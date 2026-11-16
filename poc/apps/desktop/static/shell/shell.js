@@ -6,6 +6,7 @@ import { onboardingView, showOnbError } from './shell-onboarding.js';
 import { accountCard, accountErrText, loginScreen } from './shell-account.js';
 import { bizEditStart, bizProfileCard } from './shell-biz.js';
 import { createBankAuto } from './shell-bank-auto.js';
+import { createBilling } from './shell-billing.js';
 import { createBankScreen } from './shell-bank.js';
 import { createPackScreen } from './shell-pack.js';
 import { identityIn } from './password-rules.js';
@@ -50,7 +51,7 @@ const state = {
   docDraft: null, // 문서 패널 확인 구역에서 입력 중인 값 { id, seen, createdAt, docType, issuedOn, expiresOn, noExpiry }
   docUpdating: false, // 확인·수정 요청을 기다리는 중(두 번 보내지 않게)
   docsRev: 0, // 가져오기·확인으로 목록을 바꿀 때마다 올린다(그 전에 보낸 docs.list 응답이 새 서류를 덮지 않게)
-  setTab: 'biz', // 설정 화면에서 고른 항목: 'biz'(내 사업장) | 'auth'(발급 인증) | 'devices'(기기 연결) | 'bank'(계좌 연결)
+  setTab: 'biz', // 설정 화면에서 고른 항목: 'biz'(내 사업장) | 'auth'(발급 인증) | 'devices'(기기 연결) | 'bank'(계좌 연결) | 'billing'(구독)
   deletion: null, // 탈퇴 상태(설정 > 기기 연결): { deleteAfter: ms|null, confirm }
   account: null, // 계정 상태(main AccountView): 단계·이메일·코드 만료·오류 코드
   login: null, // 로그인 화면(A-01)이 열려 있으면 { screen, draft: { email, password, code, show }, busy }
@@ -1860,7 +1861,10 @@ const SETTINGS_TABS = [
   ['auth', '발급 인증'],
   ['devices', '기기 연결'],
   ['bank', '계좌 연결'],
+  ['billing', '구독'],
 ];
+/** 설정 > 구독(shell-billing.js) */
+const billing = createBilling({ call, rerender: () => render(), errText: (e) => errText(e) });
 /** 계좌 자동조회(CODEF, shell-bank-auto.js). 연결한 계좌는 받을 돈 화면에서 [최신화]한다 */
 const bankAuto = createBankAuto({ call, rerender: () => render(), toast: (t) => toast(t), uploadFile: () => void go('bank'), openBank: () => void go('bank') });
 
@@ -1968,6 +1972,7 @@ function setTab(tab) {
   if (tab === 'auth') void loadCertMemory();
   if (tab === 'devices') refreshAccount();
   if (tab === 'bank') void bankAuto.load();
+  if (tab === 'billing') void billing.load();
 }
 
 // ---- 계정 로그인(A-01) ----
@@ -2248,6 +2253,8 @@ function settingsView() {
     ),
     state.setTab === 'biz'
       ? bizBody()
+      : state.setTab === 'billing'
+      ? billing.view()
       : state.setTab === 'bank'
       ? bankAuto.view()
       : state.setTab === 'devices'

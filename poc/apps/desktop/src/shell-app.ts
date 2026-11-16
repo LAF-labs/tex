@@ -21,7 +21,8 @@ import { BankHost, bankShellHandlers, type PickKind } from './bank-host.ts';
 import { CONSENT_CONFIG, OnboardingFlow, onboardingTodos, type BizFields } from './onboarding.ts';
 import { EngineOnboardingStore, onboardingPorts, type OnboardingExternal } from './onboarding-store.ts';
 import { listNpkiCerts } from './npki-certs.ts';
-import { openExternalKey } from './external-links.ts';
+import { openBillingCheckout, openExternalKey } from './external-links.ts';
+import { CLOUD_ORIGIN } from '@sax/net';
 import { securityBlocks, securityStatus, startSecurityProgram, type SecurityStatus } from './security-programs.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
 import { startDaemonHost, type DaemonHost, type ShowNotification } from './daemon-host.ts';
@@ -56,7 +57,7 @@ import { CounterpartyBook } from './counterparty-book.ts';
 import { nameMissing, ProfileEditLog, ProfileEditor } from './profile-edit.ts';
 import { DesktopAccount, PendingCodeFile, RemoteIdentityFile } from './remote-account.ts';
 import { GatewayAuthHost } from './gateway-auth.ts';
-import type { CloudPorts, VaultKeysFactory } from './remote-ports.ts';
+import type { AccountClient, BillingView, CloudPorts, DeviceAuth, VaultKeysFactory } from './remote-ports.ts';
 import { PairingHost } from './remote-pairing.ts';
 import { PhoneLink, PhoneStore, type TokenSeal } from './phone-link.ts';
 import { phoneReceiver } from './phone-receive.ts';
@@ -118,6 +119,7 @@ const FILES: Record<string, string> = {
   '/shell-account.js': 'text/javascript',
   '/shell-biz.js': 'text/javascript',
   '/shell-bank.js': 'text/javascript',
+  '/shell-billing.js': 'text/javascript',
   '/shell-pack.js': 'text/javascript',
   '/password-rules.js': 'text/javascript',
   '/common-passwords.js': 'text/javascript',
@@ -183,6 +185,8 @@ export interface ShellOptions {
    * "크롬 탭이 아예 열리지 않게"). 앱 안 브라우저가 고객 PC에서 막히면 되돌릴 수 있게 한 판 동안 남긴다.
    */
   externalChrome?: boolean;
+  /** 구독 결제 창 열기(시험이 바꾼다). 기본은 기본 브라우저(external-links.ts openBillingCheckout) */
+  billingOpen?: (url: string, accountOrigin: string) => Promise<void>;
   /** e2e·첫 실행 따라가기: 보안 프로그램 점검·설치 링크 열기·켜기를 바꿔 끼운다. 기본은 이 PC의 MagicLine4NX(security-programs.ts)와 기본 브라우저. */
   security?: { status(): SecurityStatus; install?(key: string): Promise<void>; start?(): boolean };
   /** 시연 전용 채팅 해석(SAX_DEMO_MODEL=openrouter, fixture 모드만). 없거나 실패하면 정규식 해석. */
@@ -1375,6 +1379,20 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     pairWin = new PairWindow({ parent: win, url: PAIR_URL, host, onClosed: () => send({ type: 'account', account: account.view() }) });
     return pairWin;
   };
+  /** 구독 경로 호출(기기 토큰). 로그인 전이면 account_required. 토큰 401이면 버리고 한 번 다시 */
+  const billingCall = async <T>(f: (c: AccountClient, auth: DeviceAuth) => Promise<T>): Promise<T> => {
+    await accountInit().catch(() => null);
+    const cloud = opts.remote?.cloud;
+    const device = account.device();
+    if (!cloud || !device) throw new Error('account_required');
+    try {
+      return await f(cloud.account, device.auth);
+    } catch (e) {
+      if ((e as { code?: string }).code !== 'account.unauthorized') throw e;
+      device.clearToken();
+      return f(cloud.account, device.auth);
+    }
+  };
   // 연결된 폰 수신(phone-link.ts, D08 §5·§7): 페어링한 폰마다 우편함을 지켜 사진·현금을 받는다(라이브 WSS + HTTPS 큐).
   // 로그인(첫 PC 등록)과 클라우드 포트·금고 키가 있을 때만. 우편함 토큰은 safeStorage(키체인·DPAPI)로 봉인해 둔다.
   // safeStorage를 쓸 수 없는 환경(일부 Linux)은 b64로 두고 표시를 남긴다: 토큰만으로는 기기 토큰(DPoP, 금고 Vd) 없이 우편함에 들어가지 못한다.
@@ -2092,6 +2110,27 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const v = await account.signOut();
       pushBoard();
       return v;
+    },
+    // 설정 > 구독: 기기 토큰으로 상태·결제 창·해지·청약철회. 토큰이 만료(401)면 한 번 새로 받아 다시 한다
+    'billing.view': async () => billingCall((c, a) => c.billing(a)),
+    'billing.subscribe': async () => {
+      needGesture(3_000);
+      const { checkoutUrl } = await billingCall<{ checkoutUrl: string }>((c, a) => c.billingCheckout(a));
+      await (opts.billingOpen ?? openBillingCheckout)(checkoutUrl, opts.remote?.cloud?.accountOrigin ?? CLOUD_ORIGIN);
+      log.event('main.billing_checkout_opened');
+      return {};
+    },
+    'billing.cancel': async () => {
+      needGesture(3_000);
+      await billingCall((c, a) => c.billingCancel(a));
+      log.event('main.billing_canceled');
+      return billingCall((c, a) => c.billing(a));
+    },
+    'billing.refund': async () => {
+      needGesture(3_000);
+      const r = await billingCall<{ amountKrw: number }>((c, a) => c.billingRefund(a));
+      log.event('main.billing_refunded');
+      return { ...(await billingCall<BillingView>((c, a) => c.billing(a))), refundedKrw: r.amountKrw };
     },
     // 탈퇴(F-06): 이 PC의 기기 토큰으로 서버에 묻는다. 로그인 전이면 account_signed_out
     'account.deletion': async () => {

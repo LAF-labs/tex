@@ -4,7 +4,7 @@ import { BundleCatalog } from '@sax/model';
 import { HttpDeviceDirectory, InternalClient, Logger, TokenVerifier, createServer, ed25519Private, fromB64, key32, listen, migrate, openFromEnv, LIMITS_MIGRATIONS_DIR, sqlLimits, type DeviceDirectory } from '@sax/svc-shared';
 import { gatewayRouter } from './app.ts';
 import { codefFromEnv, type CodefTokenSource } from './codef.ts';
-import { ZERO_PRICES, type Prices } from './constants.ts';
+import { DAILY, LIMIT_PRICES, ZERO_PRICES, type Prices } from './constants.ts';
 import { MockNtsSource, OdcloudNtsSource, type BizStatusSource } from './nts.ts';
 import { MockProvider, OpenAICompatProvider, OpenRouterProvider, SplitProvider, UpstageSystemOneStub, parseAgentPrivacy, parseOpenRouterRouting, type ModelProvider } from './providers.ts';
 import { GatewayService, type DeviceSuspender } from './service.ts';
@@ -121,6 +121,12 @@ export async function buildGateway(env: NodeJS.ProcessEnv = process.env, deps: G
     scopeKey: key32(env.RUN_SCOPE_KEY, 'RUN_SCOPE_KEY'),
     models: { decide: env.MODEL_DECIDE ?? fail('MODEL_DECIDE'), respond: env.MODEL_RESPOND ?? fail('MODEL_RESPOND'), ...(env.MODEL_AGENT ? { agent: env.MODEL_AGENT } : {}) },
     monthlyTokens: env.GW_MONTHLY_TOKENS === undefined ? undefined : positiveInt(env.GW_MONTHLY_TOKENS, 'GW_MONTHLY_TOKENS'),
+    daily: {
+      trialKrw: env.GW_DAILY_KRW_TRIAL === undefined ? DAILY.trialKrw : positiveInt(env.GW_DAILY_KRW_TRIAL, 'GW_DAILY_KRW_TRIAL'),
+      paidKrw: env.GW_DAILY_KRW_PAID === undefined ? DAILY.paidKrw : positiveInt(env.GW_DAILY_KRW_PAID, 'GW_DAILY_KRW_PAID'),
+      krwPerUsd: env.GW_KRW_PER_USD === undefined ? DAILY.krwPerUsd : positiveInt(env.GW_KRW_PER_USD, 'GW_KRW_PER_USD'),
+    },
+    limitPrices: env.GW_LIMIT_PRICES_JSON ? { ...LIMIT_PRICES, ...(JSON.parse(env.GW_LIMIT_PRICES_JSON) as Partial<Prices>) } : LIMIT_PRICES,
     prices,
     nts,
     suspender: deps.suspender ?? httpSuspender(remote().base, remote().key),

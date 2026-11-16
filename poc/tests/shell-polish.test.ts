@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import { NOTE } from '../apps/desktop/src/shell-runs.ts';
 
 const read = (f: string) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
-const SHELL = ['shell.js', 'shell-views.js', 'shell-g24.js', 'shell-onboarding.js', 'shell-account.js', 'shell-biz.js'].map((f) => [f, read(`apps/desktop/static/shell/${f}`)] as const);
+const SHELL = ['shell.js', 'shell-views.js', 'shell-g24.js', 'shell-onboarding.js', 'shell-account.js', 'shell-billing.js', 'shell-biz.js'].map((f) => [f, read(`apps/desktop/static/shell/${f}`)] as const);
 
 describe('내 사업장: 저장된 개인 프로필이 없으면 카드를 그리지 않는다', () => {
   it('제품의 개인 자리는 placeholder, 렌더러는 그 카드를 건너뛰고 사용 수에도 넣지 않는다', () => {

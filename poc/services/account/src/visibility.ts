@@ -63,6 +63,6 @@ export const ACCOUNT_VISIBILITY: Record<string, Record<string, string>> = {
   },
   device_events: { account_id: '계정', role: '기기 교체 이력(역할)', kind: '기기 교체 이력(추가·해제)', day: '기기 교체 이력(KST 일, 30일)' },
   profile_slots: { slot_token: '프로필 슬롯 수(무작위 토큰)', account_id: '계정', biz_hmac: '사업자 프로필 HMAC 존재', biz_bound_at: 'D09 §1.1 보충: 사업자 HMAC 바인딩 시각(B-28)' },
-  subscriptions: { account_id: '계정', plan: '구독 플랜', status: '구독 상태', period: '구독 주기', renew_at: '갱신일', pg_customer_ref: '결제 참조 ID', pg_event_at: 'D09 §1.1 보충: 마지막 반영 PG 이벤트 시각(PG 쪽 시각, 순서 판정)' },
+  subscriptions: { account_id: '계정', plan: '구독 플랜', status: '구독 상태', period: '구독 주기', renew_at: '갱신일', pg_customer_ref: '결제 참조 ID', pg_event_at: 'D09 §1.1 보충: 마지막 반영 PG 이벤트 시각(PG 쪽 시각, 순서 판정)', billing_key_sealed: 'D09 §1.1 보충: 카드 정기결제 빌링키(봉인, 평문 없음)', charge_attempts: 'D09 §1.1 보충: 이번 기간 청구 실패 수', next_charge_at: 'D09 §1.1 보충: 다음 청구 시도 시각', last_payment_key: '결제 참조 ID(마지막 결제, 청약철회 환불용)', last_paid_at: 'D09 §1.1 보충: 마지막 결제 시각(청약철회 7일)', last_paid_amount: 'D09 §1.1 보충: 마지막 결제 금액', trial_notice_at: 'D09 §1.1 보충: 체험 → 첫 결제 전환 안내 시각' },
   consents: { account_id: '계정', version: '동의 이력', at: '동의 이력(시각)' },
 };

@@ -81,6 +81,8 @@ export function gatewayRouter(o: GatewayAppOpts): Router {
     },
     { maxBodyBytes: 1024 * 1024 },
   );
+  // 오늘 AI 사용 금액과 한도(체험·유료, KST 새벽 4시 초기화). 앱의 사용량 표시
+  r.add('GET', '/v1/usage', async (ctx) => json(200, await svc.dailyUsage(await device(ctx))));
   r.add('POST', '/v1/biz/status', async (ctx) => {
     const c = await device(ctx, false);
     const b = V.biz(ctx.body);

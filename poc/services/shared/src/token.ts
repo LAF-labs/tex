@@ -23,6 +23,8 @@ export interface DeviceClaims {
   scp: Scope[];
   /** 기기 서명 공개키 Vx(표준 base64, 32B) */
   cnf: string;
+  /** 유료 기능 등급(게이트웨이 일 한도): 체험 trial | 구독 paid. 계정 서비스가 gateway 범위를 줄 때만 싣는다. 없으면 게이트웨이는 trial로 본다 */
+  tier?: 'trial' | 'paid';
   iat: number;
   exp: number;
   jti: string;
