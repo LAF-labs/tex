@@ -1,6 +1,7 @@
 // 대화 에이전트 e2e(결정안 agent-chat-design-2026-11-12 §14, PR-B): 입력창 → main AgentChat → chat.step 대역 → 화면(문장·표·카드·되묻기 칩·진행 단계).
 // chat.step 자리는 각본 대역이다(엔진 마스킹·모델은 tests/chat-agent.test.ts가 실제 Egress와 게이트웨이 대역으로 본다). 대역은 받은 것(프레임·도구 결과)을 적는다.
 // 실행: electron apps/desktop/e2e-dist/shell-agent-e2e.js. 시연 fixture(가짜 홈택스)와 씨앗 이력(지난 발급) 위에서 돈다. [홈택스에서 준비]는 누르지 않는다.
+import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
 import { rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';

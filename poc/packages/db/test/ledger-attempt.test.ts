@@ -151,8 +151,11 @@ describe('원장 시도 번호(ADR-042)', () => {
     const db = openDatabase(file, k);
     assert.equal(db.pragma('user_version', { simple: true }), MIGRATIONS.length);
     const after = db.prepare('SELECT * FROM irreversible_log ORDER BY intent_id, step_id').all() as Array<Record<string, unknown>>;
-    // 뒤 판(v10 발급 키)이 더한 열은 옛 행에서 비어 있다.
-    assert.deepEqual(after.map(({ attempt, issue_key, ...r }) => (assert.equal(attempt, 1), assert.equal(issue_key, null), r)), before);
+    // 뒤 판(v10 발급 키, v12 재확인 baseline_refs·reverify_day)이 더한 열은 옛 행에서 비어 있다.
+    assert.deepEqual(
+      after.map(({ attempt, issue_key, baseline_refs, reverify_day, ...r }) => (assert.equal(attempt, 1), assert.equal(issue_key, null), assert.equal(baseline_refs, null), assert.equal(reverify_day, null), r)),
+      before,
+    );
     const pk = (db.prepare('PRAGMA table_info(irreversible_log)').all() as Array<{ name: string; pk: number }>).filter((c) => c.pk).sort((a, b) => a.pk - b.pk).map((c) => c.name);
     assert.deepEqual(pk, ['intent_id', 'step_id', 'attempt']);
     const idx = (db.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='irreversible_log' AND name NOT LIKE 'sqlite_%' ORDER BY name`).all() as Array<{ name: string }>).map((r) => r.name);

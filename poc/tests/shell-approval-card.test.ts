@@ -94,7 +94,12 @@ describe('음성 ①: main이 관찰한 [승인하고 발급] 클릭 없이는 �
     const onGate = between(app, "runs.on('gate',", 'const showAttest =');
     const stopped = between(onGate, "o.reason === 'stopped'", "o.reason === 'load_failed'");
     assert.ok(stopped.includes('runs.stop(runId)') && !stopped.includes('answerGate'));
-    assert.ok(onGate.indexOf("if (o.decision === 'approve')") < onGate.indexOf('host.answerGate(o.approval)'), '게이트 답은 승인 결과일 때만');
+    // 게이트 답(host.answerGate)은 sendApproval 안 한 곳뿐이고, 바 결과에서는 승인 판정 갈래만 sendApproval을 부른다
+    // (묶음 뒤 건의 click+batch 근거는 h01-guards가 본다)
+    const send = between(onGate, 'const sendApproval = async', '    };');
+    assert.ok(send.includes('host.answerGate(approval)'));
+    const onBar = between(onGate, 'void bar.open(', "o.reason === 'stopped'");
+    assert.ok(onBar.indexOf("if (o.decision === 'approve')") >= 0 && onBar.indexOf("if (o.decision === 'approve')") < onBar.indexOf('await sendApproval(o.approval)'), '게이트 답은 승인 결과일 때만');
   });
 
   it('승인 근거(LocalApproval)는 카드가 관찰한 승인 판정에서만 발급된다', () => {
@@ -115,7 +120,10 @@ describe('음성 ①: main이 관찰한 [승인하고 발급] 클릭 없이는 �
 describe('음성 ②: 렌더러는 승인 카드를 흉내 내거나 겹쳐 승인을 만들 수 없다', () => {
   it('렌더러 IPC 표에는 승인·게이트·카드 명령이 없다', () => {
     const names = [...Object.keys(SHELL_METHODS), ...Object.keys(USER_ACTION_METHODS)];
-    for (const m of names) assert.doesNotMatch(m, /approv|gate|^bar\.|card\.|answer|attest\.(?!open|close)/i, m);
+    // 이름만 겹치는 명령: card.status·card.register·card.forget은 보안카드(홈택스 서명용 번호표) 등록,
+    // secret.answer는 대화 비밀 입력 카드의 답(값은 금고 1회용 포트로만)이다. 승인·게이트와 무관하다
+    const NOT_GATE = new Set(['card.status', 'card.register', 'card.forget', 'secret.answer']);
+    for (const m of names) if (!NOT_GATE.has(m)) assert.doesNotMatch(m, /approv|gate|^bar\.|card\.|answer|attest\.(?!open|close)/i, m);
   });
 
   it('렌더러로 가는 카드 이벤트는 띠 여부·높이·사유뿐(값·판정 영역·좌표·근거 없음)', () => {

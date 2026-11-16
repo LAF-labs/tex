@@ -206,11 +206,13 @@ describe('요청률 정책(D03 §7)', () => {
     assert.equal(matchSignal(fx, { url: 'http://127.0.0.1:9/notice/blockedness' }), null);
     assert.deepEqual(matchSignal(fx, { url: 'http://127.0.0.1:9/auth/captcha', text: '비정상적인 접근이 감지되어 이용이 제한되었습니다' }), { kind: 'block', id: 'fixture.block.text' });
     assert.equal(matchSignal(fx, { text: '전자세금계산서 건별발급' }), null);
-    // 홈택스: 근거 있는 것은 NetFunnel 대기열 문구뿐이다(차단 아님). 차단·추가 인증·캡차는 PoC-3에서 채운다.
+    // 홈택스: 근거 있는 것은 NetFunnel 대기열 문구(busy)와 시스템 점검 안내(maintenance, IR rev v1.3.7)뿐이다(둘 다 차단 아님).
+    // 차단·추가 인증·캡차는 PoC-3에서 채운다.
     const ht = SIGNAL_DICT.hometax;
     assert.deepEqual(matchSignal(ht, { text: '서비스 접속대기 중입니다. 예상대기시간 : 3초' }), { kind: 'busy', id: 'hometax.netfunnel.wait' });
     assert.deepEqual(matchSignal(ht, { text: '접속대기 중입니다.' }), { kind: 'busy', id: 'hometax.netfunnel.wait' }, '모바일 스킨 문구');
-    assert.deepEqual([...new Set(ht.map((e) => e.kind))], ['busy']);
+    assert.deepEqual(matchSignal(ht, { text: '홈택스 시스템 점검 안내' })?.kind, 'maintenance');
+    assert.deepEqual([...new Set(ht.map((e) => e.kind))].sort(), ['busy', 'maintenance']);
     for (const e of [...ht, ...fx]) assert.ok(e.source.length > 0 && (e.url || e.text), e.id);
   });
 });
