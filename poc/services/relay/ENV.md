@@ -8,10 +8,11 @@
 | `DATABASE_POOL_MAX` | 아니오(`10`) | 1~99 | 인스턴스당 PostgreSQL 연결 수. 함수는 `1` |
 | `MIGRATE_ON_START` | 아니오(`1`) | `0`·`1` | `0`이면 기동 때 마이그레이션을 하지 않는다(DDL 권한 없는 서비스 역할, [deploy/README](../deploy/README.md) 4절) |
 | `RELAY_ROOMS` | 아니오(`0`) | `0`·`1` | **룸 켬**: 1회용 페어링 룸(`/v1/rooms`, WSS 참가, `/internal/v1/rooms/:id/redeem`). 상시 룸 호스트 한 대에서만 `1`(팀장 결정 2026-11-06). 함수 진입점은 늘 끈다 |
-| `RELAY_LIVE` | 아니오(`0`) | `0`·`1` | 우편함 라이브 WSS(`/v1/mailboxes/:id/live`). Phase 1은 `0`(HTTPS 큐 폴링만, D08 §8) |
+| `RELAY_LIVE` | 아니오(`0`) | `0`·`1` | 우편함 라이브 WSS(`/v1/mailboxes/:id/live`). 기본 `0`(HTTPS 큐 폴링만, D08 §8). 운영 룸 호스트는 `1`(rooms-host/compose.yml). 클라이언트 텍스트는 keepalive `{"t":"ping"}`만 받고 `{"t":"pong"}`으로 답한다 |
 | `QUEUE_KEY` ⚿ | 예 | hex 64자 | 큐 본문·번들 저장 전 봉인 키(AES-256-GCM). 바꾸면 남은 큐(≤ 72시간)는 열리지 않고 버려진다 |
 | `LIMIT_ID_KEY` ⚿ | 예 | hex 64자 | 한도 키(계정·기기 ID) HMAC 비밀. DB에 없다(DB를 읽어도 한도 키를 다시 계산할 수 없음, [CONTRACT §10](../shared/CONTRACT.md)). 바꾸면 진행 중인 한도 창(≤ 1시간)만 처음부터 센다 |
 | `RELAY_PUBLIC_ORIGIN` | 예 | `https://…` | DPoP `htu` 검증 origin(WSS 업그레이드는 같은 origin + 경로) |
+| `RELAY_WS_ORIGIN` | 아니오(= `RELAY_PUBLIC_ORIGIN`) | `https://…`(경로 없음) | WSS 업그레이드(라이브 우편함)의 DPoP `htu` origin. 클라이언트는 QR의 릴레이 호스트로 만든다. 운영 룸 호스트는 `https://rooms.tax.laf-co.com`(HTTP 경로는 Vercel 재작성이라 `RELAY_PUBLIC_ORIGIN` = `https://tax.laf-co.com`) |
 | `TOKEN_PUBLIC_KEYS` | 예 | `kid:base64(32B)[,…]` | 계정 서비스 기기 범위 토큰 공개키 |
 | `ACCOUNT_INTERNAL_URL` | 룸 호스트·상시 서버 | 내부 URL | 기기 상태 조회(서명 호출). 함수 배포는 계정 서비스를 함수로 부르므로 쓰지 않는다 |
 | `INTERNAL_CALL_KEY` ⚿ | 예 | hex 64자 | 내부 호출 서명 키(HMAC-SHA256: 메서드·경로·본문 SHA-256·시각 ±60초·1회용 nonce, 상수 시간 비교, 팀장 결정 2026-11-06 #135). 서비스·룸 호스트가 같은 값. 받는 쪽: 정지 훅·룸 소비·큐 전면 폐기 |

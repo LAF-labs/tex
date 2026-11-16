@@ -5,7 +5,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { GATEWAY_ORIGIN, GATEWAY_PATHS, GatewayError, gatewayErrorOf, type EgressSecurityEvent, type GatewayAuth } from './gateway.ts';
 import { CODEF_MAX_BODY, CODEF_MAX_BYTES, CODEF_ORIGINS, CODEF_TIMEOUT_MS, CODEF_TOKEN_RE, decodeCodefBody, encodeCodefBody, isCodefEnv, isCodefPath, type CodefEnv, type CodefPath } from './codef.ts';
-import { CLOUD_MAX_BODY, CLOUD_MAX_BYTES, cloudHeaders, cloudRequestCheck, cloudSocketCheck, type CloudMethod } from './cloud.ts';
+import { CLOUD_MAX_BODY, cloudHeaders, cloudMaxBytes, cloudRequestCheck, cloudSocketCheck, type CloudMethod } from './cloud.ts';
 import { ModelGuard, type BundleAllowEntry, type GatewayDecideBody, type GatewayRespondBody, type GuardCode, type ModelGuardConfig } from './model-guard.ts';
 
 export interface Destination {
@@ -450,12 +450,13 @@ export class Egress {
         redirect: 'error',
       });
       this.audit.push({ dest: 'cloud', path: check.route, status: res.status });
-      if (Number(res.headers.get('content-length') ?? '0') > CLOUD_MAX_BYTES) {
+      const maxBytes = cloudMaxBytes(check.route);
+      if (Number(res.headers.get('content-length') ?? '0') > maxBytes) {
         await res.body?.cancel();
         throw new EgressError('bad_response', res.status);
       }
       const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.length > CLOUD_MAX_BYTES) throw new EgressError('bad_response', res.status);
+      if (buf.length > maxBytes) throw new EgressError('bad_response', res.status);
       let json: unknown = null;
       try {
         json = buf.length ? JSON.parse(buf.toString('utf8')) : null;

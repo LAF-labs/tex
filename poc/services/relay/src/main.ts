@@ -23,6 +23,13 @@ export function parseTokenKeys(v: string | undefined): Record<string, Buffer> {
   return out;
 }
 
+/** RELAY_WS_ORIGIN = "https://<호스트>" (경로·끝 슬래시 없음). 없으면 RELAY_PUBLIC_ORIGIN을 쓴다. */
+export function wsOrigin(v: string | undefined): string | undefined {
+  if (v === undefined || v === '') return undefined;
+  if (!/^https:\/\/[a-z0-9.-]+(:[0-9]{1,5})?$|^http:\/\/(localhost|127\.0\.0\.1)(:[0-9]{1,5})?$/.test(v)) fail('RELAY_WS_ORIGIN');
+  return v;
+}
+
 /**
  * 조립. 상시 서버(룸 호스트)와 함수 진입점(`@sax/svc-cloud`, HTTPS 큐만)이 같은 것을 쓴다.
  * 페어링 룸(`RELAY_ROOMS=1`, "룸 켬")과 우편함 라이브 WSS(`RELAY_LIVE=1`)는 켤 때만 연다(Phase 1 기본 꺼짐, 팀장 결정 2026-11-05·11-06).
@@ -43,6 +50,7 @@ export async function buildRelay(env: NodeJS.ProcessEnv = process.env, o: { migr
     verifier: new TokenVerifier(parseTokenKeys(env.TOKEN_PUBLIC_KEYS)),
     directory: deps.directory ?? new HttpDeviceDirectory({ base: env.ACCOUNT_INTERNAL_URL ?? fail('ACCOUNT_INTERNAL_URL'), key: internalKey }),
     publicOrigin: env.RELAY_PUBLIC_ORIGIN ?? fail('RELAY_PUBLIC_ORIGIN'),
+    wsOrigin: wsOrigin(env.RELAY_WS_ORIGIN),
     internal: new InternalAuth({ key: internalKey, nonces: new SqlNonceStore(db) }),
     logger,
     trustProxy: env.TRUST_PROXY === '1',

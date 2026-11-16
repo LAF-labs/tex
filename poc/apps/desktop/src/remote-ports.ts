@@ -7,7 +7,7 @@
 //   응답 본문·URL·토큰·이메일은 오류·로그에 넣지 않는다. 네트워크 실패는 code 'net.<이유>'(egress 코드 그대로).
 // - 계정 세션 문자열과 기기 토큰은 main 메모리에만 있다. 렌더러·로그·파일로 나가지 않는다. 기기 토큰은 DeviceTokenCache(15분, 영속 없음).
 // - 기기 범위 호출의 인증 헤더는 데스크톱이 만들어 넘긴다(DeviceAuth). 클라이언트는 그 헤더를 그대로 붙인다.
-import type { DeviceListJson, DesktopKeys, DeviceToken, DpopSigner, SignedAcctClaim, SignedCert, WebSocketLike } from '@sax/remote';
+import type { DeviceListJson, DesktopKeys, DeviceToken, DpopSigner, MailboxTokens, RelayQueue, SignedAcctClaim, SignedCert, WebSocketLike } from '@sax/remote';
 
 /** 기기 범위 토큰 헤더(Authorization: DPoP <token> + DPoP 증명). htu는 요청 URL 전체(쿼리 없음). 데스크톱이 deviceAuthHeaders로 만든다. */
 export type DeviceAuth = (htm: 'GET' | 'POST' | 'PUT' | 'DELETE', htu: string) => Promise<Record<string, string>>;
@@ -29,6 +29,13 @@ export interface AccountMe {
   hasPassword: boolean;
   reauthUntil: number | null;
   authMethod: string;
+}
+
+/** 구독 상태(GET /v1/billing/subscription + /v1/billing/entitlement). 금액은 원(부가세 포함), 시각은 ms. */
+export interface BillingView {
+  /** 유료 기능 권리: trial(가입 뒤 1달) | paid(낸 기간) | none */
+  entitlement: { state: 'trial' | 'paid' | 'none'; until: number | null };
+  subscription: { status: 'pending' | 'active' | 'past_due' | 'canceled'; renewAt: number | null; amountKrw: number; refund: { refundableUntil: number; amountKrw: number } | null } | null;
 }
 
 /** 계정 서비스(services/account) 클라이언트. 클라우드 세션 구현. origin은 구현이 고정한다(egress 허용 목록). */
@@ -76,6 +83,14 @@ export interface AccountClient {
    * scopes가 있으면 본문에 실어 그 범위만 달라고 한다(게이트웨이 전용 토큰, ADR-040 예정). 실제로 준 범위는 응답 scopes다.
    */
   deviceToken(cert: SignedCert, dpop: DpopSigner, scopes?: readonly string[]): Promise<DeviceToken>;
+  /** 구독 상태(기기 토큰, 데스크톱만). */
+  billing(auth: DeviceAuth): Promise<BillingView>;
+  /** POST /v1/billing/checkout(기기 토큰) → 결제 창 주소(계정 origin의 /v1/billing/card?ref=…만 받는다). main이 기본 브라우저로 연다. */
+  billingCheckout(auth: DeviceAuth): Promise<{ checkoutUrl: string }>;
+  /** POST /v1/billing/cancel(기기 토큰): 다음 결제 없음, 낸 기간까지 사용. */
+  billingCancel(auth: DeviceAuth): Promise<void>;
+  /** POST /v1/billing/refund(기기 토큰): 청약철회(결제 후 7일). 환불 금액. */
+  billingRefund(auth: DeviceAuth): Promise<{ amountKrw: number }>;
   /** GET /v1/acct-claim(기기 토큰, 데스크톱만). 응답 JSON 그대로(SignedAcctClaim). pair.ok 운반 형식(b64 JCS)은 데스크톱이 만든다. */
   acctClaim(auth: DeviceAuth): Promise<SignedAcctClaim>;
   /** POST /v1/devices/enroll(기기 토큰): 폰 대리 등록. roomId는 이 PC가 연 페어링 룸(16B base64url). 같은 키 재등록 200도 성공. */
@@ -104,10 +119,17 @@ export interface CloudPorts {
   relay: RelayHttpClient;
   /** 릴레이 호스트(pairPrologue·QR에 들어간다, WSS는 이 호스트로). 운영 relayHost = rooms.tax.laf-co.com(QR 호스트·WSS), HTTPS 큐는 tax.laf-co.com. 개발 스택 localhost:<port>. */
   relayHost: string;
+  /** 계정 서비스 origin(구독 결제 창 주소 검사). 없으면 운영 origin. */
+  accountOrigin?: string;
   /** 개발 스택(ws://localhost)이면 참. 제품 빌드는 늘 거짓. */
   insecureLocal: boolean;
   /** 릴레이 소켓 열기(wss, 개발 스택은 ws://localhost). headers는 우편함 라이브에만. */
   openSocket(url: string, headers?: Record<string, string>): WebSocketLike;
+  /**
+   * 우편함 HTTPS 큐(GET·ACK 봉투, PUT 번들, services/relay/API.md). @sax/remote relayQueue를 egress HTTP와 릴레이 HTTPS origin에 묶는다.
+   * 연결된 폰 수신(phone-link.ts)이 쓴다. 없으면(시험 대역) 큐로 받지 않는다.
+   */
+  mailboxQueue?(mbxId: Uint8Array, tok: MailboxTokens, auth: DeviceAuth): RelayQueue;
 }
 
 /**

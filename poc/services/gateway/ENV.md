@@ -31,6 +31,10 @@
 | `OPENROUTER_AGENT_PRIVACY` | 아니오(`off`) | `off` \| `deny` \| `zdr` | 위 두 툴셋 호출의 보관 조건. 공급자는 고정하지 않고 `provider`에 보관 조건만 싣는다: `deny` = `data_collection:"deny"`, `zdr` = `zdr:true` + `data_collection:"deny"`. `off`는 provider 필드 없음(대표 2026-11-13 결정). 처리방침 6항의 예외 문구를 지우려면 `zdr`로 켜야 한다. 라우터 뒤 공급사가 못 맞추면 OpenRouter가 거절할 수 있으니 실키로 판정 몇 건을 돌려 본 뒤 켠다. 다른 값이면 기동 거부 |
 | `GW_MONTHLY_TOKENS` | 아니오(3,000,000) | 양의 정수(아니면 기동 거부) | 계정 월 토큰 한도(100% L2 중단, 200% 이후 안전 판정만 계정당 분당 6회) |
 | `GW_PRICES_JSON` | 아니오(0) | `{"decideIn":…,"decideOut":…,"respondIn":…,"respondOut":…}` | 마이크로 달러 / 100만 토큰. S9·계약 전에는 0 |
+| `GW_DAILY_KRW_TRIAL` | 아니오(`50`) | 양의 정수(원) | 무료 체험 하루 AI 사용 금액 한도. 하루는 한국 시간 새벽 4시에 바뀐다(사용자 결정 2026-11-16) |
+| `GW_DAILY_KRW_PAID` | 아니오(`300`) | 양의 정수(원) | 구독자 하루 한도 |
+| `GW_KRW_PER_USD` | 아니오(`1450`) | 양의 정수 | 한도 계산 환율 |
+| `GW_LIMIT_PRICES_JSON` | 아니오(constants.ts `LIMIT_PRICES`) | `{"decideIn":…,"decideCached":…,"respondIn":…,"respondCached":…,"respondOut":…,"agentIn":…,"agentCached":…,"agentOut":…}` | 일 한도용 단가(마이크로 달러 / 100만 토큰). `GW_PRICES_JSON`(월 계량)과 따로라 그 값이 0이어도 한도는 돈다 |
 | `GW_ALLOW_IMAGES` | 아니오 | `false`만 | Phase 1 이미지 입력 없음(B-18). 다른 값이면 기동 거부 |
 | `NTS_PROVIDER` | 예 | `odcloud` \| `mock` | 진위확인 원천 |
 | `NTS_BIZ_API_KEY` ⚿ | odcloud | | 공공데이터포털 "국세청_사업자등록정보 진위확인 및 상태조회 서비스"(15081808) 인증키. 쿼리 `serviceKey`로만 보낸다. 로그·저장소·메시지에 두지 않는다 |

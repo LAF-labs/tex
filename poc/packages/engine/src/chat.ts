@@ -35,6 +35,8 @@ export type ChatErrorCode =
   | 'chat.bad_response'
   | 'chat.budget_exceeded'
   | 'chat.quota_exceeded'
+  | 'chat.daily_limit'
+  | 'chat.subscription_required'
   | 'chat.input_too_large'
   | 'chat.secret_rejected'
   | 'chat.turn_limit'
@@ -106,6 +108,9 @@ export class ChatError extends Error {
 export function errorOf(reason: string | undefined): ChatErrorCode {
   if (reason === 'gateway:run_budget_exceeded' || reason === 'turn_limit') return 'chat.budget_exceeded';
   if (reason === 'gateway:quota_exceeded') return 'chat.quota_exceeded';
+  if (reason === 'gateway:daily_limit') return 'chat.daily_limit';
+  // 체험이 끝나고 구독하지 않으면 기기 토큰에 gateway 범위가 없다(계정 서비스)
+  if (reason === 'gateway:scope_denied') return 'chat.subscription_required';
   if (reason && ['output_schema_mismatch', 'toolset_digest_mismatch', 'unexpected_item', 'tool_call_rejected', 'gateway:bad_response', 'toolset_mismatch'].includes(reason)) return 'chat.bad_response';
   return 'chat.unavailable';
 }

@@ -193,6 +193,11 @@ export const SHELL_METHODS = {
   'account.finishReset': { code: { t: 'string', max: 6, required: true }, password: { t: 'string', max: 512, required: true } },
   // 폰 연결 창 열기(S-03). 인자 없음. 실제 입력 뒤에만.
   'pair.open': {},
+  // 구독(설정 > 구독, 기기 토큰으로 계정 서비스). 결제 창은 main이 기본 브라우저로 연다(렌더러는 주소를 모른다). 해지·환불은 실제 입력 뒤에만
+  'billing.view': {},
+  'billing.subscribe': {},
+  'billing.cancel': {},
+  'billing.refund': {},
   // 온보딩 답 하나(O-01~O-06·동의 4종). 동의는 화면마다 명시 클릭이라 실제 입력 뒤에만 받는다(USER_ACTION_METHODS).
   'onboarding.reply': ONB_ANSWER,
   // 끝낸 온보딩에서 건너뛴 사업자·인증을 다시 연다([사업자 등록 마치기]·[발급 인증 고르기]). 실제 입력 뒤에만.
@@ -224,7 +229,7 @@ export type ShellHandlers = { [M in ShellMethod]: (p: ParamsOf<(typeof SHELL_MET
  * 렌더러 발 사용자 동작 명령(D11 §4 IPC 행, ADR-027 결정 8): main이 메인 창에서 직접 본 실제 입력 뒤 ms 안에만 받는다.
  * 처리기가 needGesture(ms)를 부른다(docs.import는 파일 고르기를 열 때만). tests/shell-harden.test.ts가 처리기 소스와 맞춰 본다.
  */
-export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'onboarding.reopen': 3_000, 'profile.edit': 3_000, 'profile.readCert': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'account.password': 3_000, 'account.setPassword': 3_000, 'account.startReset': 3_000, 'account.finishReset': 3_000, 'account.signOut': 3_000, 'account.delete': 3_000, 'account.deleteCancel': 3_000, 'pair.open': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'incident.open': 3_000, 'bankAuto.consent': 3_000, 'bankAuto.connect': 3_000, 'bankAuto.choose': 3_000, 'bankAuto.refresh': 3_000, 'bankAuto.disconnect': 3_000, 'run.showBrowser': 3_000, 'browser.toggle': 3_000, 'certName.clear': 3_000, 'certMemory.save': 3_000, 'secret.answer': 3_000, 'security.install': 3_000, 'security.start': 3_000, 'legal.open': 3_000, 'bank.pickStatement': 3_000, 'bank.pickInvoices': 3_000, 'bank.refresh': 3_000, 'pack.reveal': 3_000, 'pack.share': 3_000 };
+export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'onboarding.reopen': 3_000, 'profile.edit': 3_000, 'profile.readCert': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'account.password': 3_000, 'account.setPassword': 3_000, 'account.startReset': 3_000, 'account.finishReset': 3_000, 'account.signOut': 3_000, 'account.delete': 3_000, 'account.deleteCancel': 3_000, 'pair.open': 3_000, 'billing.subscribe': 3_000, 'billing.cancel': 3_000, 'billing.refund': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'incident.open': 3_000, 'bankAuto.consent': 3_000, 'bankAuto.connect': 3_000, 'bankAuto.choose': 3_000, 'bankAuto.refresh': 3_000, 'bankAuto.disconnect': 3_000, 'run.showBrowser': 3_000, 'browser.toggle': 3_000, 'certName.clear': 3_000, 'certMemory.save': 3_000, 'secret.answer': 3_000, 'security.install': 3_000, 'security.start': 3_000, 'legal.open': 3_000, 'bank.pickStatement': 3_000, 'bank.pickInvoices': 3_000, 'bank.refresh': 3_000, 'pack.reveal': 3_000, 'pack.share': 3_000 };
 
 const isPlain = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 

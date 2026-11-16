@@ -51,6 +51,7 @@
 | `401 gateway.run_token_invalid` | 서명·만료·기기/계정 불일치 |
 | `429 gateway.run_budget_exceeded` | 실행 예산 소진 |
 | `429 gateway.quota_exceeded` | 월 토큰 하드 상한(플랜 한도 × 2) 이후 안전 판정이 아닌 번들(`riskClass ≠ safety`), 또는 하드 상한 이후 안전 판정 번들이 계정당 분당 6회를 넘을 때. 월 100%~200% 사이 L1은 의도적으로 계속된다(D04 §6 "100% 이후 L1 유지", L2만 100%에서 중단) |
+| `429 gateway.daily_limit` | 오늘(한국 시간 새벽 4시 기준) AI 사용 금액이 한도를 넘었다. 체험 50원·구독 300원(기기 토큰 `tier`, 없으면 체험). 금액은 실제 토큰 × 일 한도 단가(캐시 적중 따로, `GW_LIMIT_PRICES_JSON`). `retry-after` = 다음 새벽 4시까지 초. 안전 판정 번들(`riskClass = safety`)은 한도를 넘어도 보낸다(진행 중 발급을 위험한 화면에서 멈추지 않게). respond(대화·에이전트 포함)도 같다 |
 | `503 gateway.upstream_error` | 공급사 5xx·429·연결 오류 → 지수 백오프 2회 뒤, 또는 재시도 불가 오류. 엔진은 `unknown` |
 | `429 policy.rate_limited` | 계정당 분당 60회 |
 
@@ -103,3 +104,8 @@
 ## 기기 자동 정지(D09 §3)
 
 트립와이어·공급사 거절(refusal)이 한 기기에서 1시간 창(고정 창, 인스턴스 합산)에 20회가 되면 계정 서비스 `POST /internal/v1/devices/:id/auto-suspend`를 부른다. 계정 서비스가 그 기기를 정지하고 릴레이·푸시 정지 훅과 알림 메일(`device_auto_suspended`)을 보낸다. 해제는 사용자의 AIK 서명 재활성화뿐이다.
+
+
+## `GET /v1/usage`(기기 토큰 gateway 범위)
+
+`200 {usedKrw, limitKrw, resetAt, tier}`: 오늘 쓴 AI 금액(원, 반올림)과 한도, 다음 초기화 시각(ms, 한국 시간 새벽 4시), 등급(`trial`·`paid`). 앱의 사용량 표시용.

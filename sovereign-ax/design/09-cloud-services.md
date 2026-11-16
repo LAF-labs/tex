@@ -82,6 +82,7 @@
 | `accounts.last_biz_change_at` | 계정의 마지막 사업자 HMAC 재바인딩 시각 | 사업자 HMAC 재바인딩 90일 판정(B-28) |
 | `profile_slots.biz_bound_at` | 슬롯별 사업자 HMAC 바인딩 시각 | 사업자 HMAC 재바인딩 90일 판정(B-28, §2) |
 | `subscriptions.pg_event_at` (계정·구독) | 마지막으로 반영한 PG 웹훅 이벤트의 PG 쪽 시각 | 웹훅 순서 판정. 늦게 오거나 다시 온 이벤트를 거른다(PR #46) |
+| `subscriptions.billing_key_sealed`·`charge_attempts`·`next_charge_at` (계정·구독) | 토스페이먼츠 자동결제 빌링키(저장 전 봉인, `BILLING_KEY_SEAL_KEY`, aad = 결제 참조 ID), 이번 기간 청구 실패 수, 다음 청구 시도 시각. 카드 번호·유효기간은 PG에만 있다 | 토스는 정기 청구를 스스로 하지 않아 우리가 갱신일에 청구한다. 해지하면 빌링키를 지운다(사용자 결정 2026-11-16: 토스페이먼츠 직접 연동) |
 | `mailbox_bundles(mbx_key, sealed)` (릴레이) | 우편함 ID(해시)와 우편함 번들 슬롯(`{Qx, valid_from, valid_to, seq}`의 `Vx` 서명본, ≤ 2KB, 저장 전 봉인) | 폰이 PC의 큐 공개키를 받는 곳(D08 §7). 릴레이는 서명을 검증하지 않는다(PR #63) |
 | `mailbox_quota(device_id, n)` (릴레이) | 기기별 우편함 개수. 어느 우편함인지는 없다 | 기기당 우편함 3개 상한(D08 §8). 기기↔우편함 연결은 저장하지 않는다(PR #63) |
 
@@ -89,7 +90,7 @@
 
 ```text
 account(id, email, status, plan, created_at, aik_pub, aik_pinned_at, pass_verified_day?, pass_ci_hmac?)   -- k_chk_sentinel 삭제(ADR-029)
-  ├─ subscription(plan: standard, period, renew_at, pg_customer_ref)   -- 사장님 9,900원 한 플랜(ADR-034). 세무사 요금은 다음 단계에 따로 설계
+  ├─ subscription(plan: standard, period, renew_at, pg_customer_ref)   -- 사장님 19,900원 한 플랜(ADR-034). 세무사 요금은 다음 단계에 따로 설계
   ├─ profile_slots: 1..2  (slot_token: 계정별 무작위. 번호·종류 의미 없음 (C-09, C/X-05)
   │                         biz_hmac?: HMAC(K_idx, "SAX-bizno-v1" ‖ bizNo)[:16], biz_bound_at (B-28))
   ├─ device_list: AIK 서명 DeviceListEntry[] + list_version (서버는 보관·중계만, 신뢰 앵커 아님 (C-01))

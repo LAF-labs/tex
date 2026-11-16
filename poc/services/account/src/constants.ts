@@ -80,4 +80,23 @@ export const PROFILE = {
   rebindMinDays: 90,
 } as const;
 
+/** 카드 정기결제(빌링키 PG, 토스페이먼츠 자동결제) */
+export const BILLING = {
+  /** 청구 임대: 이 시간 안에는 같은 구독을 다시 청구하지 않는다(cron·결과 페이지가 겹쳐도 한 번). 결과를 모르면 이 뒤에 같은 주문번호로 다시 묻는다 */
+  chargeLeaseMs: 15 * 60_000,
+  /** 갱신 청구가 카드 사유로 실패하면 하루 뒤 다시 */
+  retryAfterMs: D,
+  /** 확정 실패가 이만큼 쌓이면 해지(빌링키 삭제) */
+  maxFailedCharges: 3,
+  orderName: '세무 비서 월 구독',
+  /** 가입 뒤 무료 체험 개월 수(KST 달력, 카드 없음, 자동 유료 전환 없음. 사용자 결정 2026-11-16: 1달) */
+  trialMonths: 1,
+  /** 청약철회 기간(전자상거래법 §17①) */
+  refundWindowMs: 7 * D,
+  /** 체험 → 첫 결제 전환 안내를 보내는 때(첫 결제 7일 전, 약관 제12조) */
+  trialNoticeMs: 7 * D,
+  /** 연체(past_due) 중에도 재시도가 끝날 때까지 쓸 수 있다 */
+  pastDueGraceMs: 3 * D,
+} as const;
+
 export const MS = { H, D };
