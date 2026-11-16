@@ -32,6 +32,7 @@ export * from './gateway-auth.ts';
 export * from './run-history.ts';
 export * from './issue/index.ts';
 export { autoOf, candidatesFor, FEE_TOLERANCE, nameSignals, runMatch, type AmountFit, type AutoMatch, type Candidate, type MatchCounterparty, type MatchInput, type MatchReceivable, type MatchResult, type MatchTxn, type NameSignal } from './bank/match.ts';
-export { BankError, BankService, DEFAULT_TERMS, dueDate, rowKeys, sourceRowsToInput, STALE_DAYS, type BankSummary, type ReceivableStatus, type ReceivableView, type RefreshJob, type TxnView } from './bank/service.ts';
+export { analyzeCashFlow, categorize as categorizeTxn, HUMAN_CATEGORIES, rangesCover, type CashFlowAlert, type CashFlowMonth, type CashFlowResult, type CashFlowSnapshot, type CfInput, type CfInvoice, type CfTxn, type HumanCategory } from './bank/cashflow.ts';
+export { BankError, BankService, DEFAULT_TERMS, dueDate, rowKeys, sourceRowsToInput, STALE_DAYS, type BankSummary, type PayableSummary, type ReceivableStatus, type ReceivableView, type RefreshJob, type TxnView } from './bank/service.ts';
 export { SourceError, type SourceAccount, type SourceFetchResult, type SourceLinkState, type SourceProgress, type SourceRange, type SourceRow, type TxnSource, type TxnSourceKind } from './bank/source.ts';
 export { RehearsalReport } from './rehearsal.ts';

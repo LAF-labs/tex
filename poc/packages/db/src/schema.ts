@@ -441,10 +441,16 @@ ALTER TABLE irreversible_log ADD COLUMN reverify_day TEXT;
   },
   {
     // 낼 돈(11 §2): 거래처마다 내 쪽 결제 조건(받을 조건 pay_terms_json과 따로). 매입 건은 receivables(kind='purchase')를 그대로 쓴다.
+    // 현금흐름(11 §3.6): 사람이 기억시킨 갈래 규칙(다듬은 통장 표시 → 갈래). 줄 하나의 갈래는 bank_txns.ignored_reason을 그대로 쓴다.
     version: 13,
-    name: 'payables_out_terms',
+    name: 'payables_cashflow',
     sql: `
 ALTER TABLE counterparties ADD COLUMN pay_out_terms_json TEXT;
+CREATE TABLE txn_category_rules (
+  profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  direction TEXT CHECK(direction IN ('in','out')) NOT NULL, label_norm TEXT NOT NULL, category TEXT NOT NULL, created_at TEXT NOT NULL,
+  PRIMARY KEY(profile_id, direction, label_norm)
+);
 `,
   },
 ];

@@ -10,6 +10,7 @@ import {
   type Alloc, type AllocMethod, type BankTxn, type ColumnCipher, type Db, type PayTerms, type Receivable, type ReceivableEvent, type TxnInput,
 } from '@sax/db';
 import { SourceError, type SourceProgress, type SourceRow, type TxnSource } from './source.ts';
+import { analyzeCashFlow, HUMAN_CATEGORIES, shiftMonth, type CashFlowMonth, type CashFlowResult, type CfAccount, type CfInvoice, type CfTxn, type HumanCategory } from './cashflow.ts';
 import { addDays, FEE_TOLERANCE, runMatch, type Candidate, type MatchCounterparty, type MatchReceivable, type MatchTxn, type Side } from './match.ts';
 
 export class BankError extends Error {
@@ -37,6 +38,12 @@ export type Kind = 'sale' | 'purchase';
 const SIDE: Record<Kind, Side> = { sale: 'in', purchase: 'out' };
 const kindOf = (v: unknown): Kind => (v === undefined || v === null || v === 'sale' ? 'sale' : v === 'purchase' ? 'purchase' : fail('bad_kind'));
 const sideOf = (v: unknown): Side => (v === undefined || v === null || v === 'in' ? 'in' : v === 'out' ? 'out' : fail('bad_side'));
+
+/** {from, to} 날짜 구간(YYYY-MM-DD, from ≤ to)이면 그대로, 아니면 null */
+const periodOf = (v: unknown): { from: string; to: string } | null => {
+  const o = v as { from?: unknown; to?: unknown } | null;
+  return o && typeof o === 'object' && typeof o.from === 'string' && typeof o.to === 'string' && ISO.test(o.from) && ISO.test(o.to) && o.from <= o.to ? { from: o.from, to: o.to } : null;
+};
 
 export const kstDay = (d: Date) => new Date(d.getTime() + 9 * 3_600_000).toISOString().slice(0, 10);
 const lastDayOfMonth = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
@@ -265,6 +272,12 @@ export class BankService {
         return this.detail(this.profile(p.profileId), this.str(p.id, 'not_found'));
       case 'db.query.bank.counterparty':
         return this.cpBanking(this.str(p.counterpartyId, 'not_found'));
+      case 'db.query.bank.cashflow':
+        return this.cashflow(this.profile(p.profileId), p.month);
+      case 'db.query.bank.cashflowSeries':
+        return this.cashflowSeries(this.profile(p.profileId), p.months);
+      case 'bank.categorize':
+        return this.categorize(p);
       case 'db.query.bank.format':
         return this.format(this.str(p.signature, 'bad_signature', 400));
       case 'bank.consent':
@@ -531,8 +544,10 @@ export class BankService {
   private importAuto(pid: string, accountId: string, provider: string, raw: Array<Record<string, unknown>>, range: unknown) {
     if (!this.repo.account(accountId)) return fail('account_not_found');
     const rows = this.txnRows(raw);
-    if (!rows.length) return { newCount: 0, duplicateCount: 0, match: { auto: 0, review: 0, unknown: 0 } };
-    const { import: imp, newIds } = this.repo.importTxns({ profileId: pid, accountId, source: 'auto', provider, documentId: null, format: { range }, rows }, this.at());
+    const period = periodOf(range);
+    // 거래가 없던 기간도 "그 기간을 봤다"는 기록으로 남긴다(현금흐름이 그달을 덮었는지 보려고). 기간을 모르면 남기지 않는다
+    if (!rows.length && !period) return { newCount: 0, duplicateCount: 0, match: { auto: 0, review: 0, unknown: 0 } };
+    const { import: imp, newIds } = this.repo.importTxns({ profileId: pid, accountId, source: 'auto', provider, documentId: null, format: { range }, rows, period }, this.at());
     const r = this.afterImport(pid, imp, rows.length, newIds);
     return { newCount: r.newCount, duplicateCount: r.duplicateCount, match: r.match };
   }
@@ -558,7 +573,7 @@ export class BankService {
   }
 
   /**
-   * bank.importTxns {profileId, accountId, rows, source?, signature?, mapping?, file?:{bytes, ext, displayName}}
+   * bank.importTxns {profileId, accountId, rows, source?, signature?, mapping?, file?:{bytes, ext, displayName}, period?:{from, to}(조회한 기간, 현금흐름 덮음 판정)}
    * → {import, newCount, duplicateCount, match:{auto, review, unknown}}. 새 줄만 맞추기에 들어간다(이미 있던 줄은 그대로).
    */
   private async importTxns(p: Params) {
@@ -567,7 +582,7 @@ export class BankService {
     const rows = this.txnRows(p.rows);
     if (!rows.length) return fail('no_rows');
     const documentId = await this.keepFile(pid, 'bank_statement', p.file);
-    const { import: imp, newIds } = this.repo.importTxns({ profileId: pid, accountId, source: 'file', documentId, format: p.mapping, rows }, this.at());
+    const { import: imp, newIds } = this.repo.importTxns({ profileId: pid, accountId, source: 'file', documentId, format: p.mapping, rows, period: periodOf(p.period) }, this.at());
     this.rememberFormat(p.signature, p.mapping);
     return this.afterImport(pid, imp, rows.length, newIds);
   }
@@ -1173,6 +1188,103 @@ export class BankService {
     if (others.length) return fail('alias_conflict');
     const source = p.source === 'holder' || p.source === 'learned' ? p.source : 'manual';
     return this.repo.addAlias(cpId, p.name, source, this.at());
+  }
+
+  // ---- 현금흐름(11 §3, ADR-045) ----
+
+  /** 분석 입력을 DB에서 읽는다. 맞추기를 먼저 돌려 붙은 금액을 최신으로 한다. 값은 이 PC 밖으로 나가지 않는다 */
+  private cashflowInput(pid: string, month: string) {
+    this.rematch(pid);
+    const today = this.today();
+    const accts = this.repo.accounts(pid);
+    const ownHmacs = new Set(this.db.prepare('SELECT number_hmac FROM bank_accounts WHERE profile_id = ?').pluck().all(pid) as string[]);
+    const ranges = new Map<string, Array<{ from: string; to: string }>>();
+    for (const r of this.db
+      .prepare(`SELECT i.account_id AS a, coalesce(i.range_from, min(t.day)) AS f, coalesce(i.range_to, max(t.day)) AS t FROM bank_imports i LEFT JOIN bank_txns t ON t.import_id = i.id
+        WHERE i.profile_id = ? GROUP BY i.id`)
+      .all(pid) as Array<{ a: string; f: string | null; t: string | null }>)
+      if (r.f && r.t) ranges.set(r.a, [...(ranges.get(r.a) ?? []), { from: r.f, to: r.t }]);
+    const accounts: CfAccount[] = accts.map((a) => {
+      const rs = ranges.get(a.id) ?? [];
+      const bal = this.db.prepare('SELECT balance, day FROM bank_txns WHERE account_id = ? AND balance IS NOT NULL ORDER BY day DESC, occurred_at DESC, rowid DESC LIMIT 1').get(a.id) as { balance: number; day: string } | undefined;
+      return { id: a.id, last4: a.last4, bank: a.bank, ranges: rs, coverTo: rs.length ? rs.map((r) => r.to).sort().at(-1)! : null, balance: bal?.balance ?? null, balanceDay: bal?.day ?? null };
+    });
+    const settled = new Map<string, number>();
+    const lastPaid = new Map<string, string>();
+    const txnDay = new Map<string, string>();
+    const txns: CfTxn[] = this.repo.txns(pid).map((t) => {
+      txnDay.set(t.id, t.day);
+      return { id: t.id, accountId: t.accountId, day: t.day, direction: t.direction, amount: t.amount, label: [t.payer, t.memo].filter(Boolean).join(' '), counterOwn: !!t.counterAccountHmac && ownHmacs.has(t.counterAccountHmac), settled: 0, human: t.ignoredAt ? t.ignoredReason : null };
+    });
+    for (const a of this.repo.liveAllocs(pid)) {
+      if (a.txnId) settled.set(a.txnId, (settled.get(a.txnId) ?? 0) + a.amount);
+      const d = a.txnId ? txnDay.get(a.txnId) : (a.receivedOn ?? a.createdAt.slice(0, 10));
+      if (d && (!lastPaid.has(a.receivableId) || d > lastPaid.get(a.receivableId)!)) lastPaid.set(a.receivableId, d);
+    }
+    for (const t of txns) t.settled = settled.get(t.id) ?? 0;
+    const STATE: Record<ReceivableStatus, CfInvoice['state']> = { unpaid: 'open', partial: 'open', unknown: 'unknown', waiting: 'waiting', received: 'settled', excluded: 'excluded' };
+    const invoices: CfInvoice[] = (['sale', 'purchase'] as const).flatMap((kind) =>
+      this.views(pid, kind).list.map((v) => ({
+        id: v.id, kind, counterpartyKey: v.counterpartyId ?? (v.cpBizNo ? `biz:${v.cpBizNo}` : `r:${v.id}`), cpName: v.cpName, writtenOn: v.writtenOn, total: v.total, remaining: v.remaining,
+        dueOn: v.promisedOn ?? v.dueOn, state: STATE[v.status], settledOn: v.status === 'received' ? (lastPaid.get(v.id) ?? null) : null,
+      })),
+    );
+    const rows = <T>(sql: string) => this.db.prepare(sql).all(pid) as T[];
+    const cashSales = rows<{ day: string; amount: number }>('SELECT day, amount FROM cash_sales WHERE profile_id = ?');
+    const cardTxns = rows<{ day: string; amount: number; merchantBizNo: string | null; canceled: number }>('SELECT used_on AS day, amount, merchant_biz_no AS merchantBizNo, canceled FROM card_txns WHERE profile_id = ?').map((c) => ({ ...c, canceled: c.canceled === 1 }));
+    const cardRanges = rows<{ from: string; to: string }>('SELECT range_from AS "from", range_to AS "to" FROM card_fetches WHERE profile_id = ?');
+    const receipts = rows<{ day: string; amount: number; merchantBizNo: string | null }>(
+      'SELECT r.issued_on AS day, r.amount, r.merchant_biz_no AS merchantBizNo FROM receipts r JOIN documents d ON d.id = r.doc_id WHERE d.profile_id = ? AND r.issued_on IS NOT NULL AND r.amount IS NOT NULL AND r.amount > 0',
+    );
+    // 확정한 급여만, 달마다 가장 늦은 판
+    const confirmed = `SELECT m.profile_id AS pid, m.month, m.revision FROM payroll_months m WHERE m.profile_id = ? AND m.status = 'confirmed' AND m.revision = (SELECT max(revision) FROM payroll_months x WHERE x.profile_id = m.profile_id AND x.month = m.month AND x.status = 'confirmed')`;
+    const payroll = rows<{ month: string; gross: number; net: number }>(`SELECT l.month, sum(l.gross) AS gross, sum(l.net_pay) AS net FROM payroll_lines l JOIN (${confirmed}) c ON c.pid = l.profile_id AND c.month = l.month AND c.revision = l.revision GROUP BY l.month`);
+    const payees = (this.db.prepare(`SELECT e.name, l.month, l.net_pay AS net FROM payroll_lines l JOIN (${confirmed}) c ON c.pid = l.profile_id AND c.month = l.month AND c.revision = l.revision JOIN employees e ON e.id = l.employee_id`).all(pid) as Array<{ name: string; month: string; net: number }>)
+      .map((x) => ({ nameNorm: normalizePayerName(x.name), month: x.month, net: x.net }));
+    const rules = (this.db.prepare('SELECT direction, label_norm AS labelNorm, category FROM txn_category_rules WHERE profile_id = ?').all(pid) as Array<{ direction: 'in' | 'out'; labelNorm: string; category: HumanCategory }>)
+      .filter((r) => (HUMAN_CATEGORIES as readonly string[]).includes(r.category));
+    return { today, month, accounts, txns, invoices, cashSales, cardTxns, cardRanges, receipts, payroll, payees, rules };
+  }
+
+  /** db.query.bank.cashflow {profileId, month?(YYYY-MM, 기본 이번 달)} → 그달 요약 + 지금 모습 + 알림(11 §3.4·§3.5) */
+  cashflow(pid: string, month: unknown): CashFlowResult {
+    const m = month === undefined || month === null ? this.today().slice(0, 7) : typeof month === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(month) && month <= this.today().slice(0, 7) ? month : fail('bad_month');
+    return analyzeCashFlow(this.cashflowInput(pid, m));
+  }
+
+  /** db.query.bank.cashflowSeries {profileId, months?(1~12, 기본 6)} → 이번 달까지 달마다 요약(오래된 달이 앞) */
+  cashflowSeries(pid: string, months: unknown): { months: CashFlowMonth[] } {
+    const n = months === undefined || months === null ? 6 : Number.isInteger(months) && (months as number) >= 1 && (months as number) <= 12 ? (months as number) : fail('bad_months');
+    const cur = this.today().slice(0, 7);
+    const base = this.cashflowInput(pid, cur);
+    const out: CashFlowMonth[] = [];
+    for (let i = n - 1; i >= 0; i--) out.push(analyzeCashFlow({ ...base, month: shiftMonth(cur, -i) }).month);
+    return { months: out };
+  }
+
+  /**
+   * bank.categorize {profileId, txnId, category|null, remember?}: 입출금 한 줄의 갈래를 사람이 정한다(11 §3.6).
+   * 줄의 갈래는 ignored_reason에 둔다(확인할 입출금 목록에서도 빠진다). remember면 같은 통장 표시는 다음부터 그 갈래로 본다.
+   * null이면 이 줄의 갈래를 지우고(규칙은 그대로) 되돌릴 수 있게 기록한다.
+   */
+  private categorize(p: Params) {
+    const pid = this.profile(p.profileId);
+    const t = this.ownTxn(pid, p.txnId);
+    const cat = p.category === null ? null : (HUMAN_CATEGORIES as readonly unknown[]).includes(p.category) ? (p.category as HumanCategory) : fail('bad_category');
+    if (cat && this.repo.liveAllocs(pid, { txnId: t.id }).length) return fail('txn_settled');
+    const reason = cat === 'unrelated' ? 'unrelated' : cat;
+    this.repo.setIgnored(t.id, reason, this.at());
+    let rule: { labelNorm: string } | null = null;
+    if (cat && p.remember === true) {
+      const labelNorm = normalizePayerName([t.payer, t.memo].filter(Boolean).join(' '));
+      if (labelNorm.length >= 2) {
+        this.db.prepare('INSERT INTO txn_category_rules (profile_id, direction, label_norm, category, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(profile_id, direction, label_norm) DO UPDATE SET category = excluded.category')
+          .run(pid, t.direction, labelNorm, cat, this.at());
+        rule = { labelNorm };
+      }
+    }
+    const seq = this.event(pid, { receivableId: null, txnId: t.id, allocId: null, action: reason ? 'ignore' : 'unignore', reason: t.ignoredReason, undoOf: null });
+    return { seq, remembered: !!rule };
   }
 
   dispose(): void {

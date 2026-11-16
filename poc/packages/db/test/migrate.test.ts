@@ -24,7 +24,7 @@ const D07_TABLES = [
   'bundle_entries', 'bundle_exports', 'bundle_items', 'card_fetches', 'card_txn_memos', 'card_txns', 'cash_sales', 'clock_guard', 'consents', 'cooldowns', 'counterparties', 'cp_bank_accounts', 'cp_payer_aliases',
   'documents', 'employees', 'gate_requests', 'irreversible_log', 'match_rejects', 'onboarding_state', 'payroll_lines', 'payroll_months', 'playbook_packages', 'policy', 'profiles', 'rate_counters',
   'rate_tables', 'receipts', 'receivable_allocs', 'receivable_events', 'receivables', 'registry_state', 'remote_cmd_seen', 'remote_devices', 'remote_pair_state', 'run_events', 'runs', 'schedules', 'settings', 'shifts',
-  'temp_previews', 'usage_local', 'validity_rules',
+  'temp_previews', 'txn_category_rules', 'usage_local', 'validity_rules',
 ];
 
 describe('스키마 마이그레이션(D07 §7)', () => {
@@ -152,7 +152,7 @@ describe('스키마 마이그레이션(D07 §7)', () => {
     const k = key();
     // main에 먼저 들어간 v9(bank_match, #284)의 SQL sha256. 배포한 판은 바이트 하나도 바꾸지 않는다.
     assert.equal(migrationSha256(MIGRATIONS[8]!), '5edef61e8d9494ab2ba3c857a39bec5efe9d725ece0baa4710cebb2f5364bab0');
-    assert.deepEqual(MIGRATIONS.slice(8).map((m) => [m.version, m.name]), [[9, 'bank_match'], [10, 'ledger_issue_key'], [11, 'profile_cert_name'], [12, 'ledger_reverify'], [13, 'payables_out_terms']]);
+    assert.deepEqual(MIGRATIONS.slice(8).map((m) => [m.version, m.name]), [[9, 'bank_match'], [10, 'ledger_issue_key'], [11, 'profile_cert_name'], [12, 'ledger_reverify'], [13, 'payables_cashflow']]);
     for (let n = 1; n <= MIGRATIONS.length; n++) {
       const db = openDatabase(file, k, { migrations: MIGRATIONS.slice(0, n) });
       assert.equal(db.pragma('user_version', { simple: true }), n);

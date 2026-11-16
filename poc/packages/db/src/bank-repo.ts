@@ -425,12 +425,14 @@ export class BankRepo {
    * 다른 원천이 이미 들인 같은 줄은 건너뛴다: 내용 열쇠(거래일·방향·금액·잔액)가 같은 줄이 다른 원천 회차에 이 묶음 안 순번보다 많이 있으면 같은 줄로 본다.
    * (파일로 넣은 뒤 자동 연결로 같은 기간을 받아도, 그 반대여도 두 번 들어가지 않는다.) 같은 원천 안의 중복은 줄 열쇠가 막는다.
    */
-  importTxns(input: { profileId: string; accountId: string; source: BankImportSource; provider?: string | null; documentId: string | null; format: unknown; rows: TxnInput[] }, at: string): { import: BankImport; newIds: string[]; crossSkipped: number } {
+  importTxns(input: { profileId: string; accountId: string; source: BankImportSource; provider?: string | null; documentId: string | null; format: unknown; rows: TxnInput[]; period?: { from: string; to: string } | null }, at: string): { import: BankImport; newIds: string[]; crossSkipped: number } {
     return this.db.transaction(() => {
       const acct = this.account(input.accountId);
       if (!acct || acct.profileId !== input.profileId) throw new ValidationError('account_not_found');
       const id = randomUUID();
-      const days = input.rows.map((r) => r.day).sort();
+      // 회차 구간 = 조회한 기간(알면) ∪ 줄의 처음·끝 날. 현금흐름이 그달을 다 덮었는지 이것으로 본다(11 §3.4). 거래가 없던 날도 덮은 것이다
+      const p = input.period && /^\d{4}-\d{2}-\d{2}$/.test(input.period.from) && /^\d{4}-\d{2}-\d{2}$/.test(input.period.to) && input.period.from <= input.period.to ? input.period : null;
+      const days = [...input.rows.map((r) => r.day), ...(p ? [p.from, p.to] : [])].sort();
       this.db
         .prepare('INSERT INTO bank_imports (id, profile_id, account_id, source, provider, range_from, range_to, row_count, new_count, document_id, format_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)')
         .run(id, input.profileId, input.accountId, input.source, input.source === 'auto' ? (input.provider ?? null) : null, days[0] ?? null, days[days.length - 1] ?? null, input.rows.length, input.documentId, input.format === undefined ? null : JSON.stringify(input.format), at);

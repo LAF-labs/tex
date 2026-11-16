@@ -164,7 +164,9 @@
 - **엔진 안의 순수 함수**: `packages/engine/src/bank/cashflow.ts`(제안). 입력은 DB에서 읽은 행, 출력은 §3.4 지표와 근거 줄 id. 같은 입력이면 늘 같은 결과다. 시험은 합성 자료로만 한다.
 - **저장하지 않고 매번 계산**: 1인 사업자의 1년 치 입출금은 수천 줄 수준이라 매번 계산해도 빠르다(가설, 2만 줄에서 100ms 안을 목표로 시험). 그래서 캐시 표를 두지 않고, 사람이 고친 것만 저장한다.
 - **새 저장 표(제안)**: `txn_category_rules`(통장 표시 → 갈래), `bank_txns.category_override`·`excluded_from_analysis`, `counterparties.pay_out_terms_json`(v13, 구현). 낼 돈은 기존 `receivables(kind=purchase)`·`receivable_allocs`를 그대로 쓴다.
-- **명령**: `db.query.bank.cashflow {profileId, month}`(월 요약), `db.query.bank.cashflowSeries {profileId, months}`(6개월), `bank.categorize`·`bank.uncategorize`. main 전용 명령(BANK_*)이다.
+- **명령(구현)**: `db.query.bank.cashflow {profileId, month?}`(그달 요약 + 지금 모습 + 알림 후보), `db.query.bank.cashflowSeries {profileId, months?}`(기본 6개월), `bank.categorize {txnId, category|null, remember?}`(줄의 갈래는 `bank_txns.ignored_reason`, 기억은 `txn_category_rules`, 되돌리기는 `bank.undo`). main 전용 명령(BANK_*)이다.
+- **덮음 판정(구현)**: 계좌마다 회차 구간(조회한 기간 ∪ 줄의 처음·끝 날)의 합이 그달을 빈틈없이 덮어야 complete다. 자동 연결은 거래가 없던 조회 기간도 회차로 남긴다. 파일은 `period`를 넘기면 그 기간을 쓴다.
+- **알림 후보의 하루 1번·7일 중복 금지**는 판(화면) 쪽이 알림 `id`로 거른다. 엔진은 같은 상황에 늘 같은 `id`를 낸다.
 
 ## 5. 데이터·보안
 

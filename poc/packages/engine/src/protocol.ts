@@ -121,12 +121,12 @@ export const SETTLEMENT_COMMANDS = ['settlement.store'] as const;
  * 계좌번호·입금자명·금액이 오가므로 조회까지 모두 main 전용이다(렌더러에 열지 않는다). 파일은 main이 docparse 샌드박스로 읽어 다듬은 줄만 보낸다.
  * bank.refresh는 자동 연결 원천(bank/source.ts)으로 최신화를 시작만 하고 돌아온다. 진행은 db.query.bank.refreshStatus로 본다.
  */
-export const BANK_READ_QUERIES = ['db.query.bank.accounts', 'db.query.bank.overview', 'db.query.bank.summary', 'db.query.bank.receivable', 'db.query.bank.counterparty', 'db.query.bank.format', 'db.query.bank.refreshStatus'] as const;
+export const BANK_READ_QUERIES = ['db.query.bank.accounts', 'db.query.bank.overview', 'db.query.bank.summary', 'db.query.bank.receivable', 'db.query.bank.counterparty', 'db.query.bank.format', 'db.query.bank.refreshStatus', 'db.query.bank.cashflow', 'db.query.bank.cashflowSeries'] as const;
 export const BANK_COMMANDS = [
   'bank.consent', 'bank.addAccount', 'bank.updateAccount', 'bank.deleteAccount', 'bank.revealAccount', 'bank.setLink', 'bank.refresh',
   'bank.importTxns', 'bank.importInvoices', 'bank.rematch',
   'bank.accept', 'bank.attach', 'bank.detach', 'bank.reject', 'bank.markReceived', 'bank.closeFee', 'bank.ignoreTxn', 'bank.assignTxn', 'bank.setPromised', 'bank.exclude', 'bank.undo',
-  'bank.addCpAccount', 'bank.deleteCpAccount', 'bank.revealCpAccount', 'bank.addAlias', 'bank.deleteAlias', 'bank.setPayTerms', 'bank.setDefaultTerms',
+  'bank.addCpAccount', 'bank.deleteCpAccount', 'bank.revealCpAccount', 'bank.addAlias', 'bank.deleteAlias', 'bank.setPayTerms', 'bank.setDefaultTerms', 'bank.categorize',
 ] as const;
 /**
  * 실행 명령(main → 엔진 중계 통로). 승인·증언은 여기 없다. 게이트 전용 포트로만 다닌다(ADR-021, D01 §2.1). run.inspect는 값 없는 원장 상태·저널 종류(e2e).
