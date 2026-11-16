@@ -115,6 +115,12 @@ describe('긴급 정지 배선: RunService(H01·IR) 시작 거부·실행 중 �
     v: 2, runId: req.runId, gateStepId: req.gateStepId, reqId: req.reqId, approvalNonce: req.approvalNonce, actionHash: req.actionHash, exp: Date.now() + 120_000, presence: 'click', mac: 'not-verified-in-phase1',
   });
 
+  // 병렬로 도는 느린 CI(Windows)에서 3초 조회 상한이 목록 반영보다 먼저 끝나 in_doubt가 된 일이 있다. 상한만 넉넉히 둔다(조회 횟수·간격은 그대로).
+  const slowRunnerPortal = (origin: string) => {
+    const p = fixturePortal(origin);
+    return { ...p, verify: { ...p.verify, maxMs: 20_000 } };
+  };
+
   async function setup(engine: Engine): Promise<Side> {
     const dir = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), `sax-kill-${engine}-`));
     const db = openDatabase(path.join(dir, 'db.sqlite'), new Uint8Array(randomBytes(32)));
@@ -122,7 +128,7 @@ describe('긴급 정지 배선: RunService(H01·IR) 시작 거부·실행 중 �
     data.profiles.upsert({ kind: 'business', displayName: SUPPLIER.name, bizNo: SUPPLIER.bizNo, corpNo: null, repName: '김가나', bizType: null, bizItem: null, address: null, email: null, signMethod: 'simple_auth' });
     const s: Side = { runs: null as never, db, dir, cp: data.counterparties.create({ ...A }).id, events: [], gateMsgs: [], steps: new Map(), status: CLEAR, onStep: null, pages: 0, closes: 0 };
     s.runs = new RunService({
-      db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log,
+      db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: slowRunnerPortal(fx.origin), log,
       page: async () => {
         s.pages++;
         return page && !page.isClosed() ? page : (page = (await connectRunBrowser(h.client)).page);
@@ -158,7 +164,7 @@ describe('긴급 정지 배선: RunService(H01·IR) 시작 거부·실행 중 �
     };
     ir = {
       pkg, lookupDefs: h01FixtureLookupDefs(fx.origin), fixtureGrant: fixtureOriginGrant(pkg), pdf,
-      verifyTiming: { minElapsedMs: p.verify.minElapsedMs, lookups: p.verify.lookups, maxMs: p.verify.maxMs },
+      verifyTiming: { minElapsedMs: p.verify.minElapsedMs, lookups: p.verify.lookups, maxMs: 20_000 },
       judge: { decide: async () => ({ outcome: 'no_visible_error', confidence: 1, raw: {}, usage: { input_tokens: 0, output_tokens: 0 }, refusals: [], rule: 3, provider: 'openai', model: 'fixture', l0Only: true, injectionHit: false, shadow: [] }) as never },
     };
     sides.h01 = await setup('h01');

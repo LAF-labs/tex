@@ -41,7 +41,8 @@ const H01_ONLY_STEPS = new Set(['s36', 's37']);
  */
 const JOURNAL_IGNORE: Record<Engine, ReadonlySet<string>> = {
   h01: new Set([]),
-  ir: new Set(['run.state', 'decide.result', 'verify.result', 'artifact.saved', 'gate.tokens_discarded']),
+  // gate.presence: 승인 근거의 presence(click·click+batch)를 남기는 저널. IR 길에만 있다
+  ir: new Set(['run.state', 'decide.result', 'verify.result', 'artifact.saved', 'gate.tokens_discarded', 'gate.presence']),
 };
 
 interface Obs {

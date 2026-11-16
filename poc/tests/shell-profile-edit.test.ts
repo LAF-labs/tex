@@ -96,7 +96,7 @@ describe('상호가 비었거나 번호로 저장된 프로필(0.1.6 실사용: 
   it('화면: main은 중립 표기("내 사업장")+nameMissing, 렌더러는 상호 칸을 비우고 안내, 저장 뒤 제목줄도 다시 그린다', () => {
     const read = (f: string) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
     const src = read('apps/desktop/src/shell-app.ts');
-    assert.match(src, /const unnamed = p\.kind === 'business' && nameMissing\(p\);\s*return \{ kind: p\.kind, name: unnamed \? NO_BUSINESS\.name : p\.displayName, \.\.\.\(unnamed \? \{ nameMissing: true \} : \{\}\),/);
+    assert.match(src, /const unnamed = p\.kind === 'business' && nameMissing\(p\);\s*(?:const [^\n]*\n\s*)*return \{ kind: p\.kind, name: unnamed \? NO_BUSINESS\.name : p\.displayName, \.\.\.\(unnamed \? \{ nameMissing: true \} : \{\}\),/);
     const biz = read('apps/desktop/static/shell/shell-biz.js');
     assert.match(biz, /name: b\.bizNo && !b\.nameMissing \? b\.name : ''/);
     assert.match(biz, /has && b\.nameMissing \? note\(BIZ_NAME_MISSING_NOTE, true\) : null/);
@@ -170,7 +170,8 @@ describe('ProfileEditor: 실제 DB upsert', () => {
     assert.equal(r.ok, true);
     assert.deepEqual(t.checks, [NO_B]);
     assert.equal(t.cur().displayName, '새상사');
-    assert.equal(t.cur().signMethod, null);
+    // 기본 발급 인증은 공동인증서(#365): 새로 만든 프로필도 빈 값이 아니라 cert로 둔다
+    assert.equal(t.cur().signMethod, 'cert');
   });
 });
 
