@@ -2,7 +2,7 @@
 // 견본 데이터(견본 사업장·서류·대화·꾸러미·정부24 후보)는 shell-mock.ts에 있고 시연 연결(ShellDev, demo-dev.ts)로만 들어온다.
 // 실행 단계·게이트 요청·발급 확정·처음 거래 판정은 엔진(H-01 플레이북·원장)에서 온다(shell-runs.ts). 사업자 프로필·거래처는 DB에서 읽는다.
 import { kstToday } from './approval-gate.ts';
-import { CERT_DOCS, certDocByCode, certDocOf, certInputsFor, type CertCode } from './cert-docs.ts';
+import { CERT_DOCS_SHOWN, certDocByCode, certDocOf, certInputsFor, type CertCode } from './cert-docs.ts';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 export const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -110,7 +110,7 @@ export interface Doc {
 export const QUICK: Array<{ label: string; text: string; soon?: boolean; cert?: CertCode }> = [
   { label: '세금계산서 발급', text: '세금계산서 ' },
   { label: '주민등록등본(직접 발급)', text: '주민등록등본 떼 줘' },
-  ...CERT_DOCS.map((d) => ({ label: d.label, text: `${d.name} 떼 줘`, cert: d.code })),
+  ...CERT_DOCS_SHOWN.map((d) => ({ label: d.label, text: `${d.name} 떼 줘`, cert: d.code })),
 ];
 
 // ---- 요청 해석(정규식. SAX_DEMO_MODEL=openrouter 시연에서는 모델이 먼저 뽑고 실패하면 이쪽, demo-model.ts) ----
@@ -300,7 +300,7 @@ export function answersPending(parsed: Parsed, runs: Drafts, text?: string): boo
 /** 빈 요청·모르는 요청의 기본 안내. */
 export const EMPTY_REQUEST_TEXT = '세금계산서 발급이나 지난 발급·매출을 말해 주세요.';
 /** 이 앱이 떼지 않는 증명서(지방세 납세증명·4대보험 등). 떼는 것만 말한다. */
-export const CERT_OTHER_TEXT = `그 증명서는 이 앱에서 떼지 못해요. ${CERT_DOCS.map((d) => d.name).join('·')}은 바로 뗄 수 있어요.`;
+export const CERT_OTHER_TEXT = `그 증명서는 이 앱에서 떼지 못해요. ${CERT_DOCS_SHOWN.map((d) => d.name).join('·')}은 바로 뗄 수 있어요.`;
 /** 받침에 맞춘 목적격 조사(을/를). */
 const objectJosa = (w: string) => ((w.charCodeAt(w.length - 1) - 0xac00) % 28 > 0 ? '을' : '를');
 
@@ -352,7 +352,8 @@ export function interpret(text: string, vat: VatMode | null, profile: Profile['k
   }
   if (parsed.intent === 'cert') {
     const doc = parsed.cert ? certDocByCode(parsed.cert) : null;
-    if (!doc) return { kind: 'say', text: CERT_OTHER_TEXT };
+    // 숨긴 서류(cert-docs hidden, 출시판 H-04)는 표에 없는 증명서처럼 답한다(엔진 의도·모델이 그 코드를 골라도)
+    if (!doc || doc.hidden) return { kind: 'say', text: CERT_OTHER_TEXT };
     if (profile !== 'business') return { kind: 'say', text: '증명서는 사업자 프로필로 떼요. 위에서 사업자로 바꿔 주세요.' };
     const inputs = certInputsFor(doc, text, kstToday(Date.now()));
     return { kind: 'draft', run: runs.createCertDraft(doc.code, inputs), text: `${doc.name}${objectJosa(doc.name)} 홈택스에서 떼요. 사용 용도 ${inputs.purpose} · 제출처 ${inputs.submitTo}.` };

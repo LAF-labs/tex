@@ -224,7 +224,8 @@ export const ONB_TASKS: ReadonlyArray<{ id: string; label: string; now: boolean 
   { id: 'H-02', label: '발급한 세금계산서 조회·PDF 보관', now: false },
   { id: 'H-10', label: '사실증명', now: false },
   { id: 'G-01', label: '주민등록 등·초본(직접 발급 안내)', now: false },
-];
+  // 출시판에서 숨긴 민원증명(cert-docs hidden)은 맡길 업무에 보이지 않는다
+].filter((t) => !certDocByCode(t.id)?.hidden);
 const NOW_TASKS = new Set(ONB_TASKS.filter((t) => t.now).map((t) => t.id));
 
 /** 건너뛴 항목(판의 "할 일", 08 §4). */

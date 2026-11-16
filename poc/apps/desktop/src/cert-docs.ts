@@ -22,6 +22,11 @@ export interface CertDocDef {
   defaults: { purpose: string; submitTo: string };
   /** 서류별 칸(과세기간·귀속연도). today는 KST 'YYYY-MM-DD' */
   extra?: (today: string) => Record<string, string>;
+  /**
+   * 출시판에서 숨김: 맡긴 업무 칩·온보딩·도구 › 민원증명 예행 메뉴·대화 요청에서 뺀다(대화는 「이 앱에서 떼지 못해요」).
+   * 코드·패키지·이미 뗀 서류 이름(certDocByCode)은 남긴다. 다시 켜려면 이 줄만 지운다.
+   */
+  hidden?: boolean;
 }
 
 const PURPOSES_COMMON = ['입찰, 계약용', '수금용', '관공서제출용', '대출용', '여권또는비자신청용', '건강보험·국민연금공단제출용', '금융기관제출용', '신용카드발급용', '기타'] as const;
@@ -39,6 +44,8 @@ export const CERT_DOCS: readonly CertDocDef[] = [
     match: /납세\s*증명|국세\s*완납/,
     purposes: ['대금수령', '관공서 제출', '금융기관 제출', '입찰 참가', '해외이주', '기타'], submitTo: ['관공서', '금융기관', '공공기관', '기타'],
     defaults: { purpose: '금융기관 제출', submitTo: '금융기관' },
+    // 이번 출시에서 뺌(2026-11-16 5차 예행): 메뉴 진입이 홈택스 메인으로 튕기고(개인사업자 로그인 추정) 실화면 양식까지 간 적이 없다
+    hidden: true,
   },
   {
     code: 'H-08', playbookId: 'hometax.cert.vat_tax_base', name: '부가가치세 과세표준증명', label: '부가세 과세표준증명', docType: 'vat_tax_base_cert',
@@ -65,6 +72,9 @@ const PURPOSE_WORDS: ReadonlyArray<[RegExp, readonly string[], readonly string[]
   [/건강보험|국민연금|공단/, ['건강보험·국민연금공단제출용'], ['관공서', '공공기관']],
   [/해외\s*이주|이민/, ['해외이주'], ['기타']],
 ];
+
+/** 출시판에서 보이는 민원증명(hidden 아닌 것). 메뉴·칩·온보딩·대화 안내는 이것만 쓴다. */
+export const CERT_DOCS_SHOWN: readonly CertDocDef[] = CERT_DOCS.filter((d) => !d.hidden);
 
 export function certDocOf(text: string): CertDocDef | null {
   return CERT_DOCS.find((d) => d.match.test(text)) ?? null;

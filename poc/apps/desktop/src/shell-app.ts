@@ -16,7 +16,7 @@ import { execFile } from 'node:child_process';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, ShareMenu, shell as desktop } from 'electron';
 import { AccountantPack, isPackMonth, packAsk } from './accountant-pack.ts';
 import { ACTION_TEXT, actionText, issueLocalApproval, kstToday, verifyLocalApproval, verifyLocalAttestation, type LocalApproval } from './approval-gate.ts';
-import { CERT_DOCS, certInputsFor, type CertDocDef } from './cert-docs.ts';
+import { CERT_DOCS_SHOWN, certInputsFor, type CertDocDef } from './cert-docs.ts';
 import { buildBoard, type Board, type BoardInput, type IssuedInvoice } from './board.ts';
 import { BankHost, bankShellHandlers, type PickKind } from './bank-host.ts';
 import { CONSENT_CONFIG, OnboardingFlow, onboardingTodos, type BizFields } from './onboarding.ts';
@@ -2324,7 +2324,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         label: '도구',
         submenu: [
           { id: 'rehearsal', label: '홈택스 예행(발급 안 함)', click: () => void rehearse() },
-          { label: '민원증명 예행(발급 안 함)', submenu: CERT_DOCS.map((d) => ({ id: `certRehearsal.${d.code}`, label: d.label, click: () => void certRehearse(d) })) },
+          { label: '민원증명 예행(발급 안 함)', submenu: CERT_DOCS_SHOWN.map((d) => ({ id: `certRehearsal.${d.code}`, label: d.label, click: () => void certRehearse(d) })) },
           { id: 'rehearsalStop', label: '예행 중지', click: () => stopRehearsals() },
         ],
       },
