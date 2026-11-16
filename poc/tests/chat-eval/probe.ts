@@ -51,7 +51,8 @@ for (const s of SAYS) {
     const user: Item = { role: 'user', content: [{ type: 'input_text', text: s.text }] };
     let first: Item[];
     try {
-      first = await call([user]);
+      // 첫 호출은 도구를 꼭 부르게 한다(비교할 두 번째 호출을 만들려고). 두 번째 호출은 제품과 같은 본문이다.
+      first = await call([user], (b) => ({ ...b, tool_choice: 'required' }));
     } catch (e) {
       console.log('첫 호출 실패', (e as Error).message);
       continue;
@@ -60,7 +61,10 @@ for (const s of SAYS) {
       console.log('첫 응답 항목 모양:', shape(first));
       shown = true;
     }
-    if (!first.some((x) => x.type === 'function_call')) continue;
+    if (!first.some((x) => x.type === 'function_call')) {
+      console.log('첫 호출에 도구 호출 없음:', shape(first));
+      continue;
+    }
     const out = JSON.stringify(s.output);
     for (const [name, v] of Object.entries(VARIANTS)) {
       const t = (tally[name] ??= { message: 0, call: 0, err: 0 });
@@ -68,6 +72,7 @@ for (const s of SAYS) {
         const second = await call(v.input(user, first, out), v.patch);
         if (second.some((x) => x.type === 'function_call')) t.call++;
         else if (second.some((x) => x.type === 'message')) t.message++;
+        console.log(name, '→', second.map((x) => (x.type === 'function_call' ? `call:${String(x.name)}` : String(x.type))).join(' '));
       } catch (e) {
         t.err++;
         console.log(name, '오류', (e as Error).message);
