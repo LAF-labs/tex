@@ -53,5 +53,5 @@ Vercel 함수는 WebSocket을 받지 못하고 룸은 메모리에 있어서, �
 
 - 재시작하면 진행 중인 페어링(120초 룸)만 다시 하면 된다. 라이브 연결은 클라이언트가 다시 붙는다.
 - 로그: `docker compose logs --tail 100 relay`. 라우트 패턴·상태만 남는다(우편함 ID·IP 없음).
-- 롤백: Actions에서 이전 main 커밋을 고를 수 없으므로 VM에서 `printf 'SAX_RELAY_TAG=<이전 태그>\n' > .env && docker compose up -d`(이전 이미지 둘을 남겨 둔다).
+- 롤백: Actions에서 이전 main 커밋을 고를 수 없으므로 VM에서 `sed -i 's/^SAX_RELAY_TAG=.*/SAX_RELAY_TAG=<이전 태그>/' .env && docker compose up -d`(이전 이미지 둘을 남겨 둔다).
 - 침해 대응은 ../../relay/README.md(큐 전면 폐기 + 우편함 재발급)와 같다. VM은 Lightsail 스냅샷 없이 다시 만들 수 있다(상태가 없다).

@@ -11,7 +11,8 @@ install -m 644 incoming/compose.yml compose.yml
 install -m 644 incoming/Caddyfile Caddyfile
 gunzip -c incoming/sax-relay.tar.gz | docker load
 rm -f incoming/sax-relay.tar.gz
-printf 'SAX_RELAY_TAG=%s\n' "${TAG}" > .env
+# .env의 다른 줄(비상 스위치 SAX_RELAY_LIVE=0 등)은 남기고 태그만 바꾼다
+{ grep -v '^SAX_RELAY_TAG=' .env 2>/dev/null || true; printf 'SAX_RELAY_TAG=%s\n' "${TAG}"; } > .env.new && mv .env.new .env
 docker compose up -d --remove-orphans
 # 새 컨테이너가 healthy가 될 때까지(최대 60초)
 for _ in $(seq 1 30); do
