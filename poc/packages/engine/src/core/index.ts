@@ -28,3 +28,5 @@ export * from './interp.ts';
 export * from './datapkg.ts';
 export * from './dialog.ts';
 export * from './actuator.ts';
+export * from './heal-memory.ts';
+export { FallbackChain, type FallbackDeps, type StuckJudge } from './fallback.ts';

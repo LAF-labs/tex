@@ -11,7 +11,7 @@ import path from 'node:path';
 import { apiRung, BizVerifier, connectRunBrowser, DataService, FakeIssueApi, fixturePortal, hometaxAutoRung, hometaxManualRung, IssueLadder, parseIssueKey, RunService, ulid, type GatePortMessage, type IrPackage, type IssueKey, type LadderEvent, type LadderState, type RunEvent } from '@sax/engine';
 import { FIXTURE_PORTAL, fixtureOriginGrant, loadPackage, type LoadedPackage, type LoaderContext, type PackageFiles, type PdfPort } from '@sax/engine/core';
 import { BUNDLE_ALLOWLIST } from '@sax/model';
-import { Ledger, openDatabase, type LedgerRow } from '@sax/db';
+import { Ledger, openDatabase, type Db as Database, type LedgerRow } from '@sax/db';
 import { Egress } from '@sax/net';
 import { FileEventLog } from '@sax/platform';
 import { bundleOutcomes, loadPkg, signPackage, testKeys } from './core-fixtures.ts';
@@ -84,6 +84,12 @@ export interface Scenario {
   page?: (real: () => Promise<import('playwright-core').Page>) => () => Promise<import('playwright-core').Page>;
   /** 사람 대기 상한(ms, RunServiceDeps.handoffCapMs). 로그인을 끝내 하지 않는 갈래. */
   handoffCapMs?: number;
+  /** 모델 길(게이트웨이 대역): AI 위치 찾기·판정·에이전트·화면 보기(IrPackage.locate). */
+  locate?: IrPackage['locate'];
+  /** 실행 전에 DB에 손대기(앞 실행의 기억 넣기 등). */
+  beforeRun?: (db: Database) => void;
+  /** 실행 뒤 DB 닫기 전에(기억 꺼내기 등). */
+  afterRun?: (db: Database) => void;
 }
 
 export interface LadderScenario {
@@ -142,7 +148,8 @@ export async function realDryRun(sc: Scenario = {}): Promise<Outcome> {
     const base = fixturePortal(fx.origin);
     // 가짜 화면은 로드 뒤 renderDelayMs에 그린다. 조회 팝업 한 번에 1~2초라 verify 상한을 늘린다(fixture 허가 뒤에서만).
     const portal = { ...base, verify: { ...base.verify, maxMs: sc.verifyMaxMs ?? 25_000, intervalMs: 300 } };
-    const ir: IrPackage = { pkg, lookupPackages: lookups, fixtureGrant: fixtureOriginGrant(pkg), verifyTiming: { minElapsedMs: 600, lookups: 2, maxMs: sc.verifyMaxMs ?? 25_000 }, pdf: PDF, ...(sc.secret ? { secret: sc.secret } : {}) };
+    const ir: IrPackage = { pkg, lookupPackages: lookups, fixtureGrant: fixtureOriginGrant(pkg), verifyTiming: { minElapsedMs: 600, lookups: 2, maxMs: sc.verifyMaxMs ?? 25_000 }, pdf: PDF, ...(sc.secret ? { secret: sc.secret } : {}), ...(sc.locate ? { locate: sc.locate } : {}) };
+    sc.beforeRun?.(db);
     const data = new DataService(db, new BizVerifier(new Egress()));
     data.profiles.upsert({ kind: 'business', displayName: '가나다컴퍼니', bizNo: '1234567891', corpNo: null, repName: '김대표', bizType: null, bizItem: null, address: null, email: null, signMethod: sc.signMethod ?? 'cert' } as never);
     const email = sc.email === undefined ? 'tax@asangsa.example' : sc.email;
@@ -200,6 +207,7 @@ export async function realDryRun(sc: Scenario = {}): Promise<Outcome> {
       /* 끝남 */
     }
     await rb.browser.close().catch(() => {});
+    sc.afterRun?.(db);
     return { end: events.find((e) => e.type === 'end') as Outcome['end'], journal, steps, ...(lo ? { ladder: lo } : {}), gate: gm.some((m) => m.t === 'gate.request'), fx, actions: fx.requests().map((r) => r.actionId ?? `perm:${r.screenId}`) };
   } finally {
     db.close();

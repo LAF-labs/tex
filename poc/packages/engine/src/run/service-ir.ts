@@ -18,6 +18,8 @@ import { BASIC_HANDLERS, stepEnv, type Handlers, type Outcome } from '../core/st
 import { targetDiagnosis } from '../core/diagnose.ts';
 import { FallbackChain } from '../core/fallback.ts';
 import { runLocalDict } from '../core/locate.ts';
+import { HealMemory, healableKeys } from '../core/heal-memory.ts';
+import { DbHealStore } from './heal-store.ts';
 import { GatewayLocateModel, type LocateResponder } from './locate-port.ts';
 import { GatewayAgentModel, GatewayJudgeModel } from './agent-port.ts';
 import { BrowserAgent } from './browser-agent.ts';
@@ -117,6 +119,8 @@ export interface IrRunInput {
   /** $inputs(H01 RunInputs와 같은 모양). */
   inputs: Record<string, unknown>;
   db: Db;
+  /** 고친 선택자 기억(core/heal-memory.ts). false면 끈다(기본 켬). */
+  heal?: boolean;
   ledger: Ledger;
   gates: GateRepo;
   /** 게이트 카드의 readback이 정해진 뒤 예약 키·원장 행 재료를 만든다. card = 승인 카드 id(GATE_CARDS). 그 카드의 재료를 못 만들면 null(게이트를 열지 않는다). */
@@ -435,6 +439,9 @@ export class IrRun {
     const clock = i.clock ?? systemClock;
     const ir = runCopy(files.playbook, i.gateWaitMs, isFixtureGrant(i.ir.fixtureGrant) ? i.ir.verifyTiming : undefined);
     const analysis = semanticViolations(files).analysis;
+    // 고친 선택자 기억(0원 칸): 앞 실행이 고친 선택자를 이 실행 사본 사전의 첫 후보로 둔다. 실패하면 폴백 0단계가 버린다.
+    const heal = i.heal === false ? null : new HealMemory({ store: new DbHealStore(i.db, files.manifest.id), pkg: pkg.selectors, healable: healableKeys(ir, pkg.selectors, analysis.irreversible), now: () => clock.now(), journal: i.journal });
+    const seeded = heal?.seed(dict) ?? new Map<string, string>();
     const page = i.page;
     const reader = new PlaywrightPageReader(page);
 
@@ -511,7 +518,7 @@ export class IrRun {
         lastNotice: () => act.notice, currentStep: () => curStep,
       });
     }
-    const fallback = new FallbackChain({ ir, dict, page: reader, irreversible: analysis.irreversible, ...(locate ? { locate } : {}), ...(pageJudge ? { judge: pageJudge } : {}), journal: i.journal });
+    const fallback = new FallbackChain({ ir, dict, page: reader, irreversible: analysis.irreversible, ...(locate ? { locate } : {}), ...(pageJudge ? { judge: pageJudge } : {}), ...(heal ? { memory: heal, seeded } : {}), journal: i.journal });
     const book = new VerifyBook();
     const vpol = i.portal.verify;
     const verifyDeps: VerifyDeps = {
@@ -634,6 +641,7 @@ export class IrRun {
         if (name === 'step.started' && d.type === 'fill') this.formStarted = true;
         i.trace?.({ name, stepId: d.stepId, type: d.type, ...(d.code ? { code: d.code } : {}) });
         if (name === 'step.finished' && d.type === 'checkpoint' && !d.code) enforcer.reached();
+        if (name === 'step.finished' && !d.code) fallback.confirmed(d.stepId);
         // 인증서 비밀번호를 넣은 뒤 로그인 확인(첫 기다림 스텝 결과)을 금고에 알린다: 통과면 그때 기억, 실패면 버리고 지움
         if (name === 'step.finished' && secretPort) void secretPort.stepFinished(d.type, !!d.code, d.stepId);
       },

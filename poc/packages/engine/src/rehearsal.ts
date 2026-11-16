@@ -9,6 +9,8 @@ import type { Page } from 'playwright-core';
 const COUNTED: Readonly<Record<string, string>> = {
   'fallback.refind': 'refind',
   'fallback.dropped': 'refind_dropped',
+  'heal.seeded': 'heal',
+  'fallback.heal_dropped': 'heal_dropped',
   'locate.asked': 'locate',
   'fallback.checkpoint': 'reentry',
   'judge.applied': 'judge',
