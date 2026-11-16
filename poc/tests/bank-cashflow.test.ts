@@ -239,3 +239,26 @@ describe('현금흐름 조회(엔진, 실제 DB)', () => {
     await code(call('db.query.bank.cashflowSeries', { months: 13 }), 'bad_months');
   });
 });
+
+describe('BankHost 대화 포트(낼 돈·돈 흐름 요약)', () => {
+  it('payables: 아직 내지 않은 건만, 계좌가 없으면 null. cashFlowBrief: 계좌 끝 4자리·줄 id·거래처 열쇠가 없다', async () => {
+    const { BankHost } = await import('../apps/desktop/src/bank-host.ts');
+    const overview = { accounts: [{ id: 'a' }], payables: { unpaid: [{ counterpartyId: 'c1', cpName: '에스자재', writtenOn: '2026-11-03', remaining: 330_000, dueOn: '2026-12-03', promisedOn: null }] } };
+    const cf = analyzeCashFlow(base({
+      accounts: [acct({ last4: '9876' })],
+      txns: [tx('secret-id', '2026-11-04', 'in', 400_000, '모름')],
+      invoices: [inv('1', { writtenOn: '2026-09-05', total: 3_000_000, counterpartyKey: 'cp-uuid' }), inv('2', { writtenOn: '2026-10-05', counterpartyKey: 'cp-uuid' }), inv('3', { writtenOn: '2026-10-06', counterpartyKey: 'cp-uuid' }), inv('4', { writtenOn: '2026-10-07', counterpartyKey: 'cp-uuid' }), inv('5', { writtenOn: '2026-10-08', counterpartyKey: 'B', total: 10 })],
+    }));
+    const host = new BankHost({ rpc: async (m) => (m === 'db.query.bank.overview' ? overview : cf), profileId: async () => 'p', pick: async () => null, readSheet: async () => { throw new Error('unused'); }, log: () => {} });
+    assert.deepEqual(await host.payables(), [{ counterpartyId: 'c1', counterparty: '에스자재', date: '2026-11-03', total: 330_000, dueOn: '2026-12-03' }]);
+    const brief = (await host.cashFlowBrief())!;
+    assert.equal(brief.in.total, 400_000);
+    assert.equal(brief.topCustomer?.counterparty, 'A상사');
+    assert.ok(brief.alerts.some((a) => a.kind === 'concentration'));
+    const text = JSON.stringify(brief);
+    for (const bad of ['9876', 'secret-id', 'cp-uuid', '모름']) assert.ok(!text.includes(bad), bad);
+    const none = new BankHost({ rpc: async () => ({ accounts: [], payables: { unpaid: [] }, month: { hasAccounts: false } }), profileId: async () => 'p', pick: async () => null, readSheet: async () => { throw new Error('unused'); }, log: () => {} });
+    assert.equal(await none.payables(), null);
+    assert.equal(await none.cashFlowBrief(), null);
+  });
+});
