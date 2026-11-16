@@ -40,6 +40,7 @@ const ICONS = {
   eye: [16, 'M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z', 'M10 8a2 2 0 1 1-4 0a2 2 0 1 1 4 0z'],
   eyeOff: [16, 'M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z', 'M10 8a2 2 0 1 1-4 0a2 2 0 1 1 4 0z', 'M2.5 2.5l11 11'],
   send: [14, 'M7 11.5v-9M3 6.5l4-4 4 4'],
+  payroll: [20, 'M5 2.5h10A1.5 1.5 0 0 1 16.5 4v12.5l-2-1.25-2 1.25-2.5-1.25-2.5 1.25-2-1.25-2 1.25V4A1.5 1.5 0 0 1 5 2.5z', 'M7 6.5h6M7 9.5h6M7 12.5h3'],
   money: [20, 'M2.5 5.5h15v9h-15z', 'M12.5 10a2.5 2.5 0 1 1-5 0a2.5 2.5 0 1 1 5 0z', 'M5 8v4M15 8v4'],
   pencil: [16, 'M3 13l.7-2.8L10.9 3a1.4 1.4 0 0 1 2 2l-7.2 7.2z'],
   globe: [16, 'M14 8A6 6 0 1 1 2 8a6 6 0 0 1 12 0z', 'M2 8h12', 'M8 2c1.7 1.6 2.5 3.6 2.5 6S9.7 12.4 8 14C6.3 12.4 5.5 10.4 5.5 8S6.3 3.6 8 2z'],
@@ -274,7 +275,7 @@ function fold(card, run, step, stop = null) {
   // 확인 필요는 안내 상자 대신 카드의 황토 안쪽 선으로 보인다(내 차례의 파랑 선과 같은 규칙).
   card.classList.toggle('is-attention', run.status === 'attention');
   card.replaceChildren(
-    h('div', { class: 'sx-card-hd sx-run-hd' }, h('div', { class: 'sx-card-title' }, `${run.batch ? `${run.batch.index + 1}. ` : ''}세금계산서 · ${run.counterparty.name}`), h('span', { class: 'sx-card-now' }, `${num(run.total)}원 · ${step}`), chip(shownStatus(run)), stop),
+    h('div', { class: 'sx-card-hd sx-run-hd' }, h('div', { class: 'sx-card-title' }, `${run.batch ? `${run.batch.index + 1}. ` : ''}세금계산서 · ${run.counterparty.name}`), h('span', { class: 'sx-card-now' }, `${num(run.total)}원 · `, step), chip(shownStatus(run)), stop),
   );
 }
 const stopBtn = (run, act) => btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' });

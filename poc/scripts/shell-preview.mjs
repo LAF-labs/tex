@@ -2,7 +2,7 @@
 // 엔진·금고·Chrome 없이 화면만 본다(디자인 캔버스 "소버린 AX 화면 디자인"과 대조용). 흐름·판정 시험은 shell-e2e가 한다.
 // 실행: pnpm demo:preview  (= pnpm build && electron scripts/shell-preview.mjs [출력 폴더] [폭 높이])
 //   리눅스 CI·컨테이너: xvfb-run -a ./node_modules/.bin/electron --no-sandbox scripts/shell-preview.mjs
-//   DARK=1 이면 다크 테마, ONLY=flow,docs 처럼 장면을 고를 수 있다. OFFSCREEN=1 이면 창을 화면에 띄우지 않는다. 출력 기본값: reports/raw/design-sync/<폭>x<높이>[-dark]/
+//   DARK=1 이면 다크 테마, ONLY=flow,docs 처럼 장면을 고를 수 있다. OFFSCREEN=1 이면 창을 화면에 띄우지 않는다. 출력 기본값: reports/raw/design-sync/<폭>x<높이>[-dark]/ PAYROLL=1 이면 급여대장 레일 칸을 켠다.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, BrowserWindow, ipcMain, nativeImage, nativeTheme, protocol, WebContentsView } from 'electron';
@@ -14,7 +14,7 @@ const { buildBoard } = await import(`${DESK}/dist/board.js`);
 const { REGATE_NOTE, HANDOFF_HINT, HANDOFF_TEXT, NOTE } = await import(`${DESK}/dist/shell-runs.js`);
 const { OnboardingFlow, initialOnbState } = await import(`${DESK}/dist/onboarding.js`);
 const { MockOnboardingPorts } = await import(`${DESK}/dist/onboarding-mock.js`);
-const { buildBarHtml, barCss, barPalette, summarize, BAR_CSP } = await import(`${DESK}/dist/approval-gate.js`);
+const { buildCardHtml, barCss, barPalette, summarize, BAR_CSP } = await import(`${DESK}/dist/approval-gate.js`);
 const { barBounds, SHELL } = await import(`${DESK}/dist/shell-layout.js`);
 // 셸과 같은 응답 헤더(CSP·Trusted Types)로 띄운다. 미리보기가 통과하면 셸에서도 같은 정책에서 그려진다(M4-1).
 const { appHeaders } = await import(`${DESK}/dist/harden.js`);
@@ -71,7 +71,7 @@ const boardNow = () =>
   });
 
 const handlers = {
-  'shell.bootstrap': async () => ({ onboarding: S.onb ? await S.onb.view() : null, board: boardNow(), layout: SHELL, profiles: PROFILES, profile: 'business', counterparties: cps, docs: [...store.docs], timeline: seedTimeline(), quick: QUICK, platform: 'win32' }),
+  'shell.bootstrap': async () => ({ onboarding: S.onb ? await S.onb.view() : null, board: boardNow(), layout: SHELL, profiles: PROFILES, profile: 'business', counterparties: cps, docs: [...store.docs], timeline: seedTimeline(), quick: QUICK, platform: 'win32', payrollEnabled: !!process.env.PAYROLL }),
   'profile.set': (p) => ({ profile: p.kind }),
   'onboarding.reply': async (p) => {
     if (S.onbDelay) await sleep(S.onbDelay);
@@ -129,7 +129,7 @@ async function shot(win, name, bar) {
   const buf = Buffer.from(main.toBitmap());
   if (bar) {
     const b = barBounds(cw, ch);
-    S.barHtml = buildBarHtml(summarize({ fields: bar }), 'armed').replace('href="bar.css"', 'href="pv://shell/bar.css"');
+    S.barHtml = buildCardHtml(summarize({ fields: bar }), 'armed').replace('href="bar.css"', 'href="pv://shell/bar.css"');
     const view = new WebContentsView({ webPreferences: { sandbox: true } });
     win.contentView.addChildView(view);
     view.setBounds({ x: b.x, y: b.y, width: b.width, height: b.height });
@@ -145,7 +145,7 @@ async function shot(win, name, bar) {
 }
 
 const barFields = [
-  ['counterpartName', 'A상사'], ['counterpartBizNo', '2148651233'], ['totalAmount', '3630000'], ['taxAmount', '330000'], ['counterpartEmail', 'tax@asangsa.example'], ['$first.bizNo', 'true'], ['$first.email', 'true'],
+  ['counterpartName', 'A상사'], ['counterpartBizNo', '2148651233'], ['totalAmount', '3630000'], ['supplyAmount', '3300000'], ['taxAmount', '330000'], ['itemName', '디자인 용역'], ['issueDate', dayOffset(0)], ['counterpartEmail', 'tax@asangsa.example'], ['$first.bizNo', 'true'], ['$first.email', 'true'],
 ].map(([fieldKey, value]) => ({ fieldKey, value }));
 
 const scenes = {

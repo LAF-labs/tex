@@ -825,7 +825,8 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
         h('div', { class: 'sx-panel-sec' }, '계좌 · 입금자 이름'),
         ...accounts.map((a) => h('div', { class: 'hist-row', 'data-bank-cp-account': a.id }, h('span', {}, `${a.bank ?? ''} ···${a.last4}`), h('span', { class: 'hist-what' }, a.holder ? `예금주 ${a.holder}` : ''), btn('지우기', async () => (await call('bank.deleteCpAccount', { id: a.id }).catch(say), reload()), 'sx-btn-quiet'))),
         ...aliases.map((a) => h('div', { class: 'hist-row', 'data-bank-alias': a.id }, h('span', {}, a.nameRaw), h('span', { class: 'hist-what sx-meta' }, a.source === 'manual' ? '직접 입력' : a.source === 'learned' ? '확인에서 배움' : '계좌 예금주'), btn('지우기', async () => (await call('bank.deleteAlias', { id: a.id }).catch(say), reload()), 'sx-btn-quiet'))),
-        !accounts.length && !aliases.length && !form ? h('p', { class: 'sx-meta' }, '등록한 계좌와 입금자 이름이 없어요.') : null,
+        // replaceChildren(null)은 "null" 글자를 넣는다: 없을 때는 아예 넘기지 않는다.
+        ...(!accounts.length && !aliases.length && !form ? [h('p', { class: 'sx-meta' }, '등록한 계좌와 입금자 이름이 없어요.')] : []),
         form ?? h('div', { class: 'sx-actions' }, btn('계좌 더하기', open('account'), '', { 'data-act': 'bank-cp-account-open' }), btn('입금자 이름 더하기', open('alias'), '', { 'data-act': 'bank-cp-alias-open' })),
         h('div', { class: 'sx-panel-sec' }, '받기로 한 날'),
         termsSel,
