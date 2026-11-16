@@ -521,9 +521,12 @@ export class ChatAgent {
         if (!s.refs.has(slot[1]!) || !SLOT_MONEY_PATHS.includes(slot[2]!)) throw new ChatError('chat.bad_response');
         return { slot: t };
       }
-      const n = /^\[AMT_\d+\]$/.test(t) ? parseKrw(s.red.map.valueOf(t) ?? '') : null;
-      if (n === null) throw new ChatError('chat.bad_response');
-      return { value: n };
+      const raw = /^\[AMT_\d+\]$/.test(t) ? s.red.map.valueOf(t) : undefined;
+      if (raw === undefined) throw new ChatError('chat.bad_response');
+      // 사장님이 쓴 금액이 원 단위 양수로 읽히지 않으면("0원") 금액이 빈 것으로 넘긴다: main이 needs_input(amount)로 답해 모델이 다시 묻는다.
+      // 오류로 끊으면 사장님에게는 "지금 답을 받지 못했어요"만 보인다(chat-eval issue-zero).
+      const n = parseKrw(raw);
+      return n === null ? null : { value: n };
     };
     const item = (v: unknown): string | null => {
       if (v === null) return null;

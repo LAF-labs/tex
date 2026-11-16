@@ -252,6 +252,14 @@ describe('chat.step 역치환', () => {
       await code(a.step({ start: { text: 'A상사에 끊어줘', frame: { cards: [] }, profileId } }), 'chat.bad_response');
     }
   });
+
+  it('사장님이 쓴 금액이 양수로 읽히지 않으면("0원") 오류가 아니라 금액 없는 호출로 main에 넘긴다', async () => {
+    const a = agent();
+    script((body) => fc('invoice_draft', { counterparty: toks(nowLine(body), 'NAME')[0], amount: toks(nowLine(body), 'AMT')[0], vat: null, item: null }));
+    const r = await a.step({ start: { text: 'A상사 0원 세금계산서', frame: { cards: [] }, profileId } });
+    assert.equal(r.kind, 'tools');
+    assert.deepEqual(r.kind === 'tools' && [r.calls[0]!.tool, (r.calls[0] as Extract<DomainCall, { tool: 'invoice_draft' }>).amount], ['invoice_draft', null]);
+  });
 });
 
 describe('chat.step 답 검사', () => {
