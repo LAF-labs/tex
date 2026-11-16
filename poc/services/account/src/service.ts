@@ -800,11 +800,14 @@ export class AccountService {
   /** 카드 등록 창(GET /v1/billing/card?ref=). 결제 대기·연체인 참조만 연다. 세션 없이 열린다(브라우저): 참조는 그 계정만 받은 무작위 값이다 */
   async billingCardPage(ref: string, nonce: string): Promise<{ status: number; html: string }> {
     const b = this.billingOrFail();
-    const sub = REF_RE.test(ref) ? await this.db.one<{ status: string }>('SELECT status FROM subscriptions WHERE pg_customer_ref = $1', [ref]) : undefined;
+    const sub = REF_RE.test(ref) ? await this.db.one<{ status: string; account_id: string }>('SELECT status, account_id FROM subscriptions WHERE pg_customer_ref = $1', [ref]) : undefined;
     if (!sub || (sub.status !== 'pending' && sub.status !== 'past_due'))
       return { status: 404, html: this.resultPage('결제 창이 만료됐어요', '앱에서 구독하기를 다시 눌러 주세요.', nonce) };
     const base = `${this.d.publicOrigin}/v1/billing/card`;
-    return { status: 200, html: b.cardPage({ customerKey: ref, successUrl: `${base}/success`, failUrl: `${base}/fail`, amountKrw: PLAN.amountKrw, nonce }) };
+    // 체험 중 첫 구독이면 오늘은 결제하지 않고 체험이 끝나는 날 첫 결제(창에 그 날짜를 보인다)
+    const ent = sub.status === 'pending' ? await this.entitlement(sub.account_id) : null;
+    const trialEndsAt = ent?.state === 'trial' && ent.until !== null ? ent.until : undefined;
+    return { status: 200, html: b.cardPage({ customerKey: ref, successUrl: `${base}/success`, failUrl: `${base}/fail`, amountKrw: PLAN.amountKrw, nonce, ...(trialEndsAt ? { trialEndsAt } : {}) }) };
   }
 
   /** 카드 등록 성공 돌아옴(GET /v1/billing/card/success?customerKey&authKey). 빌링키를 발급·봉인하고 이번 기간을 청구한다 */
@@ -812,12 +815,24 @@ export class AccountService {
     const b = this.billingOrFail();
     const bad = () => ({ status: 400, html: this.resultPage('카드를 등록하지 못했어요', '앱에서 구독하기를 다시 눌러 주세요.', nonce) });
     if (!REF_RE.test(customerKey) || !/^[A-Za-z0-9_=.-]{1,300}$/.test(authKey)) return bad();
-    const sub = await this.db.one<{ status: string }>('SELECT status FROM subscriptions WHERE pg_customer_ref = $1', [customerKey]);
+    const sub = await this.db.one<{ status: string; account_id: string }>('SELECT status, account_id FROM subscriptions WHERE pg_customer_ref = $1', [customerKey]);
     if (!sub || sub.status === 'canceled') return bad();
-    if (sub.status === 'active') return { status: 200, html: this.resultPage('구독 중이에요', '이미 결제가 끝났어요. 앱으로 돌아가세요.', nonce) };
+    if (sub.status === 'active') return { status: 200, html: this.resultPage('구독 중이에요', '이미 등록이 끝났어요. 앱으로 돌아가세요.', nonce) };
     const key = await b.issueBillingKey({ authKey, customerKey });
     if (!key) return bad();
     const now = this.now();
+    const ent = sub.status === 'pending' ? await this.entitlement(sub.account_id) : null;
+    if (ent?.state === 'trial' && ent.until !== null && ent.until > now) {
+      // 체험 중 첫 구독: 오늘은 청구하지 않는다. 체험이 끝나는 날(renew_at)에 정리 cron이 첫 결제. 체험 중 해지하면 결제가 없다
+      const n = await this.db.run(
+        "UPDATE subscriptions SET billing_key_sealed = $2, charge_attempts = 0, next_charge_at = NULL, renew_at = $3, status = 'active' WHERE pg_customer_ref = $1 AND status = 'pending'",
+        [customerKey, sealAead(this.d.billingKeySealKey!, bkAad(customerKey), Buffer.from(key.billingKey, 'utf8')), ent.until],
+      );
+      if (n !== 1) return bad();
+      await this.db.run('INSERT INTO consents (account_id, version, at) VALUES ($1, $2, $3) ON CONFLICT (account_id, version) DO NOTHING', [sub.account_id, TERMS_VERSION, now]);
+      this.d.onEvent?.(`account.billing_key_issued_trial.${b.mode}`);
+      return { status: 200, html: this.resultPage('카드를 등록했어요', `무료 체험은 그대로 이어져요. ${kstDateLabel(ent.until)}부터 매월 ${PLAN.amountKrw.toLocaleString('ko-KR')}원이 자동 결제돼요. 그 전에 해지하면 결제되지 않아요.`, nonce) };
+    }
     // 결제 대기면 이번 기간은 오늘부터(renew_at = 이번 기간 시작, 청구 성공 뒤 한 달 뒤로). 연체면 밀린 기간부터. 새 카드는 실패 수를 0으로
     const n = await this.db.run(
       "UPDATE subscriptions SET billing_key_sealed = $2, charge_attempts = 0, next_charge_at = NULL, renew_at = CASE WHEN status = 'pending' THEN $3 ELSE renew_at END WHERE pg_customer_ref = $1 AND status IN ('pending', 'past_due')",
@@ -916,6 +931,23 @@ export class AccountService {
       this.kickNotices();
     }
     return 'declined';
+  }
+
+  /** 체험이 끝나 첫 결제로 넘어가기 7일 전 안내(전환 전 고지, 한 번). 등록만 하고 아직 결제가 없는 구독 */
+  async trialConversionNotices(): Promise<number> {
+    if (!this.d.payments.billing) return 0;
+    const now = this.now();
+    const due = await this.db.all<{ account_id: string; pg_customer_ref: string }>(
+      "SELECT account_id, pg_customer_ref FROM subscriptions WHERE status = 'active' AND billing_key_sealed IS NOT NULL AND last_paid_at IS NULL AND trial_notice_at IS NULL AND renew_at IS NOT NULL AND renew_at > $1 AND renew_at <= $2",
+      [now, now + BILLING.trialNoticeMs],
+    );
+    for (const r of due) {
+      await this.db.tx(async (q) => {
+        if ((await q.run('UPDATE subscriptions SET trial_notice_at = $2 WHERE pg_customer_ref = $1 AND trial_notice_at IS NULL', [r.pg_customer_ref, now])) === 1) await this.enqueueNotice(q, r.account_id, 'trial_converting', now);
+      });
+    }
+    if (due.length) this.kickNotices();
+    return due.length;
   }
 
   private billingOrFail() {
@@ -1460,6 +1492,7 @@ export class AccountService {
     // 응답 뒤 즉시 시도가 끝나지 못한(플랫폼이 멈춤·메일 실패) 알림을 보낸다
     await this.drainNotices();
     // 갱신일이 된 카드 정기결제 청구(빌링키 PG일 때만)
+    await this.trialConversionNotices();
     await this.chargeDue();
     // 잠금이 끝나고 하루 동안 실패가 없으면 점증 단계를 0으로
     await this.db.run('DELETE FROM pw_locks WHERE updated_at <= $1 AND (locked_until IS NULL OR locked_until <= $2)', [now - PASSWORD.lockDecayMs, now]);
@@ -1479,6 +1512,12 @@ export class AccountService {
 const REF_RE = /^cus_[A-Za-z0-9_-]{24}$/;
 /** 빌링키 봉인 aad: 행(참조)에 묶어 다른 구독으로 옮겨 붙이지 못하게 한다 */
 const bkAad = (ref: string) => `sax-billing-key-v1|${ref}`;
+
+/** 'YYYY년 M월 D일'(KST) */
+export function kstDateLabel(ms: number): string {
+  const k = new Date(ms + 9 * 3600_000);
+  return `${k.getUTCFullYear()}년 ${k.getUTCMonth() + 1}월 ${k.getUTCDate()}일`;
+}
 
 /** 한 달 뒤(KST 달력, 말일 보정: 1/31 → 2/28). 시각은 그대로 */
 export function addMonthKst(ms: number): number {

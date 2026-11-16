@@ -20,7 +20,7 @@ export interface BillingKeyGateway {
   readonly kind: 'billing_key';
   readonly mode: 'test' | 'live';
   /** 카드 등록 창 HTML(PG SDK). customerKey = pgCustomerRef */
-  cardPage(o: { customerKey: string; successUrl: string; failUrl: string; amountKrw: number; nonce: string }): string;
+  cardPage(o: { customerKey: string; successUrl: string; failUrl: string; amountKrw: number; nonce: string; trialEndsAt?: number }): string;
   /** 카드 등록 창이 돌려준 authKey로 빌링키 발급. 실패하면 null */
   issueBillingKey(o: { authKey: string; customerKey: string }): Promise<{ billingKey: string } | null>;
   /** 한 번 청구. orderId는 멱등 키로도 쓴다(같은 주문번호 재시도는 두 번 결제되지 않는다) */
@@ -88,7 +88,7 @@ export class MockBillingGateway implements PaymentGateway {
     this.billing = {
       kind: 'billing_key',
       mode: 'test',
-      cardPage: (o) => `<html data-customer="${o.customerKey}" data-success="${o.successUrl}"></html>`,
+      cardPage: (o) => `<html data-customer="${o.customerKey}" data-success="${o.successUrl}" data-trial="${o.trialEndsAt ?? ''}"></html>`,
       issueBillingKey: async (o) => {
         if (o.authKey === 'bad') return null;
         const billingKey = `bk_${o.customerKey}_${this.issued.length}`;
@@ -137,7 +137,9 @@ export type NoticeKind =
   /** 갱신 결제 실패: 다음 날 다시 시도 */
   | 'payment_failed'
   /** 결제가 세 번 실패해 구독이 끝남 */
-  | 'subscription_ended';
+  | 'subscription_ended'
+  /** 무료 체험이 곧 끝나 등록한 카드로 첫 결제가 됨(7일 전, 전환 전 고지) */
+  | 'trial_converting';
 
 export interface MailSender {
   sendLoginCode(to: string, code: string): Promise<void>;

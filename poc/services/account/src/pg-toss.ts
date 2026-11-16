@@ -141,28 +141,36 @@ function code(j: Record<string, unknown>): string {
   return typeof j.code === 'string' && /^[A-Z_]{1,64}$/.test(j.code) ? j.code : 'unknown';
 }
 
+/** 'YYYY년 M월 D일'(KST) */
+const kstDate = (ms: number) => {
+  const k = new Date(ms + 9 * 3600_000);
+  return `${k.getUTCFullYear()}년 ${k.getUTCMonth() + 1}월 ${k.getUTCDate()}일`;
+};
+
 const esc = (s: string) => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 
 /**
  * 카드 등록 창. 결제 버튼 바로 위에 결제 직전 고지(전자상거래법 §13②: 총액·결제일·자동 갱신·해지·청약철회·결제 실패)와
  * 약관·처리방침 동의 체크를 둔다. 체크해야 버튼이 열린다. 값은 JSON으로만 스크립트에 넣는다(HTML 문맥에서 깨지지 않게 '<'를 이스케이프)
  */
-function cardPageHtml(clientKey: string, o: { customerKey: string; successUrl: string; failUrl: string; amountKrw: number; nonce: string }): string {
+function cardPageHtml(clientKey: string, o: { customerKey: string; successUrl: string; failUrl: string; amountKrw: number; nonce: string; trialEndsAt?: number }): string {
   const data = JSON.stringify({ clientKey, customerKey: o.customerKey, successUrl: o.successUrl, failUrl: o.failUrl }).replace(/</g, '\\u003c');
   const won = `${o.amountKrw.toLocaleString('ko-KR')}원`;
+  // 체험 중 첫 구독: 오늘은 결제 없음, 체험이 끝나는 날 첫 결제(약관 제12조)
+  const trial = o.trialEndsAt ? kstDate(o.trialEndsAt) : null;
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>구독 결제</title><style nonce="${esc(o.nonce)}">${PAGE_CSS}</style></head><body><main>
 <h1>월 ${won} 구독</h1>
-<p>카드를 등록하면 오늘 첫 달 요금이 결제되고, 다음 달부터 매월 같은 날 자동으로 결제돼요.</p>
+${trial ? `<p>지금은 무료 체험 중이라 <strong>오늘은 결제되지 않아요</strong>. 카드를 등록하면 체험이 끝나는 ${trial}에 첫 결제가 되고, 그다음부터 매월 같은 날 자동으로 결제돼요. 그 전에 해지하면 아무 결제도 없어요.</p>` : '<p>카드를 등록하면 오늘 첫 달 요금이 결제되고, 다음 달부터 매월 같은 날 자동으로 결제돼요.</p>'}
 <dl>
 <dt>결제 금액</dt><dd>매월 ${won} (부가세 포함)</dd>
-<dt>결제일</dt><dd>오늘, 그다음부터 매월 같은 날 자동 갱신(그달에 같은 날이 없으면 말일)</dd>
+<dt>결제일</dt><dd>${trial ? `${trial}(체험이 끝나는 날)` : '오늘'}, 그다음부터 매월 같은 날 자동 갱신(그달에 같은 날이 없으면 말일)${trial ? '. 첫 결제 7일 전에 메일로 다시 알려드려요' : ''}</dd>
 <dt>해지</dt><dd>앱의 구독 화면에서 언제든 바로 해지할 수 있어요. 해지하면 다음 결제가 없고, 이미 낸 기간이 끝날 때까지 쓸 수 있어요.</dd>
-<dt>청약철회·환불</dt><dd>결제 후 7일 안에 철회할 수 있어요. 쓰지 않았으면 전액, 썼으면 쓴 날만큼 빼고 돌려드려요.</dd>
+<dt>청약철회·환불</dt><dd>${trial ? '체험 중 해지하면 결제가 없어요. ' : ''}결제 후 7일 안에 철회할 수 있어요. 쓰지 않았으면 전액, 썼으면 쓴 날만큼 빼고 돌려드려요.</dd>
 <dt>결제 실패</dt><dd>다음 날 다시 결제를 시도하고, 세 번 실패하면 구독이 끝나 유료 기능이 멈춰요.</dd>
 </dl>
 <label class="agree"><input id="agree" type="checkbox"> 위 내용과 <a href="${TERMS_URL}" target="_blank" rel="noopener">이용약관</a>, <a href="${PRIVACY_URL}" target="_blank" rel="noopener">개인정보처리방침</a>을 확인했고 매월 자동 결제에 동의해요</label>
-<button id="go" type="button" disabled>${won} 결제하고 구독 시작</button>
+<button id="go" type="button" disabled>${trial ? `카드 등록하기(오늘 결제 없음)` : `${won} 결제하고 구독 시작`}</button>
 <p class="muted" id="msg"></p>
 <footer>${SELLER_INFO} · 결제 대행: 토스페이먼츠</footer></main>
 <script src="${TOSS_SDK}"></script>

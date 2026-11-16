@@ -53,9 +53,11 @@ async function start(): Promise<Env> {
 
 const bearer = (s: string) => ({ authorization: `Bearer ${s}` });
 
-async function login(e: Env, email: string): Promise<string> {
+/** 로그인(첫 로그인이면 계정 생성). 기본은 무료 체험이 끝난 계정으로 만든다(가입 시각을 40일 앞으로): 바로 결제하는 흐름 시험. trial: true면 체험 중 그대로 */
+async function login(e: Env, email: string, o: { trial?: boolean } = {}): Promise<string> {
   const s = await e.req('POST', '/v1/auth/code', { body: { email } });
   const v = await e.req('POST', '/v1/auth/code/verify', { body: { loginId: s.json.loginId, code: e.mail.lastCode(email) } });
+  if (!o.trial) await e.db.run('UPDATE accounts SET created_at = $2 WHERE email = $1 AND created_at > $2', [email, e.clock.now() - 40 * D]);
   return v.json.session as string;
 }
 
@@ -255,14 +257,56 @@ describe('청약철회 환불·유료 기능 권리(체험 1달)', () => {
     await assert.rejects(e.svc.refundSubscription(await session(ref2)), /account.refund_unavailable/);
   });
 
+  it('체험 중 첫 구독: 오늘은 결제 없음, 체험 끝나는 날 첫 결제, 7일 전 전환 안내 한 번, 체험 중 해지하면 결제 없음', async () => {
+    const s = await login(e, 'trialsub@example.com', { trial: true });
+    const t0 = e.clock.now();
+    const trialEnd = addMonthKst(t0);
+    const c = await e.req('POST', '/v1/billing/checkout', { headers: bearer(s) });
+    const ref = new URL(c.json.checkoutUrl as string).searchParams.get('ref')!;
+    const page = await e.req('GET', `/v1/billing/card?ref=${ref}`);
+    assert.ok(page.text.includes(`data-trial="${trialEnd}"`));
+    const done = await e.req('GET', `/v1/billing/card/success?customerKey=${ref}&authKey=auth_ok`);
+    assert.equal(done.status, 200);
+    assert.ok(done.text.includes('카드를 등록했어요'));
+    assert.equal(e.pg.charges.length, 0);
+    assert.deepEqual(await st(e, ref), { status: 'active', renewAt: trialEnd });
+    assert.deepEqual((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.consents, ['terms-2026-11-30']);
+    // 첫 결제 7일 전 안내(한 번)
+    e.clock.t = trialEnd - 8 * D;
+    assert.equal(await e.svc.trialConversionNotices(), 0);
+    e.clock.t = trialEnd - 6 * D;
+    assert.equal(await e.svc.trialConversionNotices(), 1);
+    assert.equal(await e.svc.trialConversionNotices(), 0);
+    await e.flush();
+    await e.svc.drainNotices();
+    assert.ok(e.mail.outbox.some((m) => m.to === 'trialsub@example.com' && m.kind === 'trial_converting'));
+    // 체험 끝나는 날 첫 결제 → 청약철회 7일은 그때부터
+    e.clock.t = trialEnd + H;
+    assert.equal((await e.svc.chargeDue()).paid, 1);
+    assert.equal(e.pg.charges[0]!.amountKrw, 19900);
+    assert.deepEqual(await st(e, ref), { status: 'active', renewAt: addMonthKst(trialEnd) });
+    const r = await e.svc.refundSubscription({ accountId: (await e.db.one<{ account_id: string }>('SELECT account_id FROM subscriptions WHERE pg_customer_ref = $1', [ref]))!.account_id });
+    assert.equal(r.amountKrw, 19900);
+
+    // 다른 계정: 체험 중 등록 뒤 해지하면 결제 없음
+    const s2 = await login(e, 'trialcancel@example.com', { trial: true });
+    const c2 = await e.req('POST', '/v1/billing/checkout', { headers: bearer(s2) });
+    const ref2 = new URL(c2.json.checkoutUrl as string).searchParams.get('ref')!;
+    await e.req('GET', `/v1/billing/card/success?customerKey=${ref2}&authKey=auth_ok`);
+    assert.equal((await e.req('POST', '/v1/billing/cancel', { headers: bearer(s2) })).status, 204);
+    e.clock.advance(60 * D);
+    await e.svc.chargeDue();
+    assert.equal(e.pg.charges.filter((x) => x.customerKey === ref2).length, 0);
+  });
+
   it('권리: 가입 뒤 1달 체험 → 끝나면 none, 구독하면 paid(갱신일까지), 해지해도 갱신일까지 paid', async () => {
-    const s = await login(e, 'ent@example.com');
+    const s = await login(e, 'ent@example.com', { trial: true });
     const t0 = e.clock.now();
     const ent = await e.req('GET', '/v1/billing/entitlement', { headers: bearer(s) });
     assert.deepEqual(ent.json, { state: 'trial', until: addMonthKst(t0), trialMonths: 1 });
     assert.deepEqual((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.entitlement, { state: 'trial', until: addMonthKst(t0) });
     e.clock.t = addMonthKst(t0);
-    const s2 = await login(e, 'ent@example.com');
+    const s2 = await login(e, 'ent@example.com', { trial: true });
     assert.equal((await e.req('GET', '/v1/billing/entitlement', { headers: bearer(s2) })).json.state, 'none');
     const { ref } = await subscribe(e, s2);
     const renew = (await st(e, ref)).renewAt!;
@@ -381,6 +425,8 @@ describe('토스페이먼츠 어댑터(가짜 fetch)', () => {
     assert.ok(!html.includes(SK));
     assert.ok(!html.includes('cus_</script>'));
     assert.ok(html.includes('매월 19,900원 (부가세 포함)'));
+    const trial = toss().billing.cardPage({ customerKey: 'cus_x', successUrl: 's', failUrl: 'f', amountKrw: 19900, nonce: 'n1', trialEndsAt: Date.UTC(2026, 11, 9, 15) });
+    for (const w of ['오늘은 결제되지 않아요', '2026년 12월 10일', '카드 등록하기(오늘 결제 없음)', '체험 중 해지하면 결제가 없어요']) assert.ok(trial.includes(w), w);
     for (const w of ['자동 갱신', '해지', '청약철회', '결제 실패', 'https://tax.laf-co.com/terms', 'https://tax.laf-co.com/privacy', 'id="go" type="button" disabled']) assert.ok(html.includes(w), w);
   });
 

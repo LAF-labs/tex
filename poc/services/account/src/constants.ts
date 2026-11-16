@@ -93,6 +93,8 @@ export const BILLING = {
   trialMonths: 1,
   /** 청약철회 기간(전자상거래법 §17①) */
   refundWindowMs: 7 * D,
+  /** 체험 → 첫 결제 전환 안내를 보내는 때(첫 결제 7일 전, 약관 제12조) */
+  trialNoticeMs: 7 * D,
   /** 연체(past_due) 중에도 재시도가 끝날 때까지 쓸 수 있다 */
   pastDueGraceMs: 3 * D,
 } as const;
