@@ -888,8 +888,10 @@ export class AccountService {
     );
     if (lease !== 1) return 'busy';
     const row = await this.db.one<{ account_id: string; status: string; renew_at: number; charge_attempts: number; billing_key_sealed: Buffer }>('SELECT account_id, status, renew_at, charge_attempts, billing_key_sealed FROM subscriptions WHERE pg_customer_ref = $1', [ref]);
-    const bk = row && openAead(this.d.billingKeySealKey!, bkAad(ref), Buffer.from(row.billing_key_sealed));
-    if (!row || !bk) {
+    // 임대와 읽기 사이에 해지(빌링키 삭제)가 들어왔으면 청구하지 않는다
+    if (!row?.billing_key_sealed) return 'busy';
+    const bk = openAead(this.d.billingKeySealKey!, bkAad(ref), Buffer.from(row.billing_key_sealed));
+    if (!bk) {
       this.d.onEvent?.('account.billing_key_unsealable');
       return 'uncertain';
     }
