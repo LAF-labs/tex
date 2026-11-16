@@ -23,7 +23,11 @@ async function skippedBoth() {
     { step: 'auth', choice: 'later' },
     { step: 'first', choice: 'later' },
   ]);
-  return { ports, flow };
+  // 지금은 인증을 [나중에]로 넘겨도 공동인증서로 둔다(대표 지시 2026-11-14). 인증까지 빠진 상태는
+  // 그 전 설치에서 저장된 기록에만 있으므로, 그 기록 모양(인증 없음·할 일에 auth)으로 다시 연다.
+  assert.deepEqual(flow.state.skipped, ['biz']);
+  const legacy = { ...flow.state, auth: null, certId: null, skipped: ['biz', 'auth'] } as unknown as typeof flow.state;
+  return { ports, flow: new OnboardingFlow(ports, legacy, NOW) };
 }
 
 describe('카드 전 검사: 무엇이 빠졌는지', () => {
@@ -49,7 +53,7 @@ describe('카드 전 검사: 무엇이 빠졌는지', () => {
   });
   it('Chrome(U6) 배선: 판의 할 일·첫 발급 요청·[홈택스에서 준비]가 같은 점검, [다시 확인]은 chrome.check(읽기만, 판을 새로)', () => {
     const src = fs.readFileSync(new URL('../apps/desktop/src/shell-app.ts', import.meta.url), 'utf8');
-    assert.match(src, /const chromeReady = opts\.chromeReady \?\? \(\(\) => findInstalledChrome\(\) !== null\);/);
+    assert.match(src, /const chromeReady = opts\.chromeReady \?\? \(\(\) => (?:embedded \|\| )?findInstalledChrome\(\) !== null\);/);
     assert.match(src, /new ShellRuns\(host, \{ [^}]*chromeReady, /);
     assert.match(src, /profile === 'business' && !chromeReady\(\) \? \[\{ id: 'chrome', label: SETUP_LABEL\.chrome, view: 'chrome' as const \}\]/);
     // 증명서 요청에는 Chrome을 요구하지 않는다(이 빌드는 증명서를 못 뗀다, #291). 세금계산서·되묻기 답만.

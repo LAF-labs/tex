@@ -10,6 +10,7 @@ import { chromium, type Browser } from 'playwright-core';
 import { createWorker, type Worker } from 'tesseract.js';
 import { formatBizNo, syntheticBizNo } from '@sax/db';
 import { parseBizCert } from '@sax/engine';
+import { assertKorFont, KOR_FONT_CSS } from './kor-font.ts';
 import { appendMeasure, measurePath, writeMeasure } from './measure-out.ts';
 
 const require = createRequire(import.meta.url);
@@ -17,7 +18,8 @@ const kor = require('@tesseract.js-data/kor') as { langPath: string; gzip: boole
 
 function certHtml(f: { bizNo: string; name: string; rep: string; open: string; addr: string; type: string; item: string; corpNo?: string }): string {
   const row = (k: string, v: string) => `<tr><th>${k}</th><td>: ${v}</td></tr>`;
-  return `<!doctype html><meta charset="utf-8"><body style="font-family:'Apple SD Gothic Neo','Malgun Gothic',sans-serif;font-size:22px;padding:40px;width:900px;background:#fff">
+  // 글꼴은 저장소에 넣은 Noto Sans KR 부분 집합 하나(tests/kor-font.ts). OS 글꼴을 쓰면 Linux 컨테이너(WenQuanYi 등)에서 "월드컵로"를 "월드컴로"로 읽었다.
+  return `<!doctype html><meta charset="utf-8"><style>${KOR_FONT_CSS}</style><body style="font-size:22px;padding:40px;width:900px;background:#fff">
 <h1 style="text-align:center;letter-spacing:12px">사업자등록증</h1>
 <p style="text-align:center">(${f.corpNo ? '법인사업자' : '일반과세자'})</p>
 <p style="text-align:center">등록번호 : ${formatBizNo(f.bizNo)}</p>
@@ -33,16 +35,18 @@ ${row('교 부 사 유', '신규')}
 }
 
 // 품질 하한: 세 OS 녹색 기록에서 두 표본 신뢰도는 86~87로 고정이었다(tesseract.js 7.0.0·kor 1.0.0 잠금, 결정적). 67은 한 번 본 깨진 입력(2026-11-07 #215 macOS).
+// 시험 글꼴 고정(2026-11-16) 뒤 Linux 컨테이너에서 두 표본 모두 같은 값으로 되풀이됐다(PR 본문의 실측).
 const OCR_CONFIDENCE_FLOOR = 80;
 
 /**
- * 시험 입력 이미지를 안정된 상태로 찍는다(금고 경로 아님). 글꼴 적재(document.fonts.ready)와 두 프레임을 기다린 뒤,
+ * 시험 입력 이미지를 안정된 상태로 찍는다(금고 경로 아님). 시험 글꼴 적재·글자 범위 확인(assertKorFont)과 두 프레임을 기다린 뒤,
  * 연속 두 장이 바이트까지 같을 때의 이미지를 쓴다. 다섯 번 안에 안 같아지면 실패한다(입력이 흔들리면 OCR 결과로 판정하지 않는다).
  */
 async function renderStable(browser: Browser, html: string): Promise<Buffer> {
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 }, deviceScaleFactor: 2 });
   try {
     await page.setContent(html, { waitUntil: 'load' });
+    await assertKorFont(page);
     await page.evaluate(async () => {
       await document.fonts.ready;
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));

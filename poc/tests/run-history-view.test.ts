@@ -33,7 +33,7 @@ describe('지난 실행 판정 표(원장 먼저)', () => {
   it('원장 committed → 발급 완료, 승인번호·PDF·합계, KST 날짜·시각', () => {
     assert.deepEqual(pastRun(row()), {
       runId: 'r1', kind: 'issued', who: 'A상사', supply: 1_000_000, tax: 100_000, total: 1_100_000,
-      day: '2026-11-12', time: '00:30', approvalNo: '20261112-41000012-00000123', documentId: 'doc-1', note: null,
+      day: '2026-11-12', time: '00:30', approvalNo: '20261112-41000012-00000123', documentId: 'doc-1', mail: 'sent', note: null,
     });
   });
 
@@ -130,7 +130,8 @@ describe('지난 실행 읽기는 기동을 막지 않는다(이력 한 줄이 �
 
   it('기동(shell.bootstrap)의 past는 엔진 이력(readPastRuns + host.rpc)에서 온다. 시연 씨앗만 넘기면 재시작 뒤 활동 기록이 빈다', () => {
     const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../apps/desktop/src/shell-app.ts'), 'utf8');
-    assert.match(src, /'shell\.bootstrap': async \(\) => \(\{[\s\S]*?\bpast: await pastNow\(\),/);
+    // 기동 응답 객체 앞에 쉼표 식(지난 실행 복구 예약 등)이 붙어도 past는 그 객체 안에서 pastNow()로 채운다
+    assert.match(src, /'shell\.bootstrap': async \(\) => \((?:[^\n]*?, )?\{[\s\S]*?\bpast: await pastNow\(\),/);
     assert.match(src, /const pastNow = async \(\): Promise<PastRun\[\]> => \[\.\.\.\(await readPastRuns\(\(m, p\) => host\.rpc\(m, p\)/);
   });
 });
