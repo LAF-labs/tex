@@ -12,6 +12,7 @@
 | `QUEUE_KEY` ⚿ | 예 | hex 64자 | 큐 본문·번들 저장 전 봉인 키(AES-256-GCM). 바꾸면 남은 큐(≤ 72시간)는 열리지 않고 버려진다 |
 | `LIMIT_ID_KEY` ⚿ | 예 | hex 64자 | 한도 키(계정·기기 ID) HMAC 비밀. DB에 없다(DB를 읽어도 한도 키를 다시 계산할 수 없음, [CONTRACT §10](../shared/CONTRACT.md)). 바꾸면 진행 중인 한도 창(≤ 1시간)만 처음부터 센다 |
 | `RELAY_PUBLIC_ORIGIN` | 예 | `https://…` | DPoP `htu` 검증 origin(WSS 업그레이드는 같은 origin + 경로) |
+| `RELAY_WS_ORIGIN` | 아니오(= `RELAY_PUBLIC_ORIGIN`) | `https://…`(경로 없음) | WSS 업그레이드(라이브 우편함)의 DPoP `htu` origin. 클라이언트는 QR의 릴레이 호스트로 만든다. 운영 룸 호스트는 `https://rooms.tax.laf-co.com`(HTTP 경로는 Vercel 재작성이라 `RELAY_PUBLIC_ORIGIN` = `https://tax.laf-co.com`) |
 | `TOKEN_PUBLIC_KEYS` | 예 | `kid:base64(32B)[,…]` | 계정 서비스 기기 범위 토큰 공개키 |
 | `ACCOUNT_INTERNAL_URL` | 룸 호스트·상시 서버 | 내부 URL | 기기 상태 조회(서명 호출). 함수 배포는 계정 서비스를 함수로 부르므로 쓰지 않는다 |
 | `INTERNAL_CALL_KEY` ⚿ | 예 | hex 64자 | 내부 호출 서명 키(HMAC-SHA256: 메서드·경로·본문 SHA-256·시각 ±60초·1회용 nonce, 상수 시간 비교, 팀장 결정 2026-11-06 #135). 서비스·룸 호스트가 같은 값. 받는 쪽: 정지 훅·룸 소비·큐 전면 폐기 |

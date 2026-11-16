@@ -46,6 +46,11 @@ export interface RelayAppOpts {
   verifier: TokenVerifier;
   directory: DeviceDirectory & { invalidate?(deviceId: string): void };
   publicOrigin: string;
+  /**
+   * WSS 업그레이드(라이브 우편함)의 DPoP `htu` origin. 클라이언트는 QR의 릴레이 호스트(`wss://<relayHost>` → `https://<relayHost>`)로 만든다.
+   * 운영 룸 호스트는 HTTP 경로(`/v1/rooms`, Vercel 재작성)는 `https://tax.laf-co.com`, WSS는 `https://rooms.tax.laf-co.com`이다(`RELAY_WS_ORIGIN`). 없으면 publicOrigin.
+   */
+  wsOrigin?: string;
   /** 내부 경로(/internal/*) 서명 검사(INTERNAL_CALL_KEY HMAC, 팀장 결정 2026-11-06 #135) */
   internal: InternalCheck;
   logger: Logger;
@@ -72,6 +77,8 @@ export class RelayHub {
   readonly router = new Router();
   private readonly o: RelayAppOpts;
   private readonly auth: DeviceAuth;
+  /** WSS 업그레이드용(htu origin = wsOrigin) */
+  private readonly wsAuth: DeviceAuth;
   private readonly limits: Limits;
   /** 라이브 연결(WSS, Phase 1 기본 꺼짐) 프레임 속도: 연결이 붙은 인스턴스 안에서만 세면 되므로 메모리 */
   private readonly frameLimits: RateLimiter;
@@ -82,6 +89,7 @@ export class RelayHub {
     this.o = o;
     const now = o.svc.now;
     this.auth = new DeviceAuth({ verifier: o.verifier, directory: o.directory, publicOrigin: o.publicOrigin, now });
+    this.wsAuth = o.wsOrigin && o.wsOrigin !== o.publicOrigin ? new DeviceAuth({ verifier: o.verifier, directory: o.directory, publicOrigin: o.wsOrigin, now }) : this.auth;
     this.limits = o.limits ?? memoryLimits(now);
     this.frameLimits = new RateLimiter(now);
     this.ipSalt = this.limits.salt('relay-ip');
@@ -274,7 +282,7 @@ export class RelayHub {
   }
 
   private async joinMailbox(req: IncomingMessage, socket: Duplex, ip: string, mbxId: string, path: string): Promise<void> {
-    const c = await this.device({ method: 'GET', path, headers: req.headers });
+    const c = await this.wsAuth.check({ method: 'GET', path, headers: req.headers }, 'relay', 'relay.unauthorized', 'relay.device_suspended');
     const h = (n: string) => (Array.isArray(req.headers[n]) ? undefined : req.headers[n]);
     const key = await this.mailbox(ip, mbxId, h('x-mbx-read'), 'read');
     await this.mailbox(ip, mbxId, h('x-mbx-write'), 'write');

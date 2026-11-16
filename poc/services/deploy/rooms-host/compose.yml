@@ -1,0 +1,53 @@
+# 룸 호스트(rooms.tax.laf-co.com): 릴레이 한 대 + Caddy(TLS 자동 발급·WSS 프록시). 배포는 .github/workflows/rooms-host-deploy.yml.
+# 비밀은 이 파일·이미지에 없다. VM의 /opt/sax-rooms/relay.env(0600, 사용자가 한 번 붙여 넣음)에서만 읽는다.
+# 인스턴스는 한 대로 고정한다(메모리 룸, services/relay/README.md).
+services:
+  relay:
+    image: sax-relay:${SAX_RELAY_TAG:?SAX_RELAY_TAG}
+    restart: unless-stopped
+    env_file: /opt/sax-rooms/relay.env
+    environment:
+      # 아래 값은 비밀이 아니고 이 호스트의 역할로 고정한다(deploy/README.md 2절). relay.env에 같은 이름이 있어도 이 값이 이긴다.
+      RELAY_ROOMS: '1'
+      MIGRATE_ON_START: '0'
+      TRUST_PROXY: '1'
+      PORT: '8083'
+      HOST: '0.0.0.0'
+      RELAY_PUBLIC_ORIGIN: https://tax.laf-co.com
+      RELAY_WS_ORIGIN: https://rooms.tax.laf-co.com
+      ACCOUNT_INTERNAL_URL: https://tax.laf-co.com/api/internal
+    expose:
+      - '8083'
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    mem_limit: 512m
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:8083/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: '5' }
+  caddy:
+    image: caddy:2.10.2
+    restart: unless-stopped
+    depends_on: [relay]
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: '5' }
+volumes:
+  caddy_data:
+  caddy_config:
