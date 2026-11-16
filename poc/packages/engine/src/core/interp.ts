@@ -50,6 +50,11 @@ export interface InterpOptions {
    */
   escalate?: (s: Step, cause: string) => boolean;
   /**
+   * 남은 재시도를 건너뛰고 바로 escalate할 실패(폴백 사슬 0원 칸: 이 스텝에 기억한 길이 있거나 기억한 선택자로 실패). 같은 동작을 다시 해도
+   * 같은 결과일 가능성이 높아 재시도 대기(대상 대기 × 3번)를 아낀다. escalate도 참이어야 한다.
+   */
+  fastEscalate?: (s: Step, cause: string) => boolean;
+  /**
    * [중지] 신호(IrRun.stop). 끊기면 되돌릴 수 있는 화면 스텝(STOPPABLE)의 진행 중 대기와 재시도 지연을 기다리지 않고 run.stopped로 멈춘다.
    * 없으면 스텝 경계(beforeStep)에서만 멈춘다. 버린 스텝이 뒤늦게 하는 동작은 정책 집행기가 run.stopped로 거부한다(커밋 전).
    */
@@ -203,7 +208,7 @@ export class Interpreter {
       const forced = this.forced(out.code);
       if (forced === 'handoff') return { t: 'handoff', at: s.id, resumeAt: s.id, code: out.code };
       if (forced === 'abort') return { t: 'abort', at: s.id, code: out.code };
-      if (attempt < retries) {
+      if (attempt < retries && !(of.then === 'handoff' && this.opts.fastEscalate?.(s, out.code) && this.opts.escalate?.(s, out.code))) {
         const delay = retryDelayMs(attempt + 1, this.opts.retries, this.opts.retryFloorMs, (this.opts.random ?? Math.random)());
         this.hooks.event?.('step.retry', { stepId: s.id, type: s.type, attempt: attempt + 1, ...this.codes(s, out.code) });
         await this.untilStop(this.env.clock.sleep(delay), undefined);
