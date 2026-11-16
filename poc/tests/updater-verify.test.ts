@@ -64,9 +64,10 @@ function unsigned(over: Partial<Unsigned> = {}): Unsigned {
   };
 }
 /** 사람(release 키)은 기간 칸을 뺀 내용에, 서버(timestamp 키)는 {contentDigest, issuedAt, expiresAt}에 서명한다 */
-const stamp = (m: Omit<ReleaseManifest, 'timestamp'>, issuedAt = m.issuedAt, expiresAt = m.expiresAt): ReleaseManifest => {
+const stamp = (m: Omit<ReleaseManifest, 'timestamp'> & { timestamp?: unknown }, issuedAt = m.issuedAt, expiresAt = m.expiresAt): ReleaseManifest => {
+  // 다시 찍을 때(이미 도장이 있는 문서)는 옛 도장도 내용에서 뺀다(releaseContent와 같은 범위)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { signature: _s, issuedAt: _i, expiresAt: _e, ...content } = m;
+  const { signature: _s, issuedAt: _i, expiresAt: _e, timestamp: _t, ...content } = m;
   const contentDigest = createHash('sha256').update(jcs(content)).digest('hex');
   return { ...m, issuedAt, expiresAt, timestamp: sigOf(0x51, 'timestamp-1', { contentDigest, issuedAt, expiresAt }) };
 };

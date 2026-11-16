@@ -124,8 +124,10 @@ describe('거래처 저장 품목', () => {
     assert.deepEqual(Object.keys(got).sort(), Object.keys(cp).sort(), '거래처 객체에 품목 칸을 더하지 않는다(따로 읽는다)');
   });
 
-  it('protocol: 두 명령은 COMMANDS 끝에 더했고 렌더러에 열린다(거래처 추가·수정과 같다)', () => {
-    assert.deepEqual(COMMANDS.slice(-2), ['counterparty.setItems', 'counterparty.getItems']);
+  it('protocol: 두 명령은 COMMANDS에 있고 렌더러에 열린다(거래처 추가·수정과 같다)', () => {
+    // 뒤에 더한 명령(셸 이어 하기 resume.*)이 있어 끝 자리는 묻지 않는다. 둘이 나란히 있는지만 본다
+    const i = COMMANDS.indexOf('counterparty.setItems');
+    assert.deepEqual(COMMANDS.slice(i, i + 2), ['counterparty.setItems', 'counterparty.getItems']);
     for (const m of ['counterparty.setItems', 'counterparty.getItems']) assert.ok(!(MAIN_ONLY as readonly string[]).includes(m), m);
   });
 });

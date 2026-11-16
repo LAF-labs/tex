@@ -441,7 +441,8 @@ describe('셸 목업', () => {
     assert.deepEqual(Object.keys(sf.methodTargets).sort(), methods);
     for (const [label, s] of Object.entries(SIGN_BY_AUTH)) {
       assert.deepEqual(handoffTurn('sign', 'sign.waiting', label), { kind: 'sign', text: s.text, note: HANDOFF_SIGN.note });
-      assert.ok(/끝나면 자동으로 이어집니다$/.test(s.text) && !/세액 산정|절세|신고 대리|가산세/.test(s.text + s.now), label);
+      // 보안카드 차례는 앱이 번호를 못 넣었을 때만 와서 까닭과 할 일을 말한다(자동으로 이어진다는 약속을 하지 않는다)
+      assert.ok((label === SIGN_LABEL.security_card || /끝나면 자동으로 이어집니다$/.test(s.text)) && !/세액 산정|절세|신고 대리|가산세/.test(s.text + s.now), label);
       const h = new FakeHost();
       const runs = new ShellRuns(h, { counterparties: () => CPS, auth: () => label });
       const a = interpret('A상사에 18만원 세금계산서', null, 'business', runs);
