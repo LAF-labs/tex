@@ -216,6 +216,14 @@ describe('PC 폰 수신(phone-link)', () => {
     assert.equal(link.list().length, 0);
     assert.deepEqual(JSON.parse(await fs.readFile(x.file, 'utf8')).phones, []);
     assert.equal(await link.remove('p2'), false);
+    // 새 우편함으로 다시 연결하면 옛 우편함을 지운다
+    x.deleted.length = 0;
+    await link.add({ ...x.pc, pairId: 'p3' });
+    const mbx2 = new Uint8Array(32).fill(9);
+    await link.add({ ...x.pc, pairId: 'p4', mbxId: mbx2 });
+    await until(() => x.deleted.length === 1);
+    assert.deepEqual(x.deleted, [b64(x.pc.mbxId)]);
+    assert.deepEqual(link.list().map((p) => p.pairId), ['p4']);
     link.stop();
   });
 

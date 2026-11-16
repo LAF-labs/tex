@@ -225,10 +225,19 @@ export class PhoneLink {
       qbundleValidTo: 0,
       lastSeenAt: null,
     };
-    for (const old of this.#recs.filter((x) => x.deviceId === rec.deviceId || x.pairId === rec.pairId)) this.#stopRun(old.pairId);
+    const replaced = this.#recs.filter((x) => x.deviceId === rec.deviceId || x.pairId === rec.pairId);
+    for (const old of replaced) this.#stopRun(old.pairId);
     this.#recs = [...this.#recs.filter((x) => x.deviceId !== rec.deviceId && x.pairId !== rec.pairId), rec];
     await this.#o.store.save(this.#recs);
     this.#log('main.phone_link', { step: 'added' });
+    // 같은 폰을 다시 연결했으면 옛 우편함을 지운다(실패해도 새 연결은 그대로)
+    for (const old of replaced) {
+      if (old.mbxId === rec.mbxId) continue;
+      void (async () => {
+        const t = unpackTok(this.#o.seal.open(old.tok));
+        await this.#o.deleteMailbox?.(fromB64(old.mbxId), t.write);
+      })().catch((e) => this.#log('main.phone_link', { step: 'replace_mailbox', result: codeOf(e) }));
+    }
     if (this.#started) this.#run(rec);
     this.#o.onChange?.();
   }
@@ -371,12 +380,20 @@ export class PhoneLink {
       const pair: PairRecord = { pairId: rec.pairId, phoneStatic: fromB64(rec.Sm), revoked: false, ikTsMax: rec.ikTsMax };
       const receiver = this.#receiver(rec.pairId);
       while (!link.closed && !abort.signal.aborted) {
-        const sess = await acceptDesktopSession(link, {
+        let sess: Awaited<ReturnType<typeof acceptDesktopSession>>;
+        try {
+          sess = await acceptDesktopSession(link, {
           noise: keys.noise,
           pair,
           hello: { appVersion: this.#o.appVersion, deviceListVersion: this.#o.deviceListVersion(), asyncSeqMax: rec.asyncSeqMax, capabilities: [...(this.#o.capabilities?.() ?? DESKTOP_CAPS)] },
           persistTs: (_id, ts) => this.#persist(rec, { ikTsMax: ts }),
-        });
+          });
+        } catch (e) {
+          // 세션 하나가 깨져도 라이브 루프는 산다(연결을 새로 받는다)
+          this.#log('main.phone_live', { step: 'accept', result: codeOf(e) });
+          link.close();
+          break;
+        }
         if (!sess) continue;
         run.online = true;
         await this.#persist(rec, { lastSeenAt: this.#now() });
