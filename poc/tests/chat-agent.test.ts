@@ -473,6 +473,23 @@ describe('chat.step 턴 상한·세션 폐기', () => {
     assert.equal(r.filtered, 'number');
   });
 
+  it('closeOnCards: 카드 결과만 나온 차례는 모델을 다시 부르지 않고 닫는다. 조회가 섞이면 모델이 이어 간다', async () => {
+    const egress = new Egress({ env: {}, testOrigins: { gateway: mock.origin }, gateway: { auth: { headers: async () => ({ authorization: 'DPoP device-token', dpop: 'proof' }) }, bundles: catalog.allowEntries() } });
+    const a = new ChatAgent(db, { model: gatewayChatAgentModel(egress), now: () => clock, closeOnCards: true });
+    const pc = new FakePc();
+    const draft = (item: string | null) => (b: Item) => fc('invoice_draft', { counterparty: toks(nowLine(b), 'NAME')[0], amount: toks(nowLine(b), 'AMT')[0], vat: null, item });
+    script(draft('원두'));
+    const r1 = (await say(a, pc, 'A상사 110만원 원두 세금계산서 끊어줘')).reply;
+    assert.equal(responds().length, 1);
+    assert.deepEqual([r1.kind, r1.text, r1.show, r1.filtered], ['did', CHAT_AGENT_DONE_TEXT.card_shown, ['d1'], 'closed']);
+    script(draft(null));
+    const r2 = (await say(a, pc, 'A상사 50만원 세금계산서 끊어줘')).reply;
+    assert.deepEqual([r2.kind, r2.ask, r2.text, r2.filtered], ['ask', 'item', CHAT_AGENT_ASK_TEXT.item, 'closed']);
+    script(() => fc('sales_summary', { month_offset: 0 }), (b) => reply({ text: '이번 달 {X.count}건이에요.'.replace('X', lastOutput(b)!.ref!), show: [lastOutput(b)!.ref!] }));
+    const r3 = (await say(a, pc, '이번 달 매출')).reply;
+    assert.equal(r3.filtered, null);
+  });
+
   it('빈 조회를 되풀이하면 없다고 말한다(chat-eval look-empty)', async () => {
     const a = agent();
     const pc = new FakePc();

@@ -71,6 +71,8 @@ export const CHAT_AGENT_DONE_TEXT: Partial<Record<ToolStatus, string>> = {
 export const CHAT_AGENT_LOOKUP_TEXT = (ref: string): string => `{${ref}.count}건이고 합계는 {${ref}.sum.total}이에요. 가장 최근은 {${ref}.first.date} {${ref}.first.counterparty} 건이에요.`;
 /** 이번 턴 같은 카드 판정 키: 거래처와 금액 */
 const cardKey = (c: { counterpartyId: string; amount: DraftAmount }): string => `${c.counterpartyId}:${JSON.stringify(c.amount)}`;
+/** closeOnCards가 닫는 결과 */
+const CARD_CLOSE: ReadonlySet<ToolStatus> = new Set(['card_shown', 'card_updated', 'discarded', 'needs_input']);
 /** 다시 보낼 턴이라 대화록에 남기지 않는 오류 */
 const RETRY_CODES: readonly ChatErrorCode[] = ['chat.unavailable', 'chat.budget_exceeded', 'chat.quota_exceeded'];
 /** 게이트웨이 respond 스키마의 replay maxItems */
@@ -117,7 +119,7 @@ export interface AgentReply {
   show: string[];
   ask: AgentAsk | null;
   /** repeat: 모델이 같은 호출을 되풀이해 엔진이 그 결과로 턴을 닫았다(문장은 엔진 고정 문장) */
-  filtered: null | 'advice' | 'unsafe' | 'refusal' | 'number' | 'repeat' | 'slot';
+  filtered: null | 'advice' | 'unsafe' | 'refusal' | 'number' | 'repeat' | 'slot' | 'closed';
 }
 
 /**
@@ -151,6 +153,11 @@ export interface ChatAgentOptions {
   /** null이면 모든 턴이 chat.unavailable(오프라인 대체 없음) */
   model: ChatAgentModel | null;
   now?: () => number;
+  /**
+   * 카드 도구(만들기·고치기·취소) 결과만 나온 차례면 모델을 다시 부르지 않고 엔진 고정 문장으로 턴을 닫는다.
+   * 사장님 한 문장에 모델 호출이 2번 → 1번이 된다(지연·비용 절반). 카드가 사실이라 답 문장은 카드를 가리키기만 한다.
+   */
+  closeOnCards?: boolean;
 }
 
 const Ajv2020 = ajv2020.default as typeof import('ajv').default;
@@ -466,8 +473,10 @@ export class ChatAgent {
         if (o.ref !== null && o.ref[0] !== REF_KIND[c.tool]) throw new ChatError('chat.bad_tool_output');
         c.answer = o;
       }
+      const round = turn.pending!.map((c) => c.answer!);
       this.answer(s, turn);
-      return this.advance(s);
+      const closed = this.opts.closeOnCards ? this.closeOnCards(turn, round) : null;
+      return closed ? this.finish(s, closed) : this.advance(s);
     });
   }
 
@@ -551,6 +560,20 @@ export class ChatAgent {
     // 빈 조회를 되풀이했으면 없다고 말한다(chat-eval look-empty: "한빛식품 발급 기록 있어?"에 invoice_history 두 번 → turn_limit)
     if (!limit && last.status === 'empty') return { kind: 'answer', text: CHAT_AGENT_DONE_TEXT.empty!, show, ask: null, filtered: 'repeat' };
     throw new ChatError('chat.turn_limit');
+  }
+
+  /**
+   * 이번 차례 결과가 모두 카드 결과(card_shown·card_updated·discarded·needs_input)면 엔진이 닫는다. 빈 칸이 있으면 그 칸을 묻고,
+   * 아니면 마지막 결과의 고정 문장으로 카드를 보인다(부가세는 묻지 않는다: 기본값 별도, 승인 카드에서 다시 본다).
+   * 조회 결과가 섞이면 모델이 그 결과로 다음 걸음(같은 금액으로 만들기 등)을 할 수 있어 닫지 않는다.
+   */
+  private closeOnCards(turn: Turn, round: ToolOutput[]): AgentReply | null {
+    if (!round.length || !round.every((o) => CARD_CLOSE.has(o.status))) return null;
+    const show = [...new Set(turn.made)].filter((r) => r.startsWith('d')).slice(-AGENT_SHOW_MAX);
+    const ask = round.flatMap((o) => (o.status === 'needs_input' ? (o.needs ?? []) : []))[0] ?? null;
+    if (ask) return { kind: 'ask', text: CHAT_AGENT_ASK_TEXT[ask], show, ask, filtered: 'closed' };
+    if (round.some((o) => o.status === 'needs_input')) return null;
+    return { kind: 'did', text: CHAT_AGENT_DONE_TEXT[round.at(-1)!.status] ?? CHAT_AGENT_NUMBER_TEXT, show, ask: null, filtered: 'closed' };
   }
 
   /** 모든 도구 호출에 답이 있으면 function_call_output을 replay에 붙인다. 결과 ref는 이 세션의 ref로 기억한다. */
