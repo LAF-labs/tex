@@ -174,7 +174,7 @@ export const DECISION_MIN_P = 0.7;
 export const DECISION_MIN_CONFIDENCE = 0.7;
 
 /**
- * 결정 모델 칸(decision_pick, 기본 cloudflare/clef-flash): 위치 찾기의 첫 호출을 생성 모델 대신 선택지 분류로 한다. 같은 역할 요소 목록(가림)의
+ * 결정 모델 칸(decision_pick, 기본 ~typesafe/jev-latest): 위치 찾기의 첫 호출을 생성 모델 대신 선택지 분류로 한다. 같은 역할 요소 목록(가림)의
  * 번호 하나를 고르게 하고, 확률·신뢰도가 기준을 넘을 때만 그 요소를 후보로 낸다. 아니면(또는 목록이 길거나 호출이 안 되면) 같은 호출 안에서
  * 생성 모델(selector_repair)로 넘긴다. 받은 후보는 엔진이 위치 찾기와 똑같이 다시 검사한다(R-A1 이름 규칙·유일 일치·커밋 충돌).
  * 스텝·항목마다 한 번만 쓴다(두 번째 호출은 바로 생성 모델).

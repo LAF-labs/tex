@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import ajv2020 from 'ajv/dist/2020.js';
 import type { KeyObject } from 'node:crypto';
 import type { ValidateFunction } from 'ajv';
-import { AGENT_TOOLSETS, BROWSER_AGENT, COMPUTER_USE, DECISION_CHOICE_MAX_CHARS, DECISION_MAX_CHOICES, DECISION_PICK, DECISION_STATE_MAX_CHARS, MASKED_SHOT_MAX_BYTES, CHAT_AGENT, CHAT_REPLY, PAGE_JUDGE, QUERY_PARSE, canonicalJson, selectorRepair, toolsetPrefix, type BundleCatalog, type LoadedBundle, type ToolsetDef } from '@sax/model';
+import { AGENT_TOOLSETS, BROWSER_AGENT, JEV_LATEST, COMPUTER_USE, DECISION_CHOICE_MAX_CHARS, DECISION_MAX_CHOICES, DECISION_PICK, DECISION_STATE_MAX_CHARS, MASKED_SHOT_MAX_BYTES, CHAT_AGENT, CHAT_REPLY, PAGE_JUDGE, QUERY_PARSE, canonicalJson, selectorRepair, toolsetPrefix, type BundleCatalog, type LoadedBundle, type ToolsetDef } from '@sax/model';
 import { piiTripwire } from '@sax/net';
 import {
   b64u,
@@ -54,10 +54,11 @@ export function loadRequestValidators(): { decide: ValidateFunction; respond: Va
 /** 판정·에이전트 기본 모델: OpenRouter 라우터 typesafe/jev-router(요청마다 모델·추론 강도를 고른다, tools·structured_outputs, 2026-11-13 목록). 공급자 고정 없이 부른다(RespondSpec.unpinned). */
 export const DEFAULT_AGENT_MODEL = 'typesafe/jev-router';
 /**
- * 결정 모델(decision_pick) 기본: OpenRouter decisions의 TypeSafe Jev 고정 ID(별칭은 답이 바뀐다). 2026-11-16 비교(칸 고르기 12번·L1 14장)에서
- * 0.4초로 고르고, 모를 때 지어내지 않고 none을 골랐다. 문맥 262K라 Clef/Flash의 약 2,000토큰 조용한 절단이 없다. 입력 100만 토큰당 $0.042, 출력 0.
+ * 결정 모델(decision_pick) 기본: OpenRouter decisions의 TypeSafe Jev 별칭(대표 2026-11-16 "jev만, latest로"). 2026-11-16 비교(칸 고르기·L1)에서
+ * 0.4초로 고르고 지어내지 않았다. 문맥 262K라 Clef/Flash의 약 2,000토큰 조용한 절단이 없다. 입력 100만 토큰당 $0.042, 출력 0.
+ * 별칭이 풀린 버전은 응답마다 ops_stats(surface model:<이름>)에 센다. 버전이 바뀌면 이벤트 upstream_decisions_model_changed.
  */
-export const DEFAULT_DECISION_MODEL = 'typesafe/jev-1.14';
+export const DEFAULT_DECISION_MODEL = JEV_LATEST;
 
 /** decision_pick 메시지 글(JSON {state, choices}). 형식·크기가 어긋나면 null. */
 export function decisionInput(text: string): { state: string; choices: Record<string, string> } | null {
@@ -290,6 +291,15 @@ export class GatewayService {
   }
 
   /** 계량 분리(C-23): (1) 계정·월 합계 (2) 계정 없는 운영 통계 (3) 35일 호출 기록. 본문·캐시 적중 여부는 클라이언트에 주지 않는다. */
+  /** 결정 모델(별칭)이 풀린 버전을 날마다 센다(ops_stats, 계정 없음). 프로세스 안에서 바뀌면 이벤트 하나. */
+  private lastDecisionModel: string | null = null;
+  private async modelSeen(model: string): Promise<void> {
+    const m = String(model).replace(/[^A-Za-z0-9._/~-]/g, '').slice(0, 64);
+    if (this.lastDecisionModel && this.lastDecisionModel !== m) this.event('upstream_decisions_model_changed');
+    this.lastDecisionModel = m;
+    await this.d.db.run('INSERT INTO ops_stats (day, surface, outcome, n, latency_ms_sum) VALUES ($1, $2, $3, 1, 0) ON CONFLICT (day, surface, outcome) DO UPDATE SET n = ops_stats.n + 1', [kstDay(this.now()), `model:${m}`, 'seen']);
+  }
+
   private async meter(who: Who, surface: string, usage: ProviderUsage | null, outcome: string, latencyMs: number, kind: 'decide' | 'respond'): Promise<void> {
     const now = this.now();
     const p = this.d.prices ?? ZERO_PRICES;
@@ -388,6 +398,7 @@ export class GatewayService {
     const refused = Array.isArray(res.answers) && res.answers.some((a) => (a as { type?: string })?.type === 'refusal');
     if (refused) await this.abuseHit(who.dev);
     await this.meter(who, bundle!.wireId, res.usage, refused ? 'refusal' : 'ok', this.now() - started, 'decide');
+    await this.modelSeen(res.model);
     return {
       model: res.model,
       answers: res.answers,
@@ -475,6 +486,7 @@ export class GatewayService {
     const refused = res.output.some((i) => i.type === 'message' && Array.isArray(i.content) && (i.content as Array<{ type?: string }>).some((c) => c?.type === 'refusal'));
     if (refused) await this.abuseHit(who.dev);
     await this.meter(who, t!.id, res.usage, refused ? 'refusal' : res.status === 'completed' ? 'ok' : 'incomplete', this.now() - started, 'respond');
+    if (decision) await this.modelSeen(res.model);
     return {
       model: res.model,
       status: res.status,

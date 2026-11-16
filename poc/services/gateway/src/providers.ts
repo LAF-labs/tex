@@ -51,6 +51,39 @@ export function decisionResult(model: string, d: Record<string, unknown>): Respo
   return { model: String(d.model ?? model), status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] }], usage };
 }
 
+/**
+ * L1 판정을 OpenRouter decisions(System One 계약)로: 고정 접두와 화면 글을 state 하나로, 질문은 이름 키 객체(predicate → noul,
+ * choice → criteria {값: 설명}). 질문 순서·설명은 번들 정의 그대로라 클라이언트의 questionsDigest 대조가 그대로 맞는다.
+ */
+export function systemOneDecideBody(s: DecideSpec): Record<string, unknown> {
+  const questions: Record<string, unknown> = {};
+  for (const q of s.questions) {
+    if (q.type === 'predicate') questions[q.name] = { type: 'noul', instructions: q.instructions };
+    else if (q.type === 'choice') questions[q.name] = { type: 'choice', instructions: q.instructions, criteria: Object.fromEntries(q.choices.map((c) => [c.value, c.description])) };
+    else questions[q.name] = { type: 'score', instructions: q.instructions, criteria: q.levels.map((l) => l.label) };
+  }
+  return { model: s.model, state: `${s.prefix}\n\n${s.input}`, questions, user: s.safetyId };
+}
+
+/**
+ * System One 답(이름 키 객체)을 /v1/decide 응답의 OpenAI Decisions 배열 꼴로 바꾼다(클라이언트 GatewayDecideAdapter가 그대로 정규화).
+ * 이름·값 검사는 클라이언트 joinByName이 한다(여기서 고치지 않는다). 모르는 꼴은 그대로 두어 클라이언트가 거르게 한다.
+ */
+export function systemOneAnswers(answers: unknown, questions: Question[]): unknown[] {
+  const a = (answers ?? {}) as Record<string, Record<string, unknown>>;
+  return questions.map((q) => {
+    const x = a[q.name];
+    if (!x || typeof x !== 'object') return { type: 'missing', name: q.name };
+    if (q.type === 'predicate') return { type: 'predicate', name: q.name, probability: x.noul };
+    if (q.type === 'choice') {
+      const p = x.probabilities;
+      const list = Array.isArray(p) ? p : p && typeof p === 'object' ? Object.entries(p as Record<string, unknown>).map(([value, probability]) => ({ value, probability })) : p;
+      return { type: 'choice', name: q.name, choice: x.choice, confidence: x.confidence, probabilities: list };
+    }
+    return { type: 'score', name: q.name, score: x.score, confidence: x.confidence };
+  });
+}
+
 /** OpenRouter decisions 본문(문서 2026-11-16: questions는 이름이 키인 객체, choice는 criteria {값: 설명}). */
 export function decisionsBody(s: RespondSpec): Record<string, unknown> {
   return { model: s.model, state: s.decision!.state, questions: { pick: { type: 'choice', instructions: s.prefix, criteria: s.decision!.choices } }, user: s.safetyId };
@@ -250,8 +283,8 @@ function agentProviderField(p: AgentPrivacy): Record<string, unknown> | null {
 
 /**
  * OpenRouter(OpenAI 호환 Responses, 무상태). 키는 OPENROUTER_API_KEY(서버 환경 변수, 저장소 금지).
- * L2(respond)는 /api/v1/responses로 보낸다. OpenRouter에는 Decisions(L1 보정 확률) 엔드포인트가 없어서 decide는 호출하지 않고
- * 재시도 불가 오류를 낸다(게이트웨이 503 gateway.upstream_error, 엔진 unknown). L1 상류는 팀장 결정 대기.
+ * L2(respond)는 /api/v1/responses로 보낸다. L1(decide)과 결정 모델 고르기는 /api/alpha/decisions(System One 계약)로 보낸다
+ * (2026-11-16, 대표 지시 "jev·clef 중 하나, deepseek보다 싸게" → typesafe/jev-1.14).
  * 요청마다 라우팅 설정을 다시 확인하고, 적용 사실만 이벤트로 남긴다(내용·공급자 이름 없음).
  */
 export class OpenRouterProvider implements ModelProvider {
@@ -267,9 +300,39 @@ export class OpenRouterProvider implements ModelProvider {
     this.o = { baseUrl, apiKey: o.apiKey, timeoutMs: o.timeoutMs ?? 30_000, fetchFn: o.fetchFn ?? fetch, onEvent: o.onEvent ?? (() => undefined), agentPrivacy: o.agentPrivacy ?? 'off' };
   }
 
-  decide(): Promise<DecideResult> {
-    this.o.onEvent('upstream_decide_unsupported');
-    return Promise.reject(new ProviderError('fatal'));
+  /**
+   * L1 판정: OpenRouter decisions(/alpha/decisions, 기본 typesafe/jev-1.14). 확률만 내고 생성하지 않는다(호출당 약 0.15원, 0.4초).
+   * 보관 조건은 판정·에이전트와 같은 OPENROUTER_AGENT_PRIVACY(가린 화면 글만 간다). 공급자 고정 목록(Responses용)은 쓰지 않는다.
+   */
+  async decide(s: DecideSpec): Promise<DecideResult> {
+    if (!routingOk(this.routing)) {
+      this.o.onEvent('upstream_routing_refused');
+      throw new ProviderError('fatal');
+    }
+    const field = agentProviderField(this.o.agentPrivacy);
+    const body = { ...systemOneDecideBody(s), ...(field ? { provider: field } : {}) };
+    let res: Response;
+    try {
+      res = await this.o.fetchFn(`${this.o.baseUrl}/alpha/decisions`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${this.o.apiKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        redirect: 'error',
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch {
+      throw new ProviderError('retryable');
+    }
+    this.o.onEvent(field ? `upstream_decide_${this.o.agentPrivacy}` : 'upstream_decide');
+    if (res.status === 429 || res.status >= 500) throw new ProviderError('retryable');
+    if (res.status !== 200) throw new ProviderError('fatal');
+    let d: Record<string, unknown>;
+    try {
+      d = (await res.json()) as Record<string, unknown>;
+    } catch {
+      throw new ProviderError('fatal');
+    }
+    return { model: String(d.model ?? s.model), answers: systemOneAnswers(d.answers, s.questions), usage: usageOf(d.usage) };
   }
 
   async respond(s: RespondSpec): Promise<RespondResult> {

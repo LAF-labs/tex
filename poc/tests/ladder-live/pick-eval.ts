@@ -10,7 +10,7 @@ import { decisionPickInput, type DecisionPickShape } from '../../packages/engine
 import type { LocateRequest } from '../../packages/engine/src/core/locate.ts';
 
 const arg = (k: string, d = '') => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
-const models = arg('models', 'cloudflare/clef-flash').split(',').filter(Boolean);
+const models = arg('models', '~typesafe/jev-latest').split(',').filter(Boolean);
 const reps = Number(arg('reps', '1'));
 const only = new Set(arg('cases').split(',').filter(Boolean));
 const max = Number(arg('max', '0'));
@@ -64,7 +64,7 @@ for (const c of CASES.filter((x) => !only.size || only.has(x.id))) {
       });
       const ms = Date.now() - t0;
       const body = await res.text();
-      let d: { answers?: { pick?: { choice?: string; confidence?: number; probabilities?: Record<string, number> } }; usage?: { input_tokens?: number; cost?: number }; provider?: string } = {};
+      let d: { answers?: { pick?: { choice?: string; confidence?: number; probabilities?: Record<string, number> } }; usage?: { input_tokens?: number; cost?: number }; provider?: string; model?: string } = {};
       try {
         d = JSON.parse(body);
       } catch {
@@ -72,9 +72,9 @@ for (const c of CASES.filter((x) => !only.size || only.has(x.id))) {
       }
       const a = d.answers?.pick;
       const probs = Object.entries(a?.probabilities ?? {}).sort((x, y) => y[1] - x[1]).slice(0, 3).map(([k, v]) => `${k}:${v.toFixed(2)}`).join(' ');
-      const row = { case: c.id, why: c.why, shape: label, expect: c.expect, top3: probs, model, rep: r + 1, status: res.status, choices: Object.keys(choices).length, choice: a?.choice ?? null, ok: a?.choice === c.expect, p: a?.choice ? (a.probabilities?.[a.choice] ?? null) : null, confidence: a?.confidence ?? null, expectP: a?.probabilities?.[c.expect] ?? null, ms, inputTokens: d.usage?.input_tokens ?? null, cost: d.usage?.cost ?? null, provider: d.provider ?? null, ...(res.status !== 200 ? { error: body.slice(0, 300) } : {}) };
+      const row = { case: c.id, why: c.why, shape: label, expect: c.expect, top3: probs, model, rep: r + 1, status: res.status, choices: Object.keys(choices).length, choice: a?.choice ?? null, ok: a?.choice === c.expect, p: a?.choice ? (a.probabilities?.[a.choice] ?? null) : null, confidence: a?.confidence ?? null, expectP: a?.probabilities?.[c.expect] ?? null, ms, inputTokens: d.usage?.input_tokens ?? null, cost: d.usage?.cost ?? null, provider: d.provider ?? null, resolved: d.model ?? null, ...(res.status !== 200 ? { error: body.slice(0, 300) } : {}) };
       out.push(row);
-      console.log(`${c.id} ${label} ${model} #${r + 1}: [${probs}] ${res.status} 고름 ${row.choice} (정답 ${c.expect}) ${row.ok ? 'O' : 'X'} p=${row.p} conf=${row.confidence} 정답p=${row.expectP} ${ms}ms in=${row.inputTokens} $${row.cost} ${row.provider ?? ''}${res.status !== 200 ? ` ${body.slice(0, 200)}` : ''}`);
+      console.log(`${c.id} ${label} ${model} #${r + 1}: [${probs}] ${res.status} 고름 ${row.choice} (정답 ${c.expect}) ${row.ok ? 'O' : 'X'} p=${row.p} conf=${row.confidence} 정답p=${row.expectP} ${ms}ms in=${row.inputTokens} $${row.cost} ${row.provider ?? ''} ${row.resolved ?? ''}${res.status !== 200 ? ` ${body.slice(0, 200)}` : ''}`);
     }
   }
   }

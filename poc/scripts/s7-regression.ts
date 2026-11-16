@@ -1,6 +1,6 @@
 // S7 회귀 세트(D04 §9, D14 M3-7): screen_state_v2 결과 라벨 정확도(통과 98%+), blocked·captcha 재현율(99%+),
 // 질문별 정확도, 지연 p50/p95, 판정당 입력 토큰. 번들 버전을 올릴 때마다 돌리고 정확도 98% 미만이면 배포 금지.
-//   node --conditions=development scripts/s7-regression.ts [--mock] [--n=100] [--gate] [--model=openai/gpt-6-luna] [--intent=N] [--out=/abs/path.json] [--decisions=typesafe/jev-1.14] [--answers]
+//   node --conditions=development scripts/s7-regression.ts [--mock] [--n=100] [--gate] [--model=openai/gpt-6-luna] [--intent=N] [--out=/abs/path.json] [--decisions=~typesafe/jev-latest] [--answers]
 // 코퍼스: tests/fixtures/l0-corpus.ts의 화면 라벨 코퍼스(합성, PoC-3 이후 홈택스 실화면 라벨 100장으로 바꾼다).
 // 입력 경로는 제품과 같다: 관측 노드 → A11yNode 트리 → Redactor.applyTree(절단·마스킹·구분자) → decide().
 // 키 우선순위(2026-11-05 yulmu): OPENROUTER_API_KEY → OpenRouter(OpenAI 호환 Chat Completions, @sax/net/demo DemoEgress,
@@ -48,6 +48,7 @@ const PRICES: Record<string, [number, number, number, number]> = {
   'cloudflare/clef': [0.24, 0.24, 0.24, 0],
   'cloudflare/clef-omni': [0.15, 0.15, 0.15, 0],
   'typesafe/jev-1.14': [0.042, 0.042, 0.042, 0],
+  '~typesafe/jev-latest': [0.042, 0.042, 0.042, 0],
 };
 /** 모르는 모델은 비싸게 잡아 상한이 먼저 걸리게 한다. */
 const priceOf = (m: string) => PRICES[m] ?? PRICES[m.replace(/-\d{4}-\d{2}-\d{2}$/, '')] ?? PRICES[m.replace(/-\d{8}$/, '')] ?? [10, 10, 10, 50];
@@ -141,6 +142,8 @@ async function main() {
   const perQ = new Map<string, { n: number; ok: number }>();
   let cost = 0;
   let stopped = false;
+  /** 별칭이 풀린 모델(응답 model). 버전이 바뀌면 이 회귀와 칸 고르기 평가를 다시 돌린다. */
+  const resolved = new Set<string>();
   for (const [i, { s, expect }] of picked.entries()) {
     if (cost >= COST_CAP) {
       stopped = true;
@@ -151,6 +154,7 @@ async function main() {
     const r = await layer.decide({ bundleId: BUNDLE, bundleDigest: b.digest, input, runToken: localRunToken(egress, { runId: `s7-${i}` }) });
     const ms = performance.now() - t0;
     cost += costOf(r.model, r.usage);
+    if (r.model) resolved.add(r.model);
     const nums = () => Object.fromEntries(Object.entries(r.raw).map(([k, a]) => [k, a.type === 'predicate' ? { p: a.probability } : a.type === 'choice' ? { value: a.value, confidence: a.confidence, probabilities: a.probabilities } : { type: a.type }]));
     rows.push({ id: s.id, expect, got: r.outcome, ...(r.reason ? { reason: r.reason } : {}), ms, inputTokens: r.usage.inputTokens, ...(withAnswers ? { answers: nums(), labels: s.labels } : {}) });
     for (const q of b.def.questions) {
@@ -214,6 +218,7 @@ async function main() {
   const result = {
     mode,
     model: decider.model,
+    resolvedModels: [...resolved],
     bundle: BUNDLE,
     bundleDigest: b.digest,
     corpus: 'l0-corpus screenCorpus(20, 7) — 합성',
@@ -236,7 +241,7 @@ async function main() {
   };
   const out = outArg ?? fileURLToPath(new URL(`../reports/raw/s7-${mode}.json`, import.meta.url));
   fs.writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);
-  console.log(`S7 ${mode}: n=${result.n} accuracy=${result.accuracy} blocked=${result.recall.blocked} captcha=${result.recall.captcha} p50=${result.latencyMs.p50}ms p95=${result.latencyMs.p95}ms tokens=${result.inputTokensAvg} cost=$${result.costUsd} pass=${result.pass}`);
+  console.log(`S7 ${mode}: n=${result.n} accuracy=${result.accuracy} blocked=${result.recall.blocked} captcha=${result.recall.captcha} p50=${result.latencyMs.p50}ms p95=${result.latencyMs.p95}ms tokens=${result.inputTokensAvg} cost=$${result.costUsd} pass=${result.pass} models=${result.resolvedModels.join(",")}`);
   if (intent) console.log(`intent_route_v1: n=${intent.n} playbook=${intent.playbookAccuracy} taxAdviceFP=${intent.taxAdviceFalsePositiveRate} taxAdviceMiss=${intent.taxAdviceMissRate}`);
   console.log(`→ ${out}`);
   if (gate && !result.pass) process.exit(1);

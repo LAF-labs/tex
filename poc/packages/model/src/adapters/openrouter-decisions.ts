@@ -6,6 +6,7 @@ import type { RedactedText, RunToken } from '../contract.ts';
 import type { LoadedBundle } from '../bundle/types.ts';
 import { AdapterError, type AdapterLimits, type ProviderDecision } from './types.ts';
 import { UpstageSystemOneAdapter } from './upstage-systemone.ts';
+import { L1_MODEL } from './gateway-decide.ts';
 
 export interface OpenRouterDecisionsOptions {
   apiKey: string;
@@ -20,7 +21,10 @@ export interface OpenRouterDecisionsOptions {
 
 export class OpenRouterDecisionsAdapter extends UpstageSystemOneAdapter {
   override readonly provider = 'openai_compat' as const;
+  /** 응답 model 접두·프로필 키. Jev(별칭 포함)는 계열 접두 L1_MODEL, 그 밖에는 요청 모델 그대로. */
   override readonly model: string;
+  /** 요청에 싣는 모델(별칭 그대로) */
+  readonly requestModel: string;
   /** clef/flash는 state 앞 약 2,000토큰만 읽는다(가이드). 바이트 상한은 보수적으로 그 근처. 선택지 상한은 미확인이라 System One 26. */
   override readonly limits: AdapterLimits = { maxChoices: 26, maxQuestions: 32, refusals: false, maxRequestBytes: 24_000 };
   private readonly o: OpenRouterDecisionsOptions;
@@ -28,11 +32,12 @@ export class OpenRouterDecisionsAdapter extends UpstageSystemOneAdapter {
   constructor(o: OpenRouterDecisionsOptions) {
     super();
     this.o = o;
-    this.model = o.model;
+    this.requestModel = o.model;
+    this.model = /^~?typesafe\/jev-/.test(o.model) ? L1_MODEL : o.model;
   }
 
   override buildRequest(b: LoadedBundle, input: RedactedText) {
-    return { ...super.buildRequest(b, input), model: this.model };
+    return { ...super.buildRequest(b, input), model: this.requestModel };
   }
 
   override async call(b: LoadedBundle, input: RedactedText, _runToken: RunToken): Promise<ProviderDecision> {
