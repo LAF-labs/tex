@@ -82,7 +82,7 @@ describe('홈택스 발급 목록 엑셀(docparse hometax-issue-list-v1)', () =>
     ]));
     assert.equal(r.rows.length, 1);
     assert.equal(r.duplicates, 1);
-    assert.deepEqual(r.rows[0], { approvalNo: '202610054100000012345678', writtenOn: '2026-10-05', issuedOn: '2026-10-05', supplierBizNo: me, buyerBizNo: buyer, buyerName: '(주)에이상사', buyerRep: '이에이', item: '컨설팅', total: 3_300_000, supply: 3_000_000, tax: 300_000 });
+    assert.deepEqual(r.rows[0], { approvalNo: '202610054100000012345678', writtenOn: '2026-10-05', issuedOn: '2026-10-05', supplierBizNo: me, supplierName: '하늘상회', supplierRep: '김하늘', buyerBizNo: buyer, buyerName: '(주)에이상사', buyerRep: '이에이', item: '컨설팅', total: 3_300_000, supply: 3_000_000, tax: 300_000 });
   });
 
   it('두 줄 머리글(위: 공급자 / 공급받는자)', () => {
@@ -129,6 +129,16 @@ describe('맞추기 규칙(09 §6, 순수 함수)', () => {
     assert.ok(r.candidates.get('t3')!.some((c) => c.fit === 'sum' && c.receivableIds.join() === 'r1,r2'));
     assert.deepEqual(r.candidates.get('t4'), [], '창 밖은 미지정');
     assert.deepEqual(r.candidates.get('t5'), [], '뗀 짝은 다시 내지 않는다');
+  });
+
+  it('낼 돈(출금): 규칙은 같고 근거 문구가 "받는 분"이다. 수수료 맞춤은 없다(이체 수수료는 따로 찍힌다)', () => {
+    const base = { counterparties: [cp('S', { name: '에스자재' })], rejects: new Set<string>(), side: 'out' as const };
+    const exact = runMatch({ ...base, receivables: [{ id: 'p1', cpKey: 'S', writtenOn: '2026-10-20', dueOn: '2026-11-19', remaining: 1_100_000 }], txns: [tx('t1', '2026-11-10', 1_100_000, '에스자재')] });
+    assert.equal(exact.auto.length, 0, '상호 일치만으로는 자동이 아니다');
+    assert.match(exact.candidates.get('t1')![0]!.reason, /받는 분 이름이 상호와 같아요/);
+    const less = runMatch({ ...base, receivables: [{ id: 'p1', cpKey: 'S', writtenOn: '2026-10-20', dueOn: '2026-11-19', remaining: 1_100_000 }], txns: [tx('t1', '2026-11-10', 1_099_500, '에스자재')] });
+    assert.equal(less.candidates.get('t1')![0]!.fit, 'partial', '500원 적게 낸 것은 수수료가 아니라 일부 냄');
+    assert.match(less.candidates.get('t1')![0]!.reason, /일부 냄/);
   });
 
   it('결제 조건 → 받기로 한 날', () => {
@@ -193,7 +203,7 @@ describe('BankService(엔진, 실제 DB)', () => {
     assert.deepEqual(await call('bank.revealAccount', { id: acct }), { number: '12345601987654' });
   });
 
-  it('홈택스 목록 → 받을 돈 건(거래처 없으면 만듦), 내가 공급받는자인 줄(매입)은 받지 않는다', async () => {
+  it('홈택스 목록 → 받을 돈 건(거래처 없으면 만듦), 내가 공급받는자인 줄(매입)은 받을 돈이 아니라 낼 돈으로 간다', async () => {
     const rows = [
       { approvalNo: approval(1), writtenOn: '2026-10-05', supplierBizNo: me, buyerBizNo: aBiz, buyerName: '(주)에이상사', buyerRep: '이에이', item: '컨설팅', total: 3_300_000, supply: 3_000_000, tax: 300_000 },
       { approvalNo: approval(2), writtenOn: '2026-10-10', supplierBizNo: me, buyerBizNo: bBiz, buyerName: '비상사', buyerRep: '박비', item: '납품', total: 1_100_000, supply: 1_000_000, tax: 100_000 },
@@ -202,7 +212,7 @@ describe('BankService(엔진, 실제 DB)', () => {
     const r = await call<{ created: number; purchase: number; newCounterparties: number; documentId: string }>('bank.importInvoices', { rows, file: { bytes: new TextEncoder().encode('fake list'), ext: 'xlsx', displayName: '/x/목록.xlsx' } });
     assert.equal(r.created, 2);
     assert.equal(r.purchase, 1);
-    assert.equal(r.newCounterparties, 2);
+    assert.equal(r.newCounterparties, 2, '매입 줄의 공급자(비상사)는 이미 만든 거래처를 쓴다');
     const again = await call<{ created: number; merged: number }>('bank.importInvoices', { rows: rows.slice(0, 2) });
     assert.deepEqual([again.created, again.merged], [0, 2], '같은 승인번호는 합친다');
     aId = new CounterpartyRepo(db).byBizNo(aBiz)!.id;
@@ -212,6 +222,8 @@ describe('BankService(엔진, 실제 DB)', () => {
     assert.equal(o.summary.stale, true);
     assert.deepEqual(o.unpaid.map((v) => v.status), ['unknown', 'unknown'], '거래내역이 없으면 못 받음이 아니라 확인 못 함');
     assert.equal(o.summary.overdueCount, 0, '모르는 상태에서 기한 지남이라고 하지 않는다');
+    const pay = (o as unknown as { payables: { unpaid: ReceivableView[] } }).payables.unpaid;
+    assert.deepEqual(pay.map((v) => [v.cpName, v.total]), [['비상사', 55_000]]);
   });
 
   it('거래내역 넣기 → 첫 맞춤은 후보 → [맞아요] → 별칭 제안 → 다음 달은 자동, 다시 올려도 같은 결과', async () => {
@@ -328,6 +340,108 @@ describe('BankService(엔진, 실제 DB)', () => {
     assert.ok(r.removedAllocs >= 2);
     const o = await call<Overview>('db.query.bank.overview');
     assert.equal(o.received.length, 0);
+  });
+});
+
+describe('낼 돈(11 §2): 매입 건·출금 맞추기·내 쪽 결제 조건', () => {
+  let dir: string;
+  let db: Db;
+  let pid: string;
+  let svc: BankService;
+  const now = new Date('2026-11-12T01:00:00Z');
+  const cipher = new ColumnCipher(new Uint8Array(randomBytes(32)));
+  const call = <T>(m: string, p: Record<string, unknown> = {}) => svc.handle(m, { profileId: pid, ...p }) as Promise<T>;
+  const code = (p: Promise<unknown>, c: string) => assert.rejects(p, (e: Error & { code?: string }) => e.code === c, c);
+  type Side = { unpaid: ReceivableView[]; paid: ReceivableView[]; review: TxnView[]; defaultTerms: unknown };
+  type Overview = { summary: Record<string, unknown> & { payable: Record<string, number> }; unpaid: ReceivableView[]; review: TxnView[]; payables: Side };
+  const me = syntheticBizNo(50);
+  const sBiz = syntheticBizNo(51);
+  const cBiz = syntheticBizNo(52);
+  let acct: string;
+  let sId: string;
+
+  before(async () => {
+    dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'sax-pay-'));
+    db = openDatabase(path.join(dir, 'db.sqlite'), new Uint8Array(randomBytes(32)));
+    pid = new ProfileRepo(db).upsert({ kind: 'business', displayName: '하늘상회', bizNo: me, corpNo: null, repName: '김하늘', bizType: null, bizItem: null, address: null, email: null, signMethod: null }).id;
+    svc = new BankService(db, cipher, new Uint8Array(randomBytes(32)), { vaultDir: path.join(dir, 'vault'), now: () => now });
+    await call('bank.consent', { version: '09-v1' });
+    acct = (await call<{ id: string }>('bank.addAccount', { bank: '신한', number: '110-222-333444' })).id;
+  });
+  after(() => {
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('수취 목록의 매입 줄 → 낼 돈 건(거래처 = 공급자), 받을 돈 목록에는 없다. 같은 승인번호가 매출로 다시 오면 합치지 않는다', async () => {
+    const rows = [
+      { approvalNo: approval(21), writtenOn: '2026-10-20', supplierBizNo: sBiz, supplierName: '에스자재', supplierRep: '최에스', buyerBizNo: me, buyerName: '하늘상회', item: '자재', total: 1_100_000, supply: 1_000_000, tax: 100_000 },
+      { approvalNo: approval(22), writtenOn: '2026-10-25', supplierBizNo: me, buyerBizNo: cBiz, buyerName: '씨상사', total: 330_000 },
+    ];
+    const r = await call<{ created: number; purchase: number; purchaseCreated: number; newCounterparties: number; payMatch: { auto: number; review: number; unknown: number } }>('bank.importInvoices', { rows });
+    assert.deepEqual([r.created, r.purchase, r.purchaseCreated, r.newCounterparties], [1, 1, 1, 2]);
+    sId = new CounterpartyRepo(db).byBizNo(sBiz)!.id;
+    assert.equal(new CounterpartyRepo(db).get(sId)!.repName, '최에스');
+    const o = await call<Overview>('db.query.bank.overview');
+    assert.deepEqual(o.unpaid.map((v) => v.cpName), ['씨상사']);
+    assert.deepEqual(o.payables.unpaid.map((v) => [v.cpName, v.total, v.dueOn, v.status]), [['에스자재', 1_100_000, '2026-11-19', 'unknown']]);
+    const bad = await call<{ skipped: number; created: number }>('bank.importInvoices', { rows: [{ ...rows[0], supplierBizNo: me, buyerBizNo: sBiz }] });
+    assert.deepEqual([bad.skipped, bad.created], [1, 0]);
+  });
+
+  it('내 쪽 결제 조건은 받을 조건과 따로: 거래처 조건·기본 조건', async () => {
+    await call('bank.setPayTerms', { counterpartyId: sId, side: 'out', terms: { kind: 'month_end' } });
+    let o = await call<Overview>('db.query.bank.overview');
+    assert.equal(o.payables.unpaid[0]!.dueOn, '2026-11-30');
+    assert.deepEqual(await call('db.query.bank.counterparty', { counterpartyId: sId }).then((x) => (x as { terms: unknown }).terms), null, '받을 조건은 그대로 비어 있다');
+    await call('bank.setPayTerms', { counterpartyId: sId, side: 'out', terms: null });
+    await call('bank.setDefaultTerms', { kind: 'purchase', terms: { kind: 'days', n: 10 } });
+    o = await call<Overview>('db.query.bank.overview');
+    assert.equal(o.payables.unpaid[0]!.dueOn, '2026-10-30');
+    assert.deepEqual(o.payables.defaultTerms, { kind: 'days', n: 10 });
+    assert.deepEqual(o.defaultTerms, { kind: 'days', n: 30 }, '받을 돈 기본 조건은 그대로');
+    await code(call('bank.setDefaultTerms', { kind: 'refund', terms: null }), 'bad_kind');
+  });
+
+  it('출금 → 첫 맞춤은 후보(받는 분 문구) → [맞아요] → 낸 돈. 입금은 낼 돈에 붙지 않는다. 요약에 안 낸 돈', async () => {
+    const rows = [
+      { occurredAt: '2026-11-10 11:00', day: '2026-11-10', direction: 'out', amount: 1_100_000, balance: 4_000_000, payer: '에스자재', memo: '이체' },
+      { occurredAt: '2026-11-10 12:00', day: '2026-11-10', direction: 'in', amount: 1_100_000, balance: 5_100_000, payer: '에스자재', memo: '반품' },
+    ];
+    const r = await call<{ match: { review: number; unknown: number }; payMatch: { auto: number; review: number; unknown: number } }>('bank.importTxns', { accountId: acct, rows });
+    assert.deepEqual(r.payMatch, { auto: 0, review: 1, unknown: 0 });
+    let o = await call<Overview>('db.query.bank.overview');
+    assert.equal(o.summary.payable.overdueCount, 1, '기본 10일이 지났다');
+    assert.equal(o.summary.payable.overdueTotal, 1_100_000);
+    assert.equal(o.summary.payable.reviewCount, 1);
+    assert.ok(!o.review.some((t) => t.direction === 'out'), '받을 돈 쪽 확인할 입금에 출금이 섞이지 않는다');
+    const out = o.payables.review.find((t) => t.direction === 'out')!;
+    assert.match(out.candidates[0]!.reason, /받는 분 이름이 상호와 같아요/);
+    const inbound = o.review.find((t) => t.direction === 'in' && t.amount === 1_100_000)!;
+    await code(call('bank.attach', { txnId: inbound.id, receivableId: o.payables.unpaid[0]!.id }), 'not_outgoing');
+    await code(call('bank.attach', { txnId: out.id, receivableId: o.unpaid[0]!.id }), 'not_incoming');
+    await call('bank.accept', { txnId: out.id, receivableIds: out.candidates[0]!.receivableIds });
+    o = await call<Overview>('db.query.bank.overview');
+    assert.equal(o.payables.paid.length, 1);
+    assert.equal(o.payables.unpaid.length, 0);
+    assert.equal(o.summary.payable.unpaidCount, 0);
+  });
+
+  it('다음 달: 사람이 확인한 받는 분 이름(별칭) + 확정한 적 있음 → 자동. 계좌 밖으로 낸 돈은 [냈음 표시]', async () => {
+    await call('bank.addAlias', { counterpartyId: sId, name: '에스자재(주)최에스' });
+    await call('bank.importInvoices', { rows: [
+      { approvalNo: approval(23), writtenOn: '2026-11-05', supplierBizNo: sBiz, supplierName: '에스자재', buyerBizNo: me, total: 440_000 },
+      { approvalNo: approval(24), writtenOn: '2026-11-06', supplierBizNo: sBiz, supplierName: '에스자재', buyerBizNo: me, total: 77_000 },
+    ] });
+    const r = await call<{ payMatch: { auto: number } }>('bank.importTxns', { accountId: acct, rows: [{ occurredAt: '2026-11-11', day: '2026-11-11', direction: 'out', amount: 440_000, balance: null, payer: '에스자재(주)최에스', memo: null }] });
+    assert.equal(r.payMatch.auto, 1);
+    let o = await call<Overview>('db.query.bank.overview');
+    assert.equal(o.payables.paid.find((v) => v.total === 440_000)!.via, 'auto');
+    const small = o.payables.unpaid.find((v) => v.total === 77_000)!;
+    await call('bank.markReceived', { receivableId: small.id, method: 'cash', on: '2026-11-11' });
+    o = await call<Overview>('db.query.bank.overview');
+    assert.equal(o.payables.paid.find((v) => v.id === small.id)!.offAccount, 'cash');
+    assert.equal(o.summary.autoCount, 0, '받을 돈 자동 수에 낼 돈 자동은 들어가지 않는다');
   });
 });
 
