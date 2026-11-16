@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { CounterpartyRepo, openDatabase, ProfileRepo, syntheticBizNo, type Db } from '@sax/db';
-import { CHAT_ADVICE_TEXT, CHAT_AGENT_ASK_TEXT, CHAT_AGENT_FALLBACK_TEXT, CHAT_AGENT_INPUT_MAX_BYTES, CHAT_AGENT_LOOKUP_TEXT, CHAT_AGENT_NUMBER_TEXT, CHAT_AGENT_TRANSCRIPT_TURNS, ChatAgent, gatewayChatAgentModel, numberShaped, parseKrw, type DomainCall, type ScreenFrame, type StepResult, type ToolOutput } from '@sax/engine';
+import { CHAT_ADVICE_TEXT, CHAT_AGENT_ASK_TEXT, CHAT_AGENT_DONE_TEXT, CHAT_AGENT_FALLBACK_TEXT, CHAT_AGENT_INPUT_MAX_BYTES, CHAT_AGENT_LOOKUP_TEXT, CHAT_AGENT_NUMBER_TEXT, CHAT_AGENT_TRANSCRIPT_TURNS, ChatAgent, gatewayChatAgentModel, numberShaped, parseKrw, type DomainCall, type ScreenFrame, type StepResult, type ToolOutput } from '@sax/engine';
 import { CHAT_AGENT_COMMANDS, COMMANDS, MAIN_ONLY, READ_QUERIES } from '@sax/engine/protocol';
 import { BundleCatalog } from '@sax/model';
 import { Egress } from '@sax/net';
@@ -291,12 +291,23 @@ describe('chat.step 답 검사', () => {
     for (const text of ['{r1.first.amount}예요.', '{r1.first.supply}예요.', '{oops}', '{d2.first.total}으로 만들었어요.']) {
       script(() => reply({ text }));
       const r = await a.step({ start: { text: '안녕', frame: { cards: [] }, profileId } });
-      assert.deepEqual(r.kind === 'reply' && [r.reply.text, r.reply.filtered], [CHAT_AGENT_FALLBACK_TEXT, 'number']);
+      assert.deepEqual(r.kind === 'reply' && [r.reply.text, r.reply.filtered], [CHAT_AGENT_FALLBACK_TEXT, 'slot']);
     }
     // 되묻는 답이면 되묻기는 살린다
     script(() => reply({ text: '{d1.first.total} 맞나요?', kind: 'ask', ask: 'amount' }));
     const r = await a.step({ start: { text: '안녕', frame: { cards: [] }, profileId } });
-    assert.deepEqual(r.kind === 'reply' && [r.reply.text, r.reply.ask, r.reply.filtered], [CHAT_AGENT_ASK_TEXT.amount, 'amount', 'number']);
+    assert.deepEqual(r.kind === 'reply' && [r.reply.text, r.reply.ask, r.reply.filtered], [CHAT_AGENT_ASK_TEXT.amount, 'amount', 'slot']);
+  });
+
+  it('방금 만든 카드 ref에 슬롯을 붙이면 카드 문장으로 말한다(부가세 되묻기는 화면이 하지 않는다, chat-eval multi-lookup-then-issue crusoe)', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    script(
+      (b) => fc('invoice_draft', { counterparty: toks(nowLine(b), 'NAME')[0], amount: toks(nowLine(b), 'AMT')[0], vat: null, item: '원두' }),
+      (b) => reply({ kind: 'did', text: `공급가 {${lastOutput(b)!.ref}.first.supply}로 카드를 만들었어요.`, show: [lastOutput(b)!.ref!], ask: 'vat' }),
+    );
+    const { reply: rep } = await say(a, pc, 'A상사 110만원 원두 세금계산서 끊어줘');
+    assert.deepEqual([rep.text, rep.ask, rep.filtered], [CHAT_AGENT_DONE_TEXT.card_shown, null, 'slot']);
   });
 
   it('합계·건수는 집계 슬롯, 슬롯·토큰 밖 숫자가 있으면 문장을 버리고 표는 둔다, 슬롯 안 공백은 붙인다, 금액 인자는 돈 칸 슬롯만', async () => {

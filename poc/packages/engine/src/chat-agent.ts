@@ -116,7 +116,7 @@ export interface AgentReply {
   show: string[];
   ask: AgentAsk | null;
   /** repeat: 모델이 같은 호출을 되풀이해 엔진이 그 결과로 턴을 닫았다(문장은 엔진 고정 문장) */
-  filtered: null | 'advice' | 'unsafe' | 'refusal' | 'number' | 'repeat';
+  filtered: null | 'advice' | 'unsafe' | 'refusal' | 'number' | 'repeat' | 'slot';
 }
 
 /**
@@ -669,9 +669,14 @@ export class ChatAgent {
     // 모르는 결과를 가리키는 슬롯·틀린 슬롯("{d2.first.total}")은 값을 채울 수 없다. 오류로 끊지 않고 숫자 문장처럼 표·카드만 보인다
     // (chat-eval multi-lookup-then-issue: 카드 ref에 슬롯 경로를 붙임)
     if ([...text.matchAll(SLOT_ANY)].some((m) => !s.refs.has(m[1]!)) || /[{}]/.test(text.replace(SLOT_ANY, ''))) {
+      // 카드 ref에 슬롯을 붙인 것("{d2.first.supply}")은 지어낸 값이 아니라 카드 금액을 가리킨 것이다. 이번 턴 결과의 고정 문장으로 말하고
+      // 되묻기("부가세 별도인가요?")는 살린다. 카드를 만든 턴의 부가세는 화면이 묻지 않는다(기본값 별도, 카드에서 다시 본다).
       const shown = refs.length ? refs : [...new Set(turn.made)].slice(-AGENT_SHOW_MAX);
-      if (k === 'ask' && a) return { kind: k, text: CHAT_AGENT_ASK_TEXT[a], show: shown, ask: a, filtered: 'number' };
-      return { kind: k, text: shown.length ? CHAT_AGENT_NUMBER_TEXT : CHAT_AGENT_FALLBACK_TEXT, show: shown, ask: null, filtered: 'number' };
+      const outs = [...turn.done.values()];
+      const carded = outs.some((o) => o.status === 'card_shown');
+      if (a && !(a === 'vat' && carded)) return { kind: k, text: CHAT_AGENT_ASK_TEXT[a], show: shown, ask: a, filtered: 'slot' };
+      const done = outs.length ? CHAT_AGENT_DONE_TEXT[outs.at(-1)!.status] : undefined;
+      return { kind: k, text: done ?? (shown.length ? CHAT_AGENT_NUMBER_TEXT : CHAT_AGENT_FALLBACK_TEXT), show: shown, ask: null, filtered: 'slot' };
     }
     if (chatAdviceMentioned(text)) return { kind: k, text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice' };
     // 사장님이 이번 문장에 쓴 달 이름("9월")은 그대로 따라 써도 된다(지어낸 값이 아니다, chat-eval look-sept)
