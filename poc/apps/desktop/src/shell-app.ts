@@ -2033,6 +2033,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       log.event('main.security_install_open', { platform: process.platform === 'darwin' ? 1 : 0 });
       return { opened: true };
     },
+    'legal.open': async (p) => {
+      needGesture(3_000);
+      await openExternalKey(p.doc === 'privacy' ? 'legal.privacy' : 'legal.terms');
+      return { opened: true };
+    },
     'security.start': async () => {
       needGesture(3_000);
       const ok = opts.security?.start ? opts.security.start() : startSecurityProgram();

@@ -524,12 +524,21 @@ const onbAct = {
   },
   go: (v) => go(v),
   toast,
+  legal: (doc) => openLegal(doc),
   rerender: () => renderOnboarding(),
   // securityOps는 아래에서 정의된다(모듈 평가 순서): 쓸 때 읽는다
   get security() {
     return securityOps;
   },
 };
+/** 이용약관·개인정보 처리방침 전문을 기본 브라우저로 연다(F-06). */
+async function openLegal(doc) {
+  try {
+    await call('legal.open', { doc });
+  } catch {
+    toast('열지 못했어요. tax.laf-co.com에서 볼 수 있어요.');
+  }
+}
 /** 온보딩 영역을 지금 상태로 다시 그린다. 약관(④) 동의 전에는 입력창을 막는다(main도 onboarding_terms로 거부한다). */
 function renderOnboarding() {
   const old = chat.thread?.querySelector('[data-onboarding]');
@@ -2161,6 +2170,9 @@ function authCard() {
   ];
 }
 
+/** 약관·처리방침 전문(F-06): 동의한 뒤에도 언제든 볼 수 있게 설정 기기 연결 탭 끝에 둔다. */
+const legalRow = () =>
+  h('p', { class: 'onb-links', 'data-legal-row': '' }, btn('이용약관', () => openLegal('terms'), 'sx-btn-quiet', { 'data-legal': 'terms' }), btn('개인정보 처리방침', () => openLegal('privacy'), 'sx-btn-quiet', { 'data-legal': 'privacy' }));
 /** 설정(캔버스 S-02): 발급 인증 · 기기 연결. */
 function settingsView() {
   return h(
@@ -2180,7 +2192,7 @@ function settingsView() {
       : state.setTab === 'bank'
       ? bankAuto.view()
       : state.setTab === 'devices'
-      ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin, openPair, signOut))
+      ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin, openPair, signOut), legalRow())
       : h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '발급 인증'), h('p', { class: 'sx-body-sm is-muted' }, '세금계산서를 발급할 때 쓰는 인증이에요.')), authCard()),
   );
 }
