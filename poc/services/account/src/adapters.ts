@@ -58,6 +58,8 @@ export type NoticeKind =
   | 'device_suspended'
   | 'device_auto_suspended'
   | 'device_delete_pending'
+  /** 탈퇴 요청: 7일 뒤 삭제, 구독 해지됨, 유예 중 취소 가능 */
+  | 'account_delete_pending'
   | 'device_revoked'
   | 'aik_pinned'
   | 'passkey_added'
