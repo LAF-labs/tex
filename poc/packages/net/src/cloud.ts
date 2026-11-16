@@ -39,6 +39,11 @@ export const CLOUD_ROUTES: ReadonlyArray<{ name: string; method: CloudMethod; pa
   { name: 'deviceTokens', method: 'POST', path: /^\/v1\/device-tokens$/ },
   { name: 'acctClaim', method: 'GET', path: /^\/v1\/acct-claim$/ },
   { name: 'devices.enroll', method: 'POST', path: /^\/v1\/devices\/enroll$/ },
+  // 설정 > 구독(기기 토큰, services/account/API.md 구독). 카드 등록 창은 기본 브라우저가 연다(이 egress 밖)
+  { name: 'billing.subscription', method: 'GET', path: /^\/v1\/billing\/subscription$/ },
+  { name: 'billing.checkout', method: 'POST', path: /^\/v1\/billing\/checkout$/ },
+  { name: 'billing.cancel', method: 'POST', path: /^\/v1\/billing\/cancel$/ },
+  { name: 'billing.refund', method: 'POST', path: /^\/v1\/billing\/refund$/ },
   { name: 'rooms.create', method: 'POST', path: /^\/v1\/rooms$/ },
   { name: 'mailboxes.create', method: 'POST', path: /^\/v1\/mailboxes$/ },
   { name: 'mailboxes.delete', method: 'DELETE', path: new RegExp(`^/v1/mailboxes/${ID43}$`) },

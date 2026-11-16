@@ -82,7 +82,7 @@
 | 메서드·경로 | 인증 | 요청 | 응답 | 오류 |
 |---|---|---|---|---|
 | `POST /v1/billing/checkout` | 세션 또는 데스크톱 기기 토큰(devlist) | — | `200 {checkoutUrl}` | 이미 활성이면 `400 request.param_rejected`. pending·past_due는 같은 PG 참조로 다시(동시 클릭도 같은 참조), 해지 뒤는 새 참조 |
-| `GET /v1/billing/subscription` | 세션 | — | `200 {subscription: {plan:"standard", status, renewAt, amountKrw:19900, period:"month", refund?: {refundableUntil, amountKrw}} \| null}` | `refund`는 지금 청약철회할 수 있을 때만(빌링키 PG) |
+| `GET /v1/billing/subscription` | 세션 | — | `200 {subscription: {plan:"standard", status, renewAt, amountKrw:19900, period:"month", refund?: {refundableUntil, amountKrw}} \| null, entitlement: {state, until, trialMonths}}` | `entitlement`는 `GET /v1/billing/entitlement`와 같다. `refund`는 지금 청약철회할 수 있을 때만(빌링키 PG) |
 | `POST /v1/billing/cancel` | 세션 | — | `204` | 다음 결제 없음, 낸 기간(`renewAt`)까지 사용. 접수 메일(`subscription_canceled`) |
 | `POST /v1/billing/refund` | 세션 | — | `200 {amountKrw}` | 청약철회(결제 후 7일, 빌링키 PG만). 금액 = 결제액 − 쓴 날 일할(올림), 당일이면 전액. 구독은 바로 끝난다. `409 account.refund_unavailable`(기간 지남·환불할 결제 없음), `502 account.refund_failed`(PG 거절·결과 모름, 다시 해도 같은 멱등 키라 두 번 환불되지 않음) |
 | `GET /v1/billing/entitlement` | 세션 | — | `200 {state:"trial"\|"paid"\|"none", until, trialMonths}` | 유료 기능 권리. 체험 = 가입 뒤 1달(KST 달력, 카드 없음, 사용자 결정 2026-11-16). paid = 활성(갱신일까지, 연체·청구 대기는 +3일 유예)·해지했지만 갱신일 전. `GET /v1/me`에도 `entitlement`가 있다 |

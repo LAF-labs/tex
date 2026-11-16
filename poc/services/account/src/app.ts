@@ -282,7 +282,11 @@ export function accountRouter(o: AccountAppOpts): Router {
 
   // 구독·결제
   r.add('POST', '/v1/billing/checkout', async (ctx) => json(200, await svc.checkout(await billingAuth(ctx))));
-  r.add('GET', '/v1/billing/subscription', async (ctx) => json(200, { subscription: await svc.subscription(await billingAuth(ctx)) }));
+  r.add('GET', '/v1/billing/subscription', async (ctx) => {
+    const who = await billingAuth(ctx);
+    // 구독 화면은 한 번에: 구독과 유료 기능 권리
+    return json(200, { subscription: await svc.subscription(who), entitlement: await svc.entitlementOf(who) });
+  });
   r.add('GET', '/v1/billing/entitlement', async (ctx) => json(200, await svc.entitlementOf(await billingAuth(ctx))));
   r.add('POST', '/v1/billing/refund', async (ctx) => json(200, await svc.refundSubscription(await billingAuth(ctx))));
   r.add('POST', '/v1/billing/cancel', async (ctx) => {

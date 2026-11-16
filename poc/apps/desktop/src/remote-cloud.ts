@@ -196,10 +196,9 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
     },
     async billing(auth) {
       const su = `${accountOrigin}/v1/billing/subscription`;
-      const eu = `${accountOrigin}/v1/billing/entitlement`;
-      const [sr, er] = await Promise.all([call('GET', su, [200], { headers: await authed(auth, 'GET', su) }), call('GET', eu, [200], { headers: await authed(auth, 'GET', eu) })]);
-      const e = (isObj(er) ? er : {}) as Record<string, unknown>;
+      const sr = await call('GET', su, [200], { headers: await authed(auth, 'GET', su) });
       const s = (isObj(sr) ? sr : {}) as Record<string, unknown>;
+      const e = (isObj(s.entitlement) ? s.entitlement : {}) as Record<string, unknown>;
       if (!['trial', 'paid', 'none'].includes(e.state as string) || !(e.until === null || int(e.until))) shape();
       if (!(s.subscription === null || isObj(s.subscription))) shape();
       const sub = s.subscription as Record<string, unknown> | null;
