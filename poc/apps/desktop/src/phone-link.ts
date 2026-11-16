@@ -110,7 +110,17 @@ export class PhoneStore {
       await fs.mkdir(path.dirname(this.#file), { recursive: true });
       const tmp = `${this.#file}.${process.pid}.tmp`;
       await fs.writeFile(tmp, JSON.stringify({ v: FILE_VERSION, phones: [...phones] } satisfies FileShape), { mode: 0o600 });
-      await fs.rename(tmp, this.#file);
+      // Windows: 다른 프로세스(백신·색인·읽는 중)가 대상 파일을 열고 있으면 rename이 잠깐 EPERM·EBUSY로 실패한다
+      for (let i = 0; ; i++) {
+        try {
+          await fs.rename(tmp, this.#file);
+          return;
+        } catch (e) {
+          const code = (e as NodeJS.ErrnoException).code;
+          if (i >= 9 || !(code === 'EPERM' || code === 'EBUSY' || code === 'EACCES')) throw e;
+          await new Promise((r) => setTimeout(r, 20 * (i + 1)));
+        }
+      }
     };
     const p = this.#chain.then(run, run);
     this.#chain = p.catch(() => undefined);

@@ -180,13 +180,18 @@ describe('PC 폰 수신(phone-link)', () => {
     await first.add(x.pc);
     await until(() => x.queueOf(x.pc.mbxId).bundle !== null);
     // 번들 유효 기간이 파일에 남은 뒤 끈다(올린 직후 끄면 다음 기동이 다시 올린다)
-    await until(() => {
+    // 2ms마다 열면 Windows에서 rename을 계속 막으므로 50ms 간격으로 본다
+    for (let i = 0; ; i++) {
+      let ok = false;
       try {
-        return JSON.parse(readFileSync(x.file, 'utf8')).phones[0]?.qbundleValidTo > 0;
+        ok = JSON.parse(readFileSync(x.file, 'utf8')).phones[0]?.qbundleValidTo > 0;
       } catch {
-        return false;
+        /* 쓰는 중 */
       }
-    });
+      if (ok) break;
+      assert.ok(i < 100, '번들 기간이 파일에 남는다');
+      await new Promise((r) => setTimeout(r, 50));
+    }
     first.stop();
     // 폰: PC 없음 → 큐로 보낸다
     const q = x.queueOf(fromB64(x.phone.mbxId));
