@@ -66,6 +66,10 @@ export const CHAT_AGENT_DONE_TEXT: Partial<Record<ToolStatus, string>> = {
   discarded: '카드를 취소했어요. 아무것도 발급되지 않았어요.',
   ok: '찾은 기록을 표로 보여 드렸어요.',
 };
+/** 엔진이 조회 되풀이로 턴을 닫을 때의 문장. 슬롯은 main이 결과 값으로 채운다. */
+export const CHAT_AGENT_LOOKUP_TEXT = (ref: string): string => `{${ref}.count}건이고 합계는 {${ref}.sum.total}이에요. 자세한 내용은 표로 보여 드렸어요.`;
+/** 이번 턴 같은 카드 판정 키: 거래처와 금액 */
+const cardKey = (c: { counterpartyId: string; amount: DraftAmount }): string => `${c.counterpartyId}:${JSON.stringify(c.amount)}`;
 /** 다시 보낼 턴이라 대화록에 남기지 않는 오류 */
 const RETRY_CODES: readonly ChatErrorCode[] = ['chat.unavailable', 'chat.budget_exceeded', 'chat.quota_exceeded'];
 /** 게이트웨이 respond 스키마의 replay maxItems */
@@ -370,11 +374,13 @@ interface Turn {
   frameRefs: Set<string>;
   replay: RedactedReplayItem[];
   /** main이 실행 중인 도구 호출. answer가 있으면 엔진이 직접 답한 것이다. */
-  pending: Array<{ callId: string; tool: ChatAgentToolName; key: string; answer: ToolOutput | null }> | null;
+  pending: Array<{ callId: string; tool: ChatAgentToolName; key: string; call: DomainCall | null; answer: ToolOutput | null }> | null;
   /** 이번 턴에 끝난 도구 호출(도구 이름 + 인자) → 결과. 같은 호출을 또 하면 main에 보내지 않고 이 결과로 답한다. */
   done: Map<string, ToolOutput>;
   /** 이번 턴 도구 결과로 나온 ref(나온 순서) */
   made: string[];
+  /** 이번 턴에 만든 카드: 거래처·금액 → 카드 ref. 같은 거래처·금액으로 또 만들면 그 카드를 고친다. */
+  cards: Map<string, string>;
   /** 이번 턴에 풀리지 않은 거래처 이름(사장님 문장에 있던 것만). 첫 하나만 둔다. */
   unknownName?: string;
 }
@@ -437,7 +443,7 @@ export class ChatAgent {
     } catch {
       throw new ChatError('chat.unavailable');
     }
-    s.turn = { user, message: this.compose(s, user, frameLine), frameRefs: new Set(cards.map((c) => c.ref)), replay: [], pending: null, done: new Map(), made: [] };
+    s.turn = { user, message: this.compose(s, user, frameLine), frameRefs: new Set(cards.map((c) => c.ref)), replay: [], pending: null, done: new Map(), made: [], cards: new Map() };
     return this.run(s, () => this.advance(s));
   }
 
@@ -508,14 +514,14 @@ export class ChatAgent {
       // 같은 턴에 같은 도구를 같은 인자로 또 부르면 모델이 결과를 답으로 옮기지 못하는 것이다(chat-eval 2026-11-16: 공급사에 따라
       // "이번 달 매출"에 sales_summary를 네 번 부름, 같은 카드를 두 장 만듦). 다시 실행하지 않고 엔진이 그 결과로 턴을 닫는다.
       const repeat = r.toolCalls.find((c) => turn.done.has(key(c)));
-      if (repeat) return this.finish(s, this.settle(turn, turn.done.get(key(repeat))!));
+      if (repeat) return this.finish(s, this.settle(turn, turn.done.get(key(repeat))!, false));
       if (turns >= CHAT_AGENT.maxTurns || turn.replay.length + r.toolCalls.length > REPLAY_MAX) {
         const last = [...turn.done.values()].at(-1);
-        if (last) return this.finish(s, this.settle(turn, last));
+        if (last) return this.finish(s, this.settle(turn, last, true));
         throw new ChatError('chat.turn_limit');
       }
       const parsed = r.toolCalls.map((c) => ({ c, p: this.parseCall(s, turn, c) }));
-      turn.pending = parsed.map(({ c, p }) => ({ callId: c.callId, tool: c.name as ChatAgentToolName, key: key(c), answer: 'status' in p ? p : null }));
+      turn.pending = parsed.map(({ c, p }) => ({ callId: c.callId, tool: c.name as ChatAgentToolName, key: key(c), call: 'status' in p ? null : p, answer: 'status' in p ? p : null }));
       const calls = parsed.flatMap(({ c, p }) => ('status' in p ? [] : [{ callId: c.callId, ...p }]));
       if (calls.length) return { kind: 'tools', calls };
       this.answer(s, turn);
@@ -525,8 +531,10 @@ export class ChatAgent {
   /**
    * 모델 답 없이 턴을 닫는다(같은 호출 되풀이·턴 상한). 마지막 도구 결과가 빈 칸을 말하면 그 칸을 고정 문장으로 되묻고,
    * 이번 턴에 낸 표·카드가 있으면 그것을 보인다. 둘 다 아니면 chat.turn_limit.
+   * 조회 되풀이면 건수·합계를 슬롯 문장으로 말한다(값은 main이 채운다, chat-eval look-last-month: "표로 보여 드렸어요"만으로는 답이 아니다).
+   * 턴 상한이면 마지막 결과가 이번 턴 전체를 말하지 않으므로(취소 뒤 새 카드가 열려 있을 수 있다) 일반 문장을 쓴다.
    */
-  private settle(turn: Turn, last: ToolOutput): AgentReply {
+  private settle(turn: Turn, last: ToolOutput, limit: boolean): AgentReply {
     const askOf = (o: ToolOutput): AgentAsk | null =>
       o.status === 'needs_input' && o.needs?.length ? o.needs[0]! : o.status === 'unknown_counterparty' ? 'counterparty' : o.status === 'no_such_draft' ? 'which_card' : null;
     // 마지막 결과가 아니어도, 이번 턴에 카드가 안 생겼고 앞에서 빈 칸이 나왔으면 그것을 묻는다
@@ -536,7 +544,9 @@ export class ChatAgent {
     const ask = askOf(last) ?? (carded ? null : (outs.map(askOf).find((x) => x) ?? null));
     const show = [...new Set(turn.made)].slice(-AGENT_SHOW_MAX);
     if (ask) return { kind: 'ask', text: CHAT_AGENT_ASK_TEXT[ask], show, ask, filtered: 'repeat' };
-    if (show.length) return { kind: 'did', text: CHAT_AGENT_DONE_TEXT[last.status] ?? CHAT_AGENT_NUMBER_TEXT, show, ask: null, filtered: 'repeat' };
+    if (!limit && last.status === 'ok' && last.ref?.startsWith('r') && show.includes(last.ref))
+      return { kind: 'answer', text: CHAT_AGENT_LOOKUP_TEXT(last.ref), show, ask: null, filtered: 'repeat' };
+    if (show.length) return { kind: 'did', text: (limit ? null : CHAT_AGENT_DONE_TEXT[last.status]) ?? CHAT_AGENT_NUMBER_TEXT, show, ask: null, filtered: 'repeat' };
     throw new ChatError('chat.turn_limit');
   }
 
@@ -550,6 +560,7 @@ export class ChatAgent {
       }
       // 같은 인자로 다시 부르면 같은 결과다. 고치기·취소는 두 번째가 다른 뜻일 수 있어(이미 취소한 카드) 첫 결과를 그대로 준다.
       turn.done.set(c.key, o);
+      if (o.status === 'card_shown' && o.ref && c.call?.tool === 'invoice_draft') turn.cards.set(cardKey(c.call), o.ref);
       turn.replay.push({ kind: 'function_call_output', callId: c.callId, output: s.red.apply(JSON.stringify(o), { frame: 'none' }).redacted });
     }
     turn.pending = null;
@@ -621,7 +632,12 @@ export class ChatAgent {
       },
     };
     if (!Object.hasOwn(parse, tool)) throw new ChatError('chat.bad_response');
-    return parse[tool]();
+    const p = parse[tool]();
+    // 이번 턴에 같은 거래처·금액으로 만든 카드가 있으면 새 카드를 또 만들지 않고 그 카드를 고친다
+    // (chat-eval issue-korean-amount: 부가세만 바꿔 카드를 다시 만들고 앞 카드를 취소하다 턴 상한에 걸림)
+    const same = !('status' in p) && p.tool === 'invoice_draft' ? turn.cards.get(cardKey(p)) : undefined;
+    if (same && !('status' in p) && p.tool === 'invoice_draft') return { tool: 'draft_edit', draft: same, amount: p.amount, vat: p.vat, item: p.item };
+    return p;
   }
 
   /**
@@ -648,10 +664,15 @@ export class ChatAgent {
       .replace(/\{([^{}]*)\}/g, (_m, x: string) => `{${x.replace(/\s+/g, '')}}`);
     if (!text || [...text].length > CHAT_REPLY_MAX_CHARS) throw bad();
     for (const m of text.matchAll(TOKEN_RE)) if (!s.red.map.has(m[0])) throw bad();
-    for (const m of text.matchAll(SLOT_ANY)) if (!s.refs.has(m[1]!)) throw bad();
-    if (/[{}]/.test(text.replace(SLOT_ANY, ''))) throw bad();
     const refs = [...new Set(show as string[])];
     if (!refs.every((r) => new RegExp(REF).test(r) && (s.refs.has(r) || turn.frameRefs.has(r)))) throw bad();
+    // 모르는 결과를 가리키는 슬롯·틀린 슬롯("{d2.first.total}")은 값을 채울 수 없다. 오류로 끊지 않고 숫자 문장처럼 표·카드만 보인다
+    // (chat-eval multi-lookup-then-issue: 카드 ref에 슬롯 경로를 붙임)
+    if ([...text.matchAll(SLOT_ANY)].some((m) => !s.refs.has(m[1]!)) || /[{}]/.test(text.replace(SLOT_ANY, ''))) {
+      const shown = refs.length ? refs : [...new Set(turn.made)].slice(-AGENT_SHOW_MAX);
+      if (k === 'ask' && a) return { kind: k, text: CHAT_AGENT_ASK_TEXT[a], show: shown, ask: a, filtered: 'number' };
+      return { kind: k, text: shown.length ? CHAT_AGENT_NUMBER_TEXT : CHAT_AGENT_FALLBACK_TEXT, show: shown, ask: null, filtered: 'number' };
+    }
     if (chatAdviceMentioned(text)) return { kind: k, text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice' };
     // 사장님이 이번 문장에 쓴 달 이름("9월")은 그대로 따라 써도 된다(지어낸 값이 아니다, chat-eval look-sept)
     const months = new Set([...turn.user.matchAll(/(?<!\d)(1[0-2]|[1-9])월/gu)].map((m) => m[0]));
