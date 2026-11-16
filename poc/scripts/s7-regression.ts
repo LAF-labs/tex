@@ -45,6 +45,7 @@ const PRICES: Record<string, [number, number, number, number]> = {
   'cloudflare/clef-flash': [0.038, 0.038, 0.038, 0],
   'cloudflare/clef': [0.24, 0.24, 0.24, 0],
   'cloudflare/clef-omni': [0.15, 0.15, 0.15, 0],
+  'typesafe/jev-1.14': [0.042, 0.042, 0.042, 0],
 };
 /** 모르는 모델은 비싸게 잡아 상한이 먼저 걸리게 한다. */
 const priceOf = (m: string) => PRICES[m] ?? PRICES[m.replace(/-\d{4}-\d{2}-\d{2}$/, '')] ?? PRICES[m.replace(/-\d{8}$/, '')] ?? [10, 10, 10, 50];

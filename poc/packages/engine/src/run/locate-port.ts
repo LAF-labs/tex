@@ -166,9 +166,12 @@ export class GatewayLocateModel implements LocateModel {
   }
 }
 
-/** 결정 모델 고르기를 받는 기준: 고른 번호의 확률과 모델 신뢰도(맥북 탐침 2026-11-16: 맞을 때 p 0.93~0.99, confidence 0.81~0.99). */
-export const DECISION_MIN_P = 0.8;
-export const DECISION_MIN_CONFIDENCE = 0.6;
+/**
+ * 결정 모델 고르기를 받는 기준(typesafe/jev-1.14, 칸 고르기 평가 2026-11-16): jev는 맞을 때 p 0.52~0.76이고, 모를 때는 다른 번호가 아니라
+ * none을 골랐다(12번 중 틀린 4번이 모두 none). 그래서 none이 아닌 번호를 p 0.5 이상으로 고르면 받는다. 받은 후보는 엔진이 다시 검사한다.
+ */
+export const DECISION_MIN_P = 0.5;
+export const DECISION_MIN_CONFIDENCE = 0.45;
 
 /**
  * 결정 모델 칸(decision_pick, 기본 cloudflare/clef-flash): 위치 찾기의 첫 호출을 생성 모델 대신 선택지 분류로 한다. 같은 역할 요소 목록(가림)의
@@ -244,14 +247,22 @@ export class DecisionFirstLocateModel implements LocateModel {
 export function decisionPickInput(req: LocateRequest): { pool: LocateRequest['listing']; json: string } | 'listing_size' {
   const pool = req.listing.filter((x) => !req.rejected.includes(x.id ? `#${x.id}` : `role=${req.role}[name="${x.name}"]`));
   if (pool.length < 1 || pool.length > DECISION_MAX_CHOICES - 1) return 'listing_size';
+  // 선택지 글을 줄인다(고른 모델에 맞춤, 2026-11-16): 모든 id에 붙는 공통 머리(예: mf_txppWframe_)와 역할 낱말은 state에 한 번만 쓴다.
+  // 같은 정보로 입력 토큰이 약 40% 줄고, 이름이 빈 칸은 id 뒷부분(의미 있는 부분)이 앞에 온다.
+  const ids = pool.map((x) => x.id).filter((x): x is string => !!x);
+  let head = ids.length > 1 ? ids[0]! : '';
+  for (const id of ids) while (head && !id.startsWith(head)) head = head.slice(0, -1);
+  head = head.replace(/[^_-]*$/, '');
+  const short = (id: string | null) => (id ? `#${head && id.startsWith(head) ? id.slice(head.length) : id}` : '');
+  const strip = (sel: string) => (head ? sel.split(`#${head}`).join('#') : sel);
   const state = [
-    `[목표] 스텝 ${req.stepId}: ${req.purpose} · 항목 ${req.describe} · 역할 ${req.role}`,
-    req.was?.length ? `예전 선택자(지금은 못 찾음): ${req.was.join(', ')}` : '',
-    req.rejected.length ? `써 보고 맞지 않은 선택자: ${req.rejected.join(', ')}` : '',
-    '선택지는 아래 같은 역할 요소 목록의 번호다. 목표 칸이 없거나 확신이 없으면 none.',
+    `[목표] 스텝 ${req.stepId}: ${req.purpose} · 항목 ${req.describe}`,
+    req.was?.length ? `예전 선택자(지금은 못 찾음): ${req.was.map(strip).join(', ')}` : '',
+    req.rejected.length ? `써 보고 맞지 않은 선택자: ${req.rejected.map(strip).join(', ')}` : '',
+    `선택지는 같은 역할(${req.role}) 요소의 번호다. 각 선택지는 "접근성 이름" #DOM id${head ? `(공통 머리 ${head} 생략)` : ''}. 목표 칸이 없거나 확신이 없으면 none.`,
   ].filter(Boolean).join('\n').slice(0, DECISION_STATE_MAX_CHARS);
   const choices: Record<string, string> = {};
-  for (const x of pool) choices[String(x.n)] = `${req.role} "${x.name}"${x.id ? ` #${x.id}` : ''}`.slice(0, DECISION_CHOICE_MAX_CHARS);
+  for (const x of pool) choices[String(x.n)] = `"${x.name}" ${short(x.id)}`.trim().slice(0, DECISION_CHOICE_MAX_CHARS);
   choices.none = '목록에 목표 칸이 없다 또는 확신이 없다';
   return { pool, json: JSON.stringify({ state, choices }) };
 }

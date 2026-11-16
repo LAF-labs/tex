@@ -53,8 +53,11 @@ export function loadRequestValidators(): { decide: ValidateFunction; respond: Va
  */
 /** 판정·에이전트 기본 모델: OpenRouter 라우터 typesafe/jev-router(요청마다 모델·추론 강도를 고른다, tools·structured_outputs, 2026-11-13 목록). 공급자 고정 없이 부른다(RespondSpec.unpinned). */
 export const DEFAULT_AGENT_MODEL = 'typesafe/jev-router';
-/** 결정 모델 고르기(decision_pick) 기본 모델: OpenRouter decisions의 Clef Flash(선택지 확률만, 0.5초·입력 100만 토큰당 약 $0.02~0.04, 맥북 탐침 2026-11-16). */
-export const DEFAULT_DECISION_MODEL = 'cloudflare/clef-flash';
+/**
+ * 결정 모델(decision_pick) 기본: OpenRouter decisions의 TypeSafe Jev 고정 ID(별칭은 답이 바뀐다). 2026-11-16 비교(칸 고르기 12번·L1 14장)에서
+ * 0.4초로 고르고, 모를 때 지어내지 않고 none을 골랐다. 문맥 262K라 Clef/Flash의 약 2,000토큰 조용한 절단이 없다. 입력 100만 토큰당 $0.042, 출력 0.
+ */
+export const DEFAULT_DECISION_MODEL = 'typesafe/jev-1.14';
 
 /** decision_pick 메시지 글(JSON {state, choices}). 형식·크기가 어긋나면 null. */
 export function decisionInput(text: string): { state: string; choices: Record<string, string> } | null {

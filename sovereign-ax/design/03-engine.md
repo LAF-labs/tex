@@ -209,6 +209,7 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 | 2 | 기억한 선택자 버리기 | 0원 | 즉시 | 기억한 후보로 실패하면 빼고 패키지 후보로 그 스텝을 다시. 저장소에서는 패키지 후보로 통과했을 때 지운다(늦게 그려진 화면 한 번으로 지우지 않는다) |
 | 3 | **기억한 길 다시 걷기** | 0원 | 걸음당 1초 안팎 | 앞 실행에서 jev 에이전트·화면 보기가 넘긴 걸음(동작·요소 역할·이름·id·값토큰)을 모델 없이 같은 가드로(`run/agent-path.ts`, settings `agentpath.v1.<패키지 id>`). 연속 2번 실패하면 버린다 |
 | 4 | 다시 찾기 | 0원 | 1초 안팎 | 패키지 role·label 후보(css 건너뜀) |
+| 4.5 | **결정 모델 칸 고르기** | 호출당 약 0.15원 | 0.4초 | `decision_pick`(OpenRouter decisions, `typesafe/jev-1.14`). 같은 역할 요소 목록에서 번호 하나를 확률로 고른다. 모르면 none → 5로. 스텝·항목당 1번. **켜기 전 검증 중**(엔진 `decision` 옵션, 기본 끔) |
 | 5 | AI 위치 찾기 | 호출당 약 2~4원 | 호출당 3~10초, 스텝당 2번 | `selector_repair`(respond 모델) |
 | 6 | 체크포인트 재진입 | 0원 | 수십 초(앞 스텝 다시) | 실행당 체크포인트마다 1번 |
 | 7 | 예상 밖 화면 판정 | 약 11원 | 5~50초 | `page_judge`(jev-router). 팝업 닫기·재로그인·칸 다시 찾기·에이전트 |
@@ -221,6 +222,7 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 - **지키는 것**: 역할·이름 규칙은 패키지 값 그대로라 R-A1 동일성 검사·유일 일치·커밋 충돌(R-A2)이 매번 돈다. 이름 규칙을 바꾼 고침(`identity_confirmed`)은 남기지 않는다. 커밋·비밀·비밀번호 칸, 비가역 스텝·게이트 뒤 스텝이 겨누는 항목은 남기지도 다시 걷지도 않는다.
 - **계정 AI 한도**: 5·7·8·9 중 하나가 계정 한도(`gateway.daily_limit`(체험 50원·구독 300원, KST 04시 초기화)·`quota_exceeded`·`subscription_required`)를 받으면 그 실행의 다른 유료 칸은 부르지 않고 바로 사람에게 간다(`RunAiBudget.day`, 저널 `ai.account_limit`). 안전 판정(L1 decide)은 한도와 무관하게 간다.
 - **화면 보기 사진**(B-18의 예외, 대표 결정 2026-11-16): 모든 프레임의 입력 칸(input·textarea·select·편집 가능)과 숫자 두 자 이상·`@`가 든 가장 작은 글 요소를 Playwright mask로 검게 칠한 JPEG 한 장(900KB까지)만 보낸다(`MaskedShot` 브랜드, `driver/reader.ts`만 만든다, lint가 막는다). 금고는 비밀 창이 열렸거나 오염된 탭의 `Page.captureScreenshot`을 그대로 거부한다(그러면 이 칸은 건너뛴다). PC `ModelGuard`·게이트웨이·스키마는 `computer_use`에만, 요청당 한 장, JPEG data URL만 받는다. 게이트웨이는 이 툴셋에 ZDR·공급자 고정을 그대로 건다(`MODEL_VISION`). 남는 위험: 숫자 없는 이름·상호가 글로 보이는 화면(머리말 사용자 이름, 미리보기 창의 상호)은 가려지지 않는다(D11에 둔다).
+- **결정 모델(2026-11-16 비교, 대표 지시 "jev와 clef 중 하나, deepseek보다 싸게")**: 가짜 작성 화면 textbox 55개에서 칸 고르기 12번·L1 판정 14장을 견줬다. jev-1.14 8/12·12/14(틀린 4번 모두 none, 0.4초 고르게), clef-flash 10/12·12/14(상태 글 앞 약 2,000토큰만 읽고 나머지를 조용히 버림), clef 10/12·14/14(없는 번호를 지어냄, 0.5~6초). 엔진이 다시 검사하는 칸이라 '모르면 none'이 '그럴듯한 오답'보다 안전해서 jev-1.14(고정 ID)를 쓴다. 출력 비용이 없어 DeepSeek 위치 찾기(약 0.4원)보다 싸다. 입력은 id 공통 머리를 한 번만 적어 약 40% 줄였다(`decisionPickInput`).
 - **예행 보고서** `run.rehearsal_report`는 칸별 사용 수(`heal`·`replay`·`refind`·`locate`·`reentry`·`judge`·`agent`·`vision`)와 칸 단가로 낸 추정 금액 `est_krw`를 남긴다.
 
 ## 5. 스텝 실행과 커밋 구간

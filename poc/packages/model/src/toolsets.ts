@@ -225,7 +225,7 @@ export const COMPUTER_USE: ToolsetDef = {
 
 /**
  * 결정 모델 고르기(decision_pick, 대표 2026-11-16 "jev·clef 같은 결정 모델"): 가린 화면 목록에서 목표 요소 하나를 고르는 분류.
- * 게이트웨이는 OpenRouter decisions(기본 cloudflare/clef-flash)로 부른다: 생성 없이 선택지 확률만 내서 0.5초·호출당 약 0.01원(맥북 탐침 2026-11-16).
+ * 게이트웨이는 OpenRouter decisions(기본 typesafe/jev-1.14)로 부른다: 생성 없이 선택지 확률만 내서 0.4초·호출당 약 0.15원(맥북 평가 2026-11-16).
  * 메시지는 input_text 하나, 그 글은 JSON `{"state": 설명, "choices": {값: 설명}}`이다. 질문 지시문은 이 툴셋 접두(게이트웨이 정본)이고 PC가 정하지 않는다.
  * 출력은 게이트웨이가 결정 답을 바꾼 `{choice, confidence, p}`(p = 고른 값의 확률).
  */
@@ -247,8 +247,8 @@ export const DECISION_PICK: ToolsetDef = {
     },
   },
 };
-/** 선택지 상한(값 'none' 포함)과 설명·상태 글 길이 상한. clef-flash는 상태 글을 앞 약 2,000토큰만 읽는다. */
-export const DECISION_MAX_CHOICES = 48;
+/** 선택지 상한(값 'none' 포함)과 설명·상태 글 길이 상한. 가짜 작성 화면 textbox가 55개라 64로 둔다(decisions API는 56개를 받았다, 2026-11-16). */
+export const DECISION_MAX_CHOICES = 64;
 export const DECISION_CHOICE_MAX_CHARS = 160;
 export const DECISION_STATE_MAX_CHARS = 4_000;
 

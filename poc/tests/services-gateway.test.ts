@@ -309,6 +309,29 @@ describe('M4-6 게이트웨이: /v1/respond 툴셋·replay 태그·이미지 거
     assert.match(String(r.json.toolsetDigest), /^[0-9a-f]{64}$/);
   });
 
+  it('decision_pick: {state, choices} 글 하나만 받아 결정 모델(기본 typesafe/jev-1.14)에 decisions 본문으로 보내고, 답은 {choice, confidence, p} 한 줄', async () => {
+    const rt = await e.runToken();
+    const text = JSON.stringify({ state: '[목표] 1행 품목 칸', choices: { '22': '"" #gen_0_edtLsatNmTop', '23': '"1행 규격" #gen_0_edtLsatRszeNmTop', none: '없음' } });
+    e.provider.decisionChoice = '22';
+    const r = await e.call('/v1/respond', respondBody(rt, { messages: [{ role: 'user', content: [{ type: 'input_text', text }] }] }, 'decision_pick'));
+    assert.equal(r.status, 200, r.text);
+    const sent = e.provider.responds[0]!;
+    assert.equal(sent.model, 'typesafe/jev-1.14');
+    assert.equal(sent.state, '[목표] 1행 품목 칸');
+    const q = (sent.questions as { pick: { type: string; criteria: Record<string, string> } }).pick;
+    assert.equal(q.type, 'choice');
+    assert.deepEqual(Object.keys(q.criteria), ['22', '23', 'none']);
+    const out = r.json.output as Array<{ item: { content: Array<{ text: string }> } }>;
+    assert.deepEqual(JSON.parse(out[0]!.item.content[0]!.text), { choice: '22', confidence: 0.9, p: 0.95 });
+    // 글이 JSON이 아니거나, 선택지가 하나뿐이거나, 메시지가 둘이면 공급사로 보내지 않고 400
+    for (const messages of [
+      [{ role: 'user', content: [{ type: 'input_text', text: '그냥 글' }] }],
+      [{ role: 'user', content: [{ type: 'input_text', text: JSON.stringify({ state: 's', choices: { none: '없음' } }) }] }],
+      [{ role: 'user', content: [{ type: 'input_text', text }] }, { role: 'user', content: [{ type: 'input_text', text }] }],
+    ]) assert.equal((await e.call('/v1/respond', respondBody(rt, { messages }, 'decision_pick'))).json.error, 'gateway.param_rejected');
+    assert.equal(e.provider.responds.length, 1);
+  });
+
   it('클라이언트의 developer 역할·이미지·input_file·툴 정의·알 수 없는 툴셋은 400', async () => {
     const rt = await e.runToken();
     const bad = [
