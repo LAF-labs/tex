@@ -69,8 +69,20 @@ export const CHAT_AGENT_DONE_TEXT: Partial<Record<ToolStatus, string>> = {
 };
 /** 엔진이 조회 되풀이로 턴을 닫을 때의 문장. 슬롯은 main이 결과 값으로 채운다. */
 export const CHAT_AGENT_LOOKUP_TEXT = (ref: string): string => `{${ref}.count}건이고 합계는 {${ref}.sum.total}이에요. 가장 최근은 {${ref}.first.date} {${ref}.first.counterparty} 건이에요.`;
+/** 승인번호를 물은 조회 되풀이(chat-eval look-approval: 건수·합계만 말하고 물은 승인번호가 빠짐) */
+export const CHAT_AGENT_APPROVAL_TEXT = (ref: string): string => `가장 최근 건({${ref}.first.date})의 승인번호는 {${ref}.first.approvalNo}예요.`;
 /** 이번 턴 같은 카드 판정 키: 거래처와 금액 */
 const cardKey = (c: { counterpartyId: string; amount: DraftAmount }): string => `${c.counterpartyId}:${JSON.stringify(c.amount)}`;
+/**
+ * 토큰을 중괄호로 쓴 것("{AMT_1}", "{NAME_2}")은 대괄호 토큰과 같은 뜻으로 받는다(chat-eval 2026-11-16: 슬롯 문법에 끌려 금액 인자·문장에
+ * 중괄호 토큰을 넣어 턴 전체가 bad_response). 슬롯({r1.first.total})은 소문자 ref라 겹치지 않는다.
+ */
+function braceTokens<T>(v: T): T {
+  const fix = (x: string) => x.replace(/\{([A-Z]+_\d+)\}/g, '[$1]');
+  if (typeof v === 'string') return fix(v) as T;
+  if (v && typeof v === 'object' && !Array.isArray(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, typeof x === 'string' ? fix(x) : x])) as T;
+  return v;
+}
 /** closeOnCards가 닫는 결과 */
 const CARD_CLOSE: ReadonlySet<ToolStatus> = new Set(['card_shown', 'card_updated', 'discarded', 'needs_input']);
 /** 다시 보낼 턴이라 대화록에 남기지 않는 오류 */
@@ -518,19 +530,20 @@ export class ChatAgent {
       }
       turn.replay.push(...r.replay);
       if (!r.toolCalls.length) return this.finish(s, this.checkReply(s, turn, r.output));
+      const tc = r.toolCalls.map((c) => ({ ...c, arguments: braceTokens(c.arguments) }));
       // 다음 호출이 툴셋 턴 상한·replay 상한을 넘으면 도구를 실행하지 않는다(결과를 모델에 돌려줄 수 없다).
       const turns = turn.replay.filter((x) => x.kind === 'model_output' && (x.item.item as { type?: string }).type !== 'reasoning').length;
       const key = (c: ToolCall) => `${c.name}:${JSON.stringify(c.arguments)}`;
       // 같은 턴에 같은 도구를 같은 인자로 또 부르면 모델이 결과를 답으로 옮기지 못하는 것이다(chat-eval 2026-11-16: 공급사에 따라
       // "이번 달 매출"에 sales_summary를 네 번 부름, 같은 카드를 두 장 만듦). 다시 실행하지 않고 엔진이 그 결과로 턴을 닫는다.
-      const repeat = r.toolCalls.find((c) => turn.done.has(key(c)));
+      const repeat = tc.find((c) => turn.done.has(key(c)));
       if (repeat) return this.finish(s, this.settle(turn, turn.done.get(key(repeat))!, false));
-      if (turns >= CHAT_AGENT.maxTurns || turn.replay.length + r.toolCalls.length > REPLAY_MAX) {
+      if (turns >= CHAT_AGENT.maxTurns || turn.replay.length + tc.length > REPLAY_MAX) {
         const last = [...turn.done.values()].at(-1);
         if (last) return this.finish(s, this.settle(turn, last, true));
         throw new ChatError('chat.turn_limit');
       }
-      const parsed = r.toolCalls.map((c) => ({ c, p: this.parseCall(s, turn, c) }));
+      const parsed = tc.map((c) => ({ c, p: this.parseCall(s, turn, c) }));
       turn.pending = parsed.map(({ c, p }) => ({ callId: c.callId, tool: c.name as ChatAgentToolName, key: key(c), call: 'status' in p ? null : p, args: c.arguments as Record<string, unknown>, answer: 'status' in p ? p : null }));
       const calls = parsed.flatMap(({ c, p }) => ('status' in p ? [] : [{ callId: c.callId, ...p }]));
       if (calls.length) return { kind: 'tools', calls };
@@ -557,7 +570,7 @@ export class ChatAgent {
     // 이번 턴에 카드를 만들었으면 조회 요약이 아니라 카드를 말한다(chat-eval issue-two: 두 장을 만들고 기록 조회를 되풀이 → 조회 요약 문장)
     if (!limit && outs.some((o) => o.status === 'card_shown')) return { kind: 'did', text: CHAT_AGENT_DONE_TEXT.card_shown!, show, ask: null, filtered: 'repeat' };
     if (!limit && last.status === 'ok' && last.ref?.startsWith('r') && show.includes(last.ref))
-      return { kind: 'answer', text: CHAT_AGENT_LOOKUP_TEXT(last.ref), show, ask: null, filtered: 'repeat' };
+      return { kind: 'answer', text: /승인\s*번호/.test(turn.user) ? CHAT_AGENT_APPROVAL_TEXT(last.ref) : CHAT_AGENT_LOOKUP_TEXT(last.ref), show, ask: null, filtered: 'repeat' };
     if (show.length) return { kind: 'did', text: (limit ? null : CHAT_AGENT_DONE_TEXT[last.status]) ?? CHAT_AGENT_NUMBER_TEXT, show, ask: null, filtered: 'repeat' };
     // 빈 조회를 되풀이했으면 없다고 말한다(chat-eval look-empty: "한빛식품 발급 기록 있어?"에 invoice_history 두 번 → turn_limit)
     if (!limit && last.status === 'empty') return { kind: 'answer', text: CHAT_AGENT_DONE_TEXT.empty!, show, ask: null, filtered: 'repeat' };
@@ -714,7 +727,7 @@ export class ChatAgent {
     if (k === 'tax_advice') return { kind: k, text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice' };
     // 슬롯 안 공백("{ r1.first.total }")은 뜻이 같으니 붙인다
     // 문장 안의 ref 표기("[ref:r1]", "(보임: r1)")는 화면이 표·카드로 보이므로 지운다(숫자로 걸러지지 않게)
-    const text = o.text
+    const text = braceTokens(o.text)
       .replace(/\s*[[(](?:ref|보임)\s*[:：]?\s*[rd][1-9]\d{0,5}(?:\s*,\s*[rd][1-9]\d{0,5})*[\])]/gu, '')
       .replace(/\s+/g, ' ')
       .trim()
