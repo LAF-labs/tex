@@ -57,6 +57,7 @@ interface AccountRow {
   device_list_version: number;
   device_list_json: string | null;
   last_biz_change_at: number | null;
+  delete_after: number | null;
 }
 
 interface DeviceRow {
@@ -679,7 +680,37 @@ export class AccountService {
       // 계정 설정 화면: 비밀번호 [만들기]/[바꾸기](현재 비밀번호 칸) 가르기와 재인증 필요 여부(사용자 확정 2026-11-09)
       hasPassword: !!(await this.db.one('SELECT 1 AS x FROM pw_creds WHERE account_id = $1', [a.id])),
       reauthUntil: s.authMethod === 'refresh' ? null : s.authAt + PASSWORD.reauthMaxAgeMs,
+      // 탈퇴 유예 중이면 삭제 예정 시각(ms), 아니면 null
+      deleteAfter: a.delete_after == null ? null : Number(a.delete_after),
     };
+  }
+
+  // ---------- 탈퇴(계정 삭제, 7일 유예) ----------
+
+  /**
+   * 탈퇴 요청(D09 §2.2: 계정 세션만 있는 삭제 요청은 7일 유예). 다음 결제가 일어나지 않게 구독을 바로 해지하고,
+   * 계정 이메일로 알린다(직접 한 일이 아니면 유예 중 취소). 이미 요청 중이면 같은 예정 시각을 돌려준다.
+   */
+  async requestAccountDelete(s: Session): Promise<{ deleteAfter: number }> {
+    const after = this.now() + ACCOUNT.deleteGraceDays * MS.D;
+    const n = await this.db.run('UPDATE accounts SET delete_after = $1 WHERE id = $2 AND delete_after IS NULL', [after, s.accountId]);
+    if (!n) {
+      const a = await this.account(s.accountId);
+      return { deleteAfter: Number(a.delete_after) };
+    }
+    const sub = await this.db.one<{ pg_customer_ref: string; status: string }>('SELECT pg_customer_ref, status FROM subscriptions WHERE account_id = $1', [s.accountId]);
+    if (sub && sub.status !== 'canceled') {
+      await this.d.payments.cancel(sub.pg_customer_ref);
+      await this.db.run("UPDATE subscriptions SET status = 'canceled' WHERE account_id = $1", [s.accountId]);
+    }
+    await this.notify(s.accountId, 'account_delete_pending');
+    return { deleteAfter: after };
+  }
+
+  /** 유예 중 탈퇴 취소. 해지한 구독은 되살리지 않는다(다시 구독은 checkout). */
+  async cancelAccountDelete(s: Session): Promise<void> {
+    const n = await this.db.run('UPDATE accounts SET delete_after = NULL WHERE id = $1 AND delete_after IS NOT NULL', [s.accountId]);
+    if (!n) fail('account.not_pending');
   }
 
   async consent(s: Session, version: string): Promise<void> {
@@ -1232,6 +1263,14 @@ export class AccountService {
       await this.db.run("UPDATE devices SET state = 'revoked', delete_after = NULL WHERE device_id = $1", [d.device_id]);
       await this.db.run("INSERT INTO device_events (account_id, role, kind, day) VALUES ($1, $2, 'remove', $3)", [d.account_id, d.role, kstDay(now)]);
       await this.stopped(d.device_id);
+    }
+    // 탈퇴 유예가 끝난 계정: 기기 정지 훅(릴레이 우편함·푸시 토큰) 뒤 계정 행 삭제(나머지 표는 CASCADE). 결제 기록은 PG가 법정 기간 보관한다
+    const gone = await this.db.all<{ id: string }>('SELECT id FROM accounts WHERE delete_after IS NOT NULL AND delete_after <= $1', [now]);
+    for (const a of gone) {
+      const devs = await this.db.all<{ device_id: string }>("SELECT device_id FROM devices WHERE account_id = $1 AND state <> 'revoked'", [a.id]);
+      for (const d of devs) await this.stopped(d.device_id);
+      await this.db.run('DELETE FROM accounts WHERE id = $1 AND delete_after IS NOT NULL AND delete_after <= $2', [a.id, now]);
+      this.d.onEvent?.('account.deleted');
     }
     return { revoked: due.map((d) => d.device_id) };
   }

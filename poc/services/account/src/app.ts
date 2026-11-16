@@ -266,6 +266,13 @@ export function accountRouter(o: AccountAppOpts): Router {
     return json(204, undefined);
   });
 
+  // 탈퇴(7일 유예)
+  r.add('POST', '/v1/account/delete-request', async (ctx) => json(202, await svc.requestAccountDelete(await session(ctx))));
+  r.add('POST', '/v1/account/delete-cancel', async (ctx) => {
+    await svc.cancelAccountDelete(await session(ctx));
+    return json(204, undefined);
+  });
+
   // 구독·결제
   r.add('POST', '/v1/billing/checkout', async (ctx) => json(200, await svc.checkout(await session(ctx))));
   r.add('GET', '/v1/billing/subscription', async (ctx) => json(200, { subscription: await svc.subscription(await session(ctx)) }));

@@ -76,6 +76,8 @@
 |---|---|---|---|
 | `GET /v1/me` | 세션 | — | `200 {email, status, aikPinned, slotsUsed, hasBizProfile, passkeys, subscription, consents[], authMethod}` |
 | `POST /v1/consents` | 세션 | `{version}` | `204` |
+| `POST /v1/account/delete-request` | 세션 | — | `202 {deleteAfter}` | 탈퇴 요청(F-06, 약관 제15조·처리방침 3항). 7일 유예(D09 §2.2 계정 세션만 있는 삭제), 구독이 있으면 바로 해지(PG cancel, 다음 결제 없음), 알림 메일 `account_delete_pending`. 이미 요청 중이면 같은 시각. `GET /v1/me`의 `deleteAfter`로 보인다. 유예가 끝나면 주기 작업이 기기 정지 훅을 부르고 계정 행을 지운다(다른 표는 CASCADE, 이벤트 `account.deleted`) |
+| `POST /v1/account/delete-cancel` | 세션 | — | `204` | 유예 중 취소. 요청이 없으면 `409 account.not_pending`. 해지한 구독은 되살리지 않는다 |
 
 ## 구독(9,900원 한 플랜, ADR-034)
 
