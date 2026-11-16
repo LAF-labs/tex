@@ -547,7 +547,7 @@
    "fieldKey": "taxPeriodStartYear",
    "inputType": "select",
    "frame": "main",
-   "lastVerified": "2026-11-16"
+   "lastVerified": "2026-11-10"
   },
   "hometax.cert.form.periodStartHalf": {
    "candidates": [

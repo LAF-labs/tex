@@ -102,8 +102,9 @@ async function main() {
   await press('[data-task=H-02]');
   check('곧 되는 일(회색 칩)은 고를 수 없고 "지원되면 알려 드릴게요"', await js<boolean>(`document.querySelector('#toast').textContent.includes('지원되면') && document.querySelector('[data-onb=submit]').disabled`));
   await press('[data-task=H-03]');
-  await press('[data-task=H-04]');
-  check('사업자등록증명·납세증명서는 지금 되는 일: 눌러서 고른다', await js<boolean>(`['H-03', 'H-04'].every((id) => document.querySelector('[data-task=' + id + ']').getAttribute('aria-pressed') === 'true') && !document.querySelector('[data-onb=submit]').disabled`));
+  check('사업자등록증명은 지금 되는 일: 눌러서 고른다', await js<boolean>(`document.querySelector('[data-task=H-03]').getAttribute('aria-pressed') === 'true' && !document.querySelector('[data-onb=submit]').disabled`));
+  // 납세증명서(H-04)는 출시판에서 숨긴다(cert-docs hidden): 칩이 없다
+  check('납세증명서 칩은 없다(출시판에서 숨김)', await js<boolean>(`!document.querySelector('[data-task=H-04]')`));
   await press('[data-task=H-01]');
   check('세금계산서를 고르면 O-05 거래처', await reply('[data-onb=submit]', 'counterparties'));
 

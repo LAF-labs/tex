@@ -16,7 +16,7 @@ import { execFile } from 'node:child_process';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, ShareMenu, shell as desktop } from 'electron';
 import { AccountantPack, isPackMonth, packAsk } from './accountant-pack.ts';
 import { ACTION_TEXT, actionText, issueLocalApproval, kstToday, verifyLocalApproval, verifyLocalAttestation, type LocalApproval } from './approval-gate.ts';
-import { CERT_DOCS_SHOWN, certInputsFor, type CertDocDef } from './cert-docs.ts';
+import { CERT_DOCS_SHOWN, certDocByCode, certInputsFor, type CertDocDef } from './cert-docs.ts';
 import { buildBoard, type Board, type BoardInput, type IssuedInvoice } from './board.ts';
 import { BankHost, bankShellHandlers, type PickKind } from './bank-host.ts';
 import { CONSENT_CONFIG, OnboardingFlow, onboardingTodos, type BizFields } from './onboarding.ts';
@@ -1395,7 +1395,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (!(parsed.intent === 'invoice' || parsed.intent === 'cert' || answersPending(parsed, runs))) return null;
     // Chrome이 없으면 초안 카드를 만들기 전에 말한다(U6). [홈택스에서 준비]의 점검(#288)은 그 뒤에 지워진 경우를 막는 마지막 자리로 남는다.
     // 민원증명도 같은 홈택스 로그인(전용 Chrome·공동인증서 프로그램)을 쓴다. 떼지 않는 증명서(cert 없음)는 설치를 시키지 않는다.
-    const needsHometax = parsed.intent !== 'cert' || !!parsed.cert;
+    // 출시판에서 숨긴 서류(cert-docs hidden, H-04)는 떼지 않는 증명서와 같다: 설치 안내 없이 「떼지 못해요」로 답한다
+    const needsHometax = parsed.intent !== 'cert' || (!!parsed.cert && !certDocByCode(parsed.cert)?.hidden);
     const needsChrome = needsHometax && !chromeReady();
     const needsSecurity = needsHometax && securityMissing();
     const missing: SetupItem[] = [...setupMissing(profiles().business), ...(needsChrome ? (['chrome'] as const) : []), ...(needsSecurity ? (['security'] as const) : [])];
@@ -1715,7 +1716,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const local = parseRegex(text, runs.counterparties);
       // 민원증명(cert-docs 표의 이름)은 이 PC의 규칙으로 바로 고른다(모델·게이트웨이를 거치지 않는다). 대화 에이전트 도구에는 증명서가 없다.
       // 기본 용도·제출처로 초안을 만들고, 사용자 전송이면 바로 시작한다(finishReply → autoPrepare). 사람이 누르는 것은 승인 카드의 [승인]뿐이다.
-      if (profile === 'business' && local.cert) return setupGate(local) ?? finishReply(interpret(text, vat, profile, runs, local), 'offline', null, []);
+      // 숨긴 서류(H-04)는 카드 전 검사(setupGate) 없이 interpret의 「떼지 못해요」를 바로 돌려준다(Chrome·보안 프로그램 안내를 내지 않는다)
+      if (profile === 'business' && local.cert) return (certDocByCode(local.cert)?.hidden ? null : setupGate(local)) ?? finishReply(interpret(text, vat, profile, runs, local), 'offline', null, []);
       // 세무사 꾸러미 요청(엔진 L0 규칙 bundle.monthly와 같은 꼴)은 모델 없이 꾸러미 카드로 답한다. 그 달 꾸러미를 바로 만든다(로컬 파일만, 보내는 곳 없음).
       const packFor = profile === 'business' ? packAsk(text, kstToday(Date.now())) : null;
       if (packFor) return { kind: 'pack', pack: await pack.make(packFor), via: 'l0', note: null, sent: [] };

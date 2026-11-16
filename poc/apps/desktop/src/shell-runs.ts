@@ -242,7 +242,7 @@ const BLOCK_CODES = new Set(['portal.blocked', 'policy.cooldown']);
 /** in_doubt(발급됐는지 모름)는 코드와 관계없이 중복 위험을 알린다. 코드별 문구는 이 목록만. */
 const IN_DOUBT_NOTE = new Set(['verify.unknown', 'engine.exit']);
 /** 민원증명 실행에서만 다른 문구(세금계산서·메일·인터넷 연결 안내가 맞지 않는 것). */
-const CERT_NOTE: Record<string, string> = {
+export const CERT_NOTE: Record<string, string> = {
   'package.not_loaded': '이 증명서를 떼는 홈택스 작업 정보가 아직 이 PC에 없어 시작하지 않았어요. 앱을 업데이트하면 뗄 수 있어요. 아무것도 발급하지 않았어요.',
   'save_pdf.failed': '발급은 완료되었어요. 증명서 PDF는 받지 못했어요. 홈택스 민원증명 발급 내역에서 다시 출력할 수 있어요.',
 };

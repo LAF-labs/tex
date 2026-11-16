@@ -81,6 +81,10 @@ interface DocField {
   css?: string;
   /** 캡처로 확인했으면 없음 */
   capture?: string;
+  /** 실화면 접근성 이름이 label과 다를 때(이름 후보·이름 규칙에 쓴다). 5차 예행: H-08 과세기간 시작년도의 이름은 「과세기간」 */
+  screenName?: string;
+  /** 이름 규칙(없으면 screenName ?? label 글자 그대로) */
+  namePattern?: string;
   /** 입력이 아니라 화면이 정한 값(선택지가 하나뿐): select 상수 '*only'(엔진 SELECT_ONLY)로 고르고 입력·대조에서 뺀다 */
   screenOnly?: true;
 }
@@ -126,7 +130,7 @@ export const CERT_DOCS: readonly CertDoc[] = [
     menuCode: '4315010500', formTitle: '부가가치세 과세표준증명원 접수', submit: { name: '신청하기', css: '#mf_txppWframe_btn_apln' },
     // 과세기간은 시작·종료 연도와 1기·2기(간이과세자 2013년 이후분은 1기). 발급희망개업일자는 필수이고 선택지는 개업일 하나다
     fields: [
-      { input: 'periodStartYear', inputDef: { type: 'string', required: true }, fieldKey: 'taxPeriodStartYear', label: '과세기간 시작년도', role: 'combobox', css: '#mf_txppWframe_sbx_txnrmStrtYear' },
+      { input: 'periodStartYear', inputDef: { type: 'string', required: true }, fieldKey: 'taxPeriodStartYear', label: '과세기간 시작년도', screenName: '과세기간', namePattern: '^과세기간( 시작년도)?$', role: 'combobox', css: '#mf_txppWframe_sbx_txnrmStrtYear' },
       { input: 'periodStartHalf', inputDef: { type: 'enum', required: true, values: HALF }, fieldKey: 'taxPeriodStartHalf', label: '과세기간 시작년도 분기', role: 'combobox', css: '#mf_txppWframe_sbx_strtHt' },
       { input: 'periodEndYear', inputDef: { type: 'string', required: true }, fieldKey: 'taxPeriodEndYear', label: '과세기간 종료년도', role: 'combobox', css: '#mf_txppWframe_sbx_txnrmEndYear' },
       { input: 'periodEndHalf', inputDef: { type: 'enum', required: true, values: HALF }, fieldKey: 'taxPeriodEndHalf', label: '과세기간 종료년도 분기', role: 'combobox', css: '#mf_txppWframe_sbx_endHt' },
@@ -218,7 +222,7 @@ function formEntries(doc: CertDoc): Record<string, TplEntry> {
     'hometax.cert.form.copies': box('발급희망수량', 'combobox', 'copies', 'select', '#mf_txppWframe_pfm_UTECAAA0Z002_sbx_cvaAplnRecptIsnHopeQty', undefined, { allowedConstants: [COPIES] }),
   };
   // 화면이 정한 값(screenOnly)은 대조하지 않는다: fieldKey '_ignore'(V-03j 예외). 선택지가 정확히 하나일 때만 고르므로 다른 값이 들어갈 길이 없다
-  for (const f of doc.fields) out[`hometax.cert.form.${f.input}`] = box(f.label, f.role, f.screenOnly ? '_ignore' : f.fieldKey, f.role === 'textbox' ? 'text' : 'select', f.css ?? null, f.capture, f.screenOnly ? { allowedConstants: [SELECT_ONLY], reviewNote: { by: 'cert-docs', reason: `${f.label}: 화면이 정한 값, 선택지가 하나일 때만 고른다(*only)` } } : {});
+  for (const f of doc.fields) out[`hometax.cert.form.${f.input}`] = box(f.screenName ?? f.label, f.role, f.screenOnly ? '_ignore' : f.fieldKey, f.role === 'textbox' ? 'text' : 'select', f.css ?? null, f.capture, { ...(f.namePattern ? { namePattern: f.namePattern } : {}), ...(f.screenOnly ? { allowedConstants: [SELECT_ONLY], reviewNote: { by: 'cert-docs', reason: `${f.label}: 화면이 정한 값, 선택지가 하나일 때만 고른다(*only)` } } : {}) });
   out['hometax.cert.form.issueButton'] = {
     entry: {
       candidates: [...(doc.submit.css ? [{ kind: 'css' as const, value: doc.submit.css }] : []), role('button', doc.submit.name)], expect: { visible: true, enabled: true },
