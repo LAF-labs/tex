@@ -21,7 +21,7 @@ export interface GatewayDecideBody {
 }
 
 export interface GatewayRespondBody {
-  toolset: 'selector_repair' | 'summarize' | 'intent_fill' | 'query_parse' | 'chat_reply' | 'chat_agent' | 'page_judge' | 'browser_agent' | 'computer_use';
+  toolset: 'selector_repair' | 'summarize' | 'intent_fill' | 'query_parse' | 'chat_reply' | 'chat_agent' | 'page_judge' | 'browser_agent' | 'computer_use' | 'chat_phone' | 'chat_digest';
   messages: Array<{ role: 'user'; content: Array<{ type: 'input_text'; text: RedactedText } | { type: 'input_image'; image_url: string }> }>;
   replay?: Array<{ item: object; tag: string } | { type: 'function_call_output'; call_id: string; output: RedactedText }>;
   runToken: string;

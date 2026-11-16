@@ -1,9 +1,12 @@
-// 게이트웨이 HTTP. 데스크톱 기기 범위 토큰(gateway 범위) + DPoP만 받는다. 계정 세션 토큰은 거부(규칙: X-Device-Id는 토큰에서 유도, N-41).
+// 게이트웨이 HTTP. 기기 범위 토큰 + DPoP만 받는다. 계정 세션 토큰은 거부(규칙: X-Device-Id는 토큰에서 유도, N-41).
+// - 데스크톱: gateway 범위. 모든 경로.
+// - 폰(ADR-047, PC가 꺼져 있을 때 폰 대화): chat 범위. 대화 범위 실행 토큰, 폰 대화 툴셋의 respond, 사용량 조회만. 그 밖은 403 account.scope_denied.
+//   역할과 범위는 짝으로 본다(데스크톱+gateway, 폰+chat). 폰 토큰에 gateway가, 데스크톱 토큰에 chat만 있어도 통과하지 않는다.
 import { DailySalt, DeviceAuth, Router, fail, json, validator, type Ctx, type DeviceDirectory, type TokenVerifier } from '@sax/svc-shared';
 import { CodefUnavailable, type CodefTokenSource } from './codef.ts';
 import { AGENT_TOOLSETS } from '@sax/model';
 import { GATEWAY } from './constants.ts';
-import type { GatewayService } from './service.ts';
+import { toolsetAllowed, type GatewayService } from './service.ts';
 
 const MIN = 60_000;
 const id64 = { type: 'string', pattern: '^[A-Za-z0-9_.-]{8,64}$' };
@@ -52,10 +55,18 @@ export function gatewayRouter(o: GatewayAppOpts): Router {
     if (logAid) ctx.logAid = idSalt.hash(c.acc);
     return c;
   };
+  /** 대화 경로(run-tokens·respond·usage): 데스크톱(gateway 범위) 또는 폰(chat 범위). 폰이 무엇을 부를 수 있는지는 경로마다 다시 본다. */
+  const chatter = async (ctx: Ctx) => {
+    const c = await auth.check(ctx, ['gateway', 'chat'], 'gateway.unauthorized', 'gateway.device_suspended');
+    if (!c.scp.includes(c.role === 'desktop' ? 'gateway' : 'chat')) fail('account.scope_denied');
+    ctx.logAid = idSalt.hash(c.acc);
+    return c;
+  };
 
   r.add('POST', '/v1/run-tokens', async (ctx) => {
-    const c = await device(ctx);
+    const c = await chatter(ctx);
     const b = V.runToken(ctx.body);
+    if (c.role === 'mobile' && !('chatSessionId' in b)) fail('account.scope_denied');
     await limit('rt', c.dev, GATEWAY.runTokensPerDeviceHour, 60 * MIN);
     return json(200, await svc.issueRunToken(c, b));
   });
@@ -73,8 +84,10 @@ export function gatewayRouter(o: GatewayAppOpts): Router {
     'POST',
     '/v1/respond',
     async (ctx) => {
-      const c = await device(ctx);
+      const c = await chatter(ctx);
       const toolset = (ctx.body as { toolset?: unknown } | null)?.toolset;
+      // 역할 밖 툴셋은 한도를 세기 전에 거른다(폰이 남의 툴셋 이름으로 계정의 분당 한도를 태우지 못하게)
+      if (!toolsetAllowed(c.role, toolset)) fail('account.scope_denied');
       if ((AGENT_TOOLSETS as readonly unknown[]).includes(toolset)) await limit('agent', c.acc, GATEWAY.agentPerMinute, MIN);
       else await limit('l2', c.acc, GATEWAY.l2PerMinute, MIN);
       return json(200, await svc.respond(c, ctx.body));
@@ -82,7 +95,7 @@ export function gatewayRouter(o: GatewayAppOpts): Router {
     { maxBodyBytes: 1024 * 1024 },
   );
   // 오늘 AI 사용 금액과 한도(체험·유료, KST 새벽 4시 초기화). 앱의 사용량 표시
-  r.add('GET', '/v1/usage', async (ctx) => json(200, await svc.dailyUsage(await device(ctx))));
+  r.add('GET', '/v1/usage', async (ctx) => json(200, await svc.dailyUsage(await chatter(ctx))));
   r.add('POST', '/v1/biz/status', async (ctx) => {
     const c = await device(ctx, false);
     const b = V.biz(ctx.body);

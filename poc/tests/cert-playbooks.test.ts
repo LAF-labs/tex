@@ -45,7 +45,8 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
       const keys = new Set(Object.keys(p.selectors.entries));
       assert.deepEqual([...keys].filter((k) => !base.has(k)).sort(), [...docKeys(CERT_DOCS[i + 1]!)].sort());
       for (const k of base) {
-        if (['hometax.cert.menu.doc', 'hometax.cert.form.root', 'hometax.cert.form.issueButton'].includes(k)) continue;
+        // 양식 제목(hometax.cert.form.title)은 서류마다 다르다(제목 자체가 시험 이름의 「양식 제목」)
+        if (['hometax.cert.menu.doc', 'hometax.cert.form.root', 'hometax.cert.form.title', 'hometax.cert.form.issueButton'].includes(k)) continue;
         assert.deepEqual(p.selectors.entries[k], h03!.selectors.entries[k], k);
       }
     }
@@ -76,8 +77,10 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
       assert.deepEqual((p.playbook.inputs as Record<string, { values?: string[]; default?: string }>).certDoc, { type: 'enum', values: [d.name], default: d.name });
       assert.deepEqual((p.playbook.inputs as Record<string, { default?: string }>).rrnDisclosure!.default, '비공개');
       assert.equal(s('s32').docType, d.docType);
-      // 발급 안 됨이면 홈 체크포인트로 돌아가 다시 채우고 새 승인을 받는다
-      assert.equal((s('s30').on as { not_committed: string }).not_committed, 's10');
+      // 발급 안 됨이면 게이트를 지배하는 체크포인트(s10a)로 돌아가 다시 채우고 새 승인을 받는다
+      assert.equal((s('s30').on as { not_committed: string }).not_committed, 's10a');
+      // 체크포인트 첫 통과는 이동하지 않는다: 로그인 뒤 화면(홈)에서 먼저 주소로 간다
+      assert.deepEqual([s('s10').type, s('s10a').type], ['goto', 'checkpoint']);
     }
   });
 
@@ -96,17 +99,21 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
     const s10 = (p: PackageFiles) => stepsOf(p).find((x) => x.id === 's10')!;
     assert.match(s10(h03!).url as string, /tm3lIdx=4315010800$/);
     assert.match(s10(h08!).url as string, /tm3lIdx=4315010500$/);
-    assert.equal(s10(h09!).url, 'https://hometax.go.kr/', 'H-09는 메뉴 코드를 몰라 메뉴로 들어간다');
+    // H-09 메뉴 코드는 실화면 예행(2026-11-15)으로 알았다: 이제 직접 주소로 들어간다
+    assert.match(s10(h09!).url as string, /tm3lIdx=4315011800$/);
     const btn = (p: PackageFiles) => p.selectors.entries['hometax.cert.form.issueButton']!;
     assert.deepEqual([btn(h03!).namePattern, btn(h03!).candidates[0]], ['^작성완료$', { kind: 'css', value: '#mf_txppWframe_btn_wrtCmpl' }]);
     assert.deepEqual([btn(h08!).namePattern, btn(h08!).candidates[0]], ['^신청하기$', { kind: 'css', value: '#mf_txppWframe_btn_apln' }]);
     const inputs = h03!.playbook.inputs as Record<string, { values?: string[] }>;
     assert.ok(inputs.purpose!.values!.includes('금융기관제출용') && inputs.submitTo!.values!.includes('금융기관'));
     assert.deepEqual(h03!.selectors.entries['hometax.cert.form.receiveMethod']!.allowedConstants, ['인터넷발급(프린터출력)']);
-    for (const k of ['periodStartYear', 'periodStartHalf', 'periodEndYear', 'periodEndHalf', 'openDate']) assert.ok(k in (h08!.playbook.inputs as object), k);
+    for (const k of ['periodStartYear', 'periodStartHalf', 'periodEndYear', 'periodEndHalf']) assert.ok(k in (h08!.playbook.inputs as object), k);
+    // 발급희망개업일자는 화면이 정한 값(선택지가 개업일 하나): 입력이 아니고 '*only'로 고른다(실화면 4차 예행)
+    assert.ok(!('openDate' in (h08!.playbook.inputs as object)));
+    assert.equal(stepsOf(h08!).find((x) => x.type === 'select' && x.target === 'hometax.cert.form.openDate')?.option, '*only');
     assert.equal(h08!.selectors.entries['hometax.cert.form.openDate']!.candidates[0]!.kind === 'css' && (h08!.selectors.entries['hometax.cert.form.openDate']!.candidates[0] as { value: string }).value, '#mf_txppWframe_sbx_bmanOfbDt');
-    // 발급희망개업일자(날짜형)는 따로 입력 대조(V-03j′)
-    assert.deepEqual(stepsOf(h08!).find((x) => x.id === 's18a')!.cond, { readbackEquals: { fieldKey: 'bizOpenDate', ref: '$inputs.openDate' } });
+    // 화면이 정한 값이라 입력 대조(s18a)가 없다
+    assert.equal(stepsOf(h08!).find((x) => x.id === 's18a'), undefined);
     for (const p of [h03!, h08!, h09!]) {
       const x = stepsOf(p).find((s) => s.id === 's10x')!;
       assert.deepEqual([x.code, x.onFail], ['portal.personal_login_required', { retry: 0, then: 'abort' }]);
@@ -114,9 +121,13 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
     }
   });
 
-  it('캡처 목록(CAPTURE-hometax-cert.md)은 모르는 셀렉터마다 한 줄이고, 발급 버튼·로그인 수단·조회 표가 들어 있다', () => {
+  it('캡처 목록(CAPTURE-hometax-cert.md)은 아직 모르는 셀렉터마다 한 줄이고, 발급 버튼·차단 알림이 들어 있다', () => {
     const md = certOutputs().get('CAPTURE-hometax-cert.md')!;
-    for (const k of ['hometax.cert.form.issueButton', 'hometax.login.simpleAuthButton', 'hometax.cert.form.docName', 'hometax.cert.alert', 'hometax.cert.form.fiscalYear']) assert.ok(md.includes(`\`${k}\``), k);
+    for (const k of ['hometax.cert.form.issueButton', 'hometax.cert.alert']) assert.ok(md.includes(`\`${k}\``), k);
+    // 실화면으로 확인한 것은 빠진다: 로그인 구간은 H-01 원본(s0~s7g), 서류명·과세년도는 3·5차 예행(2026-11-15·16)
+    for (const k of ['hometax.login.simpleAuthButton', 'hometax.cert.form.docName', 'hometax.cert.form.fiscalYear']) assert.ok(!md.includes(`\`${k}\``), k);
+    const rows = md.split('\n').filter((l) => /^\| H-0\d \| `/.test(l));
+    assert.equal(new Set(rows).size, rows.length, '한 셀렉터·메모는 한 줄');
   });
 });
 

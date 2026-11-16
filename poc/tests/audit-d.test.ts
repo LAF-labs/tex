@@ -483,6 +483,7 @@ describe('audit-d: D13 셸 문구·이벤트 연결', () => {
     assert.ok(views.includes("btn('다시 시도', () => act.again(run), 'sx-btn-primary', { 'data-act': 'retry' })"));
     // [다시 시도]는 main을 부르지 않는다(새 IPC 없음): 같은 요청을 입력창에 채우기만 한다.
     const shell = fs.readFileSync(path.join(root, 'apps/desktop/static/shell/shell.js'), 'utf8');
-    assert.match(shell, /again: \(run\) => \{\n\s+state\.vat = run\.vat;[^\n]*\n\s+fillComposer\(/);
+    // 세금계산서는 입력창 채우기만(발급은 사람이 다시 보낸다). 민원증명(PR #272)은 같은 서류·값으로 새 카드를 바로 준비하고 승인 카드가 다시 뜬다
+    assert.match(shell, /again: \(run\) => \{\n(?:\s+\/\/[^\n]*\n)?\s+if \(run\.cert\) return act\.restart\(run\.id\);\n\s+state\.vat = run\.vat;[^\n]*\n\s+fillComposer\(/);
   });
 });

@@ -35,12 +35,15 @@ describe('H-04 정적 검증', () => {
     assert.deepEqual(h04().playbook.effects, ['issue_document']);
   });
 
-  it('로그인·인증서 비밀은 금고 경로만: sign(then human:secret), secret_fill·비밀 칸·fill 상수 비밀 없음', () => {
+  it('로그인·인증서 비밀은 금고 경로만: human secret(금고 비밀 창), secret_fill·fill 상수 비밀 없음, 비밀 칸은 인증서 창의 cert_password 하나', () => {
+    // 로그인 구간은 H-01 2.3.7 원본(s0~s7g)을 쓴다: 인증서 비밀번호는 human kind secret(금고가 기억한 값을 넣거나 앱 입력 창으로 받음)
     const p = h04();
-    const sign = step(p, 's4');
-    assert.deepEqual(sign, { id: 's4', type: 'sign', method: '$profile.signMethod', then: ['human:secret'] });
+    const secret = step(p, 's4g') as { type: string; kind?: string; target?: string };
+    assert.deepEqual([secret.type, secret.kind, secret.target], ['human', 'secret', 'hometax.cert.password']);
     assert.equal(p.playbook.steps.filter((s) => s.type === 'secret_fill').length, 0, '보안카드는 민원증명 로그인에 없다(02 §5.1)');
-    assert.equal(Object.values(p.selectors.entries).filter((e) => e.secretKind || e.inputType === 'password').length, 0, '비밀 칸은 포털 인증서 창(금고 비밀 창 b)에 있고 이 사전에 없다');
+    assert.equal(p.playbook.steps.filter((s) => s.type === 'fill' && typeof (s as { value?: unknown }).value === 'string' && !(s as { value: string }).value.startsWith('$')).length, 0, 'fill 상수 없음');
+    const secrets = Object.entries(p.selectors.entries).filter(([, e]) => e.secretKind || e.inputType === 'password');
+    assert.deepEqual(secrets.map(([k, e]) => [k, e.secretKind, e.frame]), [['hometax.cert.password', 'cert_password', 'iframe#dscert']], '비밀 칸은 포털 인증서 창(iframe) 안 cert_password 하나');
   });
 
   it('주민등록번호는 공개하지 않는다(최소 노출 상수, V-21), 사업자 대조는 $profile.bizNo(V-12: business만)', () => {
@@ -113,11 +116,12 @@ describe('H-04 로더(D03 §3.1)', () => {
 
 // ---- 가짜 화면 리플레이 ----
 
-/** 사전 항목마다 요소 하나: id = 사전 키, 역할·이름 = 첫 role 후보, 부모 = landmark. */
+/** 사전 항목마다 요소 하나: id = 사전 키, 역할·이름 = 첫 role 후보, css = css 후보, 부모 = landmark. 실화면 맞춤으로 css 후보만 남은 항목(양식 틀 #mf_txppWframe 등)도 찾는다. */
 function screenOf(dict: SelectorDict): FEl[] {
   return Object.entries(dict.entries).map(([k, e]) => {
     const role = e.candidates.find((c) => c.kind === 'role') as { role: string; name: string } | undefined;
-    return { id: k, role: e.role, name: role?.name ?? '', ...(e.landmark !== k ? { parent: e.landmark } : {}) };
+    const css = e.candidates.filter((c) => c.kind === 'css').map((c) => (c as { value: string }).value);
+    return { id: k, role: e.role, name: role?.name ?? '', ...(css.length ? { css } : {}), ...(e.landmark !== k ? { parent: e.landmark } : {}) };
   });
 }
 
@@ -188,7 +192,8 @@ describe('H-04 리플레이(가짜 화면): 양식 → readback → 대조 → �
   it('용도·제출처를 고르고 주민번호 비공개로 두면 게이트에 닿고, 카드는 되읽은 7칸이다(요약 4칸 certDoc·certPurpose·certSubmitTo·rrnDisclosure 포함)', async () => {
     const r = h04Run();
     assert.deepEqual(await r.it.run('s10'), { t: 'abort', at: 's20', code: null });
-    assert.deepEqual(r.events, ['s10', 's11', 's11a', 's11b', 's12', 's13', 's14', 's19', 's19a', 's19b', 's19c', 's19d', 's19f', 's20']);
+    // s11t: 양식 제목 확인(실화면 맞춤에서 더함, 다른 양식이면 사람에게)
+    assert.deepEqual(r.events, ['s10', 's11', 's11a', 's11b', 's11t', 's12', 's13', 's14', 's19a', 's19b', 's19c', 's19d', 's19f', 's20']);
     assert.deepEqual(r.card(), { supplierBizNo: '1068114550', applicantName: '주식회사 보내는곳', certDoc: '납세증명서(국세완납증명)', certPurpose: '대금수령', certSubmitTo: '금융기관', rrnDisclosure: '공개안함', copies: '1' });
     assert.ok(!r.act.log.some((l) => l.startsWith('click hometax.cert.taxpayment.form.applyButton')), '게이트 전에 신청하기를 누르지 않는다');
   });

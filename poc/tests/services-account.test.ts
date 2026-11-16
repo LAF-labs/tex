@@ -381,7 +381,7 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     assert.equal((await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', htu, jcs(c), d.V, now) }, body: { cert: c } })).status, 429);
   });
 
-  it('폰: 등록 신청(대기) → PC가 AIK 서명 목록에 넣으면 즉시 활성 → 폰 토큰은 relay·push 범위만', async () => {
+  it('폰: 등록 신청(대기) → PC가 AIK 서명 목록에 넣으면 즉시 활성 → 폰 토큰은 relay·push·chat 범위만(gateway 없음)', async () => {
     const s = await login(e, 'phone@example.com');
     const pc = await desktop(e, s);
     const phone = device('mobile', e.clock.now());
@@ -400,7 +400,10 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     assert.equal(up.status, 200, up.text);
     const tok = await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c), phone.V, e.clock.now()) }, body: { cert: c } });
     assert.equal(tok.status, 200, tok.text);
-    assert.deepEqual(tok.json.scopes, ['relay', 'push']);
+    assert.deepEqual(tok.json.scopes, ['relay', 'push', 'chat']);
+    // 폰은 gateway 범위를 달라고 할 수 없다(역할 범위 밖)
+    const gw = await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c), phone.V, e.clock.now()) }, body: { cert: c, scopes: ['gateway'] } });
+    assert.equal(gw.json.error, 'request.param_rejected');
     // 폰 토큰으로 데스크톱 범위(slots·devlist) 호출 불가
     const t = tok.json.token as string;
     const slot = await e.req('POST', '/v1/slots', { headers: { authorization: `DPoP ${t}`, dpop: dpop('POST', ORIGIN + '/v1/slots', t, phone.V, e.clock.now()) } });
@@ -717,6 +720,17 @@ describe('유료 기능 권리(체험 1달): 체험이 끝나고 구독이 없�
       return e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c), d.V, e.clock.now()) }, body: scopes ? { cert: c, scopes } : { cert: c } });
     };
     assert.ok(((await tok()).json.scopes as string[]).includes('gateway'));
+    // 같은 계정의 폰: 체험 중에는 chat 범위와 등급(tier)이 실린다
+    const phone = device('mobile', e.clock.now());
+    assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: phone.id, role: 'mobile', platform: 'ios', name: '폰', Sx: phone.S.b64, Vx: phone.V.b64 } })).status, 201);
+    assert.equal((await call('PUT', '/v1/device-list', { deviceList: { listVersion: 2, entries: [entry(aik, d, 1), entry(aik, phone, 2)], revoked: [] } })).status, 200);
+    const ptok = async (scopes?: string[]) => {
+      const c = cert(aik, phone, e.clock.now() + 90 * D);
+      return e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c), phone.V, e.clock.now()) }, body: scopes ? { cert: c, scopes } : { cert: c } });
+    };
+    const trialTok = await ptok();
+    assert.deepEqual(trialTok.json.scopes, ['relay', 'push', 'chat']);
+    assert.equal(JSON.parse(Buffer.from((trialTok.json.token as string).split('.')[1]!, 'base64url').toString('utf8')).tier, 'trial');
     e.clock.advance(32 * D);
     const t = await tok();
     assert.equal(t.status, 200);
@@ -724,6 +738,11 @@ describe('유료 기능 권리(체험 1달): 체험이 끝나고 구독이 없�
     assert.ok((t.json.scopes as string[]).includes('relay'));
     const g = await tok(['gateway']);
     assert.deepEqual([g.status, g.json.error], [402, 'account.subscription_required']);
+    // 폰 대화(chat 범위, ADR-047)도 유료 기능이다: 체험 뒤에는 빠지고 relay·push는 남는다. chat만 달라면 402
+    const pt = await ptok();
+    assert.deepEqual(pt.json.scopes, ['relay', 'push']);
+    const pg = await ptok(['chat']);
+    assert.deepEqual([pg.status, pg.json.error], [402, 'account.subscription_required']);
     // 모의 PG로 구독 활성
     const s2 = await login(e, 'gate@example.com');
     await e.req('POST', '/v1/billing/checkout', { headers: bearer(s2) });
@@ -732,6 +751,7 @@ describe('유료 기능 권리(체험 1달): 체험이 끝나고 구독이 없�
     await e.req('POST', '/v1/billing/webhook', { raw, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(raw)) } });
     assert.equal((await tok(['gateway'])).status, 200);
     assert.equal((await call('GET', '/v1/billing/entitlement')).json.state, 'paid');
+    assert.equal((await ptok(['chat'])).status, 200);
     assert.equal((await call('POST', '/v1/billing/cancel')).status, 204);
   });
 });

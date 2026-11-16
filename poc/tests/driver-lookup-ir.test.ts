@@ -211,8 +211,12 @@ describe('IrLookupPort(서명 조회 패키지 IR, 금고 중계 + Chrome)', () 
       ['navigationOnly 아닌 click', (f) => {
         delete (f.selectors.entries['hometax.lookup.searchButton'] as { navigationOnly?: boolean }).navigationOnly;
       }],
-      ['searchbox·combobox 밖 fill', (f) => {
+      ['searchbox·combobox·textbox(inputType text) 밖 fill', (f) => {
+        f.selectors.entries['hometax.lookup.searchKey']!.role = 'button';
+      }],
+      ['inputType text 아닌 textbox fill', (f) => {
         f.selectors.entries['hometax.lookup.searchKey']!.role = 'textbox';
+        f.selectors.entries['hometax.lookup.searchKey']!.inputType = 'other';
       }],
       ['submit 스텝', (f) => {
         f.playbook.steps.splice(2, 0, { id: 'sx', type: 'submit', target: 'hometax.lookup.searchButton' } as unknown as Step);

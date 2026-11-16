@@ -8,7 +8,8 @@
 | `packages/engine` | 금고 중계 위 Playwright, DB 단독 소유(DataService), 진위확인, 사업자등록증 파서, L0 규칙·판정 조율(`l0/`) | D01 §2, D07 §1.3, D13 S-L0 |
 | `packages/db` | 암호화 SQLite(sqlcipher), D07 DDL, 프로필·거래처 저장소 | D07 §1·§2 |
 | `packages/net` | 엔진의 단일 송신 모듈(egress), 모델 송신 BYOK 로컬 검사 4종 | D01 §3, D04 §8 |
-| `packages/redaction` | 마스킹 최소판, `RedactedText` 브랜드 | D06 §4·§8 |
+| `packages/redaction` | 마스킹 최소판, `RedactedText` 브랜드. 순수 TS(Node 전용 API 없음): PC 엔진과 폰 앱이 같은 소스를 쓴다 | D06 §4·§8, ADR-047 |
+| `packages/chat-core` | 대화 코어. PC 엔진과 폰이 같이 쓰는 표·대화 경로 가림·답 검사, 폰 대화 루프(컨텍스트 조립·접기, 사본으로 답하는 도구, 기록·합치기), 폰 → 게이트웨이 클라이언트. 순수 TS, 폰 앱에는 고정 사본으로 들어간다 | ADR-047, D04 §4, D06 §8 |
 | `packages/model` | L1·L2 계약, 번들 8종 + BV 검증기, 임계값 프로필, OpenAI Decisions·Responses 어댑터, Upstage 스텁 | D04, ADR-003·015 |
 | `packages/platform` | `%LOCALAPPDATA%\SovereignAX` 경로·ACL·로그·포트 추상화 | D07 §1.1 |
 | `apps/desktop` | Electron main(utilityProcess 배선·환경 변수 허용 목록, 기동 자기 점검 `harden.ts`, 승인 바, docparse 샌드박스, 금고 요청으로만 여는 비밀 입력 창), 셸(`shell*.ts`, `static/shell/`, 제품 진입점 `shell.ts`·시연 진입점 `demo-shell.ts`), e2e·측정(`apps/desktop/e2e`) | D01 §2.1, ADR-014·021, 08 |

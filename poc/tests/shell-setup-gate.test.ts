@@ -5,8 +5,8 @@ import fs from 'node:fs';
 import { describe, it } from 'node:test';
 import { MockOnboardingPorts } from '../apps/desktop/src/onboarding-mock.ts';
 import { OnboardingFlow, onboardingTodos, parseOnbState, type OnbAnswer, type OnbProfile } from '../apps/desktop/src/onboarding.ts';
-import { SETUP_LABEL, setupMissing, setupText } from '../apps/desktop/src/shell-model.ts';
-import { NOTE, UNKNOWN_STOP_NOTE } from '../apps/desktop/src/shell-runs.ts';
+import { CERT_OTHER_TEXT, interpret, parseRegex, SETUP_LABEL, setupMissing, setupText } from '../apps/desktop/src/shell-model.ts';
+import { CERT_NOTE, NOTE, ShellRuns, UNKNOWN_STOP_NOTE } from '../apps/desktop/src/shell-runs.ts';
 
 const NOW = () => new Date('2026-11-10T01:00:00.000Z');
 const walk = async (f: OnboardingFlow, as: OnbAnswer[]) => {
@@ -56,12 +56,13 @@ describe('카드 전 검사: 무엇이 빠졌는지', () => {
     assert.match(src, /const chromeReady = opts\.chromeReady \?\? \(\(\) => (?:embedded \|\| )?findInstalledChrome\(\) !== null\);/);
     assert.match(src, /new ShellRuns\(host, \{ [^}]*chromeReady, /);
     assert.match(src, /profile === 'business' && !chromeReady\(\) \? \[\{ id: 'chrome', label: SETUP_LABEL\.chrome, view: 'chrome' as const \}\]/);
-    // 증명서 요청에는 Chrome을 요구하지 않는다(이 빌드는 증명서를 못 뗀다, #291). 세금계산서·되묻기 답만.
-    assert.match(src, /const needsChrome = parsed\.intent !== 'cert' && !chromeReady\(\);/);
+    // 민원증명(PR #272)도 같은 홈택스 로그인이라 Chrome·보안 프로그램이 필요하다. 떼지 않는 증명서(cert 없음)·숨긴 서류(hidden)는 설치를 시키지 않는다.
+    assert.match(src, /const needsHometax = parsed\.intent !== 'cert' \|\| \(!!parsed\.cert && !certDocByCode\(parsed\.cert\)\?\.hidden\);/);
+    assert.match(src, /const needsChrome = needsHometax && !chromeReady\(\);/);
     assert.match(src, /const missing: SetupItem\[\] = \[\.\.\.setupMissing\(profiles\(\)\.business\), \.\.\.\(needsChrome \? \(\['chrome'\] as const\) : \[\]\), \.\.\.\(needsSecurity \? \(\['security'\] as const\) : \[\]\)\];/);
     // 보안 프로그램(B4): 공동인증서 사업자만, 판의 할 일·첫 발급 요청이 같은 점검
     assert.match(src, /const securityMissing = \(\) => profile === 'business' && profiles\(\)\.business\.auth === SIGN_LABEL\.cert && securityBlocks\(securityNow\(\)\);/);
-    assert.match(src, /const needsSecurity = parsed\.intent !== 'cert' && securityMissing\(\);/);
+    assert.match(src, /const needsSecurity = needsHometax && securityMissing\(\);/);
     const check = src.slice(src.indexOf("'chrome.check': async"), src.indexOf("'onboarding.reopen': async"));
     assert.ok(check.includes('const ready = chromeReady();') && check.includes('pushBoard();') && !/host\.|needGesture|openExternal/.test(check), check);
     const shell = fs.readFileSync(new URL('../apps/desktop/static/shell/shell.js', import.meta.url), 'utf8');
@@ -72,7 +73,9 @@ describe('카드 전 검사: 무엇이 빠졌는지', () => {
   it('배선: 세 경로(제품·시연 모델·시연 정규식) 모두 카드(interpret) 전에 setupGate, 렌더러는 kind setup → [사업자 등록 마치기] → onboarding.reopen', () => {
     const src = fs.readFileSync(new URL('../apps/desktop/src/shell-app.ts', import.meta.url), 'utf8');
     const send = src.slice(src.indexOf("'request.send': async"), src.indexOf("'draft.update':"));
-    assert.equal((send.match(/setupGate\(/g) ?? []).length, 3);
+    // 네 번째: 민원증명 이름이면 모델·게이트웨이 없이 바로(PR #272). 숨긴 서류는 setupGate를 거치지 않는다
+    assert.equal((send.match(/setupGate\(/g) ?? []).length, 4);
+    assert.match(send, /if \(profile === 'business' && local\.cert\) return \(certDocByCode\(local\.cert\)\?\.hidden \? null : setupGate\(local\)\) \?\? finishReply\(interpret\(/);
     assert.match(send, /const gate = setupGate\(to\.parsed\);\s*if \(gate\) return \{ \.\.\.gate, via, note: to\.note, sent \};\s*return finishReply\(interpret\(/);
     assert.match(src, /if \(!\(parsed\.intent === 'invoice' \|\| parsed\.intent === 'cert' \|\| answersPending\(parsed, runs\)\)\) return null;/);
     const shell = fs.readFileSync(new URL('../apps/desktop/static/shell/shell.js', import.meta.url), 'utf8');
@@ -85,8 +88,10 @@ describe('카드 전 검사: 무엇이 빠졌는지', () => {
     const shell = fs.readFileSync(new URL('../apps/desktop/static/shell/shell.js', import.meta.url), 'utf8');
     const views = fs.readFileSync(new URL('../apps/desktop/static/shell/shell-views.js', import.meta.url), 'utf8');
     assert.equal((shell.match(/'run\.prepare'/g) ?? []).length, 1);
-    assert.equal((views.match(/act\.prepare\(/g) ?? []).length, 1);
+    // 세금계산서 [홈택스에서 준비]와 민원증명 [홈택스에서 떼기](PR #272) 두 자리뿐
+    assert.equal((views.match(/act\.prepare\(/g) ?? []).length, 2);
     assert.match(views, /btn\('홈택스에서 준비', \(\) => act\.prepare\(run\.id\)/);
+    assert.match(views, /btn\('홈택스에서 떼기', \(\) => act\.prepare\(run\.id\)/);
     const src = fs.readFileSync(new URL('../apps/desktop/src/shell-app.ts', import.meta.url), 'utf8');
     assert.match(src, /'run\.prepare': async \(p\) => \{\s*needGesture\(2_000\);/);
   });
@@ -165,9 +170,23 @@ describe('멈춤 문구에 내부 코드가 보이지 않는다', () => {
     const missing = [...codes].filter((c) => !NOTE[c]);
     assert.deepEqual(missing, [], '표에 없는 엔진 코드');
     for (const [k, v] of Object.entries(NOTE)) assert.ok(!/[a-z]+[._][a-z]/.test(v!), `${k}: 문구에 코드 모양이 있다 → ${v}`);
+    // 민원증명 실행 전용 문구(CERT_NOTE)도 같은 검사
+    assert.ok(Object.keys(CERT_NOTE).length > 0);
+    for (const [k, v] of Object.entries(CERT_NOTE)) assert.ok(!/[a-z]+[._][a-z]/.test(v), `${k}: 민원증명 문구에 코드 모양이 있다 → ${v}`);
     assert.ok(!/[a-z_]+\.[a-z_]+|\(/.test(UNKNOWN_STOP_NOTE));
     const src = fs.readFileSync(new URL('../apps/desktop/src/shell-runs.ts', import.meta.url), 'utf8');
-    assert.match(src, /const note = \(code\?: string\) => \(code && NOTE\[code\]\) \|\| UNKNOWN_STOP_NOTE;/);
+    // 모르는 코드는 UNKNOWN_STOP_NOTE(코드 글자를 화면에 내지 않는다). 민원증명 실행이면 CERT_NOTE를 먼저 본다
+    assert.match(src, /const note = \(code\?: string, r\?: RunView\) => \(code && \(\(r\?\.cert && CERT_NOTE\[code\]\) \|\| NOTE\[code\]\)\) \|\| UNKNOWN_STOP_NOTE;/);
     assert.doesNotMatch(src, /멈췄어요\(\$\{code\}\)/);
+  });
+});
+
+describe('출시판에서 숨긴 민원증명(cert-docs hidden, H-04)', () => {
+  it('「납세증명서 떼 줘」는 증명서 의도로 읽되 카드를 만들지 않고 「떼지 못해요」로 답한다(설치 안내·실행 없음)', () => {
+    const runs = new ShellRuns({ control: async () => ({}), on: () => {} } as never, { counterparties: () => [], auth: () => '' });
+    const parsed = parseRegex('납세증명서 떼 줘', []);
+    assert.deepEqual([parsed.intent, parsed.cert], ['cert', 'H-04']);
+    assert.deepEqual(interpret('납세증명서 떼 줘', null, 'business', runs, parsed), { kind: 'say', text: CERT_OTHER_TEXT });
+    assert.ok(!CERT_OTHER_TEXT.includes('납세증명서'), '「바로 뗄 수 있어요」 목록에 숨긴 서류가 없다');
   });
 });
