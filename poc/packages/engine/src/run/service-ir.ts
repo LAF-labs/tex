@@ -19,7 +19,8 @@ import { targetDiagnosis } from '../core/diagnose.ts';
 import { FallbackChain } from '../core/fallback.ts';
 import { runLocalDict } from '../core/locate.ts';
 import { HealMemory, healableKeys } from '../core/heal-memory.ts';
-import { DbHealStore } from './heal-store.ts';
+import { DbHealStore, DbJsonStore, agentPathKey } from './heal-store.ts';
+import { AgentPathMemory, type AgentPathFile } from './agent-path.ts';
 import { GatewayLocateModel, type LocateResponder } from './locate-port.ts';
 import { GatewayAgentModel, GatewayJudgeModel } from './agent-port.ts';
 import { BrowserAgent } from './browser-agent.ts';
@@ -442,6 +443,7 @@ export class IrRun {
     // 고친 선택자 기억(0원 칸): 앞 실행이 고친 선택자를 이 실행 사본 사전의 첫 후보로 둔다. 실패하면 폴백 0단계가 버린다.
     const heal = i.heal === false ? null : new HealMemory({ store: new DbHealStore(i.db, files.manifest.id), pkg: pkg.selectors, healable: healableKeys(ir, pkg.selectors, analysis.irreversible), now: () => clock.now(), journal: i.journal });
     const seeded = heal?.seed(dict) ?? new Map<string, string>();
+    const paths = i.heal === false ? null : new AgentPathMemory(new DbJsonStore<AgentPathFile>(i.db, agentPathKey(files.manifest.id)), { now: () => clock.now(), journal: i.journal });
     const page = i.page;
     const reader = new PlaywrightPageReader(page);
 
@@ -458,6 +460,7 @@ export class IrRun {
     const raw = new PlaywrightActuator({ page, reader, afterNavigation: () => enforcer.settled(), onError: (op, why) => i.journal('actuator.why', { stepId: curStep ?? '', op, ...why }), onBoxClick: (r) => i.journal('actuator.box_click', { stepId: curStep ?? '', ...r }) });
     // 예상 밖 화면 판정(아래에서 만든다). 대화상자 훅과 스텝 경계가 먼저 생겨 이 자리에 둔다.
     let pageJudge: PageJudge | null = null;
+    let agent: BrowserAgent | null = null;
     let curStep: string | null = null;
     const act = new GuardedActuator({
       driver: raw, reader, dict, domains, policy: enforcer,
@@ -512,13 +515,13 @@ export class IrRun {
     if (i.ir.locate) {
       const port = { responder: i.ir.locate, redactor, runToken, journal: i.journal, budget: pageAiBudget };
       const screen = { page: reader, dict, act, frame: 'main', journal: i.journal };
-      const agent = new BrowserAgent({ ...screen, ir, scope, irreversible: analysis.irreversible, model: new GatewayAgentModel(port) });
+      agent = new BrowserAgent({ ...screen, ir, scope, irreversible: analysis.irreversible, model: new GatewayAgentModel(port), ...(paths ? { paths, pkg: pkg.selectors } : {}) });
       pageJudge = new PageJudge({
         ...screen, ir, irreversible: analysis.irreversible, model: new GatewayJudgeModel(port), agent, ...(locate ? { locate } : {}),
         lastNotice: () => act.notice, currentStep: () => curStep,
       });
     }
-    const fallback = new FallbackChain({ ir, dict, page: reader, irreversible: analysis.irreversible, ...(locate ? { locate } : {}), ...(pageJudge ? { judge: pageJudge } : {}), ...(heal ? { memory: heal, seeded } : {}), journal: i.journal });
+    const fallback = new FallbackChain({ ir, dict, page: reader, irreversible: analysis.irreversible, ...(locate ? { locate } : {}), ...(pageJudge ? { judge: pageJudge } : {}), ...(heal ? { memory: heal, seeded } : {}), ...(agent && paths ? { replay: agent } : {}), journal: i.journal });
     const book = new VerifyBook();
     const vpol = i.portal.verify;
     const verifyDeps: VerifyDeps = {
@@ -618,7 +621,11 @@ export class IrRun {
       },
       interp: { retries: { stepMax: 3, backoff: 'equal_jitter', baseMs: 800, capMs: 10_000 }, retryFloorMs: 0, escalate: (s, cause) => fallback.eligible(s, cause), stop: this.stopAbort.signal },
       // [중지]면 폴백(AI 위치 찾기·판정·에이전트 모델 호출)을 기다리지 않는다: false를 돌려주면 조율기가 미뤄 둔 중지를 바로 적용한다.
-      recover: (stop) => this.orStop(fallback.recover(stop.at, stop.cause ?? stop.code), false),
+      recover: (stop) => {
+        // 다시 걸은(또는 에이전트가 방금 걸은) 길로 돌아간 확인 스텝이 재시도까지 실패했다: 그 길은 남기지 않는다.
+        paths?.failed(stop.at, stop.cause ?? stop.code ?? 'step.failed');
+        return this.orStop(fallback.recover(stop.at, stop.cause ?? stop.code), false);
+      },
       // Running 진입 확인(D03 §2)·정지 분기의 Chrome 닫기(hardStop).
       allowed: () => !this.denial(),
       hardStop: () => this.denial()?.hardStop ?? false,
@@ -641,7 +648,10 @@ export class IrRun {
         if (name === 'step.started' && d.type === 'fill') this.formStarted = true;
         i.trace?.({ name, stepId: d.stepId, type: d.type, ...(d.code ? { code: d.code } : {}) });
         if (name === 'step.finished' && d.type === 'checkpoint' && !d.code) enforcer.reached();
-        if (name === 'step.finished' && !d.code) fallback.confirmed(d.stepId);
+        if (name === 'step.finished' && !d.code) {
+          fallback.confirmed(d.stepId);
+          paths?.confirmed(d.stepId);
+        }
         // 인증서 비밀번호를 넣은 뒤 로그인 확인(첫 기다림 스텝 결과)을 금고에 알린다: 통과면 그때 기억, 실패면 버리고 지움
         if (name === 'step.finished' && secretPort) void secretPort.stepFinished(d.type, !!d.code, d.stepId);
       },

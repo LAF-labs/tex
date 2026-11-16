@@ -33,6 +33,12 @@ export interface StuckJudge {
   onStuck(stepId: string, cause: string): Promise<{ from: string } | false>;
 }
 
+/** 기억한 에이전트 길 다시 걷기(run/browser-agent.ts BrowserAgent.replay, 0원). */
+export interface StuckReplay {
+  replayable(stepId: string): boolean;
+  replay(stepId: string): Promise<string | null>;
+}
+
 /** 판정을 사슬보다 먼저 부를 실패(덮은 팝업 레이어가 누름을 막는 꼴). */
 const JUDGE_FIRST = new Set(['step.timeout', 'step.not_clickable']);
 
@@ -44,6 +50,8 @@ export interface FallbackDeps {
   irreversible: ReadonlySet<string>;
   locate?: LocateEnv;
   judge?: StuckJudge;
+  /** 기억한 에이전트 길(0원). 판정·위치 찾기보다 먼저, 스텝마다 한 번. */
+  replay?: StuckReplay;
   /** 고친 선택자 기억. 있으면 폴백이 고친 후보가 스텝을 통과시킬 때 남긴다. */
   memory?: HealMemory;
   /** 실행 시작 때 기억으로 첫 후보를 둔 항목(HealMemory.seed 결과). */
@@ -61,6 +69,7 @@ interface StepState {
   via: string | null;
   tried: string[];
   judgedFirst: boolean;
+  replayed: boolean;
 }
 
 export class FallbackChain {
@@ -78,7 +87,11 @@ export class FallbackChain {
 
   /** 실행기 escalate: 이 실패를 사람에게 넘기기 전에 사슬로 보낼지. */
   eligible(s: Step, cause: string): boolean {
-    return this.healEligible(s) || this.chainEligible(s, cause) || !!this.d.judge?.eligible(s, cause);
+    return this.healEligible(s) || this.replayEligible(s) || this.chainEligible(s, cause) || !!this.d.judge?.eligible(s, cause);
+  }
+
+  private replayEligible(s: Step): boolean {
+    return !!this.d.replay && !this.state(s.id).replayed && this.d.replay.replayable(s.id);
   }
 
   /** 기억으로 첫 후보를 둔 항목을 겨누는 되돌릴 수 있는 스텝(어떤 실패든 기억을 먼저 버려 본다). */
@@ -124,6 +137,14 @@ export class FallbackChain {
       st.tried.push('heal');
       this.d.journal('fallback.heal_dropped', { stepId, key: hk, selector: sel, code: cause });
       return { from: stepId };
+    }
+    // 0.5단계: 같은 스텝을 앞 실행에서 에이전트가 넘겼던 길이 있으면 모델 없이 다시 걷는다(스텝마다 한 번).
+    if (this.replayEligible(s)) {
+      st.replayed = true;
+      st.tried.push('replay');
+      const resume = await this.d.replay!.replay(stepId);
+      this.d.journal('fallback.replay', { stepId, ok: resume !== null, code: cause });
+      if (resume) return { from: resume };
     }
     const judge = this.d.judge?.eligible(s, cause) ? this.d.judge : null;
     if (judge && s.type === 'click' && JUDGE_FIRST.has(cause) && !st.judgedFirst) {
@@ -200,7 +221,7 @@ export class FallbackChain {
 
   private state(stepId: string): StepState {
     let st = this.per.get(stepId);
-    if (!st) this.per.set(stepId, (st = { refind: false, calls: { n: 0 }, rejected: [], added: null, via: null, tried: [], judgedFirst: false }));
+    if (!st) this.per.set(stepId, (st = { refind: false, calls: { n: 0 }, rejected: [], added: null, via: null, tried: [], judgedFirst: false, replayed: false }));
     return st;
   }
 }

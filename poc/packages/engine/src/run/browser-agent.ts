@@ -14,6 +14,7 @@ import { nameMatches, resolveTarget } from '../core/resolve.ts';
 import { isAbsent, isRef, readRef, scalar, type RunScope } from '../core/scope.ts';
 import type { PlaybookIR, SelectorDict, SelectorEntry, Step } from '../core/types.ts';
 import type { AgentModel, ScreenItem } from './agent-port.ts';
+import { planSignature, type AgentPathMemory, type PathAction } from './agent-path.ts';
 
 const KEY = '__agent__';
 const PLAIN = new Set(['fill', 'click', 'select', 'press']);
@@ -75,15 +76,68 @@ export interface BrowserAgentDeps extends ScreenDeps {
   scope: RunScope;
   irreversible: ReadonlySet<string>;
   model: AgentModel;
+  /** 에이전트 길 기억(0원 다시 걷기). 없으면 남기지도 다시 걷지도 않는다. */
+  paths?: AgentPathMemory;
+  /** 서명 패키지 사전(길 지문용). 없으면 dict. */
+  pkg?: SelectorDict;
 }
 
 export class BrowserAgent {
   private readonly d: BrowserAgentDeps;
   private readonly info: ReturnType<typeof flatten>['info'];
 
+  private readonly firstGate: number;
+
   constructor(d: BrowserAgentDeps) {
     this.d = d;
     this.info = flatten(d.ir.steps).info;
+    this.firstGate = Math.min(...[...this.info.values()].filter((v) => v.step.type === 'gate').map((v) => v.order), Number.POSITIVE_INFINITY);
+  }
+
+  private sig(p: { goal: GoalItem[]; resume: string }): string {
+    return planSignature(p.goal, p.resume, this.d.pkg ?? this.d.dict);
+  }
+
+  /** 기억한 길로 다시 걸을 수 있는 스텝인가(첫 게이트 앞, 묶음이 있고, 지문이 같은 길이 있다). */
+  replayable(stepId: string): boolean {
+    const v = this.info.get(stepId);
+    if (!this.d.paths?.has(stepId) || !v || v.order >= this.firstGate || this.d.irreversible.has(stepId)) return false;
+    const p = this.plan(stepId);
+    return !!p && !!this.d.paths.get(stepId, this.sig(p));
+  }
+
+  /**
+   * 기억한 길을 모델 없이 다시 걷는다. 걸음마다 지금 화면 목록에서 같은 요소(DOM id가 있으면 id·역할, 없으면 역할·정확한 이름, 유일)를 찾아
+   * run과 같은 exec(가드 그대로)로 한다. 하나라도 안 되면 길을 버리고 null(원래 사슬로). 되면 돌아갈 스텝 id.
+   */
+  async replay(stepId: string): Promise<string | null> {
+    const p = this.plan(stepId);
+    const path = p && this.d.paths ? this.d.paths.get(stepId, this.sig(p)) : null;
+    if (!p || !path || !this.d.paths) return null;
+    this.d.journal('agentpath.replay', { stepId, actions: path.actions.length, resume: path.resume });
+    for (const [i, a] of path.actions.entries()) {
+      let index: number | null = null;
+      let els: InteractiveElement[] = [];
+      if (a.el) {
+        ({ els } = await screenList(this.d));
+        const want = a.el;
+        const hits = els.map((x, n) => ({ x, n })).filter(({ x }) => x.role === want.role && (want.id ? x.id === want.id : !x.id && normalizeName(x.name) === normalizeName(want.name)));
+        if (hits.length !== 1) return this.replayFailed(stepId, i + 1, hits.length ? 'agentpath.ambiguous' : 'agentpath.no_element');
+        index = hits[0]!.n + 1;
+      }
+      const code = await this.exec({ action: a.action, index, token: a.token, option: a.option, step: a.step }, els, p.goal);
+      this.d.journal('agentpath.action', { stepId, n: i + 1, action: a.action, result: code });
+      if (code !== 'ok') return this.replayFailed(stepId, i + 1, code);
+    }
+    this.d.paths.replaying(stepId, path.resume);
+    this.d.journal('agentpath.replayed', { stepId, actions: path.actions.length, resume: path.resume });
+    return path.resume;
+  }
+
+  private replayFailed(stepId: string, n: number, code: string): null {
+    this.d.journal('agentpath.replay_failed', { stepId, n, code });
+    this.d.paths?.forget(stepId, code);
+    return null;
   }
 
   /** 막힌 스텝부터 이어지는 "그냥 입력" 묶음과 돌아갈 스텝. 묶음이 비면 null. */
@@ -132,6 +186,7 @@ export class BrowserAgent {
     }
     this.d.journal('agent.start', { stepId, steps: p.goal.map((g) => g.stepId).join(','), resume: p.resume });
     const history: string[] = [];
+    const walked: PathAction[] = [];
     const refused = new Map<string, number>();
     for (let n = 1; n <= AGENT_MAX_ACTIONS; n++) {
       const { items, els } = await screenList(this.d);
@@ -142,6 +197,7 @@ export class BrowserAgent {
       }
       if (a.action === 'done') {
         this.d.journal('agent.end', { stepId, result: 'done', actions: n - 1, resume: p.resume });
+        this.d.paths?.propose(stepId, { sig: this.sig(p), resume: p.resume, actions: walked });
         return p.resume;
       }
       if (a.action === 'fail') {
@@ -149,6 +205,10 @@ export class BrowserAgent {
         return null;
       }
       const code = await this.exec(a, els, p.goal);
+      if (code === 'ok' && (a.action === 'click' || a.action === 'type' || a.action === 'select' || a.action === 'wait' || a.action === 'scroll')) {
+        const x = a.index !== null ? els[a.index - 1] : undefined;
+        walked.push({ action: a.action, el: x ? { role: x.role, name: normalizeName(x.name), id: x.id } : null, token: a.token, option: null, step: a.step });
+      }
       const sig = `${a.action}:${a.index ?? ''}:${a.token ?? ''}`;
       history.push(`${n}. ${a.action}${a.index !== null ? ` ${a.index}` : ''}${a.token ? ` ${a.token}` : ''}${a.option ? ` "${a.option}"` : ''} → ${code}`);
       this.d.journal('agent.action', { stepId, n, action: a.action, ...(a.step ? { goalStep: a.step } : {}), result: code });

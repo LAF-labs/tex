@@ -4,3 +4,5 @@ export * from './decide.ts';
 export * from './card.ts';
 export * from './ledger-port.ts';
 export * from './service-ir.ts';
+export * from './agent-path.ts';
+export * from './heal-store.ts';
