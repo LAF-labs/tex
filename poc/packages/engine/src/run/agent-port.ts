@@ -2,9 +2,9 @@
 // - 모델에는 마스킹된 글만 간다(D04 C-10): 스텝 의도(코드 이름), 상호작용 요소 목록(역할·접근성 이름·상태, 값 없음), 대화상자 문구를 Redactor로 가린다.
 // - 화면 글(요소 목록·대화상자 문구)은 따로 가려 Redactor가 <<<SCREEN_DATA … SCREEN_DATA>>>로 감싼다(본문 속 구분자는 이스케이프된다). 지시 글과 다른 content 조각이다.
 // - 출력은 스키마 검사(어댑터) 뒤 여기서 다시 좁힌다: 번호는 목록 안, 키는 준 목록 안, 값토큰은 준 목록 안. 아니면 받지 않는다(null).
-import { BROWSER_AGENT, PAGE_JUDGE, type AgentActionName, type JudgePrescription, type RedactedText, type RespondResult, type RunToken, type ToolsetDef } from '@sax/model';
+import { BROWSER_AGENT, COMPUTER_USE, PAGE_JUDGE, type AgentActionName, type ComputerActionName, type MaskedShot, type JudgePrescription, type RedactedText, type RespondResult, type RunToken, type ToolsetDef } from '@sax/model';
 import type { Redactor } from '@sax/redaction';
-import { budgetSpent, type LocateResponder, type RunAiBudget } from './locate-port.ts';
+import { budgetBlock, noteBudget, type LocateResponder, type RunAiBudget } from './locate-port.ts';
 
 export interface ScreenItem {
   n: number;
@@ -52,6 +52,24 @@ export interface AgentAction {
   step: string | null;
 }
 
+export interface VisionRequest {
+  goal: Array<{ stepId: string; what: string; token: string | null }>;
+  history: string[];
+  shot: { url: MaskedShot; width: number; height: number };
+}
+
+export interface VisionAction {
+  action: ComputerActionName;
+  x: number | null;
+  y: number | null;
+  token: string | null;
+  step: string | null;
+}
+
+export interface VisionModel {
+  next(req: VisionRequest): Promise<VisionAction | null>;
+}
+
 export interface JudgeModel {
   judge(req: JudgeRequest): Promise<Judgement | null>;
 }
@@ -73,15 +91,19 @@ const line = (x: ScreenItem) => `${x.n}. ${x.role} "${x.name}"${x.id ? ` #${x.id
 type Part = { text: string; data?: true };
 const screenPart = (items: ScreenItem[]): Part => ({ text: items.map(line).join('\n') || '(상호작용 요소 없음)', data: true });
 
+/** 판정·에이전트 공통 조각 + 화면 보기의 가린 사진 한 장(맨 끝). */
+type Shot = { shot: MaskedShot };
+
 /** 판정·에이전트 공통: 가려서 한 번 부르고 구조화 출력을 돌려준다. 실패면 null(저널에 원인 코드만). */
-async function callOnce(i: AgentPortInput, t: ToolsetDef, parts: Part[], tag: Record<string, string | number | boolean>): Promise<unknown> {
-  if (i.budget?.spent) {
-    i.journal(`${t.id}.unavailable`, { ...tag, cause: 'budget_spent' });
+async function callOnce(i: AgentPortInput, t: ToolsetDef, parts: Array<Part | Shot>, tag: Record<string, string | number | boolean>): Promise<unknown> {
+  const blocked = budgetBlock(i.budget);
+  if (blocked) {
+    i.journal(`${t.id}.unavailable`, { ...tag, cause: blocked });
     return null;
   }
-  let content: Array<{ type: 'input_text'; text: RedactedText }>;
+  let content: Array<{ type: 'input_text'; text: RedactedText } | { type: 'input_image'; image_url: MaskedShot }>;
   try {
-    content = parts.map((p) => ({ type: 'input_text' as const, text: i.redactor.apply(p.text, { frame: p.data ? 'screen' : 'none' }).redacted }));
+    content = parts.map((p) => ('shot' in p ? { type: 'input_image' as const, image_url: p.shot } : { type: 'input_text' as const, text: i.redactor.apply(p.text, { frame: p.data ? 'screen' : 'none' }).redacted }));
   } catch {
     i.journal(`${t.id}.unavailable`, { ...tag, cause: 'redaction' });
     return null;
@@ -101,7 +123,7 @@ async function callOnce(i: AgentPortInput, t: ToolsetDef, parts: Part[], tag: Re
     return null;
   }
   if (r.status !== 'completed' || r.toolCalls.length) {
-    if (i.budget && budgetSpent(r.reason)) i.budget.spent = true;
+    noteBudget(i.budget, r.reason, i.journal);
     i.journal(`${t.id}.unavailable`, { ...tag, cause: r.reason ?? r.status });
     return null;
   }
@@ -164,5 +186,32 @@ export class GatewayAgentModel implements AgentModel {
     if (o.action === 'type' && (!o.token || !tokens.has(o.token))) return null;
     if (o.action === 'select' && !o.option) return null;
     return { action: o.action, index: o.index, token: o.action === 'type' ? o.token : null, option: o.action === 'select' ? o.option : null, step: o.step };
+  }
+}
+
+/** 화면 보기(computer_use) 한 걸음: 목표·지난 동작(가린 글) + 가린 사진 한 장. 출력은 좌표가 사진 안, 값토큰이 목표 안일 때만 받는다. */
+export class GatewayVisionModel implements VisionModel {
+  private readonly i: AgentPortInput;
+  constructor(i: AgentPortInput) {
+    this.i = i;
+  }
+
+  async next(req: VisionRequest): Promise<VisionAction | null> {
+    const parts: Array<Part | Shot> = [
+      { text: ['[목표] 아래 스텝을 이 화면에서 한다. 값토큰은 그대로 쓴다.', ...req.goal.map((g) => `${g.stepId} ${g.what}${g.token ? ` ${g.token}` : ''}`), '[지난 동작]', ...(req.history.length ? req.history : ['(없음)'])].join('\n') },
+      { text: `[사진] 가로 ${req.shot.width} 세로 ${req.shot.height} 픽셀. 입력 칸·숫자·메일 글은 검게 가렸다.` },
+      { shot: req.shot.url },
+    ];
+    const o = (await callOnce(this.i, COMPUTER_USE, parts, { steps: req.goal.length })) as (VisionAction & { risk_flags?: string[] }) | null;
+    if (!o) return null;
+    if (o.risk_flags?.length) {
+      this.i.journal('computer_use.refused', { flags: o.risk_flags.join(',') });
+      return { action: 'fail', x: null, y: null, token: null, step: null };
+    }
+    const tokens = new Set(req.goal.map((g) => g.token).filter((x): x is string => !!x));
+    const pointed = o.action === 'click' || o.action === 'type';
+    if (pointed && (o.x === null || o.y === null || o.x < 0 || o.y < 0 || o.x >= req.shot.width || o.y >= req.shot.height)) return null;
+    if (o.action === 'type' && (!o.token || !tokens.has(o.token))) return null;
+    return { action: o.action, x: pointed ? o.x : null, y: pointed ? o.y : null, token: o.action === 'type' ? o.token : null, step: o.step };
   }
 }

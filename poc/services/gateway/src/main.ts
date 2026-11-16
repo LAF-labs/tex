@@ -119,7 +119,7 @@ export async function buildGateway(env: NodeJS.ProcessEnv = process.env, deps: G
     sidKey: key32(env.SAFETY_ID_KEY, 'SAFETY_ID_KEY'),
     tagKey: key32(env.REPLAY_TAG_KEY, 'REPLAY_TAG_KEY'),
     scopeKey: key32(env.RUN_SCOPE_KEY, 'RUN_SCOPE_KEY'),
-    models: { decide: env.MODEL_DECIDE ?? fail('MODEL_DECIDE'), respond: env.MODEL_RESPOND ?? fail('MODEL_RESPOND'), ...(env.MODEL_AGENT ? { agent: env.MODEL_AGENT } : {}) },
+    models: { decide: env.MODEL_DECIDE ?? fail('MODEL_DECIDE'), respond: env.MODEL_RESPOND ?? fail('MODEL_RESPOND'), ...(env.MODEL_AGENT ? { agent: env.MODEL_AGENT } : {}), ...(env.MODEL_VISION ? { vision: env.MODEL_VISION } : {}) },
     monthlyTokens: env.GW_MONTHLY_TOKENS === undefined ? undefined : positiveInt(env.GW_MONTHLY_TOKENS, 'GW_MONTHLY_TOKENS'),
     daily: {
       trialKrw: env.GW_DAILY_KRW_TRIAL === undefined ? DAILY.trialKrw : positiveInt(env.GW_DAILY_KRW_TRIAL, 'GW_DAILY_KRW_TRIAL'),

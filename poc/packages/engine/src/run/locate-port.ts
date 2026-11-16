@@ -41,9 +41,27 @@ export interface GatewayLocateInput {
 /** 실행당 예산 다 씀 표시(실행마다, 위치 찾기 하나·판정과 에이전트 하나). */
 export interface RunAiBudget {
   spent: boolean;
+  /**
+   * 계정의 오늘 AI 한도(체험 50원·구독 300원, KST 새벽 4시 초기화, PR #384 gateway.daily_limit)·월 한도·구독 없음. 위치 찾기·판정·에이전트·화면 보기가
+   * 한 표시를 같이 본다: 한 번 막히면 이 실행의 유료 칸은 모두 부르지 않고 바로 사람에게 간다(헛된 429와 대기를 줄인다).
+   */
+  day?: { spent: boolean };
 }
 /** 응답 사유가 실행 예산 소진인가(게이트웨이 429 gateway.run_budget_exceeded, 어댑터 사유 'gateway:run_budget_exceeded'). */
 export const budgetSpent = (reason: string | undefined): boolean => !!reason && /run_budget_exceeded|budget_exceeded/.test(reason);
+/** 응답 사유가 계정 한도(오늘·이번 달·구독)인가. */
+export const accountLimited = (reason: string | undefined): boolean => !!reason && /daily_limit|quota_exceeded|subscription_required/.test(reason);
+/** 이 응답 사유로 예산 표시를 바꾼다. 계정 한도면 한 번 저널에 남긴다. */
+export function noteBudget(b: RunAiBudget | undefined, reason: string | undefined, journal: (type: string, payload?: Record<string, string | number | boolean>) => void): void {
+  if (!b) return;
+  if (budgetSpent(reason)) b.spent = true;
+  if (b.day && accountLimited(reason) && !b.day.spent) {
+    b.day.spent = true;
+    journal('ai.account_limit', { reason: String(reason).replace(/^gateway:/, '').slice(0, 40) });
+  }
+}
+/** 부르지 않을 때의 사유(없으면 불러도 된다). */
+export const budgetBlock = (b: RunAiBudget | undefined): string | null => (b?.day?.spent ? 'account_limit' : b?.spent ? 'budget_spent' : null);
 
 export class GatewayLocateModel implements LocateModel {
   private readonly i: GatewayLocateInput;
@@ -82,8 +100,9 @@ export class GatewayLocateModel implements LocateModel {
       this.i.journal('locate.unavailable', { stepId: req.stepId, cause: 'redaction' });
       return null;
     }
-    if (this.i.budget?.spent) {
-      this.i.journal('locate.unavailable', { stepId: req.stepId, cause: 'budget_spent' });
+    const blocked = budgetBlock(this.i.budget);
+    if (blocked) {
+      this.i.journal('locate.unavailable', { stepId: req.stepId, cause: blocked });
       return null;
     }
     const t = locateToolset();
@@ -104,7 +123,7 @@ export class GatewayLocateModel implements LocateModel {
         return null;
       }
       if (r.status !== 'completed') {
-        if (this.i.budget && budgetSpent(r.reason)) this.i.budget.spent = true;
+        noteBudget(this.i.budget, r.reason, this.i.journal);
         this.i.journal('locate.unavailable', { stepId: req.stepId, cause: r.reason ?? r.status });
         return null;
       }

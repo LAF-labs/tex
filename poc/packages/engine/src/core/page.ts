@@ -3,6 +3,7 @@
 // - Actuator: 페이지를 바꾸는 모든 동작의 단일 통로. 정책 집행(지연·카운터·쿨다운·상한), R-A1 재확인, R-A2 커밋 충돌, 커밋 그림자 검사는
 //   GuardedActuator(actuator.ts, M2-4)가 원시 드라이버를 감싸 한다. 핸들러는 동작 전에 resolveTarget으로 R-A1을 한 번 확인하고,
 //   GuardedActuator가 동작 직전에 다시 확인한다.
+import type { MaskedShot } from '@sax/model';
 import type { Candidate, PressStep, SelectorEntry } from './types.ts';
 
 /** 페이지 위 요소 하나를 가리키는 불투명 값. 안은 포트 구현만 안다. */
@@ -79,6 +80,13 @@ export interface PageReader {
    * 비밀번호 칸은 넣지 않는다. 구현이 없으면 판정·에이전트를 쓰지 않는다.
    */
   listInteractive?(frame: string): Promise<InteractiveElement[]>;
+  /**
+   * 화면 보기(computer_use, 대표 결정 2026-11-16): 지금 뷰포트의 가린 JPEG. 모든 프레임의 입력 칸(input·textarea·select·편집 가능)과
+   * 숫자 두 자 이상·@가 든 글을 검게 칠한다. 금고가 거부하거나(비밀 창 열림·오염) 못 찍으면 null. 구현이 없으면 화면 보기를 쓰지 않는다.
+   */
+  maskedShot?(): Promise<{ url: MaskedShot; width: number; height: number } | null>;
+  /** 요소 상자(CSS 픽셀, 뷰포트 기준, maskedShot과 같은 좌표). 못 읽으면 null. */
+  box?(el: ElementRef): Promise<{ x: number; y: number; width: number; height: number } | null>;
   /** 핸드오프 진단(core/diagnose.ts): 요소 하나의 DOM 모양. 입력값은 읽지 않는다. 구현이 없으면 진단을 남기지 않는다. */
   describe?(el: ElementRef): Promise<ElementShape | null>;
   /** 핸드오프 진단: within(없으면 프레임 전체) 안의 입력·단추·링크·label 모양, 앞에서부터 max개. 입력값은 읽지 않는다. */
