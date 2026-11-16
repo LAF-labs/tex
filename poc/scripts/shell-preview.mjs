@@ -33,7 +33,9 @@ app.on('window-all-closed', () => {});
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** 장면이 바꾸는 하네스 상태(보관함 서류를 목록에 넣을지, 승인 바 페이지 HTML). */
-const S = { withVault: false, barHtml: '', onb: null, onbDelay: 0, g24Empty: false };
+const S = { withVault: false, barHtml: '', onb: null, onbDelay: 0, g24Empty: false, bank: 'full', mode: {}, emptyBoot: false };
+/** 불러오는 중·오류 장면: S.mode[메서드] = 'hang'(답이 오지 않음) | 'fail'(거절) */
+const HANG = () => new Promise(() => {});
 const store = new MockStore();
 const vaultDoc = {
   id: 'v1', name: '납세증명서(국세)', kind: '직접 추가', docName: '납세증명서(국세)', profile: 'business', issuedOn: dayOffset(-2), expiresOn: dayOffset(28), source: '직접 추가',
@@ -72,8 +74,46 @@ const boardNow = () =>
     cardFetchedOn: MOCK_SETTINGS.cardFetchedOn,
   });
 
+// 받을 돈(D-09) 목업: 엔진 BankService.overview·detail과 같은 모양
+const recv = (id, cpName, writtenOn, total, received, st, o = {}) => {
+  const dueOn = o.dueOn ?? null;
+  const dueIn = dueOn ? Math.round((Date.parse(`${dueOn}T00:00:00Z`) - Date.parse(`${dayOffset(0)}T00:00:00Z`)) / 86_400_000) : null;
+  return { id, counterpartyId: o.cp ?? null, cpName, cpBizNo: null, item: o.item ?? '경영 컨설팅', approvalTail: o.tail ?? '00000123', writtenOn, total, received, remaining: total - received, dueOn, promisedOn: o.promisedOn ?? null, dueIn, overdue: (st === 'unpaid' || st === 'partial') && dueIn !== null && dueIn < 0, status: st, via: st === 'received' ? (o.via ?? 'auto') : null, offAccount: o.off ?? null, sources: ['ledger'], excludedReason: null };
+};
+const bankAccounts = [
+  { id: 'a1', bank: '국민', last4: '1234', alias: '주거래', linkState: 'auto_connected', canRefresh: true, refresh: null, lastDay: dayOffset(-1), txnCount: 128 },
+  { id: 'a2', bank: '신한', last4: '5678', alias: null, linkState: 'file_only', canRefresh: false, refresh: null, lastDay: dayOffset(-9), txnCount: 41 },
+];
+const bankUnpaid = [
+  recv('r1', 'C테크', dayOffset(-45), 1650000, 0, 'unpaid', { cp: 'c3', dueOn: dayOffset(-15), item: '개발 용역', tail: '00000098' }),
+  recv('r2', 'A상사', dayOffset(-20), 3630000, 1815000, 'partial', { cp: 'c1', dueOn: dayOffset(10) }),
+  recv('r3', 'B상사', dayOffset(-3), 605000, 0, 'unpaid', { cp: 'c2', dueOn: dayOffset(27), item: '유지보수' }),
+];
+const bankReceived = [recv('r4', 'A상사', dayOffset(-50), 3630000, 3630000, 'received', { cp: 'c1', dueOn: dayOffset(-20) }), recv('r5', 'B상사', dayOffset(-33), 605000, 605000, 'received', { cp: 'c2', via: 'manual', off: 'cash' })];
+const txn = (id, day, amount, payer, cands = []) => ({ id, accountId: 'a1', accountLast4: '1234', bank: '국민', day, occurredAt: `${day}T10:12:00`, direction: 'in', amount, unallocated: amount, payer, memo: null, ignoredReason: null, assignedCounterpartyId: null, candidates: cands });
+const bankReview = [
+  txn('t1', dayOffset(-2), 1650000, '씨테크', [{ receivableIds: ['r1'], cpName: 'C테크', fit: 'exact', amounts: [1650000], feeGap: 0, reason: '금액이 같고 입금자 이름이 거래처 이름과 비슷해요', writtenOn: dayOffset(-45), total: 1650000 }]),
+  txn('t2', dayOffset(-1), 500000, '김철수'),
+];
+const bankOverview = () => {
+  const none = S.bank === 'noacct';
+  const unpaid = none ? bankUnpaid.map((v) => ({ ...v, status: v.status === 'unpaid' ? 'unknown' : v.status, overdue: false })) : bankUnpaid;
+  const over = unpaid.filter((v) => v.overdue);
+  return {
+    consent: none ? null : { at: dayOffset(-30) },
+    summary: { today: dayOffset(0), latestDay: none ? null : dayOffset(-1), stale: none, hasAccounts: !none, unpaidCount: unpaid.length, unpaidTotal: unpaid.reduce((s, v) => s + v.remaining, 0), overdueCount: over.length, overdueTotal: over.reduce((s, v) => s + v.remaining, 0), oldestOverdue: null, reviewCount: none ? 0 : bankReview.length, autoCount: 3 },
+    unpaid, received: none ? [] : bankReceived, excluded: [], review: none ? [] : bankReview, recent: [], accounts: none ? [] : bankAccounts, defaultTerms: { kind: 'days', n: 30 },
+  };
+};
+const bankDetail = (id) => {
+  const v = [...bankUnpaid, ...bankReceived].find((x) => x.id === id);
+  const allocs = v.received ? [{ id: 'al-1', receivableId: id, txnId: 'tx0', amount: v.received, method: 'account', decidedBy: v.via === 'manual' ? 'user' : 'auto', receivedOn: null, removedAt: null, txn: { day: dayOffset(-12), amount: v.received, payer: v.cpName, accountLast4: '1234' } }] : [];
+  const events = v.received ? [{ seq: 7, at: `${dayOffset(-12)}T09:30:00`, actor: 'auto', action: 'attach', undoOf: null, undone: false }] : [];
+  return { receivable: v, allocs, events, attachable: v.status === 'received' ? [] : bankReview.filter((t) => t.candidates.some((c) => c.receivableIds.includes(id))) };
+};
+
 const handlers = {
-  'shell.bootstrap': async () => ({ onboarding: S.onb ? await S.onb.view() : null, board: boardNow(), layout: SHELL, profiles: PROFILES, profile: 'business', counterparties: EMPTY ? [] : cps, docs: EMPTY ? [] : [...store.docs], timeline: seedTimeline(), quick: QUICK, platform: 'win32', payrollEnabled: !!process.env.PAYROLL }),
+  'shell.bootstrap': async () => ({ onboarding: S.onb ? await S.onb.view() : null, board: boardNow(), layout: SHELL, profiles: PROFILES, profile: 'business', counterparties: EMPTY || S.emptyBoot ? [] : cps, docs: EMPTY || S.emptyBoot ? [] : [...store.docs], timeline: seedTimeline(), quick: QUICK, platform: 'win32', payrollEnabled: !!process.env.PAYROLL }),
   'profile.set': (p) => ({ profile: p.kind }),
   'onboarding.reply': async (p) => {
     if (S.onbDelay) await sleep(S.onbDelay);
@@ -83,6 +123,11 @@ const handlers = {
   'request.send': (p) => (/등본/.test(p.text) ? { kind: 'g24', doc: '주민등록표 등본' } : { kind: 'draft', run: mkRun('draft') }),
   'counterparties.list': () => (EMPTY ? [] : cps),
   'docs.list': () => (EMPTY ? [] : S.withVault ? [vaultDoc, ...store.docs] : [...store.docs]),
+  'issued.list': () => [],
+  'bank.overview': () => bankOverview(),
+  'bank.receivable': (p) => bankDetail(p.id),
+  'bank.refreshStatus': () => ({ state: 'done', result: { newCount: 0 } }),
+  'bankAuto.status': () => ({ ok: true, connected: false }),
   'g24.candidates': () =>
     S.g24Empty
       ? []
@@ -102,6 +147,8 @@ const handlers = {
 };
 ipcMain.handle('sax', async (_e, { method, params }) => {
   const f = handlers[method];
+  if (S.mode[method] === 'hang') return HANG();
+  if (S.mode[method] === 'fail') throw new Error('engine_unavailable');
   if (!f) throw new Error(`unknown_method ${method}`);
   return f(params);
 });
@@ -339,15 +386,84 @@ const scenes = {
     await shot(win, '18c-g24-imported');
     S.g24Empty = false;
   },
+
+  // 받을 돈(D-09): 못 받은 돈(건 상세) · 확인할 입금 · 받은 돈 · 내 계좌, 계좌가 없을 때
+  async bank(win) {
+    const tab = async (k) => { await js(win, `document.querySelector('[data-bank-tab=${k}]').click()`); await sleep(150); };
+    await js(win, `document.querySelector('#rail [data-view=bank]').click()`);
+    await sleep(300);
+    await shot(win, '50-bank-unpaid');
+    await js(win, `document.querySelector('[data-bank-row=r2]').click()`);
+    await sleep(200);
+    await shot(win, '51-bank-detail');
+    await js(win, `document.querySelector('[data-act=bank-mark]').click()`);
+    await sleep(150);
+    await shot(win, '52-bank-mark-form');
+    await tab('review');
+    await shot(win, '53-bank-review');
+    await tab('received');
+    await shot(win, '54-bank-received');
+    await tab('accounts');
+    await shot(win, '55-bank-accounts');
+  },
+  async bankNoAcct(win) {
+    S.bank = 'noacct';
+    await js(win, `document.querySelector('#rail [data-view=bank]').click()`);
+    await sleep(300);
+    await shot(win, '56-bank-noacct');
+    await js(win, `document.querySelector('[data-act=bank-go-accounts]').click()`);
+    await sleep(150);
+    await shot(win, '57-bank-noacct-consent');
+    S.bank = 'full';
+  },
+  // 불러오는 중(답이 오지 않음)·오류(엔진 거절): 받을 돈 · 거래처 · 문서함 · 설정(계좌 연결)
+  async loading(win) {
+    S.mode = { 'bank.overview': 'hang', 'counterparties.list': 'hang', 'docs.list': 'hang', 'issued.list': 'hang', 'bankAuto.status': 'hang' };
+    for (const v of ['bank', 'cps', 'docs']) {
+      await js(win, `document.querySelector('#rail [data-view=${v}]').click()`);
+      await sleep(300);
+      await shot(win, `60-loading-${v}`);
+    }
+    await js(win, `document.querySelector('#rail [data-view=settings]').click()`);
+    await sleep(100);
+    await js(win, `document.querySelector('[data-set-tab=bank]').click()`);
+    await sleep(200);
+    await shot(win, '60-loading-settings-bank');
+    S.mode = {};
+  },
+  async errors(win) {
+    S.mode = { 'bank.overview': 'fail', 'counterparties.list': 'fail', 'docs.list': 'fail', 'issued.list': 'fail', 'bankAuto.status': 'fail' };
+    for (const v of ['bank', 'cps', 'docs']) {
+      await js(win, `document.querySelector('#rail [data-view=${v}]').click()`);
+      await sleep(300);
+      await shot(win, `61-error-${v}`);
+    }
+    await js(win, `document.querySelector('#rail [data-view=settings]').click()`);
+    await sleep(100);
+    await js(win, `document.querySelector('[data-set-tab=bank]').click()`);
+    await sleep(200);
+    await shot(win, '61-error-settings-bank');
+    // [다시 시도]가 되살리는지: 엔진이 다시 답하면 받을 돈 목록이 뜬다
+    S.mode = { 'bank.overview': 'fail' };
+    await js(win, `document.querySelector('#rail [data-view=bank]').click()`);
+    await sleep(300);
+    S.mode = {};
+    await js(win, `document.querySelector('[data-act=bank-retry]').click()`);
+    await sleep(300);
+    await shot(win, '62-error-bank-retried');
+    S.mode = {};
+  },
 };
 
-const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbOld', ...(EMPTY ? ['empty'] : [])];
+const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', ...(EMPTY ? ['empty'] : [])];
 const agreed = { version: 'pv', choice: 'agreed', at: '' };
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {
     if (ONLY && !ONLY.includes(k)) continue;
     const ports = () => new MockOnboardingPorts({ saveProfile: async () => {} });
     S.onb = k === 'onboarding' ? new OnboardingFlow(ports()) : k === 'onbOld' ? new OnboardingFlow(ports(), { ...initialOnbState(), step: 'tasks', consents: { terms: agreed, model: agreed } }) : null;
+    // 불러오는 중·오류 장면은 처음 목록이 빈 PC(첫 실행)에서 본다: 있던 목록이 있으면 그 목록을 그대로 보여 주기 때문이다.
+    S.emptyBoot = k === 'loading' || k === 'errors';
     const win = await open(theme);
     try {
       await scenes[k](win);

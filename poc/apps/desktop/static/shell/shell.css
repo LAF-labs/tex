@@ -465,7 +465,14 @@ body.bar-active .rs-waiting { display: inline-flex; }
 .bank-detail, .bank-review > .sx-card { margin-top: var(--space-3); }
 .bank-allocs, .bank-attach, .bank-events, .bank-cands { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
 .bank-allocs li, .bank-attach li, .bank-events li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: 13px; }
-.bank-cands li { border-top: 1px solid var(--line); padding-top: var(--space-2); }
+/* 후보 줄은 선으로 나누지 않고(v2.0 선 대신 면) 카드 면 위 canvas 면으로 둔다 */
+.bank-cands li { display: grid; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-md); background: var(--canvas); }
+.bank-cands li .sx-actions { margin-top: 2px; }
+.bank-detail h2.sx-card-title, .bank-txn-hd h2.sx-card-title { margin: 0; }
+.bank-txn-hd { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.bank-tab { display: grid; gap: var(--space-3); }
+.bank-pick { margin-top: 0; max-width: none; }
+.sx-card .bank-pick .sx-reply:not(.is-picked) { background: var(--canvas); }
 .bank-cols th select { margin-top: 4px; max-width: 120px; }
 td.is-attention { color: var(--attention); font-weight: 600; }
 .bank-link { display: inline-flex; align-items: center; gap: 5px; margin-right: var(--space-2); color: var(--ink-3); font-size: 12px; }
