@@ -3,7 +3,7 @@
 // - 칸 id·접근성 이름은 제품 패키지(packages/engine/playbooks/hometax.cert.*)의 셀렉터와 같게 둔다(2026-11-10 캡처 값). 그래서 fixture 변형 패키지는
 //   origin·id 접두만 바꾸고 셀렉터는 그대로 쓴다(tests/cert-fixture-package.ts).
 // - 실제 화면처럼 select의 value는 코드(선택지 이름과 다르다)이고, 발급유형·주민번호 공개 여부는 라디오 묶음이다.
-// - 처리결과 조회는 카드 목록(li 안 dt·dd 쌍)과 「총 N건」 건수 문구다. 조회 단추를 눌러야 그린다.
+// - 처리결과 조회는 WebSquare 카드 목록(칸 id <목록>_<행>_<칸>)과 건수 strong이다(5차 예행 실화면). 조회 단추를 눌러야 그린다.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -134,31 +134,37 @@ function home(): string {
 
 function lookupPage(records: readonly CertRecord[]): string {
   const data = JSON.stringify(records.map((r) => ({ n: r.docName, no: r.receiptNo }))).replace(/</g, '\\u003c');
-  // 실화면처럼 본문 틀 #mf_txppWframe는 역할 없는 div다(조회 화면 자체는 5차 예행 기록으로 맞춘다)
-  return page(`<div id="mf_txppWframe"><form aria-label="민원신청 처리결과 조회" onsubmit="return false">
-    <label>민원명 <input type="search" id="mf_txppWframe_ibx_cvaKndNm" aria-label="민원명"></label>
-    <button type="button">1주일</button><button type="button" id="mf_txppWframe_btn_search">조회</button>
-    <div role="status" aria-label="조회 건수" id="cnt">총 0건</div>
-    <ul id="mf_txppWframe_gen_cvaInf" aria-label="처리결과"></ul></form></div>
+  // 5차 예행 실화면(run-a82e53d3, 2026-11-16): 본문 틀 #mf_txppWframe는 역할 없는 div, 민원명은 이름표 붙은 text 칸,
+  // 기간 단추는 input type=button(id 앞부분은 매번 바뀌는 wq_uuid), 건수는 strong 숫자, 결과는 WebSquare generator 카드 목록이다.
+  // 카드에는 머리글·이름표가 없고 칸 id가 <목록>_<행 번호>_<칸 이름>이다(tbx_cvaKndNm 민원명, tbx_rcatNo 접수번호, btn_cvaTrtStatCdNm 처리상태).
+  return page(`<div id="mf_txppWframe"><h2>민원신청 처리결과 조회</h2>
+    <label for="mf_txppWframe_ibx_cvaKndNm">민원명</label> <input type="text" id="mf_txppWframe_ibx_cvaKndNm" title="민원명">
+    <input type="button" id="wq_uuid_835_btn_useWeek1" value="1주일" title="선택됨"><input type="button" id="wq_uuid_835_btn_useMonth1" value="1개월">
+    <input type="button" id="mf_txppWframe_btn_search" value="조회">
+    <p><span>총</span> <strong id="mf_txppWframe_tbx_totalCnt">0</strong><span>건</span><span>의 검색 결과가 있습니다.</span></p>
+    <div id="mf_txppWframe_gen_cvaInf"></div></div>
     <script>
     const DATA = ${data};
     document.getElementById('mf_txppWframe_btn_search').addEventListener('click', () => {
       const key = document.getElementById('mf_txppWframe_ibx_cvaKndNm').value.trim();
       const hit = DATA.filter((r) => r.n.includes(key));
-      const ul = document.getElementById('mf_txppWframe_gen_cvaInf');
-      ul.innerHTML = '';
-      for (const r of hit) {
-        const li = document.createElement('li');
-        const dl = document.createElement('dl');
-        for (const [k, v] of [['민원명', r.n], ['접수번호', r.no], ['처리상태', '처리완료'], ['접수방법', '인터넷'], ['접수일시', '2026-11-11']]) {
-          const dt = document.createElement('dt'); dt.textContent = k;
-          const dd = document.createElement('dd'); dd.textContent = v;
-          dl.append(dt, dd);
-        }
-        li.append(dl);
-        ul.append(li);
-      }
-      document.getElementById('cnt').textContent = '총 ' + hit.length + '건';
+      const gen = document.getElementById('mf_txppWframe_gen_cvaInf');
+      gen.innerHTML = '';
+      hit.forEach((r, i) => {
+        const id = (k) => 'mf_txppWframe_gen_cvaInf_' + i + '_' + k;
+        const card = document.createElement('div');
+        card.id = 'mf_txppWframe_gen_cvaInf_' + i;
+        const cell = (tag, k, v) => { const e = document.createElement(tag); e.id = id(k); e.textContent = v; card.append(e); };
+        cell('span', 'spa_rowNum', String(i + 1));
+        cell('strong', 'tbx_cvaKndNm', r.n);
+        cell('a', 'tbx_rcatNo', r.no);
+        cell('span', 'btn_cvaTrtStatCdNm', '처리완료');
+        const m = document.createElement('span'); m.textContent = '접수방법 :'; card.append(m);
+        cell('span', 'tbx_rcatMthd', '인터넷');
+        cell('span', 'tbx_rcatDtm', '2026-11-11 18:48:25');
+        gen.append(card);
+      });
+      document.getElementById('mf_txppWframe_tbx_totalCnt').textContent = String(hit.length);
     });
     </script>`);
 }

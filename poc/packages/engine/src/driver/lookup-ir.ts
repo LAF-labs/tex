@@ -49,6 +49,12 @@ const DEFAULT_CELL_CSS = ':scope > th, :scope > td, :scope > [role="columnheader
 /** 열 속성 모드(IR rev v1.3.5): 칸을 머리글 문구 대신 이 속성 값(lookup.column.<열> = 값)으로 찾는다. WebSquare 그리드는 data-col_id. */
 const COL_ATTR = 'lookup.table.colAttr';
 /**
+ * 칸 id 모드(5차 예행 run-a82e53d3, 홈택스 민원신청 처리결과): WebSquare generator 카드 목록은 머리글도 이름표도 없이
+ * 칸마다 id가 <목록>_<행 번호>_<칸 이름>이다. 이 문자열은 정규식이고 1번 묶음이 행 번호, 2번 묶음이 칸 이름이다.
+ * 표 안에서 id가 맞는 요소를 행 번호로 묶고, 첫 행의 칸 이름 차례를 머리글로 쓴다(lookup.column.<열> = 칸 이름).
+ */
+const CELL_ID = 'lookup.table.cellIdPattern';
+/**
  * 건수 문구가 없는 화면의 완결 판정(IR rev v1.3.5): 'idle'이면 rows extract 바로 앞 스텝이 wait for:idle(요청 0개 500ms)이어야 하고,
  * 행 수가 pageSize(한 쪽 행 수) 미만이어야 다 온 것으로 본다(한 쪽이 꽉 차면 다음 쪽이 있을 수 있다).
  */
@@ -186,12 +192,35 @@ export class IrLookupPort implements LookupPort {
       if (!handle) return { ok: false, code: 'lookup.incomplete' };
       const labelled = !!(files.strings[LABEL_CSS] && files.strings[VALUE_CSS]);
       const colAttr = files.strings[COL_ATTR];
+      const cellId = files.strings[CELL_ID];
+      if (cellId !== undefined) {
+        try {
+          new RegExp(cellId);
+        } catch {
+          return { ok: false, code: 'lookup.package_invalid' };
+        }
+      }
+      const byId = !!cellId;
       const table = await handle.evaluate(
         (el, css) => {
+          const text = (c: Element) => (c as HTMLElement).innerText ?? c.textContent ?? '';
+          if (css.cellId) {
+            const re = new RegExp(css.cellId);
+            const rows = new Map<string, Map<string, string>>();
+            for (const c of (el as Element).querySelectorAll('[id]')) {
+              const m = re.exec(c.id);
+              if (!m || m[1] === undefined || m[2] === undefined) continue;
+              let r = rows.get(m[1]);
+              if (!r) rows.set(m[1], (r = new Map()));
+              if (!r.has(m[2])) r.set(m[2], text(c));
+            }
+            const all = [...rows.values()];
+            const header = all[0] ? [...all[0].keys()] : null;
+            return { header, body: all.map((r) => (header ?? []).map((h) => r.get(h) ?? '')), bad: false };
+          }
           const rows = [...(el as Element).querySelectorAll(css.row)];
           const cells = (r: Element) => [...r.querySelectorAll(css.cell)];
           const isHead = (c: Element) => c.tagName === 'TH' || c.getAttribute('role') === 'columnheader';
-          const text = (c: Element) => (c as HTMLElement).innerText ?? c.textContent ?? '';
           let header: string[] | null = null;
           const body: string[][] = [];
           if (css.label && css.value) {
@@ -231,11 +260,12 @@ export class IrLookupPort implements LookupPort {
           attr: colAttr ?? null,
           label: labelled ? files.strings[LABEL_CSS]! : '',
           value: labelled ? files.strings[VALUE_CSS]! : '',
+          cellId: cellId ?? '',
         },
       );
       if (table.bad || !lookupComplete(ir.steps, files.strings, scope.vars.get(LOOKUP_COUNT_VAR), table.body.length)) return { ok: false, code: 'lookup.incomplete' };
       // 카드 목록이 비었으면(건수 0과 같음) 열을 볼 수 없다. 머리글 표는 빈 표도 머리글이 있으니 아래 열 검사를 그대로 한다.
-      if (labelled && table.body.length === 0) return halted() ?? { ok: true, rows: [] };
+      if ((labelled || byId) && table.body.length === 0) return halted() ?? { ok: true, rows: [] };
       // 열 이름 → 머리글 위치(열 속성 모드면 속성 값). 필요한 열(match·승인번호)이 하나라도 없으면 조회 실패다(그 열을 빈칸으로 읽으면 "없음"이 된다).
       // 열 속성 모드에서 행이 0개면 머리글을 읽을 수 없다: 그때는 열이 있다고 본다(빈 결과는 행 수 판정이 이미 받았다).
       const head = (table.header ?? []).map(norm);
