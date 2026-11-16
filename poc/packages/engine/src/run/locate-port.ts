@@ -244,25 +244,27 @@ export class DecisionFirstLocateModel implements LocateModel {
  * decision_pick 메시지 글(가린 상태·선택지 JSON)과 선택지가 가리키는 요소. 목록이 비거나 선택지 상한을 넘으면 사유 글.
  * 측정 도구(tests/ladder-live/pick-eval.ts)도 같은 것을 쓴다.
  */
-export function decisionPickInput(req: LocateRequest): { pool: LocateRequest['listing']; json: string } | 'listing_size' {
+/** 칸 고르기 글 모양. ids: 'short'는 id 공통 머리를 state에 한 번만, 'full'은 id 그대로. none: '없음' 선택지를 둘지. 측정용으로 열어 둔다. */
+export interface DecisionPickShape { ids: 'short' | 'full'; none: boolean }
+export const DECISION_PICK_SHAPE: DecisionPickShape = { ids: 'full', none: true };
+
+export function decisionPickInput(req: LocateRequest, shape: DecisionPickShape = DECISION_PICK_SHAPE): { pool: LocateRequest['listing']; json: string } | 'listing_size' {
   const pool = req.listing.filter((x) => !req.rejected.includes(x.id ? `#${x.id}` : `role=${req.role}[name="${x.name}"]`));
   if (pool.length < 1 || pool.length > DECISION_MAX_CHOICES - 1) return 'listing_size';
-  // 선택지 글을 줄인다(고른 모델에 맞춤, 2026-11-16): 모든 id에 붙는 공통 머리(예: mf_txppWframe_)와 역할 낱말은 state에 한 번만 쓴다.
-  // 같은 정보로 입력 토큰이 약 40% 줄고, 이름이 빈 칸은 id 뒷부분(의미 있는 부분)이 앞에 온다.
   const ids = pool.map((x) => x.id).filter((x): x is string => !!x);
-  let head = ids.length > 1 ? ids[0]! : '';
+  let head = shape.ids === 'short' && ids.length > 1 ? ids[0]! : '';
   for (const id of ids) while (head && !id.startsWith(head)) head = head.slice(0, -1);
   head = head.replace(/[^_-]*$/, '');
   const short = (id: string | null) => (id ? `#${head && id.startsWith(head) ? id.slice(head.length) : id}` : '');
   const strip = (sel: string) => (head ? sel.split(`#${head}`).join('#') : sel);
   const state = [
-    `[목표] 스텝 ${req.stepId}: ${req.purpose} · 항목 ${req.describe}`,
+    `[목표] 스텝 ${req.stepId}: ${req.purpose} · 항목 ${req.describe} · 역할 ${req.role}`,
     req.was?.length ? `예전 선택자(지금은 못 찾음): ${req.was.map(strip).join(', ')}` : '',
     req.rejected.length ? `써 보고 맞지 않은 선택자: ${req.rejected.map(strip).join(', ')}` : '',
-    `선택지는 같은 역할(${req.role}) 요소의 번호다. 각 선택지는 "접근성 이름" #DOM id${head ? `(공통 머리 ${head} 생략)` : ''}. 목표 칸이 없거나 확신이 없으면 none.`,
+    `선택지는 아래 같은 역할 요소 목록의 번호다.${head ? ` id의 공통 머리 ${head}는 생략했다.` : ''}${shape.none ? ' 목표 칸이 없거나 확신이 없으면 none.' : ' 목표 칸에 가장 가까운 번호 하나.'}`,
   ].filter(Boolean).join('\n').slice(0, DECISION_STATE_MAX_CHARS);
   const choices: Record<string, string> = {};
-  for (const x of pool) choices[String(x.n)] = `"${x.name}" ${short(x.id)}`.trim().slice(0, DECISION_CHOICE_MAX_CHARS);
-  choices.none = '목록에 목표 칸이 없다 또는 확신이 없다';
+  for (const x of pool) choices[String(x.n)] = `${req.role} "${x.name}"${x.id ? ` ${short(x.id)}` : ''}`.slice(0, DECISION_CHOICE_MAX_CHARS);
+  if (shape.none) choices.none = '목록에 목표 칸이 없다 또는 확신이 없다';
   return { pool, json: JSON.stringify({ state, choices }) };
 }
