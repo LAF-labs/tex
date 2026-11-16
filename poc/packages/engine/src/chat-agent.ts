@@ -527,8 +527,13 @@ export class ChatAgent {
    * 이번 턴에 낸 표·카드가 있으면 그것을 보인다. 둘 다 아니면 chat.turn_limit.
    */
   private settle(turn: Turn, last: ToolOutput): AgentReply {
-    const ask: AgentAsk | null =
-      last.status === 'needs_input' && last.needs?.length ? last.needs[0]! : last.status === 'unknown_counterparty' ? 'counterparty' : last.status === 'no_such_draft' ? 'which_card' : null;
+    const askOf = (o: ToolOutput): AgentAsk | null =>
+      o.status === 'needs_input' && o.needs?.length ? o.needs[0]! : o.status === 'unknown_counterparty' ? 'counterparty' : o.status === 'no_such_draft' ? 'which_card' : null;
+    // 마지막 결과가 아니어도, 이번 턴에 카드가 안 생겼고 앞에서 빈 칸이 나왔으면 그것을 묻는다
+    // (chat-eval issue-ambiguous-cp: "한빛에 30만원" → unknown_counterparty 뒤 모델이 기록 조회만 되풀이)
+    const outs = [...turn.done.values()];
+    const carded = outs.some((o) => o.status === 'card_shown' || o.status === 'card_updated' || o.status === 'discarded');
+    const ask = askOf(last) ?? (carded ? null : (outs.map(askOf).find((x) => x) ?? null));
     const show = [...new Set(turn.made)].slice(-AGENT_SHOW_MAX);
     if (ask) return { kind: 'ask', text: CHAT_AGENT_ASK_TEXT[ask], show, ask, filtered: 'repeat' };
     if (show.length) return { kind: 'did', text: CHAT_AGENT_DONE_TEXT[last.status] ?? CHAT_AGENT_NUMBER_TEXT, show, ask: null, filtered: 'repeat' };

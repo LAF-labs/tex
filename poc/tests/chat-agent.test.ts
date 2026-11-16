@@ -390,6 +390,18 @@ describe('chat.step 턴 상한·세션 폐기', () => {
     assert.equal(pc.calls.filter((c) => c.tool === 'invoice_draft').length, 0);
   });
 
+  it('카드가 안 생긴 턴에 앞에서 거래처를 못 찾았으면, 뒤에 조회를 되풀이해도 거래처를 되묻는다', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    script(
+      () => fc('invoice_draft', { counterparty: '없는상사', amount: null, vat: null, item: null }),
+      () => fc('invoice_history', { counterparty: null }),
+      () => fc('invoice_history', { counterparty: null }),
+    );
+    const { reply: rep } = await say(a, pc, '없는상사에 끊어줘');
+    assert.deepEqual([rep.kind, rep.ask, rep.filtered], ['ask', 'counterparty', 'repeat']);
+  });
+
   it('되묻는 문장에 숫자가 섞이면 문장만 고정 문장으로 바꾸고 되묻기는 살린다. 문장 속 ref 표기는 지운다', async () => {
     const a = agent();
     script(() => reply({ kind: 'ask', text: '단가에 20개라고 하셨는데 공급가로 넣을 금액을 알려 주세요.', ask: 'amount' }));
