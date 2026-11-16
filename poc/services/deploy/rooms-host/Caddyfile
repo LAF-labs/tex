@@ -1,0 +1,24 @@
+# rooms.tax.laf-co.com: TLS(Let's Encrypt 자동) → 릴레이 :8083. WSS 업그레이드는 reverse_proxy가 그대로 넘긴다.
+# 접근 로그는 남기지 않는다(경로에 우편함·룸 ID가 있다. 릴레이 자체 로그는 라우트 패턴만 남긴다, README C-14).
+# 앞단 프록시가 없으므로(VM 고정 IP 직접) X-Forwarded-For는 Caddy가 접속 주소로 새로 쓴다(클라이언트가 보낸 값은 믿지 않는다).
+
+rooms.tax.laf-co.com {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+	# 공개 경로는 릴레이가 아는 것만: 룸·라이브 우편함 WSS, 내부 서명 호출(계정 → 룸 소비·정지 알림), healthz
+	@relay path /v1/rooms /v1/rooms/* /v1/mailboxes/* /internal/v1/* /healthz
+	handle @relay {
+		reverse_proxy relay:8083 {
+			# WSS 오래 열림(서버 120초 무통신 종료, 클라이언트 30초 ping)
+			stream_timeout 24h
+			stream_close_delay 5s
+		}
+	}
+	handle {
+		respond 404
+	}
+}

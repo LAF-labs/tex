@@ -319,6 +319,35 @@ describe('셸 목업', () => {
     assert.equal(runs.get(b.run.id)!.inDoubt, false, '실패는 InDoubt가 아니다');
   });
 
+  it('승인을 기다리다 시간이 지나 멈추면 [다시 준비]로 같은 값의 새 초안을 만든다. 사람이 멈춘 건은 그대로 둔다', async () => {
+    const { host, runs } = shellRuns();
+    const a = interpret('A상사에 12만원 세금계산서', null, 'business', runs);
+    const b = interpret('B상사에 30만원 세금계산서', null, 'business', runs);
+    assert.ok(a.kind === 'draft' && b.kind === 'draft');
+    await runs.prepare(a.run.id);
+    host.emit('run', { runId: a.run.id, type: 'end', status: 'stopped', code: 'gate.expired' });
+    assert.deepEqual([runs.get(a.run.id)!.status, runs.get(a.run.id)!.redo], ['stopped', true]);
+    const d = runs.redraft(a.run.id);
+    assert.deepEqual([d.status, d.amount, d.counterparty.id], ['draft', 120_000, 'cp-a']);
+    await runs.prepare(b.run.id);
+    host.emit('run', { runId: b.run.id, type: 'end', status: 'stopped', code: 'run.stopped' });
+    assert.ok(!runs.get(b.run.id)!.redo);
+    assert.throws(() => runs.redraft(b.run.id), /not_redoable/);
+  });
+
+  it('예행이 사람 차례에서 멈추면 어느 단계에서 무엇이 필요했는지와 다시 하는 길을 말한다(막다른 문구 금지)', async () => {
+    const { host, runs } = shellRuns();
+    const d = runs.rehearsalDraft(CPS[0]!);
+    await runs.prepare(d.id);
+    host.emit('run', { runId: d.id, type: 'handoff', phase: 'login', code: 'login.captcha' });
+    host.emit('run', { runId: d.id, type: 'end', status: 'stopped', code: 'rehearsal.handoff' });
+    const r = runs.get(d.id)!;
+    assert.equal(r.status, 'stopped');
+    assert.match(r.stoppedNote!, /^'홈택스 로그인' 단계에서 사람이 할 일이 생겨 멈췄어요\(.+\)\. /);
+    assert.match(r.stoppedNote!, /발급하지 않았어요\./);
+    assert.match(r.stoppedNote!, /실제 발급에서는 앱이 여기서 기다려 드려요\. 다시 해 보려면 도구 메뉴에서 '홈택스 예행\(발급 안 함\)'을 누르세요\.$/);
+  });
+
   it('핸드오프(D03 HandedOff): 게이트 앞이면 [다 했어요] → 준비 중, 엔진이 받은 뒤에만 상태를 바꾼다', async () => {
     const { host, runs } = shellRuns();
     const a = interpret('A상사에 12만원 세금계산서', null, 'business', runs);

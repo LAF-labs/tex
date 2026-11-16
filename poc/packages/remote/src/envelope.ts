@@ -71,6 +71,45 @@ export interface ReceiptCandidates {
   merchant?: string;
   merchantBizNo?: string;
 }
+/** 종이 세금계산서·계산서 당사자(remote-envelope v1.7 $defs/paperParty). bizNo는 000-00-00000 */
+export interface PaperParty {
+  bizNo: string;
+  name: string;
+  ceo?: string;
+  address?: string;
+}
+export interface PaperInvoiceItem {
+  month?: number;
+  day?: number;
+  name: string;
+  spec?: string;
+  /** 정수(와이어 CBOR에 실수 없음). 소수 수량은 spec에 */
+  qty?: number;
+  unitPrice?: number;
+  supply: number;
+  vat?: number;
+}
+/**
+ * 종이(손글씨·인쇄) 세금계산서·계산서를 폰에서 찍고 사장님이 확인한 값(v1.7, hello 기능 receipt.v2).
+ * 폰 값은 후보다: PC가 자기 사업자번호로 direction을 다시 정하고 합계·체크섬을 다시 본다(checkPaperInvoice).
+ */
+export interface PaperInvoice {
+  docKind: 'tax_invoice' | 'invoice';
+  direction: 'sales' | 'purchase';
+  writtenOn: string;
+  approvalNo?: string;
+  bookNo?: string;
+  serialNo?: string;
+  supplier: PaperParty;
+  buyer: PaperParty;
+  supplyAmount: number;
+  vatAmount: number;
+  total: number;
+  items?: PaperInvoiceItem[];
+  receiptOrClaim: 'receipt' | 'claim' | null;
+  /** 칸 이름 → 0~100 정수(사장님이 고친 칸은 100) */
+  fieldConfidence?: Record<string, number>;
+}
 export interface ReceiptOfferBody {
   msgId: string;
   capturedAt: number;
@@ -84,6 +123,8 @@ export interface ReceiptOfferBody {
   ocrEngine: 'ios_vision' | 'android_mlkit' | 'none';
   ownerConfirmed: boolean;
   candidates?: ReceiptCandidates;
+  /** v1.7: PC가 receipt.v2를 알렸을 때만 */
+  paperInvoice?: PaperInvoice;
 }
 export interface ReceiptChunkBody {
   msgId: string;

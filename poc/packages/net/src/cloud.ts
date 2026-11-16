@@ -8,6 +8,8 @@ export const CLOUD_ORIGIN = 'https://tax.laf-co.com';
 export const CLOUD_WS_HOST = 'rooms.tax.laf-co.com';
 /** 응답 상한(기기 목록·클레임·토큰은 작다) */
 export const CLOUD_MAX_BYTES = 256 * 1024;
+/** 우편함 큐 GET 한 쪽 상한(서버는 봉투 바이트 3 MiB까지 한 쪽으로 준다, services/relay/API.md #204. JSON 겉과 여유를 더한다) */
+export const CLOUD_QUEUE_PAGE_MAX_BYTES = 3 * 1024 * 1024 + 256 * 1024;
 /** 요청 본문 상한(서버 기본 64KB와 같다) */
 export const CLOUD_MAX_BODY = 64 * 1024;
 
@@ -17,7 +19,7 @@ const ID43 = '[A-Za-z0-9_-]{43}';
 export type CloudMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 /** HTTP 경로(서버 정본: services/account/API.md, services/relay/API.md). 이름은 감사 기록에 쓴다(경로의 ID를 남기지 않는다). */
-export const CLOUD_ROUTES: ReadonlyArray<{ name: string; method: CloudMethod; path: RegExp }> = [
+export const CLOUD_ROUTES: ReadonlyArray<{ name: string; method: CloudMethod; path: RegExp; maxBytes?: number }> = [
   { name: 'auth.code', method: 'POST', path: /^\/v1\/auth\/code$/ },
   { name: 'auth.verify', method: 'POST', path: /^\/v1\/auth\/code\/verify$/ },
   { name: 'auth.logout', method: 'POST', path: /^\/v1\/auth\/logout$/ },
@@ -51,6 +53,11 @@ export const CLOUD_ROUTES: ReadonlyArray<{ name: string; method: CloudMethod; pa
   { name: 'rooms.create', method: 'POST', path: /^\/v1\/rooms$/ },
   { name: 'mailboxes.create', method: 'POST', path: /^\/v1\/mailboxes$/ },
   { name: 'mailboxes.delete', method: 'DELETE', path: new RegExp(`^/v1/mailboxes/${ID43}$`) },
+  // 연결된 폰 수신(데스크톱 phone-link.ts): PC가 꺼져 있던 동안 쌓인 HPKE 봉투를 꺼내고 ACK, 큐 번들(Q_D, Vd 서명)을 올린다.
+  // 쿼리(?after=)는 쓰지 않는다(ACK 뒤 다시 읽는다). 봉투 POST는 폰만 한다.
+  { name: 'mailboxes.envelopes', method: 'GET', path: new RegExp(`^/v1/mailboxes/${ID43}/envelopes$`), maxBytes: CLOUD_QUEUE_PAGE_MAX_BYTES },
+  { name: 'mailboxes.ack', method: 'POST', path: new RegExp(`^/v1/mailboxes/${ID43}/ack$`) },
+  { name: 'mailboxes.bundle', method: 'PUT', path: new RegExp(`^/v1/mailboxes/${ID43}/bundle$`) },
 ];
 
 /** WSS 경로: 페어링 룸 참가(인증 없음, Noise XX), 라이브 우편함(기기 토큰 + 우편함 토큰 헤더) */
@@ -90,6 +97,11 @@ export function cloudRequestCheck(method: string, url: string): { route: string;
   if (!kind) return 'origin';
   const r = CLOUD_ROUTES.find((x) => x.method === method && x.path.test(u.pathname));
   return r ? { route: r.name, kind } : 'path';
+}
+
+/** 경로 이름별 응답 상한(기본 CLOUD_MAX_BYTES, 큐 쪽 읽기만 크다) */
+export function cloudMaxBytes(route: string): number {
+  return CLOUD_ROUTES.find((x) => x.name === route)?.maxBytes ?? CLOUD_MAX_BYTES;
 }
 
 /** WSS 주소가 허용 목록에 맞으면 {route, kind}. 그 밖은 null */

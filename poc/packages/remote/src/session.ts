@@ -12,8 +12,8 @@ import { attachQueue, nextFrame, type Link } from './relay.ts';
 
 export const PROTOCOL_VERSION = 1;
 export const SUITES: HelloBody['suites'] = ['noise-25519-chachapoly-blake2b'];
-/** Phase 1 폰 기능 표시(hello.capabilities). */
-export const CAP = { receipt: 'receipt.v1', cash: 'cash.v1' } as const;
+/** Phase 1 폰 기능 표시(hello.capabilities). receiptV2 = receipt.offer의 paperInvoice(종이 세금계산서, v1.7)를 받는다. */
+export const CAP = { receipt: 'receipt.v1', receiptV2: 'receipt.v2', cash: 'cash.v1' } as const;
 const ZERO_HASH = '0'.repeat(64);
 
 export const sessionPrologue = (pairId: string): Uint8Array => concat(utf8(CTX.session), utf8(pairId));

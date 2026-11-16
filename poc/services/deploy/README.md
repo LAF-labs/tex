@@ -35,7 +35,7 @@ Phase 1 클라우드 배포 구성이다. 근거는 다음과 같다.
 - **DB**: Supabase 프로젝트 하나, PostgreSQL 하나다. 서비스마다 스키마 `<서비스>`, 한도 스키마 `<서비스>_limits`, 로그인 역할 `sax_<서비스>`를 둔다.
   - 역할은 자기 두 스키마의 **행만** 읽고 쓴다. DDL 권한도, 다른 서비스 스키마 권한도 없다(시험이 PG 17에서 확인).
   - 함수는 DDL을 하지 않는다. 마이그레이션은 아래 절차의 `supabase db push`가 적용한다.
-- **룸 호스트**: 상시 Node 프로세스 한 대(`services/relay/Dockerfile`)다. "룸 켬" `RELAY_ROOMS=1`이다. 메모리 룸이라 **인스턴스는 한 대**여야 한다. 공급사는 미정이다(ADR-015, 컨테이너가 도는 곳이면 된다).
+- **룸 호스트**: 상시 Node 프로세스 한 대(`services/relay/Dockerfile`)다. "룸 켬" `RELAY_ROOMS=1`이다. 메모리 룸이라 **인스턴스는 한 대**여야 한다. AWS Lightsail 서울 VM + Caddy(TLS)로 띄운다([`rooms-host/`](rooms-host/README.md), 배포는 Actions `rooms-host-deploy`). 공급사 중립(ADR-015): 컨테이너가 도는 곳이면 옮길 수 있다.
 
 ## 2. 필요 env(이름만, Vercel 프로젝트 → Settings → Environment Variables, Production)
 
@@ -57,7 +57,7 @@ Phase 1 클라우드 배포 구성이다. 근거는 다음과 같다.
 | 푸시 `PUSH__` | `DATABASE_URL` ⚿, `PUSH_TOKEN_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `PUSH_PUBLIC_ORIGIN`, `PUSH_PROVIDER`(`mock`) |
 | 레지스트리 `REGISTRY__` | `TRUST_ROOT_JSON`(공개 값, 서명 의식 뒤), `REGISTRY_LOG_SIGNING_KEY` ⚿, `REGISTRY_ADMIN_TOKEN` ⚿, `DATABASE_URL` ⚿(`sax_registry`), `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID` ⚿, `S3_SECRET_ACCESS_KEY` ⚿. 7절 |
 
-**룸 호스트 env**(접두 없음, 그 호스트에만): `DATABASE_URL` ⚿(`sax_relay`), `QUEUE_KEY` ⚿(릴레이 함수와 같은 값), `LIMIT_ID_KEY` ⚿(릴레이 함수와 같은 값), `RELAY_PUBLIC_ORIGIN`, `TOKEN_PUBLIC_KEYS`, `ACCOUNT_INTERNAL_URL`, `INTERNAL_CALL_KEY` ⚿, `RELAY_ROOMS`(**`1` = 룸 켬**), `RELAY_LIVE`(`0`), `MIGRATE_ON_START`(`0`), `TRUST_PROXY`, `PORT`.
+**룸 호스트 env**(접두 없음, 그 호스트에만): `DATABASE_URL` ⚿(`sax_relay`), `QUEUE_KEY` ⚿(릴레이 함수와 같은 값), `LIMIT_ID_KEY` ⚿(릴레이 함수와 같은 값), `RELAY_PUBLIC_ORIGIN`(`https://tax.laf-co.com`), `RELAY_WS_ORIGIN`(`https://rooms.tax.laf-co.com`, 라이브 WSS의 DPoP htu), `TOKEN_PUBLIC_KEYS`, `ACCOUNT_INTERNAL_URL`, `INTERNAL_CALL_KEY` ⚿, `RELAY_ROOMS`(**`1` = 룸 켬**), `RELAY_LIVE`(**`1`**, compose 고정·비상시 끄는 법은 [rooms-host/README](rooms-host/README.md)), `MIGRATE_ON_START`(`0`), `TRUST_PROXY`, `PORT`. 비밀이 아닌 역할 고정값은 [`rooms-host/compose.yml`](rooms-host/compose.yml)에 있고, 비밀은 VM의 `relay.env`에만 둔다.
 
 값의 형식(hex 64자 등)은 각 서비스 `ENV.md`가 정본이다. 키 값은 사용자가 로컬에서 `openssl rand -hex 32`로 만들어 비밀번호 관리자에 두고, Vercel·룸 호스트 env 화면에 직접 붙여 넣는다.
 
@@ -95,7 +95,7 @@ Phase 1 클라우드 배포 구성이다. 근거는 다음과 같다.
    - `tax`: Vercel이 보여 준 값(보통 CNAME `cname.vercel-dns.com`). 소유 확인 TXT `_vercel`를 요구하면 그것도 넣는다.
    - `rooms.tax`: 룸 호스트의 A/AAAA 또는 CNAME(5번에서 정해짐).
    - SES(6번)가 주는 DKIM CNAME 3개, MAIL FROM MX·SPF TXT, `_dmarc` TXT.
-5. **룸 호스트**(공급사 미정)
+5. **룸 호스트**(AWS Lightsail 서울, 절차 전체는 [rooms-host/README.md](rooms-host/README.md))
    1. 상시 컨테이너 한 대로 `services/relay/Dockerfile`을 빌드해 실행한다.
    2. TLS 인증서는 호스트나 앞단에서 받는다(`rooms.tax.laf-co.com`, WSS).
    3. 2절의 룸 호스트 env를 넣는다. `RELAY_ROOMS=1`, `MIGRATE_ON_START=0`이다.
@@ -232,7 +232,7 @@ cd poc && node --conditions=development services/deploy/check-vercel-output.ts <
    - 실제 AWS에 붙여 본 적은 없다. 시험은 가짜 SES 서버로 서명(AWS 공개 시험 벡터 포함)·본문·오류 분류를 본다.
 6. **레지스트리**: 7절. 클라이언트 egress 허용 목록은 `https://tax.laf-co.com` 하나로 고정한다. Supabase 도메인은 클라이언트에 넣지 않는다(팀장 결정 2026-11-06).
 7. **릴레이 큐 GET 응답 상한**: Vercel 함수 응답은 4.5MB이고 큐 상한은 6 MiB다. 큐 GET은 봉투 바이트 3 MiB씩 쪽으로 나눠 돌려준다(`more`, 선택 `after`, relay API.md). 클라이언트가 `more`를 보고 곧바로 다음 쪽을 읽게 하는 것은 `packages/remote` `drainQueue` 몫이다(그 전에는 ACK 뒤 다음 폴링에서 받는다).
-8. **라이브 우편함(`RELAY_LIVE=1`) 켜기 전 체크**: 데스크톱은 라이브 WSS의 DPoP `htu`를 `https://rooms.tax.laf-co.com/v1/mailboxes/:id/live`(QR 호스트)로 만들고, 룸 호스트의 `RELAY_PUBLIC_ORIGIN`은 `https://tax.laf-co.com`이다. 켜는 PR에서 둘을 맞춘다(팀장 결정 2026-11-06, #145).
+8. **라이브 우편함(`RELAY_LIVE=1`) DPoP origin**: 데스크톱·폰은 라이브 WSS의 DPoP `htu`를 `https://rooms.tax.laf-co.com/v1/mailboxes/:id/live`(QR 호스트)로 만들고, 룸 호스트의 HTTP 경로(`/v1/rooms`, Vercel 재작성)는 `https://tax.laf-co.com`이다. 릴레이가 WSS 업그레이드만 `RELAY_WS_ORIGIN`으로 검사해서 둘이 맞는다(시험 `services-relay.test.ts` "RELAY_WS_ORIGIN", 팀장 결정 2026-11-06 #145).
 
 ## 7. 레지스트리(정적 GET·투명성 로그·게시 관문·타임스탬프 자동 재서명)
 

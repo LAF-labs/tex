@@ -7,6 +7,7 @@ import type { AccountClient, AccountLogin, CloudPorts, DeviceAuth, RelayHttpClie
 import {
   b64url,
   relayOrigin,
+  relayQueue,
   requestDeviceToken,
   type DeviceListJson,
   type HttpJson,
@@ -286,6 +287,9 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
     relayHost,
     accountOrigin,
     insecureLocal: dev,
+    mailboxQueue(mbxId, tok, auth) {
+      return relayQueue({ http: httpJson, origin: relayHttpOrigin, mbxId, tok, deviceAuth: (htm, htu) => auth(htm, htu) });
+    },
     openSocket(url, headers) {
       try {
         return o.egress.openCloudSocket(url, headers) as unknown as WebSocketLike;
