@@ -1,6 +1,6 @@
 // S7 회귀 세트(D04 §9, D14 M3-7): screen_state_v2 결과 라벨 정확도(통과 98%+), blocked·captcha 재현율(99%+),
 // 질문별 정확도, 지연 p50/p95, 판정당 입력 토큰. 번들 버전을 올릴 때마다 돌리고 정확도 98% 미만이면 배포 금지.
-//   node --conditions=development scripts/s7-regression.ts [--mock] [--n=100] [--gate] [--model=openai/gpt-6-luna] [--intent=N] [--out=/abs/path.json]
+//   node --conditions=development scripts/s7-regression.ts [--mock] [--n=100] [--gate] [--model=openai/gpt-6-luna] [--intent=N] [--out=/abs/path.json] [--decisions=typesafe/jev-1.14] [--answers]
 // 코퍼스: tests/fixtures/l0-corpus.ts의 화면 라벨 코퍼스(합성, PoC-3 이후 홈택스 실화면 라벨 100장으로 바꾼다).
 // 입력 경로는 제품과 같다: 관측 노드 → A11yNode 트리 → Redactor.applyTree(절단·마스킹·구분자) → decide().
 // 키 우선순위(2026-11-05 yulmu): OPENROUTER_API_KEY → OpenRouter(OpenAI 호환 Chat Completions, @sax/net/demo DemoEgress,
@@ -23,6 +23,8 @@ const forceMock = process.argv.includes('--mock');
 const gate = process.argv.includes('--gate');
 const n = Number(process.argv.find((a) => a.startsWith('--n='))?.slice(4) ?? 100);
 const outArg = process.argv.find((a) => a.startsWith('--out='))?.slice(6);
+/** 질문별 답 수치(선택값·신뢰도·확률, 술어 확률)와 라벨을 표본마다 남긴다. 모델별 임계값 프로필을 재산정할 때 쓴다. 글은 남기지 않는다. */
+const withAnswers = process.argv.includes('--answers');
 /** 의도 코퍼스 표본 수 상한(기본 전부). 시험 실행을 싸게 할 때만 줄인다. */
 const intentN = Number(process.argv.find((a) => a.startsWith('--intent='))?.slice(9) ?? Infinity);
 const orKey = forceMock ? undefined : process.env.OPENROUTER_API_KEY || undefined;
@@ -135,7 +137,7 @@ async function main() {
     if ([...byOutcome.values()].every((xs) => i >= xs.length)) break;
   }
 
-  const rows: Array<{ id: string; expect: string; got: string; reason?: string; ms: number; inputTokens: number }> = [];
+  const rows: Array<{ id: string; expect: string; got: string; reason?: string; ms: number; inputTokens: number; answers?: Record<string, unknown>; labels?: Record<string, unknown> }> = [];
   const perQ = new Map<string, { n: number; ok: number }>();
   let cost = 0;
   let stopped = false;
@@ -149,7 +151,8 @@ async function main() {
     const r = await layer.decide({ bundleId: BUNDLE, bundleDigest: b.digest, input, runToken: localRunToken(egress, { runId: `s7-${i}` }) });
     const ms = performance.now() - t0;
     cost += costOf(r.model, r.usage);
-    rows.push({ id: s.id, expect, got: r.outcome, ...(r.reason ? { reason: r.reason } : {}), ms, inputTokens: r.usage.inputTokens });
+    const nums = () => Object.fromEntries(Object.entries(r.raw).map(([k, a]) => [k, a.type === 'predicate' ? { p: a.probability } : a.type === 'choice' ? { value: a.value, confidence: a.confidence, probabilities: a.probabilities } : { type: a.type }]));
+    rows.push({ id: s.id, expect, got: r.outcome, ...(r.reason ? { reason: r.reason } : {}), ms, inputTokens: r.usage.inputTokens, ...(withAnswers ? { answers: nums(), labels: s.labels } : {}) });
     for (const q of b.def.questions) {
       const a = r.raw[q.name];
       const l = s.labels[q.name];
@@ -227,7 +230,8 @@ async function main() {
     costUsd: +cost.toFixed(5),
     perQuestion: Object.fromEntries([...perQ].map(([k, v]) => [k, +(v.ok / v.n).toFixed(4)])),
     confusion,
-    misses: rows.filter((r) => r.got !== r.expect).slice(0, 30),
+    misses: rows.filter((r) => r.got !== r.expect).slice(0, 30).map(({ answers: _a, labels: _l, ...x }) => x),
+    ...(withAnswers ? { rows } : {}),
     intent,
   };
   const out = outArg ?? fileURLToPath(new URL(`../reports/raw/s7-${mode}.json`, import.meta.url));
