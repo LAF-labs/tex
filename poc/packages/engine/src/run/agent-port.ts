@@ -4,7 +4,7 @@
 // - 출력은 스키마 검사(어댑터) 뒤 여기서 다시 좁힌다: 번호는 목록 안, 키는 준 목록 안, 값토큰은 준 목록 안. 아니면 받지 않는다(null).
 import { BROWSER_AGENT, COMPUTER_USE, PAGE_JUDGE, type AgentActionName, type ComputerActionName, type MaskedShot, type JudgePrescription, type RedactedText, type RespondResult, type RunToken, type ToolsetDef } from '@sax/model';
 import type { Redactor } from '@sax/redaction';
-import { budgetSpent, type LocateResponder, type RunAiBudget } from './locate-port.ts';
+import { budgetBlock, noteBudget, type LocateResponder, type RunAiBudget } from './locate-port.ts';
 
 export interface ScreenItem {
   n: number;
@@ -96,8 +96,9 @@ type Shot = { shot: MaskedShot };
 
 /** 판정·에이전트 공통: 가려서 한 번 부르고 구조화 출력을 돌려준다. 실패면 null(저널에 원인 코드만). */
 async function callOnce(i: AgentPortInput, t: ToolsetDef, parts: Array<Part | Shot>, tag: Record<string, string | number | boolean>): Promise<unknown> {
-  if (i.budget?.spent) {
-    i.journal(`${t.id}.unavailable`, { ...tag, cause: 'budget_spent' });
+  const blocked = budgetBlock(i.budget);
+  if (blocked) {
+    i.journal(`${t.id}.unavailable`, { ...tag, cause: blocked });
     return null;
   }
   let content: Array<{ type: 'input_text'; text: RedactedText } | { type: 'input_image'; image_url: MaskedShot }>;
@@ -122,7 +123,7 @@ async function callOnce(i: AgentPortInput, t: ToolsetDef, parts: Array<Part | Sh
     return null;
   }
   if (r.status !== 'completed' || r.toolCalls.length) {
-    if (i.budget && budgetSpent(r.reason)) i.budget.spent = true;
+    noteBudget(i.budget, r.reason, i.journal);
     i.journal(`${t.id}.unavailable`, { ...tag, cause: r.reason ?? r.status });
     return null;
   }

@@ -117,6 +117,8 @@ export class BrowserAgent {
     const path = p && this.d.paths ? this.d.paths.get(stepId, this.sig(p)) : null;
     if (!p || !path || !this.d.paths) return null;
     this.d.journal('agentpath.replay', { stepId, actions: path.actions.length, resume: path.resume });
+    // 재시도를 건너뛰고 왔으니(fastEscalate) 화면이 그려지기를 한 번 기다린다
+    await this.d.page.waitIdle(5_000).catch(() => false);
     for (const [i, a] of path.actions.entries()) {
       let index: number | null = null;
       let els: InteractiveElement[] = [];
@@ -203,7 +205,7 @@ export class BrowserAgent {
 
   private replayFailed(stepId: string, n: number, code: string): null {
     this.d.journal('agentpath.replay_failed', { stepId, n, code });
-    this.d.paths?.forget(stepId, code);
+    this.d.paths?.missed(stepId, code);
     return null;
   }
 

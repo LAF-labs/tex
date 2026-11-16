@@ -79,6 +79,7 @@ interface StepState {
   judgedFirst: boolean;
   replayed: boolean;
   vision: boolean;
+  healDropped: boolean;
 }
 
 export class FallbackChain {
@@ -103,6 +104,11 @@ export class FallbackChain {
     return !!this.d.replay && !this.state(s.id).replayed && this.d.replay.replayable(s.id);
   }
 
+  /** 실행기 fastEscalate: 0원 칸(기억한 선택자 버리기·기억한 길 다시 걷기)이 있으면 재시도를 기다리지 않는다. */
+  fastEscalate(s: Step, _cause: string): boolean {
+    return this.healEligible(s) || this.replayEligible(s);
+  }
+
   /** 기억으로 첫 후보를 둔 항목을 겨누는 되돌릴 수 있는 스텝(어떤 실패든 기억을 먼저 버려 본다). */
   private healEligible(s: Step): boolean {
     const key = targetOf(s);
@@ -116,7 +122,15 @@ export class FallbackChain {
   confirmed(stepId: string): void {
     const st = this.per.get(stepId);
     const s = this.info.get(stepId)?.step;
-    if (!st?.added || !s || !this.d.memory) return;
+    if (!st || !s || !this.d.memory) return;
+    if (!st.added) {
+      // 기억한 후보를 버린 뒤 패키지 후보로 통과했다: 그 기억은 필요 없다.
+      const k = targetOf(s);
+      if (st.healDropped && k) this.d.memory.forget(k, 'package_ok');
+      st.healDropped = false;
+      return;
+    }
+    st.healDropped = false;
     const key = targetOf(s);
     const e = key ? this.d.dict.entries[key] : undefined;
     if (!key || !e) return;
@@ -142,7 +156,8 @@ export class FallbackChain {
       const sel = this.d.seeded!.get(hk)!;
       this.d.seeded!.delete(hk);
       dropFirstCandidate(this.d.dict, hk);
-      this.d.memory?.forget(hk, cause);
+      // 저장소에서는 아직 지우지 않는다(화면이 늦어 실패했을 수도 있다). 패키지 후보로 통과하면 그때 지우고, 폴백이 새로 고치면 덮어쓴다.
+      st.healDropped = true;
       st.tried.push('heal');
       this.d.journal('fallback.heal_dropped', { stepId, key: hk, selector: sel, code: cause });
       return { from: stepId };
@@ -246,7 +261,7 @@ export class FallbackChain {
 
   private state(stepId: string): StepState {
     let st = this.per.get(stepId);
-    if (!st) this.per.set(stepId, (st = { refind: false, calls: { n: 0 }, rejected: [], added: null, via: null, tried: [], judgedFirst: false, replayed: false, vision: false }));
+    if (!st) this.per.set(stepId, (st = { refind: false, calls: { n: 0 }, rejected: [], added: null, via: null, tried: [], judgedFirst: false, replayed: false, vision: false, healDropped: false }));
     return st;
   }
 }

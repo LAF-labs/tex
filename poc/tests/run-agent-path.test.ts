@@ -47,6 +47,21 @@ describe('에이전트 길 기억', () => {
     assert.equal(store.f?.paths.s1, undefined);
   });
 
+  it('다시 걷기 실패는 연속 두 번이면 버린다(늦게 그려진 한 번으로는 안 버림). 통과하면 다시 0', () => {
+    const store = new Mem();
+    const m = new AgentPathMemory(store, { now: () => 1000 });
+    const sig = planSignature(goal, 's2', pkg);
+    m.propose('s1', { sig, resume: 's2', actions: [act] });
+    m.confirmed('s2');
+    assert.equal(m.missed('s1', 'agentpath.no_element'), false);
+    m.replaying('s1', 's2');
+    m.confirmed('s2');
+    assert.equal(store.f?.paths.s1?.misses, 0);
+    assert.equal(m.missed('s1', 'agentpath.no_element'), false);
+    assert.equal(m.missed('s1', 'agentpath.no_element'), true);
+    assert.equal(store.f?.paths.s1, undefined);
+  });
+
   it('지문(패키지 항목·묶음)이 다르거나 기한이 지났거나 걸음이 없으면 쓰지 않는다', () => {
     const store = new Mem();
     const m = new AgentPathMemory(store, { now: () => 1000 });

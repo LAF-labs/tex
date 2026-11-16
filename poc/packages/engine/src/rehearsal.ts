@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { LogFields } from '@sax/platform';
 import type { Page } from 'playwright-core';
+import { estimateKrw } from './core/escalation.ts';
 
 /** 저널 이벤트 → 보고서 칸. 표에 없는 이벤트는 세지 않는다. */
 const COUNTED: Readonly<Record<string, string>> = {
@@ -19,6 +20,7 @@ const COUNTED: Readonly<Record<string, string>> = {
   'judge.dialog': 'judge',
   'decide.result': 'decide',
   'agent.action': 'agent',
+  'computer_use.action': 'vision',
   'human.secret_fallback': 'secret_fallback',
 };
 
@@ -83,6 +85,8 @@ export class RehearsalReport {
     };
     for (const [p, ms] of this.phaseMs) f[`${p}_ms`] = ms;
     for (const k of new Set(Object.values(COUNTED))) f[k] = this.counts.get(k) ?? 0;
+    // 이 실행의 AI 비용 추정(원, core/escalation.ts 칸 단가). 사다리가 싼 칸에서 끝났는지 본다.
+    f.est_krw = estimateKrw(Object.fromEntries(this.counts));
     return f;
   }
 

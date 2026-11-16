@@ -495,8 +495,10 @@ export class IrRun {
     const redactor = new Redactor({ runId: i.runId });
     // 실행당 예산: 게이트웨이가 다 썼다고(run_budget_exceeded) 하면 그 뒤로는 부르지 않는다(헛된 429 호출을 줄인다).
     // 위치 찾기(L2, 실행당 2번)와 판정·에이전트(agentPerRun)는 게이트웨이가 따로 세므로 표시도 따로 둔다.
-    const locateBudget = { spent: false };
-    const pageAiBudget = { spent: false };
+    // 계정 한도(오늘·이번 달·구독)는 실행 안의 유료 칸 전부가 같이 본다.
+    const day = { spent: false };
+    const locateBudget = { spent: false, day };
+    const pageAiBudget = { spent: false, day };
     const locate = i.ir.locate ? { model: new GatewayLocateModel({ responder: i.ir.locate, redactor, runToken, journal: i.journal, budget: locateBudget }), journal: i.journal } : undefined;
     // IR rev v1.3.7 closeLayers: 공지 레이어(X)를 until 스텝(또는 첫 게이트) 전 스텝마다 본다. 해석되면 GuardedActuator로 누른다. 없거나 틀리면 건너뛴다.
     const layers = ir.closeLayers?.targets ?? [];
@@ -621,7 +623,7 @@ export class IrRun {
         opened: (r) => i.handoff?.({ phase: 'sign', code: r.code?.startsWith('sign.card_') ? r.code : 'sign.waiting', stepId: r.stepId }),
         closed: () => {},
       },
-      interp: { retries: { stepMax: 3, backoff: 'equal_jitter', baseMs: 800, capMs: 10_000 }, retryFloorMs: 0, escalate: (s, cause) => fallback.eligible(s, cause), stop: this.stopAbort.signal },
+      interp: { retries: { stepMax: 3, backoff: 'equal_jitter', baseMs: 800, capMs: 10_000 }, retryFloorMs: 0, escalate: (s, cause) => fallback.eligible(s, cause), fastEscalate: (s, cause) => fallback.fastEscalate(s, cause), stop: this.stopAbort.signal },
       // [중지]면 폴백(AI 위치 찾기·판정·에이전트 모델 호출)을 기다리지 않는다: false를 돌려주면 조율기가 미뤄 둔 중지를 바로 적용한다.
       recover: (stop) => {
         // 다시 걸은(또는 에이전트가 방금 걸은) 길로 돌아간 확인 스텝이 재시도까지 실패했다: 그 길은 남기지 않는다.

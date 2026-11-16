@@ -29,7 +29,12 @@ export interface AgentPath {
   resume: string;
   actions: PathAction[];
   at: number;
+  /** 다시 걷기 연속 실패 수(PATH_MISS_LIMIT이면 버린다). */
+  misses?: number;
 }
+
+/** 다시 걷기가 이만큼 연속 실패하면 길을 버린다(화면이 늦게 그려진 한 번으로 버리지 않게). */
+export const PATH_MISS_LIMIT = 2;
 
 export interface AgentPathFile {
   v: 1;
@@ -84,7 +89,15 @@ export class AgentPathMemory {
 
   /** 실행기 step.finished(코드 없음). 돌아간 확인 스텝이 통과했으면 길을 남긴다. */
   confirmed(stepId: string): void {
-    if (this.replayed?.resume === stepId) this.replayed = null;
+    const r = this.replayed;
+    if (r?.resume === stepId) {
+      this.replayed = null;
+      const p = this.file.paths[r.stepId];
+      if (p?.misses) {
+        p.misses = 0;
+        this.flush();
+      }
+    }
     const p = this.pending;
     if (!p || p.path.resume !== stepId) return;
     this.pending = null;
@@ -98,7 +111,21 @@ export class AgentPathMemory {
     this.flush();
   }
 
-  /** 다시 걷기가 실패했거나 돌아간 스텝이 실패했다: 버린다. */
+  /** 다시 걷기가 실패했다: 연속 PATH_MISS_LIMIT번이면 버린다. 버렸으면 true. */
+  missed(stepId: string, code: string): boolean {
+    const p = this.file.paths[stepId];
+    if (!p) return false;
+    p.misses = (p.misses ?? 0) + 1;
+    if (p.misses >= PATH_MISS_LIMIT) {
+      this.forget(stepId, code);
+      return true;
+    }
+    this.journal('agentpath.missed', { stepId, code, misses: p.misses });
+    this.flush();
+    return false;
+  }
+
+  /** 돌아간 스텝이 실패했거나 다시 걷기가 거듭 실패했다: 버린다. */
   forget(stepId: string, code: string): void {
     if (this.pending?.stepId === stepId) this.pending = null;
     if (!this.file.paths[stepId]) return;

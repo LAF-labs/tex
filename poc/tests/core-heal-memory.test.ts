@@ -71,7 +71,7 @@ describe('고친 선택자 기억', () => {
     assert.equal(d2.entries.item!.candidates.filter((c) => c.kind === 'role').length, 1);
   });
 
-  it('기억한 후보로 실패하면 0단계가 버리고(저장소에서도) 같은 스텝을 패키지 후보로 다시 돈다. 모델·판정 없음', async () => {
+  it('기억한 후보로 실패하면 0단계가 실행 사본에서 빼고 같은 스텝을 패키지 후보로 다시 돈다(모델·판정·재시도 없음). 패키지 후보로 통과하면 저장소에서도 지운다', async () => {
     const store = new MemoryHealStore();
     const pkg = dict();
     const healable = healableKeys(ir, pkg, new Set(['s4']));
@@ -83,9 +83,14 @@ describe('고친 선택자 기억', () => {
     const j: string[] = [];
     const c = chain(d, m, seeded, j);
     assert.equal(c.eligible(steps[0]!, 'step.identity_mismatch'), true);
+    assert.equal(c.fastEscalate(steps[0]!, 'step.identity_mismatch'), true, '기억으로 실패하면 재시도를 기다리지 않는다');
     assert.deepEqual(await c.recover('s1', 'step.identity_mismatch'), { from: 's1' });
     assert.deepEqual(j, ['fallback.heal_dropped']);
     assert.deepEqual(d.entries.item!.candidates, pkg.entries.item!.candidates);
+    assert.equal(c.fastEscalate(steps[0]!, 'step.identity_mismatch'), false, '버린 뒤에는 재시도를 건너뛰지 않는다');
+    // 화면이 늦었을 수도 있어 저장소에서는 아직 지우지 않는다
+    assert.ok(store.f?.entries.item);
+    c.confirmed('s1');
     assert.equal(store.f?.entries.item, undefined);
     assert.equal(c.tried('s1'), 'retry:heal');
   });

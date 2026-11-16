@@ -58,6 +58,7 @@ describe('발급 사다리 0원 칸: 에이전트 길 기억(가짜 홈택스 �
   it('1회차 판정 → 에이전트가 넘김 → 길 기억, 2회차 같은 막힘은 모델 0번으로 다시 걸어 끝까지', async (t) => {
     let saved: string | undefined;
     const g1 = fakeGateway();
+    const t1 = Date.now();
     const o1 = await realDryRun({
       loggedIn: true, patchIssue: drift, locate: g1, maxMs: 300_000,
       afterRun: (db: Db) => {
@@ -73,7 +74,9 @@ describe('발급 사다리 0원 칸: 에이전트 길 기억(가짜 홈택스 �
     assert.ok(file.paths.s16a?.actions.length, saved);
     assert.ok(!saved!.includes('테스트'), '값(품목명)은 남기지 않는다');
 
+    const ms1 = Date.now() - t1;
     const g2 = fakeGateway();
+    const t2 = Date.now();
     const o2 = await realDryRun({
       loggedIn: true, patchIssue: drift, locate: g2, maxMs: 300_000,
       beforeRun: (db: Db) => void db.prepare('INSERT INTO settings (key, value_json) VALUES (?, ?)').run(ROW, saved!),
@@ -81,6 +84,9 @@ describe('발급 사다리 0원 칸: 에이전트 길 기억(가짜 홈택스 �
     assert.equal(o2.end?.status, 'success', show(o2));
     assert.ok(o2.journal.includes('agentpath.replayed'), show(o2));
     assert.deepEqual(g2.calls, [], '2회차 모델 호출 없음');
-    t.diagnostic(`1회차 jev 걸음 ${agentCalls}번 + 판정 1번 → 2회차 0번`);
+    const ms2 = Date.now() - t2;
+    t.diagnostic(`1회차 ${ms1}ms(재시도·위치 찾기·체크포인트·판정·jev ${agentCalls}걸음), 2회차 ${ms2}ms(기억한 길, 재시도 건너뜀)`);
+    assert.ok(ms2 < ms1, `2회차가 더 빠르다: ${ms1} → ${ms2}`);
+    assert.ok(!o2.steps.includes('s16a!step.selector_miss!x'), o2.steps.join(','));
   });
 });

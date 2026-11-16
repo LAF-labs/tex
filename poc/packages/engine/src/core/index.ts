@@ -30,3 +30,4 @@ export * from './dialog.ts';
 export * from './actuator.ts';
 export * from './heal-memory.ts';
 export { FallbackChain, type FallbackDeps, type StuckJudge, type StuckReplay, type StuckVision } from './fallback.ts';
+export * from './escalation.ts';
