@@ -194,11 +194,14 @@ export class IrLookupPort implements LookupPort {
       const colAttr = files.strings[COL_ATTR];
       const cellId = files.strings[CELL_ID];
       if (cellId !== undefined) {
+        // 행 번호·칸 이름 두 캡처 그룹이 없는 패턴은 표를 조용히 비우므로 패키지 오류로 본다.
+        let groups = 0;
         try {
-          new RegExp(cellId);
+          groups = (new RegExp(`${cellId}|`).exec('')?.length ?? 1) - 1;
         } catch {
           return { ok: false, code: 'lookup.package_invalid' };
         }
+        if (groups < 2) return { ok: false, code: 'lookup.package_invalid' };
       }
       const byId = !!cellId;
       const table = await handle.evaluate(
