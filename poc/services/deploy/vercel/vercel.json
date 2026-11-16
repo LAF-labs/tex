@@ -73,6 +73,10 @@
       "destination": "/api/sax?__p=/v1/oauth/:path*"
     },
     {
+      "source": "/v1/account/:path*",
+      "destination": "/api/sax?__p=/v1/account/:path*"
+    },
+    {
       "source": "/v1/billing/:path*",
       "destination": "/api/sax?__p=/v1/billing/:path*"
     },
@@ -135,6 +139,14 @@
     {
       "source": "/guide",
       "destination": "/guide/index.html"
+    },
+    {
+      "source": "/terms",
+      "destination": "/terms/index.html"
+    },
+    {
+      "source": "/privacy",
+      "destination": "/privacy/index.html"
     },
     {
       "source": "/download/mac",

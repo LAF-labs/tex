@@ -329,6 +329,16 @@ describe('데스크톱 계정: 이메일 6자리 → 첫 PC 등록 → 기기 �
     assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'remote-identity.json'), 'utf8')).deviceId, first);
   });
 
+  it('폰 연결을 닫은 빌드(운영 룸 호스트·폰 앱 출시 전): 로그인 뷰에 pairable:false, 렌더러는 [폰 연결] 대신 안내, main은 pair_unavailable', async () => {
+    const a = new DesktopAccount({ client: s.client, keys: async () => softDesktopKeys(), identity: new RemoteIdentityFile(dir), platform: 'windows', deviceName: 'Windows PC', pairing: false, now: s.clock.now });
+    const v = await signIn(a);
+    assert.equal(v.step, 'signed_in');
+    assert.equal(v.pairable, false);
+    const read = (f: string) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
+    assert.match(read('apps/desktop/static/shell/shell-account.js'), /v\.pairable === false\s*\? h\('p', \{ class: 'sx-meta', 'data-pair-soon': '' \}/);
+    assert.match(read('apps/desktop/src/shell-app.ts'), /if \(opts\.remote\?\.pairing === false\) throw new Error\('pair_unavailable'\);/);
+  });
+
   it('[로그아웃] 배선: 실제 입력 3초, 발급 실행 중이면 거부, 폰 연결 창을 닫는다, 렌더러는 설정 > 계정의 [로그아웃] → 로그인 게이트', () => {
     const read = (f: string) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
     const src = read('apps/desktop/src/shell-app.ts');

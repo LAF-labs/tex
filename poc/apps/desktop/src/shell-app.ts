@@ -233,6 +233,8 @@ export interface RemoteWiring {
   deviceName?: string;
   /** 룸 클라이언트를 바꿔 끼운다(e2e·개발 스택의 메모리 릴레이). 없으면 cloud.openSocket 위 WSS(wsRelayClient). */
   relayClient?: RelayClient;
+  /** false면 폰 연결을 닫는다([폰 연결]을 숨기고 pair.open은 pair_unavailable). 없으면 연다(시험·e2e·개발 스택). */
+  pairing?: boolean;
 }
 
 /** ShellOptions.update. updater가 없으면(시험) electron-updater를 불러온다. */
@@ -1317,6 +1319,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     pending: new PendingCodeFile(appPaths(root ?? defaultAppRoot()).userData),
     platform: process.platform === 'darwin' ? 'macos' : 'windows',
     deviceName: opts.remote?.deviceName ?? (process.platform === 'darwin' ? 'Mac PC' : 'Windows PC'),
+    pairing: opts.remote?.pairing !== false,
     log: (n, d) => log.event(n, d),
   });
   let accountReady: Promise<unknown> | null = null;
@@ -1347,6 +1350,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (pairWin) return pairWin;
     const cloud = opts.remote?.cloud;
     const device = account.device();
+    if (opts.remote?.pairing === false) throw new Error('pair_unavailable');
     if (!cloud || !device) throw new Error(device ? 'pair_unavailable' : 'account_required');
     const host = new PairingHost({
       account: cloud.account,
@@ -2089,6 +2093,31 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       pushBoard();
       return v;
     },
+    // 탈퇴(F-06): 이 PC의 기기 토큰으로 서버에 묻는다. 로그인 전이면 account_signed_out
+    'account.deletion': async () => {
+      await accountInit();
+      const d = account.device();
+      if (!d) throw new Error('account_signed_out');
+      return d.deletion();
+    },
+    'account.delete': async () => {
+      needGesture(3_000);
+      await accountInit();
+      const d = account.device();
+      if (!d) throw new Error('account_signed_out');
+      const r = await d.requestDelete();
+      log.event('main.account_delete_request', { result: 'ok' });
+      return r;
+    },
+    'account.deleteCancel': async () => {
+      needGesture(3_000);
+      await accountInit();
+      const d = account.device();
+      if (!d) throw new Error('account_signed_out');
+      await d.cancelDelete();
+      log.event('main.account_delete_cancel', { result: 'ok' });
+      return { deleteAfter: null };
+    },
     // [폰 연결]: main 소유 창(S-03)을 연다. 창은 셸 렌더러와 통하지 않는다(QR·6자리는 그 창에만).
     'pair.open': async () => {
       needGesture(3_000);
@@ -2152,6 +2181,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       if (!st.installKey) throw new Error('no_installer');
       await (opts.security?.install ?? openExternalKey)(st.installKey);
       log.event('main.security_install_open', { platform: process.platform === 'darwin' ? 1 : 0 });
+      return { opened: true };
+    },
+    'legal.open': async (p) => {
+      needGesture(3_000);
+      await openExternalKey(p.doc === 'privacy' ? 'legal.privacy' : 'legal.terms');
       return { opened: true };
     },
     'security.start': async () => {

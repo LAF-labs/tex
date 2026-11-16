@@ -10,7 +10,7 @@ import { createBankScreen } from './shell-bank.js';
 import { createPackScreen } from './shell-pack.js';
 import { identityIn } from './password-rules.js';
 import { bizDigits, bizNoInput, checkFields, dateInput, emailInput, field, fieldError, keys, LIMITS, secretInput, selectInput, textInput } from './fields.js';
-import { agoText, batchCard, btn, CHIP, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, replyOptions, runPanel, runSteps, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
+import { agoText, batchCard, btn, CHIP, emptyState, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, replyOptions, runPanel, runSteps, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -51,6 +51,7 @@ const state = {
   docUpdating: false, // 확인·수정 요청을 기다리는 중(두 번 보내지 않게)
   docsRev: 0, // 가져오기·확인으로 목록을 바꿀 때마다 올린다(그 전에 보낸 docs.list 응답이 새 서류를 덮지 않게)
   setTab: 'biz', // 설정 화면에서 고른 항목: 'biz'(내 사업장) | 'auth'(발급 인증) | 'devices'(기기 연결) | 'bank'(계좌 연결)
+  deletion: null, // 탈퇴 상태(설정 > 기기 연결): { deleteAfter: ms|null, confirm }
   account: null, // 계정 상태(main AccountView): 단계·이메일·코드 만료·오류 코드
   login: null, // 로그인 화면(A-01)이 열려 있으면 { screen, draft: { email, password, code, show }, busy }
 };
@@ -190,7 +191,7 @@ const act = {
       openPanel({ kind: 'run', id });
     } catch (e) {
       const c = errText(e);
-      toast(c === 'busy' ? '진행 중인 작업이 끝난 뒤에 시작할 수 있어요' : c === 'item_required' ? '품목이 비어 있어요. 카드의 품목을 눌러 넣고 다시 준비해 주세요.' : c === 'bad_email' ? '받는 이메일 모양이 맞지 않아요. 카드의 받는 이메일을 눌러 고치고 다시 준비해 주세요.' : c === 'chrome.not_installed' ? 'Chrome을 찾지 못했어요. Chrome을 설치한 뒤 다시 눌러 주세요.' : prepareRefusal(c) ?? human(e));
+      toast(c === 'busy' ? '진행 중인 작업이 끝난 뒤에 시작할 수 있어요' : c === 'item_required' ? '품목이 비어 있어요. 카드의 품목을 눌러 넣고 다시 준비해 주세요.' : c === 'amount_zero' ? '합계가 0원이에요. 카드의 금액을 눌러 고치고 다시 준비해 주세요.' : c === 'bad_email' ? '받는 이메일 모양이 맞지 않아요. 카드의 받는 이메일을 눌러 고치고 다시 준비해 주세요.' : c === 'chrome.not_installed' ? 'Chrome을 찾지 못했어요. Chrome을 설치한 뒤 다시 눌러 주세요.' : prepareRefusal(c) ?? human(e));
     }
   },
   vat: async (id, vat) => {
@@ -524,12 +525,21 @@ const onbAct = {
   },
   go: (v) => go(v),
   toast,
+  legal: (doc) => openLegal(doc),
   rerender: () => renderOnboarding(),
   // securityOps는 아래에서 정의된다(모듈 평가 순서): 쓸 때 읽는다
   get security() {
     return securityOps;
   },
 };
+/** 이용약관·개인정보 처리방침 전문을 기본 브라우저로 연다(F-06). */
+async function openLegal(doc) {
+  try {
+    await call('legal.open', { doc });
+  } catch {
+    toast('열지 못했어요. tax.laf-co.com에서 볼 수 있어요.');
+  }
+}
 /** 온보딩 영역을 지금 상태로 다시 그린다. 약관(④) 동의 전에는 입력창을 막는다(main도 onboarding_terms로 거부한다). */
 function renderOnboarding() {
   const old = chat.thread?.querySelector('[data-onboarding]');
@@ -1454,9 +1464,11 @@ function docsView() {
   return h(
     'section',
     { class: 'rail-screen', 'data-view': 'docs' },
+    // 서류가 하나도 없으면 머리에는 제목만 두고 거르기도 숨긴다(빈 화면 가운데 [PDF 가져오기] 하나).
+    !state.docs.length && !(state.issued ?? []).length ? railHead('문서함', '', btn('세무사 꾸러미', () => go('bundle'), 'sx-btn-quiet', { 'data-act': 'go-bundle' }), btn('활동 기록', () => go('activity'), 'sx-btn-quiet', { 'data-act': 'go-activity' })) :
     railHead('문서함', meta, btn('세무사 꾸러미', () => go('bundle'), 'sx-btn-quiet', { 'data-act': 'go-bundle' }), btn('활동 기록', () => go('activity'), 'sx-btn-quiet', { 'data-act': 'go-activity' }), btn(state.docBusy ? '읽는 중…' : 'PDF 가져오기', () => importDoc({ pick: true }), '', { 'data-act': 'doc-import', disabled: state.docBusy })),
     // 거르기는 화면 전체에 걸리므로 맨 위에 둔다(전에는 발급 표 아래에 있어 그 표에는 안 걸리는 것처럼 보였다).
-    h('div', { class: 'filters', role: 'group', 'aria-label': '서류 거르기' }, DOC_FILTERS.map(fb)),
+    state.docs.length || (state.issued ?? []).length ? h('div', { class: 'filters', role: 'group', 'aria-label': '서류 거르기' }, DOC_FILTERS.map(fb)) : null,
     withIssued ? issuedSection() : null,
     list.length || !withIssued ? listTable(
       [['서류'], ['발급일'], ['용도'], ['출처']],
@@ -1473,7 +1485,11 @@ function docsView() {
         ),
       ),
     ) : null,
-    list.length || (withIssued && (state.issued ?? []).length) ? null : h('div', { class: 'empty' }, '조건에 맞는 서류가 없어요.'),
+    list.length || (withIssued && (state.issued ?? []).length)
+      ? null
+      : state.docs.length || f !== 'all'
+        ? emptyState('조건에 맞는 서류가 없어요.', null, f === 'all' ? null : btn('전체 보기', () => ((state.docFilter = 'all'), render()), '', { 'data-act': 'doc-filter-all' }))
+        : emptyState('아직 서류가 없어요.', '대화에서 "사업자등록증명 떼 줘"처럼 말하거나, 받아 둔 PDF를 가져오면 여기에 모여요.', btn(state.docBusy ? '읽는 중…' : 'PDF 가져오기', () => importDoc({ pick: true }), 'sx-btn-primary', { 'data-act': 'doc-import', disabled: state.docBusy })),
   );
 }
 
@@ -1485,12 +1501,13 @@ function cpsView() {
   return h(
     'section',
     { class: 'rail-screen', 'data-view': 'cps' },
-    railHead('거래처', `${state.cps.length}곳${issued ? ` · 이번 달 발급 ${issued}곳` : ''}`, btn('거래처 추가', () => openPanel({ kind: 'cp-edit', id: null }), '', { 'data-act': 'cp-add' })),
+    // 비어 있으면 머리의 건수·[거래처 추가]를 두지 않는다(빈 화면 가운데 단추 하나만).
+    state.cps.length ? railHead('거래처', `${state.cps.length}곳${issued ? ` · 이번 달 발급 ${issued}곳` : ''}`, btn('거래처 추가', () => openPanel({ kind: 'cp-edit', id: null }), '', { 'data-act': 'cp-add' })) : railHead('거래처', ''),
     // 온보딩 O-05에서 [거래처 화면에서 추가]로 왔다(F-12): 다 넣으면 대화로 돌아가 [다 했어요]를 누르게 띠 하나
     state.onb?.step === 'counterparties'
       ? h('div', { class: 'sx-note', 'data-onb-band': 'cps' }, h('div', {}, '거래처를 다 넣으면 대화로 돌아가 [다 했어요]를 눌러 주세요.'), btn('대화로 돌아가기', () => go('chat'), 'sx-btn-primary', { 'data-act': 'onb-back' }))
       : null,
-    listTable(
+    state.cps.length ? listTable(
       [['상호'], ['사업자번호'], ['상태'], ['최근 발급'], ['이번 달']],
       state.cps.map((c) =>
         h(
@@ -1503,8 +1520,8 @@ function cpsView() {
           h('td', { class: c.lastIssuedOn?.startsWith(month) ? null : 'is-none' }, c.lastIssuedOn?.startsWith(month) ? '발급함' : '—'),
         ),
       ),
-    ),
-    h('p', { class: 'sx-meta rs-foot' }, '사업자번호는 발급할 때마다 홈택스에서 다시 확인해요.'),
+    ) : emptyState('아직 거래처가 없어요.', '세금계산서를 보낼 곳의 사업자번호만 있으면 상호·대표자는 홈택스에서 채워요.', btn('거래처 추가', () => openPanel({ kind: 'cp-edit', id: null }), 'sx-btn-primary', { 'data-act': 'cp-add' })),
+    state.cps.length ? h('p', { class: 'sx-meta rs-foot' }, '사업자번호는 발급할 때마다 홈택스에서 다시 확인해요.') : null,
   );
 }
 
@@ -1778,7 +1795,7 @@ function activityView() {
             ),
           ),
         )
-      : h('div', { class: 'empty' }, '아직 기록이 없어요.'),
+      : emptyState('아직 기록이 없어요.', '홈택스·정부24에서 한 일이 시각·결과와 함께 여기에 남아요.'),
   );
 }
 
@@ -1962,6 +1979,57 @@ async function refreshAccount() {
     state.account = { step: 'unavailable', email: null, codeExpiresAt: null, error: null };
   }
   render();
+  if (state.account?.step === 'signed_in') await loadDeletion();
+}
+
+// ---- 탈퇴(F-06, 약관 제15조): 7일 유예, 요청하면 구독이 바로 해지된다 ----
+
+async function loadDeletion() {
+  try {
+    const r = await call('account.deletion', {});
+    state.deletion = { deleteAfter: r.deleteAfter ?? null, confirm: false };
+  } catch {
+    state.deletion = null;
+  }
+  if (state.view === 'settings') render();
+}
+async function deletionAct(method) {
+  try {
+    const r = await call(method, {});
+    state.deletion = { deleteAfter: r.deleteAfter ?? null, confirm: false };
+    toast(r.deleteAfter ? '탈퇴를 요청했어요. 7일 안에 취소할 수 있어요.' : '탈퇴를 취소했어요.');
+  } catch (err) {
+    toast(accountErrText(errText(err)));
+  }
+  render();
+}
+const ymd = (ms) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일`;
+};
+/** 설정 > 기기 연결의 탈퇴 줄. 확인 한 번을 거친다(되돌릴 수 있는 7일 유예라 입력 확인 없이 두 번 누름). */
+function deletionRow() {
+  const d = state.deletion;
+  if (state.account?.step !== 'signed_in' || !d) return null;
+  const meta = (t) => h('p', { class: 'sx-meta' }, t);
+  if (d.deleteAfter)
+    return h(
+      'div',
+      { class: 'sx-card', 'data-account-delete': 'pending' },
+      h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '탈퇴 예정')),
+      meta(`${ymd(d.deleteAfter)}에 계정 정보가 지워져요. 구독은 해지돼 다음 결제가 없어요. 그 전에는 취소할 수 있어요.`),
+      h('div', { class: 'sx-actions' }, btn('탈퇴 취소', () => deletionAct('account.deleteCancel'), 'sx-btn-primary', { 'data-act': 'account-delete-cancel' })),
+    );
+  if (d.confirm)
+    return h(
+      'div',
+      { class: 'sx-card', 'data-account-delete': 'confirm' },
+      h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '정말 탈퇴할까요?')),
+      meta('구독이 바로 해지되고, 7일 뒤 서버의 계정 정보(이메일·기기·결제 참조)가 지워져요. 7일 안에는 취소할 수 있어요.'),
+      meta('이 Mac에 있는 사업장·거래처·발급 기록은 앱을 지우기 전까지 그대로 남아요.'),
+      h('div', { class: 'sx-actions' }, btn('탈퇴하기', () => deletionAct('account.delete'), 'sx-btn-primary', { 'data-act': 'account-delete' }), btn('그만두기', () => ((state.deletion = { ...d, confirm: false }), render()), 'sx-btn-quiet', { 'data-act': 'account-delete-back' })),
+    );
+  return h('p', { class: 'onb-links', 'data-account-delete': 'none' }, btn('탈퇴', () => ((state.deletion = { ...d, confirm: true }), render()), 'sx-btn-quiet', { 'data-act': 'account-delete-open' }));
 }
 
 function openLogin() {
@@ -2161,6 +2229,9 @@ function authCard() {
   ];
 }
 
+/** 약관·처리방침 전문(F-06): 동의한 뒤에도 언제든 볼 수 있게 설정 기기 연결 탭 끝에 둔다. */
+const legalRow = () =>
+  h('p', { class: 'onb-links', 'data-legal-row': '' }, btn('이용약관', () => openLegal('terms'), 'sx-btn-quiet', { 'data-legal': 'terms' }), btn('개인정보 처리방침', () => openLegal('privacy'), 'sx-btn-quiet', { 'data-legal': 'privacy' }));
 /** 설정(캔버스 S-02): 발급 인증 · 기기 연결. */
 function settingsView() {
   return h(
@@ -2180,7 +2251,7 @@ function settingsView() {
       : state.setTab === 'bank'
       ? bankAuto.view()
       : state.setTab === 'devices'
-      ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin, openPair, signOut))
+      ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin, openPair, signOut), deletionRow(), legalRow())
       : h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '발급 인증'), h('p', { class: 'sx-body-sm is-muted' }, '세금계산서를 발급할 때 쓰는 인증이에요.')), authCard()),
   );
 }
