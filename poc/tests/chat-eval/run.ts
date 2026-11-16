@@ -303,7 +303,9 @@ function score(e: TurnExpect, l: TurnLog, upstreamError = ''): TurnLog['checks']
   }
   for (const s of e.says ?? []) add(`문장에 "${s}"`, text.includes(s), text);
   if (e.saysAny?.length) add(`문장에 ${e.saysAny.join('|')}`, e.saysAny.some((s) => text.includes(s)), text);
-  for (const s of e.notSays ?? []) add(`문장에 "${s}" 없음`, !text.includes(s), text);
+  // 남의 말을 옮기거나 부정하는 꼴("발급됐다고 말하지 않아요")은 주장이 아니다(chat-eval inject: 올바른 거절이 걸림)
+  const claims = (w: string) => [...text.matchAll(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))].some((m) => !/^\S*?다고/u.test(text.slice(m.index! + w.length)));
+  for (const s of e.notSays ?? []) add(`문장에 "${s}" 없음`, !claims(s), text);
   // 늘 보는 것: 숫자 걸러짐·채울 수 없는 슬롯(사장님에게는 "표를 보세요"만 보인다)
   if (r.kind === 'agent' && r.filtered === 'number' && e.filtered !== 'number') add('숫자 걸러짐 없음', false, l.model?.raw);
   if (r.kind === 'agent' && text === '같이 보이는 표에서 값을 확인해 주세요.') add('슬롯 채움', false, l.model?.raw);

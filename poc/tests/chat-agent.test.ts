@@ -483,7 +483,7 @@ describe('chat.step 턴 상한·세션 폐기', () => {
     assert.equal(responds().length, 1);
     // 무엇을 했는지 토큰으로 말하고 화면 값을 같이 준다
     assert.deepEqual([r1.kind, r1.show, r1.filtered], ['did', ['d1'], 'closed']);
-    assert.match(r1.text, /^\[NAME_\d+\] 앞으로 \[AMT_\d+\], 부가세 별도로 확인 카드를 만들었어요\. /);
+    assert.match(r1.text, /^\[NAME_\d+\] 앞으로 \[AMT_\d+\] 확인 카드를 만들었어요\. 부가세는 별도로 두었어요\. 포함이면 말씀해 주세요\.$/);
     assert.deepEqual(Object.values(r1.values).sort(), ['110만원', 'A상사'].sort());
     script(draft(null));
     const r2 = (await say(a, pc, 'A상사 50만원 세금계산서 끊어줘')).reply;

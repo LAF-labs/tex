@@ -585,21 +585,24 @@ export class ChatAgent {
       if (r.o.status === 'card_shown') {
         const who = nameOf(a);
         const amt = amtOf(a);
-        return `${who ? `${who} 앞으로 ` : ''}${amt ? `${amt}, ` : ''}${vatWord(a.vat) ?? '부가세 별도'}로 확인 카드를 만들었어요.`;
+        // 부가세를 말하지 않았으면(null) 앱이 별도로 둔다: 문장 끝에 한 번 알린다(vatNote)
+        const vat = vatWord(a.vat);
+        return `${who ? `${who} 앞으로 ` : ''}${amt ? `${amt}${vat ? ', ' : ' '}` : ''}${vat ? `${vat}로 ` : ''}확인 카드를 만들었어요.`;
       }
       if (r.o.status === 'card_updated') {
         const parts = [amtOf(a) ? `금액 ${amtOf(a)}` : null, vatWord(a.vat), r.call?.tool === 'draft_edit' && r.call.item ? '품목' : null].filter((x) => x);
-        return parts.length ? `카드를 고쳤어요(${parts.join(', ')}).` : null;
+        return parts.length === 1 ? `카드를 ${parts[0] === '품목' ? '품목을 바꿔' : `${parts[0]}으로`} 고쳤어요.` : parts.length ? `카드의 ${parts.join(', ')}을 고쳤어요.` : null;
       }
       return null;
     };
     const lines = round.map(line);
+    const vatNote = round.some((r) => r.o.status === 'card_shown' && !vatWord(r.args.vat)) ? ' 부가세는 별도로 두었어요. 포함이면 말씀해 주세요.' : '';
     const cards = round.filter((r) => r.o.status === 'card_shown').length;
     const tail = round.at(-1)!.o.status === 'card_shown' ? ' 내용을 확인하시고 [홈택스에서 준비]를 눌러 주세요.' : round.at(-1)!.o.status === 'card_updated' ? ' 카드에서 바뀐 값을 확인해 주세요.' : '';
     const text =
       round.every((r) => r.o.status === 'discarded') ? CHAT_AGENT_DONE_TEXT.discarded!
-      : lines.every((l) => l) && lines.length <= 2 ? `${lines.join(' ')}${tail}`
-      : cards > 1 ? `확인 카드 ${cards}장을 만들었어요.${tail}`
+      : lines.every((l) => l) && lines.length <= 2 ? `${lines.join(' ')}${vatNote || tail}`
+      : cards > 1 ? `확인 카드 ${cards}장을 만들었어요.${vatNote || tail}`
       : (CHAT_AGENT_DONE_TEXT[round.at(-1)!.o.status] ?? CHAT_AGENT_NUMBER_TEXT);
     return { kind: 'did', text, show, ask: null, filtered: 'closed' };
   }
