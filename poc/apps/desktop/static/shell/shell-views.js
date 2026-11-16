@@ -413,11 +413,8 @@ export function taskCard(run, act) {
     );
   } else if (st === 'preparing') {
     // v2.0(H3): 머리 한 줄(지금 단계) + 조용한 [중지]. "승인 전에는 발급하지 않아요"는 패널에 있다.
-    // 로그인 단계: 엔진은 로그인 화면을 열고 최대 10분 기다린다(그 뒤에야 로그인 차례 카드). 사람 몫이라 할 일 한 줄과 [홈택스 창 보기]를 바로 보인다.
-    const login = run.steps[0].state === 'now' && run.steps[0].note;
-    if (login) card.dataset.loginNow = '';
-    fold(card, run, stepLine(now, !login), stopBtn(run, act));
-    if (login) card.append(todoLine(run.steps[0].note), h('div', { class: 'sx-actions' }, showBrowserBtn(run, act, true)));
+    // 로그인 단계: 앱이 직접 로그인한다. 사람 몫(캡차·추가 인증 등)은 로그인 차례 카드로 따로 온다. 여기서는 머리 한 줄(단계 이름만, 설명은 패널 단계 목록)뿐이다.
+    fold(card, run, stepLine(now, run.steps[0].state !== 'now'), stopBtn(run, act));
   } else if (verifying(run)) {
     // 발급 후 조회 중(08 §11 "발급 후 응답 끊김" 행). 이 상태에서는 어떤 버튼도 다시 발급하지 않는다. 머리 한 줄만, 설명은 패널에 있다.
     fold(card, run, h('span', { 'data-verify-attempt': run.verifyAttempt ? String(run.verifyAttempt) : null }, run.verifyAttempt ? `발급목록에서 확인하는 중 · 조회 ${run.verifyAttempt}회째` : '발급목록에서 확인하는 중'));
@@ -487,6 +484,8 @@ export function taskCard(run, act) {
     card.append(line(run.stoppedNote || '중지했어요.', true));
     // 브라우저가 닫혀 멈춘 제출 전 실행: 같은 값으로 바로 다시 시작
     if (run.browserClosed) card.append(h('div', { class: 'sx-actions' }, btn('다시 시작', () => act.restart(run.id), 'sx-btn-primary', { 'data-act': 'restart' })));
+    // 시간이 다 되어 멈춤(승인·사람 대기): 같은 값의 새 초안. 시작은 새 카드의 [홈택스에서 준비]
+    else if (run.redo) card.append(h('div', { class: 'sx-actions' }, btn('다시 준비', () => act.redraft(run.id), 'sx-btn-primary', { 'data-act': 'redraft' })));
   } else if (st === 'attention' && run.inDoubt) {
     // InDoubt 카드(08 §11): 발급됐는지 모른다. 다시 발급하는 버튼은 두지 않는다. 직접 확인할 곳(패널의 찾을 값)만 연다.
     card.dataset.inDoubt = '1';

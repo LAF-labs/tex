@@ -11,7 +11,7 @@ const DESK = path.resolve(import.meta.dirname, '../apps/desktop');
 const { tokensCss, bundleCss, loadTokens } = await import(`${DESK}/dist/shell-tokens.js`);
 const { MockStore, seedTimeline, QUICK, PROFILES, dayOffset, mockBundle, MOCK_SETTINGS } = await import(`${DESK}/dist/shell-mock.js`);
 const { buildBoard } = await import(`${DESK}/dist/board.js`);
-const { REGATE_NOTE, HANDOFF_HINT, HANDOFF_TEXT, NOTE } = await import(`${DESK}/dist/shell-runs.js`);
+const { REGATE_NOTE, HANDOFF_HINT, HANDOFF_TEXT, NOTE, HANDOFF_LOGIN, REHEARSAL_NEXT, LOGIN_NOW } = await import(`${DESK}/dist/shell-runs.js`);
 const { OnboardingFlow, initialOnbState } = await import(`${DESK}/dist/onboarding.js`);
 const { MockOnboardingPorts } = await import(`${DESK}/dist/onboarding-mock.js`);
 const { buildCardHtml, barCss, barPalette, summarize, BAR_CSP } = await import(`${DESK}/dist/approval-gate.js`);
@@ -220,6 +220,13 @@ const scenes = {
     await sleep(100);
     await js(win, `document.querySelector('[data-act=check-list]').click()`);
     await shot(win, '33-in-doubt');
+    // 멈춤 카드: 승인 시간 초과([다시 준비]), 예행이 사람 차례에서 멈춤(어느 단계·다시 하는 길), 로그인 중(할 일 없음)
+    ev(win, { type: 'run', run: { ...mkRun('stopped', { done: 4, stoppedNote: NOTE['gate.expired'] }), redo: true } });
+    await shot(win, '34-stopped-expired');
+    ev(win, { type: 'run', run: { ...mkRun('stopped', { done: 0, attentionAt: 0, note: '직접 해 주세요', stoppedNote: `'홈택스 로그인' 단계에서 사람이 할 일이 생겨 멈췄어요(${HANDOFF_LOGIN.text}). 예행은 기다리지 않아서 발급하지 않았어요. ${REHEARSAL_NEXT}` }), rehearsal: true } });
+    await shot(win, '35-rehearsal-handoff');
+    ev(win, { type: 'run', run: mkRun('preparing', { done: 0, now: true, note: LOGIN_NOW }) });
+    await shot(win, '36-login-now');
   },
   // EMPTY=1 ONLY=empty: 빈 화면 셋(거래처·문서함·활동 기록)
   async empty(win) {

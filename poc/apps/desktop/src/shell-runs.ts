@@ -46,10 +46,11 @@ export const SIGN_BY_AUTH: Record<string, { now: string; text: string }> = {
   [SIGN_LABEL.security_card]: { now: '앱이 홈택스 보안카드 창에 번호를 넣고 있어요', text: '보안카드 번호를 앱이 넣지 못했어요. 홈택스 창에서 보안카드 번호를 직접 넣어 주세요. 홈택스가 틀렸다고 했으면 설정에서 카드를 다시 등록해 주세요' },
 };
 /**
- * 로그인 단계 안내(H-01 2.2.0 s3~s5): 로그아웃 상태면 엔진이 로그인 화면을 열고 사람이 로그인하기를 최대 10분 기다린다.
- * 그 뒤에야 로그인 차례(handoff)가 오므로, 로그인 단계에 있는 동안 할 일을 바로 보인다(이미 로그인돼 있으면 곧 지나간다).
+ * 로그인 단계 안내. 앱이 공동인증서로 직접 로그인한다(H-01 2.3.x, 비밀번호는 금고가 넣고 저장하지 않았으면 금고 창이 묻는다).
+ * 사람이 할 일(캡차·추가 인증·인증서 고르기·간편인증 대체)은 로그인 차례(handoff, HANDOFF_BY_CODE)로 따로 온다.
+ * 그래서 이 줄은 할 일이 아니라 지금 단계 설명이다(대표 지적 2026-11-16: "직접 로그인해 주세요"는 앱이 하는 일과 맞지 않다).
  */
-export const LOGIN_NOW = '홈택스 창에 로그인 화면이 보이면 직접 로그인해 주세요. 로그인하면 자동으로 이어집니다';
+export const LOGIN_NOW = '앱이 홈택스에 로그인하고 있어요';
 export const SIGN_NOW_DEFAULT = '홈택스 창에서 인증을 마쳐 주세요';
 const signFor = (auth: string | undefined) => (auth && Object.hasOwn(SIGN_BY_AUTH, auth) ? SIGN_BY_AUTH[auth]! : null);
 /** 발급 전 단계의 사람 차례 코드별 한 줄(끝 문구 NOTE와 다르다: 실행은 아직 기다린다). */
@@ -156,7 +157,7 @@ export const NOTE: Record<string, string> = {
   // 예행(엔진 REHEARSAL_DONE): 승인 직전까지 가서 엔진이 스스로 멈췄다.
   'rehearsal.gate_reached': '예행을 마쳤어요. 승인 직전까지 갔고 발급하지 않았어요.',
   // 예행(엔진 REHEARSAL_HANDOFF): 사람 차례가 나서 바로 멈췄다(예행 실패, 이유는 engine.log run.rehearsal_report).
-  'rehearsal.handoff': '예행이 사람이 필요한 단계에서 멈췄어요. 발급하지 않았어요.',
+  'rehearsal.handoff': '예행은 사람이 할 일이 생기면 기다리지 않고 멈춰요. 발급하지 않았어요.',
   'mail.not_confirmed': '발급은 완료되었어요. 메일 발송은 홈택스 메일발송목록에서 확인해 주세요.',
   selector_placeholder: '홈택스 화면 정보(셀렉터)가 아직 확정되지 않아 시작하지 않았어요.',
   'answer.rejected': '승인을 엔진에 전달하지 못해 멈췄어요. 아무것도 발급하지 않았어요.',
@@ -304,6 +305,10 @@ export const ATTEST_NOTE = {
 export const GATELESS_STREAK_MAX = 3;
 export const PREPARE_PAUSE_MS = 60_000;
 /** 홈택스 예행의 고정 초안(부장 2026-11-13): 일호유통, 품목 예행, 공급가 1원, 이메일 없음. */
+/** 시간이 다 되어 멈춘 끝 코드(사람이 [중지]를 누르지 않았다). 멈춤 카드에 [다시 준비]를 둔다. */
+const TIMED_OUT: ReadonlySet<string> = new Set(['gate.expired', 'run.handoff_timeout']);
+/** 예행이 사람 차례에서 멈춘 뒤 다음 할 일. 예행은 도구 메뉴에서만 시작한다. */
+export const REHEARSAL_NEXT = "실제 발급에서는 앱이 여기서 기다려 드려요. 다시 해 보려면 도구 메뉴에서 '홈택스 예행(발급 안 함)'을 누르세요.";
 export const REHEARSAL = { name: '일호유통', bizNo: '6495800524', item: '예행', supply: 1 } as const;
 
 /** 엔진 answer() 거부 중 [중지]·만료가 먼저 게이트를 닫아서 생긴 것(근거 문제 아님). */
@@ -986,7 +991,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
   redraft(id: string): RunView {
     const r = this.runs.get(id);
     // 확인 필요로 끝난 발급 전 실행, 또는 브라우저가 닫혀 멈춘 발급 전 실행([다시 시작])
-    if (!r || !r.redo || !(r.status === 'attention' || (r.status === 'stopped' && r.browserClosed))) throw new Error('not_redoable');
+    if (!r || !r.redo || !(r.status === 'attention' || r.status === 'stopped')) throw new Error('not_redoable');
     const cp = this.src.counterparties().find((c) => c.id === r.counterparty.id);
     if (!cp) throw new Error('no_counterparty');
     const d = this.createDraft(cp, r.amount, r.vatGuessed ? null : r.vat, r.itemGuessed ? null : r.item);
@@ -1286,6 +1291,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     void this.host.control('run.end', { runId: r.id }).catch(() => {});
     // 승인했거나 게이트 뒤 단계였는가(engineGone의 unsure와 같은 판단). 핸드오프 끝 문구가 "발급하지 않았어요"를 말해도 되는지 가른다.
     const pastGate = r.status === 'issuing' || r.approvedPending === true || r.handoff?.afterGate === true;
+    const lastTurn = r.turn;
     r.turn = null;
     r.handoff = null;
     r.approvedPending = false;
@@ -1315,6 +1321,14 @@ export class ShellRuns extends EventEmitter implements Drafts {
     } else if (e.status === 'stopped' || e.status === 'expired') {
       r.status = 'stopped';
       r.stoppedNote = note(code);
+      // 사람이 고르지 않은 멈춤(승인·사람 대기 시간 초과)은 막다른 카드가 되지 않게 같은 값으로 [다시 준비]를 연다. 예행·게이트 뒤는 아니다.
+      if (TIMED_OUT.has(code ?? '') && !pastGate && !r.rehearsal) r.redo = true;
+      // 예행이 사람 차례에서 멈췄으면 어느 단계였는지와 다음 할 일을 말한다(대표 지적 2026-11-16: 멈춤 문구만 남고 할 일이 없었다).
+      if (r.rehearsal && code === 'rehearsal.handoff') {
+        const at = r.steps.findLast((s) => s.state === 'attention' || s.state === 'now');
+        const what = lastTurn?.text ? `(${lastTurn.text.replace(/[.。]$/, '')})` : '';
+        r.stoppedNote = `${at ? `'${at.label}' 단계에서 사람이 할 일이 생겨 멈췄어요${what}. 예행은 기다리지 않아서 발급하지 않았어요.` : NOTE['rehearsal.handoff']} ${REHEARSAL_NEXT}`;
+      }
     } else {
       // 실패·in_doubt는 사용자가 볼 일이 있다(확인 필요). 지금 단계를 표시하고 이유를 보인다.
       r.status = 'attention';
