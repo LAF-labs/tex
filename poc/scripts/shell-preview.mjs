@@ -2,7 +2,7 @@
 // 엔진·금고·Chrome 없이 화면만 본다(디자인 캔버스 "소버린 AX 화면 디자인"과 대조용). 흐름·판정 시험은 shell-e2e가 한다.
 // 실행: pnpm demo:preview  (= pnpm build && electron scripts/shell-preview.mjs [출력 폴더] [폭 높이])
 //   리눅스 CI·컨테이너: xvfb-run -a ./node_modules/.bin/electron --no-sandbox scripts/shell-preview.mjs
-//   DARK=1 이면 다크 테마, ONLY=flow,docs 처럼 장면을 고를 수 있다. 출력 기본값: reports/raw/design-sync/<폭>x<높이>[-dark]/
+//   DARK=1 이면 다크 테마, ONLY=flow,docs 처럼 장면을 고를 수 있다. OFFSCREEN=1 이면 창을 화면에 띄우지 않는다. 출력 기본값: reports/raw/design-sync/<폭>x<높이>[-dark]/
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, BrowserWindow, ipcMain, nativeImage, nativeTheme, protocol, WebContentsView } from 'electron';
@@ -113,7 +113,8 @@ protocol.handle('pv', async (req) => {
 
 async function open(theme = 'light') {
   nativeTheme.themeSource = theme;
-  const win = new BrowserWindow({ width: W, height: H, useContentSize: true, show: true, webPreferences: { sandbox: true, contextIsolation: true, preload: path.join(DESK, 'static/preload-shell.cjs') } });
+  const offscreen = !!process.env.OFFSCREEN;
+  const win = new BrowserWindow({ width: W, height: H, useContentSize: true, show: !offscreen, webPreferences: { offscreen, sandbox: true, contextIsolation: true, preload: path.join(DESK, 'static/preload-shell.cjs') } });
   await win.loadURL('pv://shell/shell.html');
   for (let i = 0; i < 100 && !(await win.webContents.executeJavaScript('document.body.dataset.ready === "1"')); i++) await sleep(50);
   return win;
@@ -149,6 +150,25 @@ const barFields = [
 
 const scenes = {
   async home(win) { await shot(win, '01-home'); },
+  // 레일 실측: 단추·알약·이름 칸의 실제 상자를 rail.json에 남긴다(목표: 폭 76, 단추 64×58, 알약 44×32, 한 칸 68).
+  async rail(win) {
+    const m = await js(win, `(() => {
+      const r = (el) => { const b = el.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height }; };
+      const rail = document.querySelector('#rail');
+      const css = getComputedStyle(document.documentElement);
+      return {
+        lRail: css.getPropertyValue('--l-rail').trim(), railWidthToken: css.getPropertyValue('--rail-width').trim(), rail: r(rail),
+        buttons: [...rail.querySelectorAll('button')].map((b) => {
+          const ic = b.querySelector('.rail-ic'), lb = b.querySelector('.rail-label'), svg = b.querySelector('svg'), dot = b.querySelector('b');
+          return { view: b.dataset.view, on: b.classList.contains('is-on'), box: r(b), ic: r(ic), icRadius: getComputedStyle(ic).borderRadius, icBg: getComputedStyle(ic).backgroundColor, btnBg: getComputedStyle(b).backgroundColor,
+            svg: r(svg), label: r(lb), font: getComputedStyle(lb).fontSize + '/' + getComputedStyle(lb).lineHeight, dot: dot ? r(dot) : null };
+        }),
+      };
+    })()`);
+    m.shell = SHELL;
+    await fs.writeFile(path.join(OUT, 'rail.json'), JSON.stringify(m, null, 1));
+    await shot(win, '00-rail');
+  },
   async menu(win) { await js(win, `document.querySelector('.tb-co').click()`); await shot(win, '02-profile-menu'); },
   async typing(win) { await js(win, `(() => { const i = document.querySelector('#composer'); i.value = 'A상사에 330만원 세금계산서 끊고 메일 보내 줘'; i.dispatchEvent(new Event('input')); })()`); await shot(win, '03-typing-vat'); },
   async flow(win) {
@@ -292,7 +312,7 @@ const scenes = {
   },
 };
 
-const order = ['home', 'board', 'menu', 'typing', 'flow', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbOld'];
+const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbOld'];
 const agreed = { version: 'pv', choice: 'agreed', at: '' };
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {

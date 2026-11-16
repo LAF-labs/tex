@@ -218,8 +218,11 @@ export function bankBoardCards(s: BankSummaryLike): BoardCard[] {
   const target = { to: 'view' as const, view: 'bank' as const };
   if (s.unpaidCount > 0) {
     const basis = s.latestDay ? `거래내역 ${md(s.latestDay)}까지 반영` : '거래내역을 아직 올리지 않았어요';
-    const item = s.stale
-      ? { id: 'bank-stale', label: '거래내역이 오래됐어요', detail: `${basis} · [거래내역 올리기]`, tone: 'attention' as const }
+    // 거래내역이 없으면 "오래됐다"가 아니라 아직 맞춰 보지 않은 것이다. 줄 전체가 받을 돈 화면으로 가는 단추라 글자 단추([…])는 두지 않는다.
+    const item = !s.latestDay
+      ? { id: 'bank-stale', label: `받을 돈 ${s.unpaidCount}건 · 입금 확인 전`, detail: basis, tone: null }
+      : s.stale
+      ? { id: 'bank-stale', label: '거래내역이 오래됐어요', detail: basis, tone: 'attention' as const }
       : s.overdueCount > 0
         ? { id: 'bank-overdue', label: `기한 지난 받을 돈 ${s.overdueCount}건 · ${won(s.overdueTotal)}`, detail: `${s.oldestOverdue ? `가장 오래된 것: ${s.oldestOverdue.cpName ?? '거래처'} ${md(s.oldestOverdue.writtenOn)}(${s.oldestOverdue.daysOver}일 지남) · ` : ''}${basis}`, tone: 'attention' as const }
         : { id: 'bank-unpaid', label: `기다리는 받을 돈 ${s.unpaidCount}건`, detail: basis, tone: null };

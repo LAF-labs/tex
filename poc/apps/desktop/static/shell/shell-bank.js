@@ -253,7 +253,8 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
   function head() {
     const sum = s.data?.summary;
     const basis = !sum ? '' : `${sum.latestDay ? `거래내역 ${md(sum.latestDay)}까지 반영` : '거래내역을 아직 올리지 않았어요'}${sum.stale && sum.latestDay ? ' · 오래됐어요' : ''}`;
-    const right = [btn('거래내역 파일 올리기', pickStatement, 'sx-btn-primary', { 'data-act': 'bank-statement', disabled: !s.data?.accounts?.length }), btn('홈택스 발급목록 파일 올리기', pickInvoices, 'sx-btn-quiet', { 'data-act': 'bank-invoices' })];
+    // 계좌가 없으면 거래내역 단추를 두지 않는다(누를 수 없는 단추는 보이지 않는다). 그때 할 일은 알림 줄의 [계좌 등록하기] 하나다.
+    const right = [s.data?.accounts?.length ? btn('거래내역 파일 올리기', pickStatement, 'sx-btn-primary', { 'data-act': 'bank-statement' }) : null, btn('홈택스 발급목록 파일 올리기', pickInvoices, 'sx-btn-quiet', { 'data-act': 'bank-invoices' })].filter(Boolean);
     if (railHead) return railHead('받을 돈', basis, ...right);
     return h('div', { class: 'rs-head' }, h('h1', { class: 'title-screen' }, '받을 돈'), basis ? h('span', { class: 'sx-meta', 'data-bank-basis': '' }, basis) : null, h('div', { class: 'rs-right' }, ...right));
   }
@@ -743,7 +744,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       d && s.tab === 'review' ? reviewList() : null,
       d && s.tab === 'accounts' ? accountsTab() : null,
       s.tab === 'import' ? importTab() : null,
-      h('p', { class: 'sx-meta rs-foot' }, '받기로 한 날은 기본 작성일 + 30일이에요. 거래처마다 거래처 화면에서 바꿀 수 있어요. 맞추기는 이 PC 안에서 정해진 규칙으로만 해요.'),
+      h('p', { class: 'sx-meta rs-foot' }, '받기로 한 날은 기본 작성일 + 30일이에요. 거래처마다 거래처 화면에서 바꿀 수 있어요.'),
     );
   }
 
