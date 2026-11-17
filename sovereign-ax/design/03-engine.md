@@ -24,7 +24,7 @@ IR 로드·검증, **패키지 로더(서명·핫픽스·정책·레지스트리
 | Loaded | start | Preparing | intentId 생성(로컬) 또는 수신(리모트), 기본값 확정, `inputs_hash` 계산. 원장에 같은 intentId 행이 있는데 `inputs_hash`·`playbook_id`가 다르면 거부 + `ledger.intent_reuse`(B-10) |
 | Preparing | 전제조건 실패 | Failed | |
 | Preparing | 준비 완료 | Running | 저널 `run.started` |
-| Running | gate 도달 | WaitingGate | **진입 전**(W 밖): 사전 안전 판정(§5.3) 통과, verify 기준선 B₀ 조회(실패 시 handoff + `verify.baseline_missing`, B-07)와 B₀로 하는 포털 기존 건 판정(`$dup.portalExisting`, §4, ADR-024), 기기 간 업무 키 조회(§4, Phase 2·데스크톱 2대 계정, B-30). 진입 시: 카드 = readback 값(앱 내장 라벨), 포털 탭 입력 잠금(R-G6), 승인 요청 발행(main 승인 바·폰) |
+| Running | gate 도달 | WaitingGate | **진입 전**(W 밖): 사전 안전 판정(§5.3) 통과, 발급 잠금 잡기(PC 2대 이상 계정의 세금계산서 발급만, 아래 "발급 잠금", ADR-048 결정 7), verify 기준선 B₀ 조회(실패 시 handoff + `verify.baseline_missing`, B-07)와 B₀로 하는 포털 기존 건 판정(`$dup.portalExisting`, §4, ADR-024), 기기 간 업무 키 조회(§4, Phase 2·데스크톱 2대 계정, B-30). 진입 시: 카드 = readback 값(앱 내장 라벨), 포털 탭 입력 잠금(R-G6), 승인 요청 발행(main 승인 바·폰) |
 | WaitingGate | 승인(먼저 도착한 결정) | Running | `gate_requests` 원자 전이 후 토큰 발급(§3, R-G8), 거부 우선 창 2초 |
 | WaitingGate | 거부 | Aborted | |
 | WaitingGate | 사용자 "수정하기" | Running(게이트 앞 체크포인트) | 게이트 취소, 입력 잠금 해제, 게이트 앞으로 되감기(R-G6, B-06) |
@@ -57,6 +57,12 @@ IR 로드·검증, **패키지 로더(서명·핫픽스·정책·레지스트리
 | (비종료 상태) | 프로세스 재시작 | Interrupted | 저널로 복원. 원장 `armed\|dispatched\|observed_manual` 행은 `in_doubt`로 승격 → InDoubt |
 
 - **IR 실행기의 사람 대기(Phase 1, 2026-11-11 B3)**: HandedOff·Paused에 들어가도 실행을 끝내지 않고 사람의 명령을 기다린다(`run.resume` = 위 "사용자 재개", `run.manualDone` = "직접 발급함", `run.stop`). 대기 한 번의 상한은 30분, 실행 전체 수명(대기 포함)은 2시간이다. 상한에 닿으면 위의 30분 → Paused 전이보다 먼저 `handoff`(`run.handoff_timeout`)로 끝난다. 이 상한을 정하는 정책 필드는 아직 없다(생기면 더 엄격한 쪽을 쓴다). 게이트 만료(`gate.expired`)·정지 하향·차단 걸쇠는 대상이 아니다(지금처럼 끝). 캡차 `human` 핸드오프의 재개 지점은 마지막 체크포인트다(사람이 브라우저에서 풀고 로그인까지 마쳤는지 화면을 다시 본다). 대기 중 앱이 꺼지면 기존대로 `interrupted`이고, 원장이 열려 있으면 `in_doubt`로 승격한다.
+- **발급 잠금(ADR-048 결정 7, `run/service-ir.ts`·`issue-lock.ts`)**: 계정에 PC가 2대 이상이면 세금계산서 발급(`kind = invoice`, 예행 제외)은 계정당 하나인 잠금을 잡은 PC만 게이트를 연다. 엔진은 서버를 모른다. main과 잇는 인증 포트로 `lock.acquire`·`lock.renew`·`lock.release`를 보내고, main(`issue-lock-host.ts`)이 계정 서비스를 부른다. PC가 한 대면 main이 서버를 부르지 않고 `held: false`로 답한다.
+  - **잡는 때**: 게이트 직전(W 밖), 사전 안전 판정 뒤·기준선 B₀ 조회 앞. 다른 PC가 잡고 있으면 5초마다 다시 잡아 보며 10분까지 기다리고(단계 표시에 `issue.locked_elsewhere`), 그 뒤에는 핸드오프로 선다. 서버에 못 닿으면 바로 `issue.lock_unavailable`로 선다. 어느 쪽이든 게이트를 열지 않고 다른 발급 경로(API·다른 화면)로 넘기지 않는다.
+  - **지키는 때**: main이 30초마다 갱신한다(만료 90초). 한 번 잡은 뒤 20분이 지나면 main이 갱신을 멈춘다(멈춘 실행이 다른 PC를 막지 않게).
+  - **커밋 직전**: 제어기가 토큰을 쓰기 전에 `beforeCommit`을 부르고, 이때 서버에 갱신을 한 번 더 물어 성공해야 버튼을 누른다. 실패하면 토큰과 승인값을 버리고 `submit.not_entered`를 남긴 뒤 핸드오프로 선다(`issue.lock_lost`, 답이 없으면 `commit.precheck_failed`). 재개는 게이트 앞부터다(잠금·기준선·승인을 다시 한다).
+  - **놓는 때**: 원장이 `committed`나 `not_committed`로 정리됐을 때, 실행이 사람을 기다리며 설 때(HandedOff·Paused), 실행이 끝날 때, 엔진 프로세스가 죽었을 때(main). 승인 대기는 게이트 만료(10분)가 상한이다.
+  - 핸드오프 카드는 [이어서]만 보인다([직접 발급함]은 없다. 다른 PC가 내고 있을 수 있어서 사람이 포털에서 직접 내는 길을 권하지 않는다).
 - **서명 차례(커밋 구간 안 사람 대기, B3)**: `signFlow`의 `wait:push`가 `maxWaitMs`를 넘기거나 `human:secret`이 TTL로 끝나면 곧바로 verify로 가지 않고 사람을 기다린다. 상태는 Running(commit) 그대로다.
   - 간편인증(push)이면 확인 버튼(`confirmTarget`)이 뜰 때 **무장 한 번에 한 번만, 승인 토큰 `exp` 안에서만** 엔진이 누른다.
   - `run.resume`([다 했어요])·`run.stop`·상한(30분과 실행 수명 중 짧은 쪽)이면 **어떤 버튼도 누르지 않고** verify로 간다. 무장 토큰은 새로 만들지 않는다. 서명을 못 마쳤으면 사람이 홈택스 창에서 [서명]까지 누른 뒤 [다 했어요]를 누른다.

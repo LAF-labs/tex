@@ -52,6 +52,10 @@
 | `commit_guard` | `fetch_enable_failed` | 호스트 고정 `Fetch.enable` 다시 걸기 실패(호스트 수만 기록)(PR #111) | — | 저널만 |
 | `commit_guard` | `ledger_failed` | 가드가 원장 결과(`not_committed`·`in_doubt`)를 쓰지 못함(PR #111) | — | 저널만. 정지는 그대로 |
 | `commit` | `confirm_accepted` | 무장 구간에서 `expectConfirm` 일치 confirm 수락, 텍스트 해시 기록(V-24) | — | 저널만 |
+| `commit` | `precheck_failed` | 커밋 직전 확인(`beforeCommit`, 지금은 발급 잠금 갱신)이 답 없이 실패함. 토큰을 쓰기 전이라 버튼을 누르지 않았다(ADR-048 결정 7) | `err.commit.precheck_failed` | 핸드오프([이어서]만), 재개는 게이트 앞부터 |
+| `issue` | `locked_elsewhere` | 계정의 다른 PC가 발급 잠금을 잡고 있음. 10분까지 5초마다 스스로 다시 잡아 보고 그 뒤에 이 코드로 선다(ADR-048 결정 7, PC 2대 이상 계정) | `err.issue.locked_elsewhere` | 게이트 열지 않음, 핸드오프([이어서]만) |
+| `issue` | `lock_unavailable` | 발급 잠금 서버에 닿지 못했거나 답을 해석하지 못함(PC 2대 이상 계정). 다른 발급 경로로 넘기지 않는다 | `err.issue.lock_unavailable` | 게이트 열지 않음, 핸드오프([이어서]만) |
+| `issue` | `lock_lost` | 커밋 직전 갱신에서 잠금이 만료됐거나 다른 PC로 넘어감. 토큰을 쓰기 전이라 버튼을 누르지 않았다 | `err.issue.lock_lost` | 핸드오프([이어서]만), 재개는 게이트 앞부터(잠금·기준선·승인 다시) |
 | `security` | `commit_payload_mismatch` | 커밋 요청 본문 ≠ readback 값(R-C1, 금고가 대조해 `match:false`, **보안 이벤트**) | `err.security.commit_payload_mismatch` | 요청 중단, 원장 `not_committed`, 핸드오프 |
 | `verify` | `committed` / `not_committed` / `unknown` | 조회 결과 | — | 분기 |
 | `verify` | `baseline_missing` | 게이트 직전 기준선 조회 실패(B-07) | `err.verify.baseline_missing` | 게이트 열지 않음, 핸드오프 |
@@ -122,6 +126,7 @@
 | `account` | `slot_limit`(409) / `slot_not_found`(404) / `rebind_too_soon`(409) | 프로필 슬롯 2개 초과 / 슬롯 없음 / 사업자 HMAC 재바인딩 90일 안(B-28, D09 §2) | 안내만 |
 | `account` | `device_limit`(409) / `device_churn_limit`(429) / `device_not_found`(404) / `device_suspended`(403) / `not_pending`(409) | 기기 수 상한 / 30일 교체 상한(C-32) / 기기 없음 / 긴급 정지·폐기된 기기 / 대기 상태가 아닌 기기 | 안내만. 정지 해제는 AIK 서명 계정 작업 |
 | `account` | `aik_not_pinned`(409) / `aik_already_pinned`(409) / `aik_signature_invalid`(400) / `list_version_stale`(409) | AIK 미고정 / 이미 고정 / AIK 서명 오류 / 기기 목록 버전이 저장값보다 낮음(D08 §4.1) | 목록 다시 받기 |
+| `account` | `issue_locked`(409) / `issue_lock_lost`(409) | 다른 데스크톱이 발급 잠금을 잡고 있음 / 내 잠금이 만료됐거나 넘어감(ADR-048 결정 7). PC는 각각 `issue.locked_elsewhere`·`issue.lock_lost`로 옮긴다 | 기다렸다 다시 잡기 / 커밋하지 않고 게이트 앞부터 |
 | `account` | `billing_signature_invalid`(400) | PG 웹훅 서명 불일치(**보안 이벤트**) | 무시·기록 |
 | `gateway` | `run_token_invalid`(401) / `run_budget_exceeded`(429) / `device_suspended`(403) | `runToken`(`SAX-run-token-v1`) 오류 / 실행당 예산 초과 / 정지된 기기 | 해당 호출 `unknown`, 예산 초과는 핸드오프 |
 | `relay` | `room_used`(409) | 같은 룸의 두 번째 enroll(키와 무관). 룸 하나에 enroll 성공은 한 번이다(팀장 결정 2026-11-06, 클라우드 PR #122). 409는 그 룸을 만든 PC에만 보이고, 다른 PC·없음·만료·미페어링은 `404 relay.room_unavailable`이다(존재 오라클 없음) | 다시 보내지 않는다(첫 enroll이 이미 성공함). 새 폰은 새 룸으로 페어링 |
