@@ -15,7 +15,18 @@ export interface SeedRow {
   approvalNo?: string;
 }
 export const TODAY = '2026-11-16';
-export const SEED: { cps: SeedCp[]; issued: SeedRow[]; receivables: SeedRow[] } = {
+/** 돈 흐름 한 달(agent-chat CashFlowValues와 같은 꼴). 이번 달은 다 덮였고 지난달은 일부 계좌가 모자란다(partial). */
+export interface SeedCash {
+  complete: boolean;
+  through: string;
+  in: number;
+  out: number;
+  net: number;
+  balance: number | null;
+  nextIn: number;
+  nextOut: number;
+}
+export const SEED: { cps: SeedCp[]; issued: SeedRow[]; receivables: SeedRow[]; payables: SeedRow[]; cash: Record<string, SeedCash> } = {
   cps: [
     { name: '한빛상사', item: '디자인 용역' },
     { name: '한빛식품', item: null },
@@ -35,6 +46,15 @@ export const SEED: { cps: SeedCp[]; issued: SeedRow[]; receivables: SeedRow[] } 
     { cp: '스마일카페', date: '2026-10-20', total: 550_000 },
     { cp: '김앤리컨설팅', date: '2026-10-28', total: 3_300_000 },
   ],
+  // 낼 돈: 받은 매입 세금계산서 중 아직 내지 않은 것(11 §2)
+  payables: [
+    { cp: '한빛식품', date: '2026-10-25', total: 770_000 },
+    { cp: '대한테크', date: '2026-11-05', total: 220_000 },
+  ],
+  cash: {
+    '2026-11': { complete: true, through: '2026-11-16', in: 4_400_000, out: 2_950_000, net: 1_450_000, balance: 8_200_000, nextIn: 3_850_000, nextOut: 990_000 },
+    '2026-10': { complete: false, through: '2026-10-31', in: 2_750_000, out: 3_100_000, net: -350_000, balance: 8_200_000, nextIn: 3_850_000, nextOut: 990_000 },
+  },
 };
 
 export interface DraftExpect {
@@ -66,7 +86,7 @@ export interface TurnExpect {
   /** 되묻는 칸(null이면 되묻지 않아야 한다) */
   ask?: string | null;
   /** 보인 표 종류 */
-  table?: 'sales' | 'history' | 'receivables';
+  table?: 'sales' | 'history' | 'receivables' | 'payables' | 'cash_flow';
   /** 화면 문장에 모두 있어야 할 말 */
   says?: string[];
   /** 화면 문장에 하나라도 있어야 할 말 */
@@ -173,6 +193,11 @@ export const CASES: Case[] = [
   { id: 'look-approval', cat: '조회', why: '승인번호', turns: [{ say: '대한테크 최근 세금계산서 승인번호 알려줘', expect: { tools: ['invoice_history'], says: ['20261110-41000000-00000002'] } }] },
   { id: 'look-receivables', cat: '조회', why: '받을 돈(미수금)', turns: [{ say: '아직 돈 안 들어온 거 있어?', expect: { tools: ['receivables'], table: 'receivables' } }] },
   { id: 'look-receivables-cp', cat: '조회', why: '거래처 미수', turns: [{ say: '김앤리컨설팅 입금됐나?', expect: { tools: ['receivables'] } }] },
+  { id: 'look-late', cat: '조회', why: '늦게 주는 거래처 → 받을 돈의 가장 오래된 건', turns: [{ say: '누가 제일 늦게 줘?', expect: { tools: ['receivables'], saysAny: ['스마일카페'] } }] },
+  { id: 'look-payables', cat: '조회', why: '낼 돈(미지급)', turns: [{ say: '안 낸 돈 있어?', expect: { tools: ['payables'], table: 'payables', noTools: ['receivables'] } }] },
+  { id: 'look-payables-sum', cat: '조회', why: '낼 돈 합계', turns: [{ say: '우리가 줘야 할 돈 다 합치면 얼마야?', expect: { tools: ['payables'], saysAny: ['990,000원'] } }] },
+  { id: 'look-cash', cat: '조회', why: '이번 달 돈 흐름(다 덮임)', turns: [{ say: '이번 달 돈 남았어?', expect: { tools: ['cash_flow'], table: 'cash_flow', saysAny: ['1,450,000원', '4,400,000원', '8,200,000원'], notSays: ['이익', '세금'] } }] },
+  { id: 'look-cash-partial', cat: '조회', why: '지난달 돈 흐름(일부 계좌 모자람) → 확인 못 한 부분이 있다고 말함', turns: [{ say: '지난달 돈 흐름 어땠어?', expect: { tools: ['cash_flow'], saysAny: ['일부', '확인 못', '모자라'] } }] },
   { id: 'look-receivables-sum', cat: '조회', why: '받을 돈 합계', turns: [{ say: '못 받은 돈 다 합치면 얼마야?', expect: { tools: ['receivables'], saysAny: ['3,850,000원', '3,500,000원'] } }] },
   { id: 'look-empty', cat: '조회', why: '기록 없는 거래처', turns: [{ say: '한빛식품 발급 기록 있어?', expect: { tools: ['invoice_history'], noCreate: true } }] },
 
