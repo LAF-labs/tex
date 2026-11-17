@@ -198,6 +198,19 @@ describe('PhoneIssue', () => {
     assert.ok((await again.get(c1)) && (await again.get(c2)));
   });
 
+  it('끝 소식을 못 보내면 다음 세션에서 다시 보낸다', async () => {
+    const x = await issueWorld();
+    const bad = { send: () => { throw new Error('closed'); } };
+    x.p.attach('p', bad);
+    const ack = await x.p.handle('p', new Sink(), issueCmd(ulid(), req));
+    const done = run({ id: 'run-1', status: 'done', result: { approvalNo: '20261117-41000000-12345678', mailTo: CP.email, docId: '', doneAt: '10:03', mailConfirmed: true } });
+    x.runs.set('run-1', done);
+    x.p.update(done);
+    const s = new Sink();
+    x.p.attach('p', s);
+    assert.deepEqual(s.events.map((e) => [e.runId, e.phase]), [[ack.runId, 'done']]);
+  });
+
   it('준비가 막혀도(상한) 초안은 PC에 남고, 폰에는 준비 단계로 보인다', async () => {
     const x = await issueWorld({ prepare: async () => Promise.reject(new Error('throttled.rate:3')) });
     const s = new Sink();

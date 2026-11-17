@@ -175,7 +175,9 @@ export class PhoneIssue {
     try {
       sink.send('run.event', ev);
     } catch {
+      // 끝 소식도 못 보냈으면 지우지 않는다(다음 세션 attach에서 다시 보낸다)
       this.#log('event_send_failed');
+      return;
     }
     if (ev.event === 'end') this.#runs.delete(r.id);
   }
