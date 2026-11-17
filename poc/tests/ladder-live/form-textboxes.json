@@ -1,0 +1,277 @@
+[
+{
+"n": 1,
+"name": "",
+"id": "mf_txppWframe_edtSplrTnmNmTop"
+},
+{
+"n": 2,
+"name": "성명",
+"id": "mf_txppWframe_edtSplrRprsFnmTop"
+},
+{
+"n": 3,
+"name": "사업장",
+"id": "mf_txppWframe_edtSplrPfbAdrTop"
+},
+{
+"n": 4,
+"name": "업태",
+"id": "mf_txppWframe_edtSplrBcNmTop"
+},
+{
+"n": 5,
+"name": "종목",
+"id": "mf_txppWframe_edtSplrItmNmTop"
+},
+{
+"n": 6,
+"name": "",
+"id": "mf_txppWframe_edtSplrEmlIdTop"
+},
+{
+"n": 7,
+"name": "이메일 도메인",
+"id": "mf_txppWframe_edtSplrEmlDmanTop"
+},
+{
+"n": 8,
+"name": "",
+"id": "mf_txppWframe_edtDmnrBsnoTop"
+},
+{
+"n": 9,
+"name": "",
+"id": "mf_txppWframe_edtDmnrTnmNmTop"
+},
+{
+"n": 10,
+"name": "성명",
+"id": "mf_txppWframe_edtDmnrRprsFnmTop"
+},
+{
+"n": 11,
+"name": "사업장",
+"id": "mf_txppWframe_edtDmnrPfbAdrTop"
+},
+{
+"n": 12,
+"name": "업태",
+"id": "mf_txppWframe_edtDmnrBcNmTop"
+},
+{
+"n": 13,
+"name": "종목",
+"id": "mf_txppWframe_edtDmnrItmNmTop"
+},
+{
+"n": 14,
+"name": "공급받는자 이메일 주소",
+"id": "mf_txppWframe_edtDmnrMchrgEmlIdTop"
+},
+{
+"n": 15,
+"name": "주담당 이메일 도메인",
+"id": "mf_txppWframe_edtDmnrMchrgEmlDmanTop"
+},
+{
+"n": 16,
+"name": "부담당 이메일 아이디",
+"id": "mf_txppWframe_edtDmnrSchrgEmlIdTop"
+},
+{
+"n": 17,
+"name": "부담당 이메일 도메인",
+"id": "mf_txppWframe_edtDmnrSchrgEmlDmanTop"
+},
+{
+"n": 18,
+"name": "날짜 입력",
+"id": "mf_txppWframe_calWrtDtTop_input"
+},
+{
+"n": 19,
+"name": "",
+"id": "mf_txppWframe_edtRmrkCntnTop"
+},
+{
+"n": 20,
+"name": "1행 월",
+"id": "mf_txppWframe_genEtxivLsatTop_0_edtLsatSplMmTop"
+},
+{
+"n": 21,
+"name": "1행 일",
+"id": "mf_txppWframe_genEtxivLsatTop_0_edtLsatSplDdTop"
+},
+{
+"n": 22,
+"name": "",
+"id": "mf_txppWframe_genEtxivLsatTop_0_edtLsatNmTop"
+},
+{
+"n": 23,
+"name": "1행 규격",
+"id": "mf_txppWframe_genEtxivLsatTop_0_edtLsatRszeNmTop"
+},
+{
+"n": 24,
+"name": "1행 수량",
+"id": "mf_txppWframe_genEtxivLsatTop_0_edtLsatQtyTop"
+},
+{
+"n": 25,
+"name": "1행 단가",
+"id": "mf_txppWframe_genEtxivLsatTop_0_edtLsatUtprcTop"
+},
+{
+"n": 26,
+"name": "",
+"id": "mf_txppWframe_genEtxivLsatTop_0_edtLsatSplCftTop"
+},
+{
+"n": 27,
+"name": "",
+"id": "mf_txppWframe_genEtxivLsatTop_0_edtLsatTxamtTop"
+},
+{
+"n": 28,
+"name": "1행 비고",
+"id": "mf_txppWframe_genEtxivLsatTop_0_edtLsatRmrkCntnTop"
+},
+{
+"n": 29,
+"name": "2행 월",
+"id": "mf_txppWframe_genEtxivLsatTop_1_edtLsatSplMmTop"
+},
+{
+"n": 30,
+"name": "2행 일",
+"id": "mf_txppWframe_genEtxivLsatTop_1_edtLsatSplDdTop"
+},
+{
+"n": 31,
+"name": "2행 품목",
+"id": "mf_txppWframe_genEtxivLsatTop_1_edtLsatNmTop"
+},
+{
+"n": 32,
+"name": "2행 규격",
+"id": "mf_txppWframe_genEtxivLsatTop_1_edtLsatRszeNmTop"
+},
+{
+"n": 33,
+"name": "2행 수량",
+"id": "mf_txppWframe_genEtxivLsatTop_1_edtLsatQtyTop"
+},
+{
+"n": 34,
+"name": "2행 단가",
+"id": "mf_txppWframe_genEtxivLsatTop_1_edtLsatUtprcTop"
+},
+{
+"n": 35,
+"name": "2행 공급가액",
+"id": "mf_txppWframe_genEtxivLsatTop_1_edtLsatSplCftTop"
+},
+{
+"n": 36,
+"name": "2행 세액",
+"id": "mf_txppWframe_genEtxivLsatTop_1_edtLsatTxamtTop"
+},
+{
+"n": 37,
+"name": "2행 비고",
+"id": "mf_txppWframe_genEtxivLsatTop_1_edtLsatRmrkCntnTop"
+},
+{
+"n": 38,
+"name": "3행 월",
+"id": "mf_txppWframe_genEtxivLsatTop_2_edtLsatSplMmTop"
+},
+{
+"n": 39,
+"name": "3행 일",
+"id": "mf_txppWframe_genEtxivLsatTop_2_edtLsatSplDdTop"
+},
+{
+"n": 40,
+"name": "3행 품목",
+"id": "mf_txppWframe_genEtxivLsatTop_2_edtLsatNmTop"
+},
+{
+"n": 41,
+"name": "3행 규격",
+"id": "mf_txppWframe_genEtxivLsatTop_2_edtLsatRszeNmTop"
+},
+{
+"n": 42,
+"name": "3행 수량",
+"id": "mf_txppWframe_genEtxivLsatTop_2_edtLsatQtyTop"
+},
+{
+"n": 43,
+"name": "3행 단가",
+"id": "mf_txppWframe_genEtxivLsatTop_2_edtLsatUtprcTop"
+},
+{
+"n": 44,
+"name": "3행 공급가액",
+"id": "mf_txppWframe_genEtxivLsatTop_2_edtLsatSplCftTop"
+},
+{
+"n": 45,
+"name": "3행 세액",
+"id": "mf_txppWframe_genEtxivLsatTop_2_edtLsatTxamtTop"
+},
+{
+"n": 46,
+"name": "3행 비고",
+"id": "mf_txppWframe_genEtxivLsatTop_2_edtLsatRmrkCntnTop"
+},
+{
+"n": 47,
+"name": "4행 월",
+"id": "mf_txppWframe_genEtxivLsatTop_3_edtLsatSplMmTop"
+},
+{
+"n": 48,
+"name": "4행 일",
+"id": "mf_txppWframe_genEtxivLsatTop_3_edtLsatSplDdTop"
+},
+{
+"n": 49,
+"name": "4행 품목",
+"id": "mf_txppWframe_genEtxivLsatTop_3_edtLsatNmTop"
+},
+{
+"n": 50,
+"name": "4행 규격",
+"id": "mf_txppWframe_genEtxivLsatTop_3_edtLsatRszeNmTop"
+},
+{
+"n": 51,
+"name": "4행 수량",
+"id": "mf_txppWframe_genEtxivLsatTop_3_edtLsatQtyTop"
+},
+{
+"n": 52,
+"name": "4행 단가",
+"id": "mf_txppWframe_genEtxivLsatTop_3_edtLsatUtprcTop"
+},
+{
+"n": 53,
+"name": "4행 공급가액",
+"id": "mf_txppWframe_genEtxivLsatTop_3_edtLsatSplCftTop"
+},
+{
+"n": 54,
+"name": "4행 세액",
+"id": "mf_txppWframe_genEtxivLsatTop_3_edtLsatTxamtTop"
+},
+{
+"n": 55,
+"name": "4행 비고",
+"id": "mf_txppWframe_genEtxivLsatTop_3_edtLsatRmrkCntnTop"
+}
+]

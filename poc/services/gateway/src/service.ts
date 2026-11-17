@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import ajv2020 from 'ajv/dist/2020.js';
 import type { KeyObject } from 'node:crypto';
 import type { ValidateFunction } from 'ajv';
-import { AGENT_TOOLSETS, BROWSER_AGENT, COMPUTER_USE, MASKED_SHOT_MAX_BYTES, CHAT_AGENT, CHAT_DIGEST, CHAT_PHONE, CHAT_REPLY, PAGE_JUDGE, PHONE_ONLY_TOOLSETS, PHONE_TOOLSETS, QUERY_PARSE, canonicalJson, selectorRepair, toolsetPrefix, type BundleCatalog, type LoadedBundle, type ToolsetDef } from '@sax/model';
+import { AGENT_TOOLSETS, BROWSER_AGENT, JEV_LATEST, COMPUTER_USE, DECISION_CHOICE_MAX_CHARS, DECISION_MAX_CHOICES, DECISION_PICK, DECISION_STATE_MAX_CHARS, MASKED_SHOT_MAX_BYTES, CHAT_AGENT, CHAT_DIGEST, CHAT_PHONE, CHAT_REPLY, PAGE_JUDGE, PHONE_ONLY_TOOLSETS, PHONE_TOOLSETS, QUERY_PARSE, canonicalJson, selectorRepair, toolsetPrefix, type BundleCatalog, type LoadedBundle, type ToolsetDef } from '@sax/model';
 import { piiTripwire } from '@sax/net';
 import {
   b64u,
@@ -55,6 +55,30 @@ export function loadRequestValidators(): { decide: ValidateFunction; respond: Va
  */
 /** 판정·에이전트 기본 모델: OpenRouter 라우터 typesafe/jev-router(요청마다 모델·추론 강도를 고른다, tools·structured_outputs, 2026-11-13 목록). 공급자 고정 없이 부른다(RespondSpec.unpinned). */
 export const DEFAULT_AGENT_MODEL = 'typesafe/jev-router';
+/**
+ * 결정 모델(decision_pick) 기본: OpenRouter decisions의 TypeSafe Jev 별칭(대표 2026-11-16 "jev만, latest로"). 2026-11-16 비교(칸 고르기·L1)에서
+ * 0.4초로 고르고 지어내지 않았다. 문맥 262K라 Clef/Flash의 약 2,000토큰 조용한 절단이 없다. 입력 100만 토큰당 $0.042, 출력 0.
+ * 별칭이 풀린 버전은 응답마다 ops_stats(surface model:<이름>)에 센다. 버전이 바뀌면 이벤트 upstream_decisions_model_changed.
+ */
+export const DEFAULT_DECISION_MODEL = JEV_LATEST;
+
+/** decision_pick 메시지 글(JSON {state, choices}). 형식·크기가 어긋나면 null. */
+export function decisionInput(text: string): { state: string; choices: Record<string, string> } | null {
+  let o: unknown;
+  try {
+    o = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const v = o as { state?: unknown; choices?: unknown };
+  if (!v || typeof v !== 'object' || Object.keys(v).sort().join(',') !== 'choices,state') return null;
+  if (typeof v.state !== 'string' || !v.state.length || v.state.length > DECISION_STATE_MAX_CHARS) return null;
+  if (!v.choices || typeof v.choices !== 'object' || Array.isArray(v.choices)) return null;
+  const e = Object.entries(v.choices as Record<string, unknown>);
+  if (e.length < 2 || e.length > DECISION_MAX_CHOICES) return null;
+  if (!e.every(([k, d]) => /^[A-Za-z0-9_]{1,16}$/.test(k) && typeof d === 'string' && d.length > 0 && d.length <= DECISION_CHOICE_MAX_CHARS)) return null;
+  return { state: v.state, choices: Object.fromEntries(e) as Record<string, string> };
+}
 
 export function gatewayToolsets(): Map<string, ToolsetDef> {
   const sr = selectorRepair(['x']);
@@ -72,6 +96,7 @@ export function gatewayToolsets(): Map<string, ToolsetDef> {
     [COMPUTER_USE.id, COMPUTER_USE],
     [CHAT_PHONE.id, CHAT_PHONE],
     [CHAT_DIGEST.id, CHAT_DIGEST],
+    [DECISION_PICK.id, DECISION_PICK],
   ]);
 }
 
@@ -127,7 +152,7 @@ export interface GatewayDeps {
   /** 실행 범위 해시 키 */
   scopeKey: Buffer;
   /** agent: 예상 밖 화면 판정·브라우저 에이전트(page_judge·browser_agent) 모델. 없으면 DEFAULT_AGENT_MODEL. vision: 화면 보기(computer_use, 이미지 입력) 모델. 없으면 agent. */
-  models: { decide: string; respond: string; agent?: string; vision?: string };
+  models: { decide: string; respond: string; agent?: string; vision?: string; decision?: string };
   monthlyTokens?: number;
   prices?: Prices;
   /** 하루 AI 사용 금액 한도(원). 없으면 DAILY. 단가는 limitPrices(없으면 LIMIT_PRICES) */
@@ -282,6 +307,15 @@ export class GatewayService {
   }
 
   /** 계량 분리(C-23): (1) 계정·월 합계 (2) 계정 없는 운영 통계 (3) 35일 호출 기록. 본문·캐시 적중 여부는 클라이언트에 주지 않는다. */
+  /** 결정 모델(별칭)이 풀린 버전을 날마다 센다(ops_stats, 계정 없음). 프로세스 안에서 바뀌면 이벤트 하나. */
+  private lastDecisionModel: string | null = null;
+  private async modelSeen(model: string): Promise<void> {
+    const m = String(model).replace(/[^A-Za-z0-9._/~-]/g, '').slice(0, 64);
+    if (this.lastDecisionModel && this.lastDecisionModel !== m) this.event('upstream_decisions_model_changed');
+    this.lastDecisionModel = m;
+    await this.d.db.run('INSERT INTO ops_stats (day, surface, outcome, n, latency_ms_sum) VALUES ($1, $2, $3, 1, 0) ON CONFLICT (day, surface, outcome) DO UPDATE SET n = ops_stats.n + 1', [kstDay(this.now()), `model:${m}`, 'seen']);
+  }
+
   private async meter(who: Who, surface: string, usage: ProviderUsage | null, outcome: string, latencyMs: number, kind: 'decide' | 'respond'): Promise<void> {
     const now = this.now();
     const p = this.d.prices ?? ZERO_PRICES;
@@ -381,6 +415,7 @@ export class GatewayService {
     const refused = Array.isArray(res.answers) && res.answers.some((a) => (a as { type?: string })?.type === 'refusal');
     if (refused) await this.abuseHit(who.dev);
     await this.meter(who, bundle!.wireId, res.usage, refused ? 'refusal' : 'ok', this.now() - started, 'decide');
+    await this.modelSeen(res.model);
     return {
       model: res.model,
       answers: res.answers,
@@ -411,6 +446,9 @@ export class GatewayService {
     // 예외(대표 결정 2026-11-16): computer_use만 가린 화면 사진 한 장(PC가 입력 칸·숫자·메일 글을 검게 가린 JPEG). 다른 툴셋의 이미지는 거부.
     const shots = b.messages.flatMap((m) => m.content.filter((c) => c.type === 'input_image'));
     if (shots.length && (t!.id !== COMPUTER_USE.id || shots.length > 1 || shots.some((c) => c.type !== 'input_image' || c.image_url.length > MASKED_SHOT_MAX_BYTES))) fail('gateway.param_rejected');
+    // 결정 모델 고르기: 메시지 하나·글 하나·재생 없음, 글은 {state, choices} JSON
+    const decision = t!.id === DECISION_PICK.id ? (b.messages.length === 1 && b.messages[0]!.content.length === 1 && b.messages[0]!.content[0]!.type === 'input_text' && !b.replay?.length ? decisionInput(b.messages[0]!.content[0]!.text) : null) : undefined;
+    if (decision === null) fail('gateway.param_rejected');
     const rt = this.verifyRunToken(b.runToken, who);
     if (who.role === 'mobile' && rt.k !== 'chat') fail('gateway.run_token_invalid');
     const replay = b.replay ?? [];
@@ -445,7 +483,8 @@ export class GatewayService {
       res = await this.withRetry(() =>
         this.d.provider.respond({
           ...(agent ? { timeoutMs: GATEWAY.agentUpstreamTimeoutMs } : {}),
-          model: t!.id === COMPUTER_USE.id ? (this.d.models.vision ?? this.d.models.agent ?? DEFAULT_AGENT_MODEL) : agent ? (this.d.models.agent ?? DEFAULT_AGENT_MODEL) : this.d.models.respond,
+          model: decision ? (this.d.models.decision ?? DEFAULT_DECISION_MODEL) : t!.id === COMPUTER_USE.id ? (this.d.models.vision ?? this.d.models.agent ?? DEFAULT_AGENT_MODEL) : agent ? (this.d.models.agent ?? DEFAULT_AGENT_MODEL) : this.d.models.respond,
+          ...(decision ? { decision, timeoutMs: 15_000 } : {}),
           prefix: toolsetPrefix(t!),
           effort: t!.effort,
           maxOutputTokens: t!.maxOutputTokens,
@@ -466,6 +505,7 @@ export class GatewayService {
     const refused = res.output.some((i) => i.type === 'message' && Array.isArray(i.content) && (i.content as Array<{ type?: string }>).some((c) => c?.type === 'refusal'));
     if (refused) await this.abuseHit(who.dev);
     await this.meter(who, t!.id, res.usage, refused ? 'refusal' : res.status === 'completed' ? 'ok' : 'incomplete', this.now() - started, 'respond');
+    if (decision) await this.modelSeen(res.model);
     return {
       model: res.model,
       status: res.status,

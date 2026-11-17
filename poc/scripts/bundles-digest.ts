@@ -30,11 +30,12 @@ if (fs.readFileSync(allowFile, 'utf8') !== allowSrc) {
 }
 
 // 프로필: OpenAI gpt-6-luna = 설계 초기값(initial). Upstage solar-decide = 재산정 전이라 사용 불가(uncalibrated, ADR-015).
+// OpenRouter decisions Jev 계열(typesafe/jev-, 제품 L1, 별칭 ~typesafe/jev-latest, 2026-11-16) = 초기값에서 시작, S7 코퍼스로 재산정한 번들은 calibrated + overrides.
 const profFile = new URL('profiles/thresholds.json', root);
 const prev = JSON.parse(fs.readFileSync(profFile, 'utf8')) as ThresholdProfile[];
 const next: ThresholdProfile[] = [];
 for (const a of allow) {
-  for (const [provider, model, status] of [['openai', 'gpt-6-luna', 'initial'], ['upstage', 'solar-decide', 'uncalibrated']] as const) {
+  for (const [provider, model, status] of [['openai', 'gpt-6-luna', 'initial'], ['upstage', 'solar-decide', 'uncalibrated'], ['openai_compat', 'typesafe/jev-', 'initial']] as const) {
     const old = prev.find((p) => p.bundle === a.id && p.provider === provider && p.model === model);
     if (old && old.bundleDigest !== a.digest && old.overrides.length) {
       console.error(`${a.id}/${provider}: 다이제스트가 바뀌었는데 재산정 프로필이 있다. 같은 코퍼스로 다시 산정해야 한다.`);

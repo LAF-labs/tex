@@ -127,6 +127,10 @@ describe('고친 선택자 기억', () => {
     const pkg = dict();
     const j: string[] = [];
     const c = chain({ ...pkg, entries: { ...pkg.entries } }, undefined, undefined, j);
+    // 대상을 못 찾음: 재시도는 한 번만 하고 다시 찾기로(실모델 예행: 재시도 3번 약 90초)
+    assert.equal(c.fastEscalate(steps[0]!, 'step.selector_miss', 0), false);
+    assert.equal(c.fastEscalate(steps[0]!, 'step.selector_miss', 1), true);
+    assert.equal(c.fastEscalate(steps[0]!, 'step.timeout', 1), false);
     assert.deepEqual(await c.recover('s1', 'step.selector_miss'), { from: 's1' });
     assert.deepEqual(j, ['fallback.refind']);
   });
