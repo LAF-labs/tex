@@ -3,7 +3,8 @@
 // - 서명 입력은 utf8(purpose) ‖ msg(구분 바이트 없음, schemas/SIGNING.md §8). purpose는 허용 목록과 고정 비교한다.
 // - 호출 감사: 연산·용도를 로그에 남기고, 한 시간 기대치를 넘으면 vault.crypto_rate_anomaly(막지는 않는다, D05 §5.1).
 // - 오라클 한계(D05 §1): 침해된 엔진은 허용 용도 안의 서명·개봉을 요청할 수 있다. 키 자체는 나가지 않는다.
-import { createCipheriv, createDecipheriv, createHmac, createPrivateKey, createPublicKey, diffieHellman, hkdfSync, randomBytes, sign as edSign, timingSafeEqual, type KeyObject } from 'node:crypto';
+import { createHmac, createPrivateKey, createPublicKey, diffieHellman, hkdfSync, randomBytes, sign as edSign, timingSafeEqual, type KeyObject } from 'node:crypto';
+import { chacha20poly1305 } from '@noble/ciphers/chacha.js';
 import type { EventLog } from '@sax/platform';
 import type { KeyStore } from '../keystore.ts';
 import {
@@ -131,6 +132,13 @@ function hpkeKeys(dh: Uint8Array, encap: Uint8Array, pkR: Uint8Array, info: Uint
 }
 
 /**
+ * ChaCha20-Poly1305(RFC 8439). node:crypto의 'chacha20-poly1305'는 쓰지 않는다: 금고가 도는 Electron(BoringSSL)에는 그 이름의 암호가 없어
+ * createCipheriv가 "Unknown cipher"로 던진다(Node에서 도는 시험은 통과한다). @sax/remote·폰과 같은 구현(@noble/ciphers)을 쓴다.
+ * 한 번 봉인하거나 한 번 여는 데만 쓴다(부를 때마다 새로 만든다).
+ */
+const aead = (key: Uint8Array, nonce: Uint8Array, aad: Uint8Array) => chacha20poly1305(key, nonce, aad);
+
+/**
  * RFC 9180 Base 모드 단발 개봉(DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305, seq 0).
  * 실패(인증 태그 불일치 등)는 Error('open_failed').
  */
@@ -138,10 +146,7 @@ export function hpkeOpenBase(skR: KeyObject, pkR: Uint8Array, encap: Uint8Array,
   const { key, nonce } = hpkeKeys(x25519(skR, encap), encap, pkR, info);
   try {
     if (ct.length < 16) throw new Error('short');
-    const d = createDecipheriv('chacha20-poly1305', key, nonce, { authTagLength: 16 });
-    d.setAAD(aad, { plaintextLength: ct.length - 16 });
-    d.setAuthTag(ct.subarray(ct.length - 16));
-    return new Uint8Array(Buffer.concat([d.update(ct.subarray(0, ct.length - 16)), d.final()]));
+    return aead(key, nonce, aad).decrypt(ct);
   } catch {
     throw new Error('open_failed');
   } finally {
@@ -159,9 +164,7 @@ export function hpkeSealBase(pkR: Uint8Array, info: Uint8Array, aad: Uint8Array,
     const e = x25519FromSeed(seed);
     const { key, nonce } = hpkeKeys(x25519(e.priv, pkR), e.pub, pkR, info);
     try {
-      const c = createCipheriv('chacha20-poly1305', key, nonce, { authTagLength: 16 });
-      c.setAAD(aad, { plaintextLength: pt.length });
-      return { enc: e.pub, ct: new Uint8Array(Buffer.concat([c.update(pt), c.final(), c.getAuthTag()])) };
+      return { enc: e.pub, ct: aead(key, nonce, aad).encrypt(pt) };
     } finally {
       key.fill(0);
     }

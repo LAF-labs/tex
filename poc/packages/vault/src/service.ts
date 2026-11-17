@@ -75,6 +75,17 @@ interface NeedLike {
   scope: unknown;
   row?: unknown;
 }
+/**
+ * 로그에 남길 RPC 실패 사유. 금고가 스스로 던진 코드 모양(bad_params, vault.keystore_mismatch 등)은 그대로,
+ * 런타임 오류는 Node 오류 코드(ERR_CRYPTO_UNKNOWN_CIPHER 등)만 남긴다. 오류 문장은 남기지 않는다(경로·값이 섞일 수 있다).
+ */
+export const rpcErrorCode = (e: unknown): string => {
+  const m = (e as { message?: unknown } | null)?.message;
+  if (typeof m === 'string' && /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)?$/.test(m) && m.length <= 60) return m;
+  const c = (e as { code?: unknown } | null)?.code;
+  return typeof c === 'string' && /^[A-Z][A-Z0-9_]{1,59}$/.test(c) ? c : 'error';
+};
+
 const needKey = (n: NeedLike): string => `${String(n.runId)}|${String(n.kind)}|${String(n.scope)}|${n.row ?? ''}`;
 
 const isRow = (r: unknown): r is number => Number.isInteger(r) && (r as number) >= SECURITY_CARD_ROWS.min && (r as number) <= SECURITY_CARD_ROWS.max;
@@ -438,6 +449,8 @@ export class Vault {
       const result = await this.dispatch(msg.method, msg.params ?? {});
       this.post(port, { t: 'rpc', id: msg.id, result });
     } catch (e) {
+      // 키 연산이 실패하면 사유를 한 줄 남긴다(부르는 쪽은 코드 없는 오류만 받아 원인을 알 수 없었다: 2026-11-17 새 PC 연결).
+      if (msg.method.startsWith('crypto.')) this.opts.log.event('vault.rpc_failed', { method: msg.method, port: kind, error: rpcErrorCode(e) });
       this.post(port, { t: 'rpc', id: msg.id, error: (e as Error).message.slice(0, 200) });
     }
   }

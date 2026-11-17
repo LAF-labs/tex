@@ -21,6 +21,17 @@ const codeOf = (e: unknown): string => {
   return typeof c === 'string' && /^[a-z_]+\.[a-z_]+$/.test(c) ? c : 'account.failed';
 };
 
+/**
+ * 로그에 남길 실패 원인. 코드가 있으면 코드, 없으면 오류 문장을 글자·숫자·`_.:-`만 남겨 40자로 자른다.
+ * 금고가 돌려주는 오류는 코드가 없어 화면 코드로는 account.failed 하나로 뭉친다(2026-11-17: 봉인 실패 원인을 로그에서 찾지 못했다).
+ */
+const causeOf = (e: unknown): string => {
+  const c = (e as { code?: unknown } | null)?.code;
+  if (typeof c === 'string' && /^[A-Za-z0-9_.:-]{1,40}$/.test(c)) return c;
+  const m = (e as { message?: unknown } | null)?.message;
+  return typeof m === 'string' && m ? m.slice(0, 40).replace(/[^A-Za-z0-9_.:-]/g, '_') : 'unknown';
+};
+
 /** 새 PC가 6자리를 보인 뒤 이만큼 지나도 승인이 없으면 새로 신청한다(쓰던 PC의 승인 창 10분 + 여유). */
 export const PCLINK_RESTART_MS = PCLINK_STEP_MS + 30_000;
 /** 쓰던 PC가 "연결됐어요"를 보여 두는 시간. 새 PC의 사용자가 이 말을 보고 확인을 누른다. */
@@ -267,6 +278,8 @@ export class PcLinkHost {
       }
       const row = (await call((a) => this.#o.client.pcLinks(a))).find((x) => x.deviceId === deviceId);
       this.#aps.delete(deviceId);
+      // 어디서 멈췄는지 로그에 남긴다: list(목록 올리기) → seal(인증서·열쇠 봉인) → send(새 PC에 보내기)
+      let step: 'list' | 'seal' | 'send' = 'list';
       try {
         const aik = await this.#o.aik();
         const h = p.ap.hello;
@@ -279,11 +292,13 @@ export class PcLinkHost {
           await s.setDeviceList(list);
         }
         // 목록이 올라간 뒤에만 열쇠를 봉인한다(서버가 거절하면 봉인하지 않는다)
+        step = 'seal';
         const vault = await this.#o.vault();
         const grant = await p.ap.grant({ aik, deviceList: list, sealRk: (r, i, a) => vault.sealRk(r, i, a), now: this.#now() });
+        step = 'send';
         await call((a) => this.#o.client.pcLinkGrant(a, deviceId, grant));
       } catch (e) {
-        this.#log('main.pclink_host', { result: codeOf(e) });
+        this.#log('main.pclink_host', { result: codeOf(e), step, cause: causeOf(e) });
         // 렌더러는 오류의 message만 받는다(ipc.ts dispatchShell): 코드를 message에 둔다
         throw Object.assign(new Error(codeOf(e)), { code: codeOf(e) });
       }

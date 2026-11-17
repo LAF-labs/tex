@@ -89,9 +89,13 @@ async function oldPc(m: ReturnType<typeof mailbox>, now: () => number) {
   let list = await initialDeviceList(aik, { deviceId, role: 'desktop', noisePub: keys.noise.publicKey, signPub: keys.vd.publicKey, registeredAt: 1 });
   m.devices.push({ deviceId, role: 'desktop', platform: 'windows', name: '사무실 PC', state: 'active', registeredAt: 1, Sx: b64(keys.noise.publicKey), Vx: b64(keys.vd.publicKey), deleteAfter: null });
   let seals = 0;
+  let sealError: Error | null = null;
   const vault: PcLinkVault = {
     key: async () => fail('account.failed'),
-    sealRk: async (recipient, info, aad) => (seals++, hpkeSeal(recipient, info, aad, rk)),
+    sealRk: async (recipient, info, aad) => {
+      if (sealError) throw sealError;
+      return (seals++, hpkeSeal(recipient, info, aad, rk));
+    },
     importRk: async () => fail('account.failed'),
   };
   const session: DeviceManagerSession = {
@@ -105,15 +109,16 @@ async function oldPc(m: ReturnType<typeof mailbox>, now: () => number) {
     setDeviceList: async (l) => void (list = l),
   };
   const logs: string[] = [];
+  const records: Array<Record<string, string | number>> = [];
   const host = new PcLinkHost({
     client: m.client,
     exclusive: (f) => f(session, (g) => g(session.auth), async () => {}),
     aik: async () => aik,
     vault: async () => vault,
     now,
-    log: (_n, d) => void logs.push(String(d.result)),
+    log: (_n, d) => void (logs.push(String(d.result)), records.push(d)),
   });
-  return { rk, aik, deviceId, host, session, logs, seals: () => seals, list: () => list, setList: (l: DeviceListJson) => void (list = l) };
+  return { rk, aik, deviceId, host, session, logs, records, seals: () => seals, failSeal: (e: Error | null) => void (sealError = e), list: () => list, setList: (l: DeviceListJson) => void (list = l) };
 }
 
 /** 새 PC: 기기 키와 금고 대역(넘겨받기 키는 메모리, importRk는 AIK 대조). */
@@ -333,5 +338,43 @@ describe('새 PC 연결(main): 쓰던 PC 쪽', () => {
     await j4.poll();
     await assert.rejects(e.host.confirm(j4.deviceId, j4.code!), { code: 'account.device_limit' });
     assert.equal(e.seals(), 2);
+  });
+
+  it('금고가 봉인에 실패하면 로그에 멈춘 단계와 원인이 남는다. 목록은 이미 올라갔으니 새 PC가 다시 신청하면 열쇠만 다시 보낸다', async () => {
+    const m = mailbox();
+    const e = await oldPc(m, () => 1);
+    const n = newPc(m, e.session.aikPub, () => 1);
+    const j = await n.start();
+    await e.host.begin(j.deviceId);
+    await j.poll();
+    // 금고가 돌려주는 오류는 코드가 없다(2026-11-17: Electron에 없는 암호 이름으로 봉인이 실패했다)
+    e.failSeal(new Error('Unknown cipher'));
+    m.calls.length = 0;
+    await assert.rejects(e.host.confirm(j.deviceId, j.code!), { code: 'account.failed' });
+    assert.deepEqual(m.calls.filter((c) => c === 'putDeviceList' || c === 'pcLinkGrant'), ['putDeviceList'], '목록은 올라갔고 열쇠는 보내지 못했다');
+    assert.deepEqual(e.records.at(-1), { result: 'account.failed', step: 'seal', cause: 'Unknown_cipher' });
+    // 보내는 단계에서 서버가 거절하면 step은 send, 원인은 서버 코드
+    e.failSeal(null);
+    await j.cancel();
+    const j2 = await n.start();
+    assert.equal(j2.deviceId, j.deviceId);
+    await e.host.begin(j2.deviceId);
+    await j2.poll();
+    const grant = m.client.pcLinkGrant;
+    m.client.pcLinkGrant = async () => fail('account.link_state');
+    await assert.rejects(e.host.confirm(j2.deviceId, j2.code!), { code: 'account.link_state' });
+    assert.deepEqual(e.records.at(-1), { result: 'account.link_state', step: 'send', cause: 'account.link_state' });
+    m.client.pcLinkGrant = grant;
+    // 다시 신청하면 목록은 그대로 두고 열쇠만 보낸다
+    await j2.cancel();
+    const j3 = await n.start();
+    await e.host.begin(j3.deviceId);
+    await j3.poll();
+    m.calls.length = 0;
+    assert.equal((await e.host.confirm(j3.deviceId, j3.code!)).ok, true);
+    assert.deepEqual(m.calls.filter((c) => c === 'putDeviceList' || c === 'pcLinkGrant'), ['pcLinkGrant']);
+    await j3.poll();
+    await j3.accept();
+    assert.deepEqual(n.rk(), e.rk);
   });
 });
