@@ -36,7 +36,7 @@ import { estimateTokens } from './tokens.ts';
 /** 한 번 부를 때의 입력 상한(추정 토큰, 머리말·도구 정의 포함). 하루 한도(체험 50원·구독 300원) 안에서 대화 횟수를 지키는 값이다. */
 export const PHONE_CONTEXT_MAX_TOKENS = 8000;
 /** chat_phone 머리말 + 도구 정의 + 출력 스키마의 추정 토큰(넉넉하게). 시험이 실제 머리말의 추정값이 이보다 작은지 본다. */
-export const PHONE_PREFIX_EST_TOKENS = 3300;
+export const PHONE_PREFIX_EST_TOKENS = 3800;
 /** [앞 대화]에 두는 사용자 턴 수 상한. 넘으면 오래된 절반을 한꺼번에 요약으로 접는다. */
 export const PHONE_TURNS_MAX = 20;
 /** [사실]에 미리 조회해 넣는 거래처 수 상한 */
