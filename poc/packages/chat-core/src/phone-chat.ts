@@ -8,7 +8,7 @@ import { CHAT_MAP_IDLE_MS, Redactor, TOKEN_RE, detokenize, type RedactedText } f
 import { capture, rebind, type ChatMessage, type MaskedText } from './chat-log.ts';
 import { cleanItem, fillWithJosa, finalOf, fixJosa, koDate, kstDate, splitVat, validAmount, won } from './fill.ts';
 import { PhoneChatError, type PhoneChatErrorCode, type PhoneModel, type PhoneRespondResult, type PhoneToolCall, type ReplayItem } from './phone-gateway.ts';
-import { ReplyShapeError, chatSecretShaped, checkAgentReply, unsafeText, type CheckedReply, type ReplyFilter } from './reply-check.ts';
+import { ReplyShapeError, braceTokens, chatSecretShaped, checkAgentReply, unsafeText, type CheckedReply, type ReplyFilter } from './reply-check.ts';
 import { chatInput, gluedName, parseKrw, registerChatRecords, type ChatRecord } from './rules.ts';
 import {
   AGENT_ASKS,
@@ -62,6 +62,17 @@ const NAME_MAX = 40;
 
 export const PHONE_FALLBACK_TEXT = '세금계산서 카드 만들기와 발급 기록·받을 돈 확인을 도와드려요. 어떤 일을 할까요?';
 export const PHONE_NUMBER_TEXT = '결과를 화면에 보여 드렸어요. 금액과 날짜는 표와 카드에서 확인해 주세요.';
+/**
+ * 폰이 직접 되묻는 고정 문장(되묻기 칸별). 모델이 되묻는 문장에 숫자를 섞었거나 틀린 슬롯을 썼을 때 쓴다(PC의 CHAT_AGENT_ASK_TEXT와 같은 쓰임).
+ * 화면은 이 문장 아래 그 칸의 선택지를 붙인다.
+ */
+export const PHONE_ASK_TEXT: Record<AgentAsk, string> = {
+  amount: '금액을 알려 주세요. 부가세 포함인지 별도인지도 같이 말씀해 주시면 바로 카드를 만들게요.',
+  item: '품목을 알려 주세요. 예를 들어 디자인 용역처럼 적어 주시면 돼요.',
+  counterparty: '어느 거래처인가요? 거래처 목록에서 골라 주세요.',
+  vat: '부가세 별도인가요, 포함인가요?',
+  which_card: '어느 카드를 말씀하시는지 골라 주세요.',
+};
 export const PHONE_SLOT_MISSING_TEXT = '같이 보이는 표에서 값을 확인해 주세요.';
 export const PHONE_UNAVAILABLE_TEXT = '지금 답을 받지 못했어요. 잠시 뒤 다시 시도해 주세요.';
 export const PHONE_ENTRUST_TEXT = (name: string): string => `${name} 세금계산서를 맡겼어요. PC가 켜지면 시작하고, 발급 전에 한 번 더 확인을 받아요.`;
@@ -577,7 +588,8 @@ export class PhoneChat {
 
   /** 도구 인자 역치환(PC 엔진 parseCall과 같다). 거래처가 레코드 하나로 풀리지 않거나 모르는 카드면 실행하지 않고 결과를 답한다. */
   private parseCall(st: State, s: Session, turn: Turn, c: PhoneToolCall): DomainCall | ToolOutput {
-    const a = c.arguments;
+    // 토큰을 중괄호로 쓴 인자("{AMT_1}")는 대괄호 토큰으로 받는다(PC 엔진과 같다, chat-eval 2026-11-16)
+    const a = braceTokens(c.arguments);
     const bad = () => new PhoneChatError('chat.bad_response');
     const cp = (v: unknown): string | null => {
       if (typeof v !== 'string') return null;
@@ -753,6 +765,18 @@ export class PhoneChat {
         canShow: (ref) => this.results.has(ref) || turn.frameRefs.has(ref) || st.drafts.some((d) => d.ref === ref && d.state !== 'discarded'),
         fallbackText: PHONE_FALLBACK_TEXT,
         numberText: PHONE_NUMBER_TEXT,
+        // 아래 셋은 PC 대화에서 실제 모델로 찾은 실패를 고친 것과 같은 규칙이다(chat-eval 2026-11-16, PC 엔진 chat-agent.ts).
+        // 사장님이 이번에 쓴 달·날짜는 따라 써도 거르지 않는다.
+        userText: turn.user,
+        // 되묻는 문장에 숫자가 섞이면 되묻기는 살리고 문장만 고정 문장으로 바꾼다.
+        askText: (a) => PHONE_ASK_TEXT[a],
+        // 틀린 슬롯("{d2.first.supply}")은 지어낸 값이 아니라 카드·표를 가리킨 것이다. 턴을 버리지 않고 이번 턴 결과를 고정 문장과 같이 보인다.
+        // 카드를 만든 턴의 부가세는 묻지 않는다(기본값 별도, 카드에서 고친다).
+        badSlot: (k, a, refs) => {
+          const show = refs.length ? refs : [...new Set(turn.made)].slice(-AGENT_SHOW_MAX);
+          if (a && !(a === 'vat' && turn.created.length > 0)) return { kind: k, text: PHONE_ASK_TEXT[a], show, ask: a, filtered: 'slot' };
+          return { kind: k, text: show.length ? PHONE_NUMBER_TEXT : PHONE_FALLBACK_TEXT, show, ask: null, filtered: 'slot' };
+        },
       });
     } catch (e) {
       throw e instanceof ReplyShapeError ? new PhoneChatError('chat.bad_response') : e;

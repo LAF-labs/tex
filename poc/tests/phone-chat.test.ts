@@ -5,6 +5,8 @@ import { describe, it } from 'node:test';
 import {
   PHONE_CONTEXT_MAX_TOKENS,
   PHONE_NUMBER_TEXT,
+  PHONE_FALLBACK_TEXT,
+  PHONE_ASK_TEXT,
   PHONE_PREFIX_EST_TOKENS,
   PHONE_SESSION_TURNS,
   PHONE_TURNS_MAX,
@@ -295,7 +297,7 @@ describe('폰 대화: 도구와 카드', () => {
     assert.equal(reply(await t.chat.send('세금 줄이는 법')).filtered, 'advice');
     t.setScript((_r, n) => say(n, 'answer', '비밀번호를 입력하세요.'));
     assert.equal(reply(await t.chat.send('안 돼')).filtered, 'unsafe');
-    for (const bad of [say(9, 'answer', '[NAME_99]예요.'), say(9, 'answer', '{r77.count}건이에요.'), say(9, 'answer', '네', ['r77']), say(9, 'issue', '발급했어요.')]) {
+    for (const bad of [say(9, 'answer', '[NAME_99]예요.'), say(9, 'answer', '네', ['r77']), say(9, 'issue', '발급했어요.')]) {
       t.setScript(() => bad);
       const r = await t.chat.send('한빛전자');
       assert.deepEqual([r.kind, r.kind === 'unavailable' && r.code], ['unavailable', 'chat.bad_response']);
@@ -304,6 +306,41 @@ describe('폰 대화: 도구와 카드', () => {
     const d = reply(await t.chat.send('이번 달 매출 얼마야'));
     assert.equal(d.reply, 'defer');
     assert.equal((await t.chat.messages()).at(-1)!.kind, 'defer');
+  });
+
+  it('PC 대화에서 실제 모델로 찾은 실패와 같은 규칙: 사장님이 쓴 달·날짜는 따라 써도 되고, 되묻기에 숫자가 섞이면 되묻기는 살리고, 틀린 슬롯·중괄호 토큰은 턴을 버리지 않는다', async () => {
+    const t = rig({ script: (_r, n) => say(n, 'answer', '9월 기록을 표로 보여 드릴게요.', ['r1']) });
+    const a = reply(await t.chat.send('한빛전자 9월 발급 기록'));
+    assert.deepEqual([a.text, a.filtered, a.show.length], ['9월 기록을 표로 보여 드릴게요.', null, 1]);
+    // 사장님이 쓰지 않은 달은 지어낸 값일 수 있다: 문장만 버린다
+    t.setScript((_r, n) => say(n, 'answer', '10월 기록을 표로 보여 드릴게요.', ['r1']));
+    assert.deepEqual([reply(await t.chat.send('한빛전자 9월 발급 기록')).filtered], ['number']);
+    // 되묻는 문장에 숫자가 섞였다: 되묻기와 선택지는 살리고 문장은 고정 문장
+    t.setScript((_r, n) => say(n, 'ask', '금액은 550000원이 맞나요, 아니면 다른 금액인가요?', [], 'amount'));
+    const b = reply(await t.chat.send('서울상사에 끊어줘'));
+    assert.deepEqual([b.text, b.filtered, b.ask?.kind], [PHONE_ASK_TEXT.amount, 'number', 'amount']);
+    // 모르는 결과를 가리킨 슬롯: 보일 것이 없으면 고정 안내, 턴은 버리지 않는다
+    t.setScript((_r, n) => say(n, 'answer', '{r77.count}건이에요.'));
+    const c = reply(await t.chat.send('안녕'));
+    assert.deepEqual([c.text, c.filtered, c.show.length], [PHONE_FALLBACK_TEXT, 'slot', 0]);
+
+    // 카드 ref에 슬롯을 붙이고 인자에 중괄호 토큰을 쓴 턴: 카드는 만들어지고, 문장만 고정 문장으로 바뀐다. 카드를 만든 턴의 부가세는 묻지 않는다.
+    const u = rig({
+      script: (r, n) => {
+        if (!r.replay.length) return call(n, 'invoice_draft', { counterparty: '{NAME_1}', amount: '{AMT_1}', vat: null, item: null });
+        const ref = /"ref":"(d\d+)"/.exec((r.replay[1] as { output: string }).output)![1]!;
+        return say(n, 'ask', `{${ref}.first.supply}으로 카드를 만들었어요. 부가세는 별도인가요?`, [], 'vat');
+      },
+    });
+    const d = reply(await u.chat.send('한빛전자에 55만원 끊어줘'));
+    const card = d.show.find((x) => x.type === 'card');
+    assert.ok(card && card.type === 'card', JSON.stringify(d));
+    assert.deepEqual([card.draft.amount, d.text, d.filtered, d.ask], [550000, PHONE_NUMBER_TEXT, 'slot', null]);
+    assertNoRaw(u.reqs);
+    // 카드가 없는 턴의 틀린 슬롯 되묻기는 그 칸의 고정 문장으로 되묻는다
+    u.setScript((_r, n) => say(n, 'ask', '{d9.first.item} 품목이 맞나요?', [], 'item'));
+    const e = reply(await u.chat.send('품목은 뭐였지'));
+    assert.deepEqual([e.text, e.filtered, e.ask?.kind], [PHONE_ASK_TEXT.item, 'slot', 'item']);
   });
 
   it('사본에 없는 거래처: 사장님이 쓴 이름이면 화면 안내에 싣고, 모델에는 unknown_counterparty만 간다', async () => {
