@@ -49,6 +49,8 @@ export const ERROR_STATUS = {
   'account.slot_not_found': 404,
   'account.rebind_too_soon': 409,
   'account.device_limit': 409,
+  /** 계정에 남은 마지막 활성 데스크톱은 스스로 나가거나 폰이 정지할 수 없다(ADR-048 결정 6) */
+  'account.last_desktop': 409,
   'account.device_churn_limit': 429,
   'account.device_not_found': 404,
   'account.device_suspended': 403,
@@ -151,6 +153,7 @@ export const PROPOSED_D16: readonly ErrorCode[] = [
   'account.reauth_required',
   'account.current_password_required',
   'account.current_password_invalid',
+  'account.last_desktop',
   'relay.unauthorized',
   'relay.device_suspended',
   'push.unauthorized',

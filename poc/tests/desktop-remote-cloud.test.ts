@@ -14,6 +14,7 @@ import {
   certNotAfter,
   deviceAuthHeaders,
   ed25519Keygen,
+  addDevice,
   initialDeviceList,
   issueCert,
   jcsBytes,
@@ -23,11 +24,13 @@ import {
   softSigner,
   uuid4,
   verifyAcctClaim,
+  verifyDeviceList,
   wsRelayClient,
   x25519Keygen,
   type DesktopKeys,
 } from '../packages/remote/src/index.ts';
 import { cloudPorts, type CloudPorts, type DeviceAuth } from '../apps/desktop/src/remote-cloud.ts';
+import { DeviceManager, type DeviceManagerSession } from '../apps/desktop/src/remote-devices.ts';
 import { CLOUD_ROUTES } from '../packages/net/src/cloud.ts';
 import { argon2Available } from '../services/account/src/index.ts';
 import { MockMailSender, startAccount } from '../services/account/src/index.ts';
@@ -255,6 +258,8 @@ describe('계정 화면 경로(#224 비밀번호 로그인이 실제 앱에서 n
       acctClaim: [auth],
       enrollPhone: [auth, { deviceId: uuid4(), role: 'mobile', platform: 'ios', name: '폰', Sx: 'x', Vx: 'y', roomId: 'r' }],
       putDeviceList: [auth, list],
+      devices: [auth],
+      leaveDevice: [auth],
       billing: [auth],
       billingCheckout: [auth],
       billingCancel: [auth],
@@ -382,6 +387,80 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
     const audit = JSON.stringify(egress.audit);
     for (const secret of [email, session, tok.token, Buffer.from(mbx).toString('base64url')]) assert.ok(!audit.includes(secret));
     assert.ok(egress.audit.some((a) => a.dest === 'cloud.ws' && a.path === 'rooms.join'));
+  });
+
+  it('기기 관리(remote-devices.ts, ADR-048 결정 6): 폰 끊기는 AIK 폐기로 바로, 스스로 나간 폰은 목록을 맞춘 뒤 새 폰을 받는다, 마지막 PC는 나가지 못한다', async () => {
+    const { account } = ports;
+    const email = 'devices@example.com';
+    const start = await account.startEmailCode(email);
+    const { session } = await account.verifyEmailCode(start.loginId, s.mail.lastCode(email)!);
+    const keys = { noise: softNoiseStatic(x25519Keygen().secretKey), vd: softSigner(ed25519Keygen().secretKey, VD_PURPOSES), aik: softSigner(ed25519Keygen().secretKey, AIK_PURPOSES) };
+    const pcId = uuid4();
+    let list = await initialDeviceList(keys.aik, { deviceId: pcId, role: 'desktop', noisePub: keys.noise.publicKey, signPub: keys.vd.publicKey, registeredAt: Date.now() });
+    await account.pinFirstDesktop(session, { aikPub: b64(keys.aik.publicKey), deviceList: list, platform: 'macos', name: '사무실 PC' });
+    const tok = await account.deviceToken(await issueCert(keys.aik, { device_id: pcId, role: 'desktop', Sx: keys.noise.publicKey, Vx: keys.vd.publicKey, not_after: certNotAfter() }), keys.vd);
+    const auth: DeviceAuth = async (htm, htu) => deviceAuthHeaders(tok.token, keys.vd, htm, htu);
+    // 폰: 계정 세션으로 신청하고 PC가 AIK 목록에 올려 활성으로 만든다
+    const phone = async (name: string) => {
+      const p = { id: uuid4(), noise: x25519Keygen(), vd: softSigner(ed25519Keygen().secretKey, VD_PURPOSES) };
+      const r = await fetch(`${s.origin}/v1/devices/enroll`, { method: 'POST', headers: { authorization: `Bearer ${session}`, 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: p.id, role: 'mobile', platform: 'ios', name, Sx: b64(p.noise.publicKey), Vx: b64(p.vd.publicKey) }) });
+      assert.equal(r.status, 201);
+      list = await addDevice(keys.aik, list, { deviceId: p.id, role: 'mobile', noisePub: p.noise.publicKey, signPub: p.vd.publicKey, registeredAt: Date.now() });
+      await account.putDeviceList(auth, list);
+      return p;
+    };
+    const p1 = await phone('폰 하나');
+    const p2 = await phone('폰 둘');
+    const dropped: string[] = [];
+    const session2: DeviceManagerSession = {
+      deviceId: pcId,
+      get deviceList() {
+        return list;
+      },
+      auth,
+      clearToken: () => {},
+      setDeviceList: async (l) => void (list = l),
+    };
+    const mgr = new DeviceManager({ client: account, session: () => session2, aik: async () => keys.aik, dropPhone: async (id) => void dropped.push(id) });
+
+    const all = await mgr.list();
+    assert.deepEqual(all.map((d) => [d.name, d.role, d.state, d.self, d.listed]), [['사무실 PC', 'desktop', 'active', true, true], ['폰 하나', 'mobile', 'active', false, true], ['폰 둘', 'mobile', 'active', false, true]]);
+    assert.ok(!JSON.stringify(all).includes(b64(p1.vd.publicKey)), '키는 렌더러로 가지 않는다');
+
+    // 폰 끊기: 목록에서 빠지고 폐기 레코드가 생기며, 서버는 그 폰의 토큰을 바로 주지 않는다
+    const after = await mgr.unlink(p1.id);
+    assert.deepEqual(after.map((d) => d.name), ['사무실 PC', '폰 둘']);
+    assert.deepEqual(dropped, [p1.id]);
+    assert.deepEqual(list.revoked.map((r) => r.device_id), [p1.id]);
+    assert.ok(verifyDeviceList(list, keys.aik.publicKey).ok);
+    const c1 = await issueCert(keys.aik, { device_id: p1.id, role: 'mobile', Sx: p1.noise.publicKey, Vx: p1.vd.publicKey, not_after: certNotAfter() });
+    await assert.rejects(account.deviceToken(c1, p1.vd), (e: Error & { code: string }) => /^account\./.test(e.code));
+    // 이미 끊긴 기기를 다시 눌러도 그대로다. 자기 자신은 leave로만
+    assert.deepEqual((await mgr.unlink(p1.id)).map((d) => d.name), ['사무실 PC', '폰 둘']);
+    await assert.rejects(mgr.unlink(pcId), { code: 'account.use_leave' });
+
+    // 폰이 스스로 나감(폰 기기 토큰, devices 범위): 서버는 바로 폐기하지만 AIK 목록에는 아직 남아 있다
+    const c2 = await issueCert(keys.aik, { device_id: p2.id, role: 'mobile', Sx: p2.noise.publicKey, Vx: p2.vd.publicKey, not_after: certNotAfter() });
+    const t2 = await account.deviceToken(c2, p2.vd);
+    assert.ok(t2.scopes.includes('devices'));
+    const leaveUrl = `${s.origin}/v1/devices/self/leave`;
+    assert.equal((await fetch(leaveUrl, { method: 'POST', headers: await deviceAuthHeaders(t2.token, p2.vd, 'POST', leaveUrl) })).status, 204);
+    assert.ok(list.entries.some((e) => e.entry.device_id === p2.id));
+    // 맞추기 전에는 새 목록(새 폰 올리기)을 서버가 받지 않는다
+    const stale = list;
+    assert.equal(await mgr.reconcile(), 1);
+    assert.ok(!list.entries.some((e) => e.entry.device_id === p2.id));
+    assert.deepEqual(list.revoked.map((r) => r.device_id), [p1.id, p2.id]);
+    assert.ok(dropped.includes(p2.id), '스스로 나간 폰의 연결 기록도 지운다');
+    assert.equal(await mgr.reconcile(), 0);
+    assert.ok(stale.listVersion < list.listVersion);
+    const p3 = await phone('새 폰');
+    assert.deepEqual((await mgr.list()).map((d) => d.name), ['사무실 PC', '새 폰']);
+    assert.ok(p3.id);
+
+    // 계정에 남은 마지막 PC는 나갈 수 없다(로그아웃만)
+    await assert.rejects(mgr.leave(), { code: 'account.last_desktop' });
+    assert.equal((await mgr.list()).find((d) => d.self)?.state, 'active');
   });
 
   it('계정 화면 경로 전부를 제품 Egress로(실제 계정 서비스): 만들기·로그인·갱신 회전·재인증·바꾸기·지우기·재설정·모든 기기 로그아웃', { skip: !argon2Available() && 'argon2id 없음' }, async () => {
