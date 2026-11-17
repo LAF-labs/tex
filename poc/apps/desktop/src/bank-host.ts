@@ -178,6 +178,41 @@ export class BankHost {
     return o.unpaid.map((v) => ({ counterpartyId: v.counterpartyId, counterparty: v.cpName ?? '거래처', date: v.writtenOn, total: v.remaining }));
   }
 
+  /**
+   * 대화 도구가 쓸 낼 돈 조회(11 §2.5). receivables()와 같은 모양: 아직 내지 않은 건만, 금액은 남은 돈. 계좌가 없으면 null.
+   * dueOn은 낼 날(약속일 우선, 기한 없음이면 null).
+   */
+  async payables(): Promise<Array<ReceivableRow & { dueOn: string | null }> | null> {
+    const o = await this.call<{ accounts: unknown[]; payables: { unpaid: Array<{ counterpartyId: string | null; cpName: string | null; writtenOn: string; remaining: number; dueOn: string | null; promisedOn: string | null }> } }>('db.query.bank.overview');
+    if (!o.accounts.length) return null;
+    return o.payables.unpaid.map((v) => ({ counterpartyId: v.counterpartyId, counterparty: v.cpName ?? '거래처', date: v.writtenOn, total: v.remaining, dueOn: v.promisedOn ?? v.dueOn }));
+  }
+
+  /**
+   * 대화 도구가 쓸 돈 흐름 요약(11 §3.7·§5). 모델에 가도 되는 칸만 남긴다: 합계·비율·건수·거래처 상호.
+   * 계좌번호(끝 4자리 포함)·줄 id·통장 표시는 넣지 않는다. 계좌가 없으면 null.
+   */
+  async cashFlowBrief(month?: string): Promise<CashFlowBrief | null> {
+    const r = await this.call<CashFlowResultLike>('db.query.bank.cashflow', month ? { month } : {});
+    if (!r.month.hasAccounts) return null;
+    const m = r.month;
+    return {
+      month: m.month, through: m.to, complete: m.complete, missingAccounts: m.missing.length,
+      in: m.cash.in, out: m.cash.out, net: m.cash.net, accrual: m.accrual, collectionRate: m.collectionRate,
+      unknown: { inTotal: m.unknown.inTotal, outTotal: m.unknown.outTotal, inCount: m.unknown.inCount, outCount: m.unknown.outCount },
+      balance: r.snapshot.balance.total, balancePartial: r.snapshot.balance.partial, next30: r.snapshot.next30, aging: r.snapshot.aging,
+      collectDays: r.snapshot.collectDays.overall, payDays: r.snapshot.payDays,
+      slowest: r.snapshot.collectDays.byCounterparty.slice(0, 3).map((c) => ({ counterparty: c.cpName ?? '거래처', days: c.days, count: c.count })),
+      topCustomer: r.snapshot.concentration.top1 ? { counterparty: r.snapshot.concentration.top1.cpName ?? '거래처', share: r.snapshot.concentration.top1.share } : null,
+      // 거래처 열쇠(장부 id)는 모델에 줄 까닭이 없어 뺀다
+      alerts: r.alerts.map((a) => {
+        const { counterpartyKey, ...rest } = a;
+        void counterpartyKey;
+        return 'cpName' in rest ? { ...rest, cpName: rest.cpName ?? '거래처' } : rest;
+      }),
+    };
+  }
+
   /** 판 카드 "못 받은 돈"·"확인할 입금"(대표 결정 ⑤). 거래내역이 오래됐으면 금액 대신 "거래내역이 오래됐어요" */
   async boardCards(): Promise<BoardCard[]> {
     let s: BankSummaryLike;
@@ -196,6 +231,46 @@ export interface ReceivableRow {
   counterparty: string;
   date: string;
   total: number | null;
+}
+
+/** 엔진 db.query.bank.cashflow 결과에서 여기서 읽는 칸(engine CashFlowResult와 같은 모양) */
+interface CashFlowResultLike {
+  month: {
+    month: string; to: string; complete: boolean; hasAccounts: boolean; missing: unknown[];
+    cash: { in: { total: number; by: Record<string, number> }; out: { total: number; by: Record<string, number> }; net: number };
+    accrual: Record<string, number | null>; collectionRate: number | null;
+    unknown: { inTotal: number; outTotal: number; inCount: number; outCount: number };
+  };
+  snapshot: {
+    balance: { total: number | null; partial: boolean };
+    next30: Record<string, number>; aging: Record<string, number>; payDays: number | null;
+    collectDays: { overall: number | null; byCounterparty: Array<{ cpName: string | null; days: number; count: number }> };
+    concentration: { top1: { cpName: string | null; share: number } | null };
+  };
+  alerts: Array<{ id: string; kind: string; cpName?: string | null; counterpartyKey?: string }>;
+}
+
+/** 대화 도구 cash_flow가 받는 요약(값은 PC 안에서 만들고, 모델에는 이 칸만 간다) */
+export interface CashFlowBrief {
+  month: string;
+  through: string;
+  complete: boolean;
+  missingAccounts: number;
+  in: { total: number; by: Record<string, number> };
+  out: { total: number; by: Record<string, number> };
+  net: number;
+  accrual: Record<string, number | null>;
+  collectionRate: number | null;
+  unknown: { inTotal: number; outTotal: number; inCount: number; outCount: number };
+  balance: number | null;
+  balancePartial: boolean;
+  next30: Record<string, number>;
+  aging: Record<string, number>;
+  collectDays: number | null;
+  payDays: number | null;
+  slowest: Array<{ counterparty: string; days: number; count: number }>;
+  topCustomer: { counterparty: string; share: number } | null;
+  alerts: Array<Record<string, unknown>>;
 }
 
 export interface BankSummaryLike {

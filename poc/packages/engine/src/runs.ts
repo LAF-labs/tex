@@ -20,7 +20,7 @@ import type { SecretTurnEvent } from './driver/cert-secret.ts';
 import type { RunPermit } from './core/permit.ts';
 import type { Policy } from './core/types.ts';
 import { parseIssueKey, type IssueKey } from './issue/types.ts';
-import { REHEARSAL_DONE, REHEARSAL_HANDOFF, rehearsalSnap, RehearsalReport } from './rehearsal.ts';
+import { REHEARSAL_DONE, REHEARSAL_HANDOFF, rehearsalSnap, RehearsalReport, watchDialogs } from './rehearsal.ts';
 import { reverifyInDoubt, type ReverifyResult } from './run/reverify.ts';
 import type { RunInputsSummary } from './run-history.ts';
 
@@ -464,6 +464,8 @@ export class RunService extends EventEmitter {
       // 요청률 정책·차단 신호 감시는 로그인보다 먼저 붙인다(로그인 구간이 캡차·추가 인증·대기열이 잘 뜨는 곳이다).
       const page = await this.d.page();
       a.page = page;
+      // 예행이면 대화상자 글을 snap에 남긴다(차단 alert 등, 로컬 파일만)
+      if (a.rehearsal) watchDialogs(page);
       if (this.engine !== 'ir') a.policy = new RunPolicy(page, this.rate, a.portal, {
         profileId: profile.id,
         signals: a.signals,
