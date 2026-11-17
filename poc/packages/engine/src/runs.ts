@@ -10,6 +10,7 @@ import { businessKey, canonicalEmail, H01, packageDigest, type Phase } from './h
 import { portalProblems, type PortalConfig } from './portal.ts';
 import { H01Runner, type Readback, type RunInputs } from './h01/runner.ts';
 import { RunEnd, type RunStatus } from './run-end.ts';
+import type { IssueLockPort } from './issue-lock.ts';
 import { SIGNAL_DICT, type SignalDict } from './signals.ts';
 import { kstDay, policyFor, RateGuard, RunPolicy, runPortalConfig, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
 import { IrRun, type GateHistory, type IrPackage, type IrSourceResult, type StoppedAt } from './run/service-ir.ts';
@@ -143,6 +144,14 @@ export interface RunServiceDeps {
   log: EventLog;
   /** 게이트 포트로 내보낸다. 이 함수 말고는 게이트 요청이 나가는 길이 없다. */
   postGate: (m: GatePortMessage) => void;
+  /**
+   * 발급 잠금(ADR-048 결정 7, issue-lock.ts). 서명 패키지로 도는 세금계산서 발급(IR 경로, 예행 아님)이 게이트 앞에서 잡고 커밋 직전에 갱신한다.
+   * 없으면 잠그지 않는다(auth 포트 없는 기동·시험). 가짜 H-01 개발 포털(H01Runner)은 실제 발급이 아니라 잠그지 않는다.
+   */
+  issueLock?: IssueLockPort;
+  /** 시험용: 다른 PC가 잡고 있을 때 기다리는 상한·간격(기본 10분·5초). */
+  issueLockWaitMs?: number;
+  issueLockRetryMs?: number;
   /** 시험용: gate.waitMs 대신 쓸 값. */
   gateWaitMs?: number;
   /** 시험용: 포털 kind의 내장 정책 대신 쓸 값. */
@@ -630,6 +639,10 @@ export class RunService extends EventEmitter {
       postGate: (m) => this.gatePort(a, m),
       waiting: (reqId) => this.ev({ runId: a.runId, type: 'waiting', reqId }),
       ...(this.d.gateWaitMs !== undefined ? { gateWaitMs: this.d.gateWaitMs } : {}),
+      // 예행은 승인 직전에 스스로 멈춘다(발급 없음): 다른 PC의 발급을 막지 않게 잠그지 않는다
+      ...(this.d.issueLock && !a.rehearsal ? { issueLock: this.d.issueLock } : {}),
+      ...(this.d.issueLockWaitMs !== undefined ? { issueLockWaitMs: this.d.issueLockWaitMs } : {}),
+      ...(this.d.issueLockRetryMs !== undefined ? { issueLockRetryMs: this.d.issueLockRetryMs } : {}),
       ...(this.d.trace ? { trace: (e) => this.d.trace!(a.runId, e) } : {}),
       handoff: (h) => this.ev({ runId: a.runId, type: 'handoff', phase: h.phase as Phase, ...(h.code ? { code: h.code } : {}) }),
       ...(this.d.human ? { human: this.d.human } : {}),

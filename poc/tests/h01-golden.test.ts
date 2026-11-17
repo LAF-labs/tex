@@ -386,6 +386,96 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
     assert.ok(o.journal.includes('checkpoint.reentry'));
   });
 
+  // ---- 발급 잠금(ADR-048 결정 7): 계정에 PC가 2대 이상일 때. 잠금 포트는 대역이고(main issue-lock-host가 진짜), 여기서는 엔진이 언제 묻고 무엇을 하지 않는지를 본다. ----
+  type LockAns = { ok: true } | { ok: false; code: string };
+  const fakeLock = (plan: { acquire?: LockAns[]; renew?: LockAns[] } = {}) => {
+    const calls: string[] = [];
+    const take = (name: 'acquire' | 'renew'): LockAns => (calls.push(name), plan[name]?.shift() ?? { ok: true });
+    return { calls, port: { acquire: async () => take('acquire'), renew: async () => take('renew'), release: () => void calls.push('release'), close: () => {} } };
+  };
+  const handoffOf = (s: Side, runId: string, nth = 0) => next(() => s.events.filter((e) => e.runId === runId && e.type === 'handoff')[nth] as Extract<RunEvent, { type: 'handoff' }> | undefined);
+
+  it('[IR 발급 잠금] 게이트 앞(발급목록 기준선 전)에 잡고, 커밋 직전에 갱신하고, 끝나면 놓는다', async () => {
+    const s = sides.ir;
+    const lock = fakeLock();
+    let atGate: string[] = [];
+    const o = await observe(s, 'C', 931_000, async (req, _runId, runs) => {
+      atGate = [...lock.calls];
+      assert.deepEqual(runs.answer(approval(req!)), { ok: true });
+    }, { deps: { issueLock: lock.port } });
+    assert.deepEqual([o.status, o.ledger, o.posts], ['success', 'committed', 1], JSON.stringify(o));
+    assert.deepEqual(atGate, ['acquire'], '승인 카드가 뜨기 전에 잡았고 아직 갱신은 없다');
+    assert.deepEqual(lock.calls, ['acquire', 'renew', 'release']);
+    assert.ok(o.journal.indexOf('gate.requested') > -1 && !o.journal.includes('issue.lock_refused'));
+  });
+
+  it('[IR 발급 잠금] 다른 PC가 잡고 있으면 승인 카드를 열지 않고 기다렸다가, 풀리면 이어서 승인을 받는다', async () => {
+    const s = sides.ir;
+    const lock = fakeLock({ acquire: [{ ok: false, code: 'issue.locked_elsewhere' }, { ok: false, code: 'issue.locked_elsewhere' }] });
+    const sent = s.events.length;
+    const o = await observe(s, 'C', 932_000, async (req, runId, runs) => {
+      assert.equal(lock.calls.filter((c) => c === 'acquire').length, 3, '두 번 막히고 세 번째에 잡았다');
+      assert.ok(s.events.slice(sent).some((e) => e.runId === runId && e.type === 'phase' && e.phase === 'gate' && e.state === 'now' && e.code === 'issue.locked_elsewhere'), '기다리는 까닭을 승인 단계에 보인다');
+      assert.deepEqual(runs.answer(approval(req!)), { ok: true });
+    }, { deps: { issueLock: lock.port, issueLockRetryMs: 50, issueLockWaitMs: 30_000 } });
+    assert.deepEqual([o.status, o.ledger, o.posts], ['success', 'committed', 1], JSON.stringify(o));
+    assert.ok(o.journal.includes('issue.lock_wait') && o.journal.includes('issue.lock_wait_done'));
+  });
+
+  it('[IR 발급 잠금] 끝까지 못 잡으면(다른 PC 발급 중·확인 못 함) 승인 카드·제출·원장 행 없이 사람 차례로 멈추고 잠금 요청을 거둔다. [이어서]면 다시 잡고 승인을 받는다', async () => {
+    const s = sides.ir;
+    for (const code of ['issue.locked_elsewhere', 'issue.lock_unavailable'] as const) {
+      let free = false;
+      const calls: string[] = [];
+      const port = {
+        acquire: async (): Promise<LockAns> => (calls.push('acquire'), free ? { ok: true } : { ok: false, code }),
+        renew: async (): Promise<LockAns> => (calls.push('renew'), { ok: true }),
+        release: () => void calls.push('release'),
+        close: () => {},
+      };
+      const sentGates = s.gateMsgs.length;
+      const o = await observe(s, 'C', code === 'issue.lock_unavailable' ? 934_000 : 933_000, async (_req, runId, runs) => {
+        const hd = await handoffOf(s, runId);
+        assert.deepEqual([hd.phase, hd.code], ['gate', code]);
+        assert.equal(s.gateMsgs.slice(sentGates).filter((m) => m.t === 'gate.request').length, 0, '승인 카드를 띄우지 않았다');
+        assert.equal(runs.inspect(runId).ledger, null);
+        assert.equal(calls.at(-1), 'release', '기다리는 동안 다른 PC를 막지 않는다');
+        if (code === 'issue.lock_unavailable') assert.deepEqual(calls, ['acquire', 'release'], '확인을 못 하면 다시 해 보지 않고 바로 멈춘다');
+        else assert.ok(calls.filter((c) => c === 'acquire').length >= 2, '상한까지 다시 잡아 본다');
+        calls.length = 0;
+        free = true;
+        assert.deepEqual(runs.resume(runId), { ok: true });
+        const req = await gateFor(s, runId);
+        assert.deepEqual(runs.answer(approval(req)), { ok: true });
+      }, { noGate: true, deps: { issueLock: port, issueLockRetryMs: 20, issueLockWaitMs: 300 } });
+      assert.deepEqual([o.status, o.ledger, o.posts], ['success', 'committed', 1], JSON.stringify(o));
+      assert.deepEqual(calls, ['acquire', 'renew', 'release']);
+    }
+  });
+
+  it('[IR 발급 잠금] 승인한 뒤 커밋 직전 갱신이 안 되면 발급 버튼을 누르지 않는다: 원장 행 없음, 사람 차례. [이어서]면 게이트 앞부터 새 승인을 받아야 발급한다', async () => {
+    const s = sides.ir;
+    const lock = fakeLock({ renew: [{ ok: false, code: 'issue.lock_lost' }] });
+    const o = await observe(s, 'C', 935_000, async (req, runId, runs) => {
+      const posts = fx.posts();
+      assert.deepEqual(runs.answer(approval(req!)), { ok: true });
+      const hd = await handoffOf(s, runId);
+      assert.equal(hd.code, 'issue.lock_lost');
+      assert.equal(fx.posts(), posts, '제출 요청이 나가지 않았다');
+      assert.equal(runs.inspect(runId).ledger, null, '원장 armed도 쓰지 않았다');
+      assert.deepEqual(lock.calls, ['acquire', 'renew', 'release']);
+      assert.deepEqual(runs.resume(runId), { ok: true });
+      const again = await gateFor(s, runId, 1);
+      assert.notEqual(again.reqId, req!.reqId, '새 게이트 요청');
+      assert.equal(fx.posts(), posts);
+      assert.equal(runs.answer(approval(req!)).ok, false, '앞 승인으로는 넘지 못한다');
+      assert.deepEqual(runs.answer(approval(again)), { ok: true });
+    }, { deps: { issueLock: lock.port } });
+    assert.deepEqual([o.status, o.ledger, o.posts], ['success', 'committed', 1], JSON.stringify(o));
+    assert.deepEqual(lock.calls, ['acquire', 'renew', 'release', 'acquire', 'renew', 'release']);
+    assert.ok(o.journal.includes('submit.not_entered'));
+  });
+
   it('[IR ③] 초안에 이메일이 없는데 포털이 주소를 다시 채우면 s19f(assert.input_mismatch)에서 멈춘다: 게이트 요청·제출·원장 행 없음', async () => {
     const s = sides.ir;
     const sent = s.gateMsgs.length;

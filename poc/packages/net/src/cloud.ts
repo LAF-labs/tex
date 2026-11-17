@@ -53,6 +53,11 @@ export const CLOUD_ROUTES: ReadonlyArray<{ name: string; method: CloudMethod; pa
   { name: 'pcLinks.reveal', method: 'POST', path: new RegExp(`^/v1/pc-links/${UUID4}/reveal$`) },
   { name: 'pcLinks.challenge', method: 'POST', path: new RegExp(`^/v1/pc-links/${UUID4}/challenge$`) },
   { name: 'pcLinks.grant', method: 'POST', path: new RegExp(`^/v1/pc-links/${UUID4}/grant$`) },
+  // 발급 잠금(ADR-048 결정 7, 데스크톱 기기 토큰): 계정에 하나, 잡은 PC만 홈택스 발급에 들어간다
+  { name: 'issueLock.get', method: 'GET', path: /^\/v1\/issue-lock$/ },
+  { name: 'issueLock.acquire', method: 'POST', path: /^\/v1\/issue-lock\/acquire$/ },
+  { name: 'issueLock.renew', method: 'POST', path: /^\/v1\/issue-lock\/renew$/ },
+  { name: 'issueLock.release', method: 'POST', path: /^\/v1\/issue-lock\/release$/ },
   // 설정 > 구독(기기 토큰, services/account/API.md 구독). 카드 등록 창은 기본 브라우저가 연다(이 egress 밖)
   { name: 'billing.subscription', method: 'GET', path: /^\/v1\/billing\/subscription$/ },
   { name: 'billing.checkout', method: 'POST', path: /^\/v1\/billing\/checkout$/ },

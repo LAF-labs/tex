@@ -105,6 +105,7 @@ interface Opts {
   readback?: Record<string, string>;
   preGate?: RunControllerInput['preGate'];
   recover?: RunControllerInput['recover'];
+  beforeCommit?: RunControllerInput['beforeCommit'];
   beforeStep?: (s: Step, c: RunController) => void;
   handlers?: Partial<Handlers>;
   pdf?: PdfPort;
@@ -178,6 +179,7 @@ function mk(steps: Step[], o: Opts = {}) {
     commit,
     pdf: o.pdf,
     preGate: o.preGate,
+    ...(o.beforeCommit ? { beforeCommit: o.beforeCommit } : {}),
     journal: (t, p) => rec.journal.push([t, p ?? {}]),
     onState: (e) => rec.states.push(e),
     onEffect: (e, at) => (rec.effects.push(e), rec.effectsAt.push([e, at])),
@@ -831,6 +833,75 @@ describe('submit(M2-3, D03 §3 R-G7·§5.3, D02 §4·§4.5): 게이트 토큰·�
     assert.deepEqual(eff, ['ledger.dispatched', 'ledger.committed{verify_ref}']);
     assert.ok(!h.rec.effects.some((e) => ['ledger.arm+token.consume', 'commit_guard.arm', 'click'].includes(e)), '진입 효과는 조율기가 직접 한다(포트로 두 번 하지 않는다)');
     assert.ok(!JSON.stringify(h.rec.journal).includes('1000'), '값 없음(⑦)');
+  });
+
+  it('진입 전 확인(beforeCommit, ADR-048 결정 7 발급 잠금 갱신): 통과해야 토큰을 쓰고 원장에 적는다. 확인은 원장 armed보다 먼저다', async () => {
+    const order: string[] = [];
+    const h = mk(GATE_FLOW, { readback: RB1, beforeCommit: async (x) => (order.push(`pre ${x}`), { ok: true }), commit: { arm: (a) => (order.push(`arm ${a.stepId}`), { ok: true }) } });
+    const p = h.c.start();
+    await h.atGate();
+    assert.deepEqual(order, [], '승인 전에는 부르지 않는다');
+    h.approve();
+    assert.equal((await p).state, 'Completed');
+    assert.deepEqual(order, ['pre s21', 'arm s21']);
+    assert.deepEqual(clicks(h), ['click f.issue']);
+  });
+
+  it('음성: 진입 전 확인이 거부하면(issue.lock_lost) 누르지 않고 원장도 쓰지 않는다. 핸드오프(재시도 없음), 재개하면 게이트 앞부터 새 승인을 받는다', async () => {
+    let ok = false;
+    let calls = 0;
+    const h = mk(GATE_FLOW, { readback: RB1, beforeCommit: async () => (calls++, ok ? { ok: true } : { ok: false, code: 'issue.lock_lost' }) });
+    const p = h.c.start();
+    await h.atGate();
+    h.approve();
+    const r = await p;
+    assert.deepEqual([r.state, r.code, r.resumeAt], ['HandedOff', 'issue.lock_lost', 's1'], '재개 지점은 submit이 아니라 게이트 앞 체크포인트');
+    assert.equal(calls, 1, '다시 해 보지 않는다');
+    assert.deepEqual(h.rec.commit, [], '원장 armed·가드 무장 없음');
+    assert.deepEqual(clicks(h), []);
+    assert.equal(h.c.tokenFor('s20'), null, '토큰은 남지 않는다');
+    assert.ok(h.triggers.includes('Recovering'), `상태 전이가 토큰을 폐기한다(${h.triggers.join(',')})`);
+    assert.ok(h.rec.journal.some(([t, d]) => t === 'submit.not_entered' && d.cause === 'issue.lock_lost'));
+    assert.ok(!h.rec.effects.some((e) => e.startsWith('ledger.')), '원장 효과 없음');
+    // 재개: 게이트가 다시 열리고(새 reqId) 새로 승인해야 누른다
+    ok = true;
+    const p2 = h.c.resume();
+    await h.atGate(2);
+    assert.notEqual(h.rec.published[1]!.reqId, h.rec.published[0]!.reqId);
+    assert.deepEqual(clicks(h), []);
+    h.approve();
+    assert.equal((await p2).state, 'Completed');
+    assert.deepEqual(h.rec.commit, ['arm s21', 'guard s21', 'disarm']);
+    assert.deepEqual(clicks(h), ['click f.issue']);
+  });
+
+  it('음성: 진입 전 확인이 던져도 누르지 않는다(commit.precheck_failed, 핸드오프)', async () => {
+    const h = mk(GATE_FLOW, { readback: RB1, beforeCommit: async () => Promise.reject(new Error('port')) });
+    const p = h.c.start();
+    await h.atGate();
+    h.approve();
+    const r = await p;
+    assert.deepEqual([r.state, r.code], ['HandedOff', 'commit.precheck_failed']);
+    assert.deepEqual(h.rec.commit, []);
+    assert.deepEqual(clicks(h), []);
+  });
+
+  it('발급 잠금을 못 잡으면(preGate issue.locked_elsewhere·issue.lock_unavailable) 게이트를 열지 않고 핸드오프, 재개하면 다시 잡아 본다', async () => {
+    for (const code of ['issue.locked_elsewhere', 'issue.lock_unavailable']) {
+      let free = false;
+      let calls = 0;
+      const h = mk(GATE_FLOW, { readback: RB1, preGate: async () => (calls++, free ? { ok: true } : { ok: false, code }) });
+      const r = await h.c.start();
+      assert.deepEqual([r.state, r.code, r.resumeAt], ['HandedOff', code, 's20']);
+      assert.equal(calls, 1);
+      assert.equal(h.rec.published.length, 0, '게이트 요청 없음');
+      free = true;
+      const p = h.c.resume();
+      await h.atGate();
+      assert.equal(calls, 2);
+      h.approve();
+      assert.equal((await p).state, 'Completed');
+    }
   });
 
   it('음성: 커밋 포트가 없으면 누르지 않는다(step.irreversible_unguarded, 재시도·핸드오프 없이 Failed)', async () => {

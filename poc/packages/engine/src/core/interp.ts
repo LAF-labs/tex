@@ -112,6 +112,12 @@ export const FORCED_STOPS: ReadonlyMap<string, 'handoff' | 'abort'> = new Map([
   // 비가역 진입 전 거부(D03 §3 R-G7): 토큰이 맞지 않거나 원장 armed를 쓰지 못했다. 누르지 않았다. 다시 해도 같은 거부라 중단.
   ['gate.token_invalid', 'abort'],
   ['ledger.arm_failed', 'abort'],
+  // 발급 잠금(ADR-048 결정 7): 다른 PC가 발급 중이거나, 겹치는지 확인하지 못했거나, 커밋 직전에 잠금이 없다. 게이트를 열지 않았거나 누르지 않았다.
+  // 재시도 없이 핸드오프(사람이 [다시 시도]하면 게이트 앞부터 다시 잡는다). 진입 전 확인이 던진 경우(commit.precheck_failed)도 같다.
+  ['issue.locked_elsewhere', 'handoff'],
+  ['issue.lock_unavailable', 'handoff'],
+  ['issue.lock_lost', 'handoff'],
+  ['commit.precheck_failed', 'handoff'],
 ]);
 
 export function retryDelayMs(attempt: number, r: Pick<Policy['retries'], 'baseMs' | 'capMs'>, floorMs: number, u: number): number {

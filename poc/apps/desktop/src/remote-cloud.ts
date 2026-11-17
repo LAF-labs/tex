@@ -65,6 +65,8 @@ function login(b: unknown): AccountLogin {
 /** remember는 참일 때만 본문에 싣는다. */
 const rem = (remember?: boolean) => (remember ? { remember: true } : {});
 
+/** 발급 잠금 값(서버 randomToken, base64url). 모양만 본다 */
+const ISSUE_LOCK_ID = /^[A-Za-z0-9_-]{22,64}$/;
 const DEV_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1):[0-9]{1,5}$/;
 const DEV_HOST = /^(localhost|127\.0\.0\.1):[0-9]{1,5}$/;
 
@@ -316,6 +318,30 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
     async pcLinkDrop(auth, deviceId) {
       const url = linkUrl(deviceId);
       await call('DELETE', url, [204], { headers: await authed(auth, 'DELETE', url) });
+    },
+    async issueLock(auth) {
+      const url = `${accountOrigin}/v1/issue-lock`;
+      const b = await call('GET', url, [200], { headers: await authed(auth, 'GET', url) });
+      if (!isObj(b) || typeof b.held !== 'boolean' || typeof b.mine !== 'boolean' || !(b.deviceId === null || typeof b.deviceId === 'string') || !(b.expiresAt === null || int(b.expiresAt))) shape();
+      const r = b as { held: boolean; deviceId: string | null; expiresAt: number | null; mine: boolean };
+      return { held: r.held, deviceId: r.deviceId, expiresAt: r.expiresAt, mine: r.mine };
+    },
+    async acquireIssueLock(auth) {
+      const url = `${accountOrigin}/v1/issue-lock/acquire`;
+      const b = await call('POST', url, [200], { headers: await authed(auth, 'POST', url), body: {} });
+      if (!isObj(b) || typeof b.lockId !== 'string' || !ISSUE_LOCK_ID.test(b.lockId) || !int(b.expiresAt)) shape();
+      const r = b as { lockId: string; expiresAt: number };
+      return { lockId: r.lockId, expiresAt: r.expiresAt };
+    },
+    async renewIssueLock(auth, lockId) {
+      const url = `${accountOrigin}/v1/issue-lock/renew`;
+      const b = await call('POST', url, [200], { headers: await authed(auth, 'POST', url), body: { lockId } });
+      if (!isObj(b) || !int(b.expiresAt)) shape();
+      return { expiresAt: (b as { expiresAt: number }).expiresAt };
+    },
+    async releaseIssueLock(auth, lockId) {
+      const url = `${accountOrigin}/v1/issue-lock/release`;
+      await call('POST', url, [204], { headers: await authed(auth, 'POST', url), body: { lockId } });
     },
     async leaveDevice(auth) {
       const url = `${accountOrigin}/v1/devices/self/leave`;
