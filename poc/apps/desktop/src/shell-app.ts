@@ -58,6 +58,7 @@ import { CounterpartyBook } from './counterparty-book.ts';
 import { nameMissing, ProfileEditLog, ProfileEditor } from './profile-edit.ts';
 import { DesktopAccount, PendingCodeFile, RemoteIdentityFile, type AccountView } from './remote-account.ts';
 import { GatewayAuthHost } from './gateway-auth.ts';
+import { IssueLockHost } from './issue-lock-host.ts';
 import type { AccountClient, BillingView, CloudPorts, DeviceAuth, PcLinkVault, VaultKeysFactory } from './remote-ports.ts';
 import { PairingHost } from './remote-pairing.ts';
 import { PhoneLink, PhoneStore, type TokenSeal } from './phone-link.ts';
@@ -1382,6 +1383,19 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     modelAllowed: () => modelOk(),
   });
   host.setGatewayAuth((m) => gwAuth.handle(m));
+  // 발급 잠금(issue-lock-host.ts, ADR-048 결정 7): 이 PC의 기기 목록에 PC가 2대 이상이면 엔진이 승인 카드를 열기 전에 계정의 발급 잠금을 잡는다.
+  // PC 한 대 계정·계정 연결 없는 실행은 서버를 부르지 않고 통과한다. 계정을 읽지 못하면 엔진은 승인을 열지 않는다.
+  const issueLock = new IssueLockHost({
+    client: opts.remote?.keys ? (opts.remote.cloud?.account ?? null) : null,
+    device: async () => {
+      await accountInit();
+      return account.device();
+    },
+    log: (n, d) => log.event(n, d),
+  });
+  host.setIssueLock((m) => issueLock.handle(m));
+  // 엔진이 죽으면 놓으라는 말을 못 했을 수 있다: main이 대신 놓는다(못 놓아도 서버 잠금은 90초 뒤 풀린다)
+  host.on('exit', () => void issueLock.release());
   // 폰 연결(S-03, remote-pairing.ts·pair-window.ts). 로그인(첫 PC 등록)을 마치고 클라우드 포트·QR 인코더가 있을 때만.
   // 우편함 토큰·채널이 든 결과는 지금은 이 실행의 메모리에만 둔다(수신 배선 PR에서 금고 보관).
   let pairWin: PairWindow | null = null;

@@ -15,6 +15,7 @@ import { appPaths, defaultAppRoot, FileEventLog, wrapPort, type PortLike } from 
 import { BundleCatalog } from '@sax/model';
 import { BizVerifier } from './bizverify.ts';
 import { portGatewayAuth } from './gateway-auth.ts';
+import { portIssueLock } from './issue-lock.ts';
 import { connectRunBrowser, RunBrowserSlot } from './browser.ts';
 import { COMMANDS, DataService, READ_QUERIES } from './data-service.ts';
 import type { GatePortMessage } from './gate.ts';
@@ -155,7 +156,10 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   key.fill(0);
   // 게이트웨이 인증은 main auth 포트로 요청마다 받는다(ADR-040 결정 3: gateway 범위 기기 토큰, 엔진은 토큰·키를 갖지 않는다).
   // auth 포트가 없으면(개발 콘솔·시험 기동) 게이트웨이 구성 없이 둔다. 그때 intent.resolve는 decide.unavailable이다.
-  const egress = new Egress(authPort ? { gateway: { auth: portGatewayAuth(wrapPort(authPort, 'electron')), bundles: BundleCatalog.load().allowEntries() } } : {});
+  // 발급 잠금(ADR-048 결정 7)도 같은 auth 포트로 main에 묻는다(issue-lock.ts). 메시지 이름이 달라 서로 섞이지 않는다.
+  const auth = authPort ? wrapPort(authPort, 'electron') : null;
+  const issueLock = auth ? portIssueLock(auth) : null;
+  const egress = new Egress(auth ? { gateway: { auth: portGatewayAuth(auth), bundles: BundleCatalog.load().allowEntries() } } : {});
   if (egress.envTampered.length) log.event('egress.env_tampered', { keys: egress.envTampered.join(',') });
   data = new DataService(db, new BizVerifier(egress), { vaultDir: paths.vault });
   payroll = new BundleService(db, cipher, { exportDir: path.join(paths.root, 'exports') });
@@ -220,6 +224,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
           : null,
       } : {}),
       page: async () => (await slot.open()).page, log, postGate: (m) => gate.postMessage(m),
+      ...(issueLock ? { issueLock } : {}),
       // 실행 허가(팀장 결정 2026-11-09 ④⑤, D03 §3.1·§7.1·§12): status killPlaybooks·portalModeCeiling ∧ 서명 정책 portalMode·만료 규칙.
       // 홈택스는 정책이 없거나(핀 없음 포함) 만료 뒤 168시간이 지나면 postprocess(fail-closed): 정책 게시 전에는 H-01을 자동으로 돌리지 않는다.
       // fixture 개발 포털은 status 상한·kill만 따르고 정책은 보지 않는다(실제 포털 접속이 없다).

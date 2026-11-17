@@ -167,6 +167,11 @@ export interface RunControllerInput {
   card: (g: StepOf<'gate'>) => { readback: ReadbackValues; reserved: GateField[] } | null;
   /** 게이트 진입 전(W 밖) 사전 안전 판정·verify 기준선·$dup.portalExisting(M2-3). 거부면 그 코드로 실패. */
   preGate?: (g: StepOf<'gate'>) => Promise<ActResult>;
+  /**
+   * 커밋 구간에 들어가기 직전(토큰을 쓰기 전)의 마지막 확인(ADR-048 결정 7: 발급 잠금 갱신). 거부면 누르지 않고 그 코드로 멈춘다.
+   * 토큰은 버린다(다시 가려면 게이트 앞부터). 던지면 거부로 본다.
+   */
+  beforeCommit?: (x: string) => Promise<ActResult>;
   /** 주 비가역 X의 Wmax(token.wmaxMs). */
   wmaxMs: (x: string) => number;
   /** 정책 commitWindowMs. */
@@ -847,6 +852,18 @@ export class RunController {
     if (!this.i.commit || !g || !held || !approved) {
       this.i.journal('step.irreversible_unguarded', { stepId: s.id, type: s.type, ...(this.i.commit ? {} : { cause: 'no_commit_port' }) });
       return fail('step.irreversible_unguarded');
+    }
+    // ⓪ 진입 전 확인(발급 잠금 갱신 등). 거부면 원장에 아무것도 쓰지 않고 멈춘다. 토큰은 이 실행에서 다시 쓰지 못하게 치운다(상태 전이가 폐기한다).
+    if (this.i.beforeCommit) {
+      const pre = await this.i.beforeCommit(s.id).catch((): ActResult => ({ ok: false, code: 'commit.precheck_failed' }));
+      if (!pre.ok) {
+        this.tokensByGate.delete(g);
+        this.approvedReadback.delete(g);
+        this.i.journal('submit.not_entered', { stepId: s.id, cause: pre.code });
+        // 핸드오프로 멈추면 재개 지점은 이 스텝이 아니라 게이트 앞이다(토큰이 없으니 다시 승인받는다)
+        this.handoffResumeAt = this.preGateCp ?? this.staticPreGate.get(g) ?? g;
+        return fail(pre.code);
+      }
     }
     // ① 토큰: 이 게이트·이 actionHash·이 X, 기한 안. 실패면 누르지 않는다(위조·다른 실행·재사용은 보안 이벤트).
     this.tokensByGate.delete(g);

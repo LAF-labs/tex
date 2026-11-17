@@ -128,6 +128,17 @@ export interface AccountClient {
   pcLinkGrant(auth: DeviceAuth, deviceId: string, grant: PcLinkGrant): Promise<void>;
   /** DELETE /v1/pc-links/:id(기기 토큰): 거절. 아직 활성화되지 않은 그 PC의 신청 기록도 지워진다. */
   pcLinkDrop(auth: DeviceAuth, deviceId: string): Promise<void>;
+  /**
+   * 발급 잠금(기기 토큰, 데스크톱만. ADR-048 결정 7, API.md 발급 잠금). 계정에 하나이고 잡은 PC만 홈택스 발급에 들어간다.
+   * - issueLock: 지금 누가 잡고 있나(잠금 값은 오지 않는다).
+   * - acquireIssueLock: 다른 PC가 잡고 있으면 account.issue_locked. 다시 잡으면 새 값이다(앞 값은 죽는다). 만료 90초.
+   * - renewIssueLock: 만료됐거나 넘어갔으면 account.issue_lock_lost.
+   * - releaseIssueLock: 내 값이 아니어도 조용히 끝난다.
+   */
+  issueLock(auth: DeviceAuth): Promise<{ held: boolean; deviceId: string | null; expiresAt: number | null; mine: boolean }>;
+  acquireIssueLock(auth: DeviceAuth): Promise<{ lockId: string; expiresAt: number }>;
+  renewIssueLock(auth: DeviceAuth, lockId: string): Promise<{ expiresAt: number }>;
+  releaseIssueLock(auth: DeviceAuth, lockId: string): Promise<void>;
   /** 탈퇴(기기 토큰, 데스크톱만): GET /v1/account/deletion, POST delete-request(7일 유예·구독 해지), POST delete-cancel. */
   accountDeletion(auth: DeviceAuth): Promise<{ deleteAfter: number | null }>;
   requestAccountDelete(auth: DeviceAuth): Promise<{ deleteAfter: number }>;

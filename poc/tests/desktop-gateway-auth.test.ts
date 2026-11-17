@@ -269,7 +269,8 @@ describe('엔진 auth 포트 배선(소스)', () => {
     assert.ok(host.includes('this.engine.postMessage(init, [relay.port2, gate.port1, auth.port1]);'));
     assert.ok(/r = h \? await h\(m\) : id === null \? null : \{ t: 'gw\.auth\.result', id, code: 'account\.signed_out' \}/.test(gw));
     // EngineHost는 auth 포트를 authPortResponder(받은 순서대로 하나씩)로만 처리한다.
-    assert.ok(host.includes('const onAuth = authPortResponder(') && host.includes("this.authPort.on('message', (e) => void onAuth(e.data));"));
+    // 발급 잠금 메시지(lock.*)만 따로 답하고(ADR-048 결정 7), 나머지는 전부 authPortResponder로 간다.
+    assert.ok(host.includes('const onAuth = authPortResponder(') && host.includes("this.authPort.on('message', (e) => (isIssueLockMessage(e.data) ? onLock(e.data) : void onAuth(e.data)));"));
     assert.ok(!host.includes('private async onAuth('));
   });
 
