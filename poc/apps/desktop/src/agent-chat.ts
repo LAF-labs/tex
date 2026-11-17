@@ -183,7 +183,15 @@ interface Session {
   results: Map<string, Result>;
   refOfRun: Map<string, string>;
   runOfRef: Map<string, string>;
+  /** 이번 차례에 사장님이 쓴 문장(미래 날짜 말 확인용, ADR-049) */
+  said?: string;
 }
+
+/**
+ * 사장님이 미래 작성일자를 말했다("다음 달 1일자로", "내일 날짜로"). 모델이 날짜를 비우거나 이번 달로 바꿔 넣어도(parasail date-future)
+ * 기기가 받지 않고 날짜를 되묻는다. 작성일자는 오늘이나 지난 날만 된다.
+ */
+const FUTURE_DATE_SAID = /(?:다음\s?달|담달|내달|다음\s?주|내년|다음\s?해)\s*(?:\d{1,2}\s*일|말일?|초|중순|말경)|(?:^|[^가-힣])(?:내일|모레)\s*(?:날짜|자|일자)/u;
 
 const TOOL_PHASE: Record<DomainCall['tool'], Exclude<AgentPhase, 'thinking'>> = {
   sales_summary: 'reading',
@@ -246,6 +254,7 @@ export class AgentChat {
     const profileId = this.ports.profileId();
     if (!profileId) return { kind: 'agent', text: AGENT_SETUP_TEXT, show: [], ask: null, filtered: null, setup: true };
     const s = this.open(profileId);
+    s.said = text;
     const created: string[] = [];
     this.ports.onProgress('thinking');
     let phase: AgentPhase = 'thinking';
@@ -443,7 +452,8 @@ export class AgentChat {
     const today = this.ports.today();
     const d = call.date ? draftDate(today, call.date.monthOffset, call.date.day) : null;
     const rule = d === null || d === 'bad' ? null : issueDateRule(d, today);
-    const date = rule === 'future' || rule === 'past_period' ? 'bad' : d;
+    const futureSaid = FUTURE_DATE_SAID.test(s.said ?? '') && (call.tool === 'invoice_draft' || call.date);
+    const date = rule === 'future' || rule === 'past_period' || futureSaid ? 'bad' : d;
     const q = (call as DraftExtra).quantity ?? null;
     const u = (call as DraftExtra).unitPrice ?? null;
     if (q === null && u === null) return { date, line: null };

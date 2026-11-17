@@ -67,7 +67,7 @@ class Drafts {
 }
 
 /** main 한 턴: 엔진 각본은 도구 호출 하나 → 결과를 받고 끝. 도구 결과를 돌려준다. */
-async function run(call: DomainCall, d = new Drafts()): Promise<{ out: ToolOutput; d: Drafts }> {
+async function run(call: DomainCall, d = new Drafts(), say = 'x'): Promise<{ out: ToolOutput; d: Drafts }> {
   let out: ToolOutput | null = null;
   const steps: Array<(p: StepParams) => StepResult> = [
     () => ({ kind: 'tools', calls: [{ callId: 'c1', ...call }] }),
@@ -88,7 +88,7 @@ async function run(call: DomainCall, d = new Drafts()): Promise<{ out: ToolOutpu
     today: () => '2026-11-17',
     onProgress: () => {},
   };
-  await new AgentChat(ports).turn('x');
+  await new AgentChat(ports).turn(say);
   return { out: out!, d };
 }
 const draft = (o: Partial<Extract<DomainCall, { tool: 'invoice_draft' }>>): DomainCall => ({ tool: 'invoice_draft', counterpartyId: 'cpA', amount: null, vat: null, item: '원두', ...o });
@@ -116,6 +116,15 @@ describe('AgentChat: 작성일자·수량×단가', () => {
       assert.deepEqual([out.status, out.needs], ['needs_input', ['date']], JSON.stringify(date));
       assert.equal(d.creates.length, 0);
     }
+  });
+  it('사장님이 미래 날짜를 말했으면 모델이 날짜를 비우거나 이번 달로 바꿔도 카드를 만들지 않고 날짜를 되묻는다(parasail date-future)', async () => {
+    for (const [date, say] of [[undefined, '한빛상사 110만원 다음 달 1일자로 끊어줘'], [{ monthOffset: 0, day: '1' }, '다음달 1일로 끊어줘'], [undefined, '내일 날짜로 해줘']] as const) {
+      const { out, d } = await run(draft({ amount: { value: 1_000_000 }, ...(date ? { date } : {}) }), new Drafts(), say);
+      assert.deepEqual([out.status, out.needs], ['needs_input', ['date']], say);
+      assert.equal(d.creates.length, 0);
+    }
+    // 미래 날짜 말이 아니면 그대로(“다음 달에 보낼 거”는 날짜가 아니다, "내일 끊어줘"는 발급 시점이다)
+    for (const say of ['다음 달에 또 할게요, 이번 건 끊어줘', '내일 끊어줘']) assert.equal((await run(draft({ amount: { value: 1_000_000 } }), new Drafts(), say)).out.status, 'card_shown', say);
   });
   it('고치기: 작성일자만, 수량×단가로 금액까지', async () => {
     const d = new Drafts();

@@ -612,9 +612,21 @@ Object.assign(scenes, {
     await sleep(200);
     await shot(win, '87-link-limit');
   },
+  // 대화로 정한 작성일자·수량×단가 카드(ADR-049): 지난 날(준비 막음), 발급기한 지남(경고만), 수량×단가 줄
+  async issueDate(win) {
+    await js(win, `(() => { const i = document.querySelector('#composer'); i.value = 'A상사 지난달 말일자로 10개 33만원씩 끊어줘'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
+    await sleep(300);
+    const back = { writeDate: dayOffset(-20), writeDateSet: true, quantity: 10, unitPrice: 330000 };
+    ev(win, { type: 'run', run: { ...mkRun('draft'), ...back, issueDateHeld: true } });
+    await sleep(100);
+    await shot(win, '04d-draft-issue-date-held');
+    ev(win, { type: 'run', run: { ...mkRun('draft'), ...back, issueDateHeld: false, issueDateLate: true } });
+    await sleep(100);
+    await shot(win, '04e-draft-issue-date-late');
+  },
 });
 
-const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'newPc', ...(EMPTY ? ['empty'] : [])];
+const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'newPc', ...(EMPTY ? ['empty'] : [])];
 const agreed = { version: 'pv', choice: 'agreed', at: '' };
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {
