@@ -213,6 +213,16 @@ export class BankHost {
     };
   }
 
+  /**
+   * 대화 도구 cash_flow의 값(agent-chat CashFlowValues). 앞으로 30일 낼 돈은 기한 지난 것까지 더한다(이미 늦은 돈도 곧 나갈 돈이다).
+   * 계좌가 없으면 null.
+   */
+  async cashFlowValues(month: string): Promise<{ complete: boolean; through: string; in: number; out: number; net: number; balance: number | null; nextIn: number; nextOut: number } | null> {
+    const b = await this.cashFlowBrief(month);
+    if (!b) return null;
+    return { complete: b.complete, through: b.through, in: b.in.total, out: b.out.total, net: b.net, balance: b.balance, nextIn: b.next30.payIn ?? 0, nextOut: (b.next30.payOut ?? 0) + (b.next30.payOverdue ?? 0) };
+  }
+
   /** 판 카드 "못 받은 돈"·"확인할 입금"(대표 결정 ⑤). 거래내역이 오래됐으면 금액 대신 "거래내역이 오래됐어요" */
   async boardCards(): Promise<BoardCard[]> {
     let s: BankSummaryLike;

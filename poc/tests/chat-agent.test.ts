@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { CounterpartyRepo, openDatabase, ProfileRepo, syntheticBizNo, type Db } from '@sax/db';
-import { CHAT_ADVICE_TEXT, CHAT_AGENT_APPROVAL_TEXT, CHAT_AGENT_ASK_TEXT, CHAT_AGENT_DONE_TEXT, CHAT_AGENT_FALLBACK_TEXT, CHAT_AGENT_INPUT_MAX_BYTES, CHAT_AGENT_LOOKUP_TEXT, CHAT_AGENT_NUMBER_TEXT, CHAT_AGENT_TRANSCRIPT_TURNS, ChatAgent, gatewayChatAgentModel, numberShaped, parseKrw, type DomainCall, type ScreenFrame, type StepResult, type ToolOutput } from '@sax/engine';
+import { CHAT_ADVICE_TEXT, CHAT_AGENT_APPROVAL_TEXT, CHAT_AGENT_ASK_TEXT, CHAT_AGENT_CASH_TEXT, CHAT_AGENT_DONE_TEXT, CHAT_AGENT_FALLBACK_TEXT, CHAT_AGENT_INPUT_MAX_BYTES, CHAT_AGENT_LOOKUP_TEXT, CHAT_AGENT_NUMBER_TEXT, CHAT_AGENT_OLDEST_TEXT, CHAT_AGENT_TRANSCRIPT_TURNS, ChatAgent, gatewayChatAgentModel, numberShaped, parseKrw, type DomainCall, type ScreenFrame, type StepResult, type ToolOutput } from '@sax/engine';
 import { CHAT_AGENT_COMMANDS, COMMANDS, MAIN_ONLY, READ_QUERIES } from '@sax/engine/protocol';
 import { BundleCatalog } from '@sax/model';
 import { Egress } from '@sax/net';
@@ -72,6 +72,10 @@ class FakePc {
         return { ref: ref('r'), status: 'ok', fields: [...FIELDS], needs: null };
       case 'receivables':
         return { ref: null, status: 'not_set_up', fields: null, needs: null };
+      case 'payables':
+        return { ref: ref('r'), status: 'ok', fields: [...FIELDS], needs: null };
+      case 'cash_flow':
+        return { ref: ref('r'), status: 'partial', fields: null, needs: null };
       case 'invoice_draft': {
         const d = { ref: ref('d'), cp: c.counterpartyId, amount: c.amount !== null, vat: c.vat, item: c.item !== null, open: true };
         this.drafts.push(d);
@@ -361,14 +365,47 @@ describe('chat.step 턴 상한·세션 폐기', () => {
     assert.deepEqual(r.kind === 'reply' && [r.reply.kind, r.reply.ask, r.reply.text], ['ask', 'which_card', CHAT_AGENT_ASK_TEXT.which_card]);
   });
 
-  it('같은 호출을 되풀이했는데 보일 결과도 되물을 칸도 없으면 chat.turn_limit', async () => {
+  it('계좌 연결 전(not_set_up) 조회를 되풀이하면 턴 상한 대신 계좌 연결이 먼저라고 닫는다', async () => {
     const a = agent();
     const pc = new FakePc();
     const call = () => fc('receivables', { counterparty: null });
     script(call, call);
     const r = await a.step({ start: { text: '못 받은 돈', frame: { cards: [] }, profileId } });
-    await code(a.step({ continue: { outputs: r.kind === 'tools' ? r.calls.map((c) => ({ callId: c.callId, output: pc.exec(c) })) : [] } }), 'chat.turn_limit');
+    const end = await a.step({ continue: { outputs: r.kind === 'tools' ? r.calls.map((c) => ({ callId: c.callId, output: pc.exec(c) })) : [] } });
     assert.equal(pc.calls.length, 1);
+    assert.deepEqual(end.kind === 'reply' && [end.reply.kind, end.reply.text, end.reply.filtered], ['answer', CHAT_AGENT_DONE_TEXT.not_set_up, 'repeat']);
+  });
+
+  it('돈 흐름 조회를 되풀이하면 cash 슬롯 문장으로 닫고, partial이면 확인 못 한 계좌가 있다고 같이 말한다(11 §3.4)', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const call = () => fc('cash_flow', { month_offset: 0 });
+    script(call, call);
+    const r = await a.step({ start: { text: '이번 달 돈 남았어?', frame: { cards: [] }, profileId } });
+    assert.deepEqual(r.kind === 'tools' && r.calls.map(({ callId, ...c }) => (void callId, c)), [{ tool: 'cash_flow', monthOffset: 0 }]);
+    const end = await a.step({ continue: { outputs: r.kind === 'tools' ? r.calls.map((c) => ({ callId: c.callId, output: pc.exec(c) })) : [] } });
+    assert.equal(pc.calls.length, 1);
+    assert.deepEqual(end.kind === 'reply' && [end.reply.kind, end.reply.text, end.reply.show, end.reply.filtered], ['answer', CHAT_AGENT_CASH_TEXT('r1', true), ['r1'], 'repeat']);
+    assert.match(CHAT_AGENT_CASH_TEXT('r1', true), /일부 계좌 거래내역이 모자라/);
+  });
+
+  it('가장 오래된 건을 물은 조회를 되풀이하면 last 슬롯 문장으로 닫는다(chat-eval look-late)', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const call = () => fc('payables', { counterparty: null });
+    script(call, call);
+    const r = await a.step({ start: { text: '누가 제일 늦게 받았어?', frame: { cards: [] }, profileId } });
+    const end = await a.step({ continue: { outputs: r.kind === 'tools' ? r.calls.map((c) => ({ callId: c.callId, output: pc.exec(c) })) : [] } });
+    assert.deepEqual(end.kind === 'reply' && [end.reply.text, end.reply.filtered], [CHAT_AGENT_OLDEST_TEXT('r1'), 'repeat']);
+  });
+
+  it('낼 돈(payables)은 거래처 토큰을 레코드 ID로 풀어 main에 보낸다', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    script((b) => fc('payables', { counterparty: toks(nowLine(b), 'NAME')[0] }), () => reply({ text: '{r1.count}건이에요.', show: ['r1'] }));
+    const t = await say(a, pc, 'B상사에 안 낸 돈 있어?');
+    assert.deepEqual(pc.calls.map((c) => [c.tool, 'counterpartyId' in c ? c.counterpartyId : null]), [['payables', cpId['B상사']]]);
+    assert.deepEqual([t.reply.kind, t.reply.text], ['answer', '{r1.count}건이에요.']);
   });
 
   it('같은 턴에 같은 도구를 같은 인자로 또 부르면 다시 실행하지 않고 그 결과로 턴을 닫는다(chat-eval)', async () => {
@@ -620,7 +657,7 @@ describe('PR #296 판정 반영', () => {
   it('① 답 숫자 규칙: 전각·아랍-인도·원문자 숫자, 한글·한자 수, 고유어 건수, 달 이름도 숫자다. 낱말 속 글자는 아니다', () => {
     for (const t of ['합계는 １，２１０，０００원이에요.', '합계는 ١٢١٠٠٠٠원이에요.', '합계는 ①②③원이에요.', '합계는 백이십일만 원이에요.', '합계는 일백이십일만원이에요.', '합계는 一百二十一万원이에요.', '합계는 百万원이에요.', '모두 두 건이에요.', '모두 열한 건이에요.', '마지막 발급은 시월 십오일이에요.', '오십만으로 만들었어요.', '이백만 원이에요.'])
       assert.equal(numberShaped(t), true, t);
-    for (const t of ['카드를 만들었어요.', '천천히 확인해 주세요.', '이 건은 발급했어요.', '일정은 잡아 드리지 못해요.', '이번 달 매출이에요.', '한 장 더 만들었어요. 앞 카드와 따로예요.', '사업자 정보를 등록해 주세요.', '오늘 발급했어요.', '만약 다르면 말씀해 주세요.', '지난번과 같은 금액으로 카드를 만들었어요.', '방금 만든 카드를 취소했어요.', '부가세 별도로 확정했어요. 공급가에 세액을 더한 금액으로 바뀌었어요.'])
+    for (const t of ['카드를 만들었어요.', '천천히 확인해 주세요.', '이 건은 발급했어요.', '일정은 잡아 드리지 못해요.', '이번 달 매출이에요.', '한 장 더 만들었어요. 앞 카드와 따로예요.', '사업자 정보를 등록해 주세요.', '오늘 발급했어요.', '만약 다르면 말씀해 주세요.', '지난번과 같은 금액으로 카드를 만들었어요.', '방금 만든 카드를 취소했어요.', '부가세 별도로 확정했어요. 공급가에 세액을 더한 금액으로 바뀌었어요.', '화면에서 한 건씩 확인해 보세요.'])
       assert.equal(numberShaped(t), false, t);
   });
 

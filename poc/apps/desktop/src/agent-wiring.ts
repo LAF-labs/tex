@@ -4,7 +4,7 @@
 // - 받을 돈은 #284(BankHost.receivables()) 전에는 null(계좌 연결 전)이다.
 import type { StepParams, StepResult } from '@sax/engine';
 import { kstToday } from './approval-gate.ts';
-import type { AgentChatPorts, AgentPhase, DraftCard, IssuedRow, ReceivableRow } from './agent-chat.ts';
+import type { AgentChatPorts, AgentPhase, CashFlowValues, DraftCard, IssuedRow, ReceivableRow } from './agent-chat.ts';
 import { INVOICE_PLAYBOOK } from './run-history.ts';
 import type { Counterparty, RunView, VatMode } from './shell-model.ts';
 
@@ -42,6 +42,9 @@ export interface AgentWiring {
   onCreated(run: RunView): void;
   onProgress(phase: AgentPhase): void;
   receivables?: () => Promise<ReceivableRow[] | null>;
+  /** 낼 돈·돈 흐름(11 §2·§3). 없으면 계좌 연결 전(not_set_up) */
+  payables?: () => Promise<ReceivableRow[] | null>;
+  cashFlow?: (month: string) => Promise<CashFlowValues | null>;
   /** 원장 밖의 지난 발급(시연 씨앗 이력). 제품은 없다. */
   pastIssued?: () => IssuedRow[];
   now?: () => number;
@@ -93,6 +96,8 @@ export function agentPorts(w: AgentWiring): AgentChatPorts {
     },
     issued: async () => [...issuedRows(await w.rpc('db.query.runs.history', { limit: AGENT_HISTORY_LIMIT })), ...(w.pastIssued?.() ?? [])],
     receivables: w.receivables ?? (async () => null),
+    payables: w.payables ?? (async () => null),
+    cashFlow: w.cashFlow ?? (async () => null),
     counterparties: () => w.runs.counterparties.map((c) => ({ id: c.id, name: c.name, item: c.item.trim() ? c.item : null })),
     today: () => kstToday(w.now?.() ?? Date.now()),
     onProgress: (phase) => w.onProgress(phase),

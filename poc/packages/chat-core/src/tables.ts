@@ -11,6 +11,8 @@ export const CHAT_AGENT_TOOLS = [
   { name: 'sales_summary', parameters: obj({ month_offset: { type: 'integer', minimum: -12, maximum: 0 } }) },
   { name: 'invoice_history', parameters: obj({ counterparty: NULLABLE_STRING }) },
   { name: 'receivables', parameters: obj({ counterparty: NULLABLE_STRING }) },
+  { name: 'payables', parameters: obj({ counterparty: NULLABLE_STRING }) },
+  { name: 'cash_flow', parameters: obj({ month_offset: { type: 'integer', minimum: -12, maximum: 0 } }) },
   { name: 'invoice_draft', parameters: obj({ counterparty: { type: 'string' }, amount: NULLABLE_STRING, vat: VAT, item: NULLABLE_STRING }) },
   { name: 'draft_edit', parameters: obj({ draft: { type: 'string' }, amount: NULLABLE_STRING, vat: VAT, item: NULLABLE_STRING }) },
   { name: 'draft_discard', parameters: obj({ draft: { type: 'string' } }) },
@@ -27,6 +29,12 @@ export const SLOT_POSITIONS = ['first', 'last'] as const;
 /** approvalNo: 국세청 승인번호(원장 committed). 값은 기기가 채우고 모델에는 가지 않는다. */
 export const SLOT_FIELDS = ['date', 'supply', 'total', 'counterparty', 'approvalNo'] as const;
 export type SlotField = (typeof SLOT_FIELDS)[number];
+/**
+ * 돈 흐름 결과(cash_flow)의 칸: `{r<N>.cash.<칸>}`. 행이 아니라 그달 요약 하나다(11 §3, ADR-045).
+ * in·out·net: 그달 통장에 실제로 들어온·나간 돈과 그 차이. balance: 지금 잔액 합. next_in·next_out: 앞으로 30일 받을·낼 돈(기한 지난 낼 돈 포함).
+ */
+export const CASH_FIELDS = ['in', 'out', 'net', 'balance', 'next_in', 'next_out'] as const;
+export type CashField = (typeof CASH_FIELDS)[number];
 /** 합계를 낼 수 있는 칸(돈) */
 export const SLOT_SUM_FIELDS = ['supply', 'total'] as const satisfies readonly SlotField[];
 /** 슬롯 경로 전부(ref 뒤). 슬롯 문법은 이 목록 하나에서 나온다. */
@@ -34,6 +42,7 @@ export const SLOT_PATHS: readonly string[] = [
   ...SLOT_POSITIONS.flatMap((p) => SLOT_FIELDS.map((f) => `${p}.${f}`)),
   ...SLOT_SUM_FIELDS.map((f) => `sum.${f}`),
   'count',
+  ...CASH_FIELDS.map((f) => `cash.${f}`),
 ];
 /** 금액 인자로 쓸 수 있는 경로(돈인 칸만) */
 export const SLOT_MONEY_PATHS: readonly string[] = SLOT_PATHS.filter((x) => /\.(supply|total)$/.test(x));
@@ -58,8 +67,8 @@ export type Vat = 'separate' | 'included';
 
 // ── 폰 대화(chat_phone, ADR-047 결정 3) ──
 
-/** 폰에 없는 도구(장부 전체가 있어야 답하는 조회). 이런 요청은 defer로 답하고 PC가 켜지면 PC가 이어받는다. */
-export const PHONE_OMITTED_TOOLS = ['sales_summary'] as const;
+/** 폰에 없는 도구(장부 전체·통장 거래내역이 있어야 답하는 조회. 낼 돈·돈 흐름은 폰 사본에 아직 없다). 이런 요청은 defer로 답하고 PC가 켜지면 PC가 이어받는다. */
+export const PHONE_OMITTED_TOOLS = ['sales_summary', 'payables', 'cash_flow'] as const;
 /** 폰 대화 도구 표: chat_agent 표에서 폰에 없는 것만 뺀다(이름·인자 모양은 PC와 같다). */
 export const CHAT_PHONE_TOOLS = CHAT_AGENT_TOOLS.filter((t) => !(PHONE_OMITTED_TOOLS as readonly string[]).includes(t.name)) as ReadonlyArray<Exclude<(typeof CHAT_AGENT_TOOLS)[number], { name: (typeof PHONE_OMITTED_TOOLS)[number] }>>;
 export type ChatPhoneToolName = Exclude<ChatAgentToolName, (typeof PHONE_OMITTED_TOOLS)[number]>;
