@@ -25,6 +25,8 @@ import {
   type RelayQueue,
   type Signer,
   type CTX,
+  type Channel,
+  type Envelope,
 } from '@sax/remote';
 import type { PhoneReceiver } from './phone-receive.ts';
 
@@ -144,6 +146,13 @@ export interface PhoneView {
   lastSeenAt: number | null;
 }
 
+/** 라이브 세션 한 번에 붙는 PC 쪽 기능. peerCaps는 폰 hello의 capabilities. */
+export interface PhoneSessionHook {
+  open(pairId: string, ch: Channel, peerCaps: readonly string[]): void | Promise<void>;
+  handle(pairId: string, ch: Channel, env: Envelope): Promise<boolean>;
+  close(pairId: string, ch: Channel): void;
+}
+
 export interface PhoneLinkOptions {
   store: PhoneStore;
   seal: TokenSeal;
@@ -159,6 +168,11 @@ export interface PhoneLinkOptions {
   deviceListVersion: () => number;
   appVersion: string;
   capabilities?: () => readonly string[];
+  /**
+   * 라이브 세션 위의 PC 쪽 기능(v1.8 폰 발급 명령·폰 사본, phone-session.ts). 세션이 열리면 open, 봉투마다 handle(받았으면 true,
+   * 아니면 사진·현금 수신기로 넘긴다), 닫히면 close. 없으면 사진·현금만 받는다.
+   */
+  session?: PhoneSessionHook;
   /** 큐 폴링 간격(기본: 라이브 연결 중 5분, 아니면 30초) */
   pollMs?: { live: number; idle: number };
   now?: () => number;
@@ -411,14 +425,23 @@ export class PhoneLink {
         this.#log('main.phone_live', { step: 'session', listMismatch: sess.deviceListMismatch });
         // 폰이 세션을 열 때 큐에 남긴 것도 비운다(라이브로 다시 보내기 전에 중복을 줄인다)
         run.kick();
+        const hook = this.#o.session;
+        try {
+          await hook?.open(rec.pairId, sess.channel, sess.peerHello.capabilities);
+        } catch (e) {
+          // 사본을 못 보내도 세션은 살린다(사진·현금 받기는 이어 간다)
+          this.#log('main.phone_live', { step: 'open', result: codeOf(e) });
+        }
         try {
           while (!sess.channel.closed && !abort.signal.aborted) {
             const env = await sess.channel.recv(30_000);
-            if (env) await receiver.queue.handle(sess.channel, env);
+            if (env && !(await hook?.handle(rec.pairId, sess.channel, env))) await receiver.queue.handle(sess.channel, env);
           }
         } catch (e) {
           this.#log('main.phone_live', { step: 'recv', result: codeOf(e) });
           sess.channel.close();
+        } finally {
+          hook?.close(rec.pairId, sess.channel);
         }
         run.online = false;
         this.#o.onChange?.();
