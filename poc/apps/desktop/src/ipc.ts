@@ -197,6 +197,14 @@ export const SHELL_METHODS = {
   'devices.list': {},
   'devices.unlink': { deviceId: { t: 'string', max: 36, required: true } },
   'devices.leave': {},
+  // 새 PC 연결(ADR-048 결정 3, remote-pclink.ts). 새 PC 쪽: 6자리는 account 보기(linkCode)로 가고, 받기·그만두기는 실제 입력 뒤에만.
+  'account.linkAccept': {},
+  'account.linkCancel': {},
+  // 쓰던 PC 쪽: 기다리는 신청 보기는 읽기만, 연결·6자리 넣기·거절은 실제 입력 뒤에만. 6자리는 새 PC 화면에서 읽어 넣는다
+  'pclink.list': {},
+  'pclink.begin': { deviceId: { t: 'string', max: 36, required: true } },
+  'pclink.confirm': { deviceId: { t: 'string', max: 36, required: true }, code: { t: 'string', max: 6, required: true } },
+  'pclink.reject': { deviceId: { t: 'string', max: 36, required: true } },
   // 구독(설정 > 구독, 기기 토큰으로 계정 서비스). 결제 창은 main이 기본 브라우저로 연다(렌더러는 주소를 모른다). 해지·환불은 실제 입력 뒤에만
   'billing.view': {},
   'billing.subscribe': {},
@@ -233,7 +241,7 @@ export type ShellHandlers = { [M in ShellMethod]: (p: ParamsOf<(typeof SHELL_MET
  * 렌더러 발 사용자 동작 명령(D11 §4 IPC 행, ADR-027 결정 8): main이 메인 창에서 직접 본 실제 입력 뒤 ms 안에만 받는다.
  * 처리기가 needGesture(ms)를 부른다(docs.import는 파일 고르기를 열 때만). tests/shell-harden.test.ts가 처리기 소스와 맞춰 본다.
  */
-export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'onboarding.reopen': 3_000, 'profile.edit': 3_000, 'profile.readCert': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'account.password': 3_000, 'account.setPassword': 3_000, 'account.startReset': 3_000, 'account.finishReset': 3_000, 'account.signOut': 3_000, 'account.delete': 3_000, 'account.deleteCancel': 3_000, 'pair.open': 3_000, 'devices.unlink': 3_000, 'devices.leave': 3_000, 'billing.subscribe': 3_000, 'billing.cancel': 3_000, 'billing.refund': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'incident.open': 3_000, 'bankAuto.consent': 3_000, 'bankAuto.connect': 3_000, 'bankAuto.choose': 3_000, 'bankAuto.refresh': 3_000, 'bankAuto.disconnect': 3_000, 'run.showBrowser': 3_000, 'browser.toggle': 3_000, 'certName.clear': 3_000, 'certMemory.save': 3_000, 'secret.answer': 3_000, 'security.install': 3_000, 'security.start': 3_000, 'legal.open': 3_000, 'bank.pickStatement': 3_000, 'bank.pickInvoices': 3_000, 'bank.refresh': 3_000, 'pack.reveal': 3_000, 'pack.share': 3_000 };
+export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'onboarding.reopen': 3_000, 'profile.edit': 3_000, 'profile.readCert': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'account.password': 3_000, 'account.setPassword': 3_000, 'account.startReset': 3_000, 'account.finishReset': 3_000, 'account.signOut': 3_000, 'account.delete': 3_000, 'account.deleteCancel': 3_000, 'pair.open': 3_000, 'devices.unlink': 3_000, 'devices.leave': 3_000, 'account.linkAccept': 3_000, 'account.linkCancel': 3_000, 'pclink.begin': 3_000, 'pclink.confirm': 3_000, 'pclink.reject': 3_000, 'billing.subscribe': 3_000, 'billing.cancel': 3_000, 'billing.refund': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'incident.open': 3_000, 'bankAuto.consent': 3_000, 'bankAuto.connect': 3_000, 'bankAuto.choose': 3_000, 'bankAuto.refresh': 3_000, 'bankAuto.disconnect': 3_000, 'run.showBrowser': 3_000, 'browser.toggle': 3_000, 'certName.clear': 3_000, 'certMemory.save': 3_000, 'secret.answer': 3_000, 'security.install': 3_000, 'security.start': 3_000, 'legal.open': 3_000, 'bank.pickStatement': 3_000, 'bank.pickInvoices': 3_000, 'bank.refresh': 3_000, 'pack.reveal': 3_000, 'pack.share': 3_000 };
 
 const isPlain = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 

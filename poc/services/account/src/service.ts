@@ -1426,11 +1426,14 @@ export class AccountService {
   // ---- 새 PC 연결 우편함(ADR-048 결정 3, D08 §4.3) ----
   // 서버는 순서만 지킨다(hello → challenge → reveal → grant). 내용의 진위(약속·6자리·AIK 서명·봉인문)는 두 PC가 본다.
 
-  /** [새 PC, 세션] m1. 내 계정의 신청 중인(pending) 데스크톱이고 hello의 키가 신청한 키와 같아야 한다. 다시 올리면 앞 단계를 지우고 새로 시작한다. */
+  /**
+   * [새 PC, 세션] m1. 내 계정의 데스크톱이고 hello의 키가 등록한 키와 같아야 한다. 다시 올리면 앞 단계를 지우고 새로 시작한다.
+   * 신청 중(pending)이 보통이다. 활성(active)도 받는다: 목록에는 올랐는데 RK를 받지 못하고 끊긴 PC가 다시 받는 길이다(쓰던 PC의 6자리 승인은 같다).
+   */
   async putPcLinkHello(s: Session, deviceId: string, hello: { device_id: string; Sx: string; Vx: string }): Promise<void> {
     await this.db.tx(async (q) => {
       const d = await q.one<DeviceRow>('SELECT * FROM devices WHERE device_id = $1 AND account_id = $2', [deviceId, s.accountId]);
-      if (!d || d.role !== 'desktop' || d.state !== 'pending') return fail('account.device_not_found');
+      if (!d || d.role !== 'desktop' || (d.state !== 'pending' && d.state !== 'active')) return fail('account.device_not_found');
       if (hello.device_id !== deviceId || hello.Sx !== d.sx || hello.Vx !== d.vx) fail('request.param_rejected');
       const now = this.now();
       await q.run('DELETE FROM pc_links WHERE device_id = $1', [deviceId]);
@@ -1456,7 +1459,7 @@ export class AccountService {
   /** [기존 PC, 기기 토큰] 기다리는 신청들. 이름·플랫폼은 서버 값(신청 때 새 PC가 적은 것)이다. */
   async pcLinks(accountId: string): Promise<Array<{ deviceId: string; name: string; platform: string; createdAt: number; hello: unknown; challengedBy: string | null; reveal: unknown }>> {
     const rows = await this.db.all<{ device_id: string; hello: string; challenge: string | null; reveal: string | null; created_at: number; name: string; platform: string }>(
-      "SELECT l.device_id, l.hello, l.challenge, l.reveal, l.created_at, d.name, d.platform FROM pc_links l JOIN devices d ON d.device_id = l.device_id WHERE l.account_id = $1 AND l.expires_at > $2 AND l.grant_msg IS NULL AND d.state = 'pending' ORDER BY l.created_at",
+      "SELECT l.device_id, l.hello, l.challenge, l.reveal, l.created_at, d.name, d.platform FROM pc_links l JOIN devices d ON d.device_id = l.device_id WHERE l.account_id = $1 AND l.expires_at > $2 AND l.grant_msg IS NULL AND d.state IN ('pending', 'active') ORDER BY l.created_at",
       [accountId, this.now()],
     );
     return rows.map((r) => ({

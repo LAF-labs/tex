@@ -15,6 +15,7 @@ export const CLOUD_MAX_BODY = 64 * 1024;
 
 const ID22 = '[A-Za-z0-9_-]{22}';
 const ID43 = '[A-Za-z0-9_-]{43}';
+const UUID4 = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 
 export type CloudMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
@@ -44,6 +45,14 @@ export const CLOUD_ROUTES: ReadonlyArray<{ name: string; method: CloudMethod; pa
   // 기기 관리(ADR-048 결정 6): 계정의 기기 상태 보기, 이 PC 나가기. 다른 기기 끊기는 deviceList.put(AIK 폐기 레코드)으로 한다
   { name: 'devices.list', method: 'GET', path: /^\/v1\/devices$/ },
   { name: 'devices.leave', method: 'POST', path: /^\/v1\/devices\/self\/leave$/ },
+  // 새 PC 연결 우편함(ADR-048 결정 3, D08 §4.3): 새 PC는 세션, 쓰던 PC는 기기 토큰. 경로의 ID는 새 PC의 기기 ID(UUIDv4)다
+  { name: 'pcLinks.list', method: 'GET', path: /^\/v1\/pc-links$/ },
+  { name: 'pcLinks.hello', method: 'PUT', path: new RegExp(`^/v1/pc-links/${UUID4}$`) },
+  { name: 'pcLinks.answer', method: 'GET', path: new RegExp(`^/v1/pc-links/${UUID4}$`) },
+  { name: 'pcLinks.delete', method: 'DELETE', path: new RegExp(`^/v1/pc-links/${UUID4}$`) },
+  { name: 'pcLinks.reveal', method: 'POST', path: new RegExp(`^/v1/pc-links/${UUID4}/reveal$`) },
+  { name: 'pcLinks.challenge', method: 'POST', path: new RegExp(`^/v1/pc-links/${UUID4}/challenge$`) },
+  { name: 'pcLinks.grant', method: 'POST', path: new RegExp(`^/v1/pc-links/${UUID4}/grant$`) },
   // 설정 > 구독(기기 토큰, services/account/API.md 구독). 카드 등록 창은 기본 브라우저가 연다(이 egress 밖)
   { name: 'billing.subscription', method: 'GET', path: /^\/v1\/billing\/subscription$/ },
   { name: 'billing.checkout', method: 'POST', path: /^\/v1\/billing\/checkout$/ },

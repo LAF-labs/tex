@@ -4,8 +4,10 @@
 // - 맞추기: 폰이 스스로 나갔거나(self/leave) 유예가 끝나 서버에서 폐기된 기기가 AIK 목록에 남아 있으면 폐기 레코드로 옮긴다.
 //   옮기지 않으면 다음 목록 갱신(폰 연결)이 거부된다(서버는 폐기된 기기가 항목에 있는 목록을 받지 않는다).
 // - 이 PC 나가기: 서버에 알리고(바로 폐기) 호출자가 로그아웃한다. 계정에 남은 마지막 활성 PC는 나갈 수 없다(account.last_desktop).
+// - 최신 목록 받기: PC가 여러 대면 다른 PC가 목록을 바꾼다(폰 연결·끊기·새 PC 승인). 목록을 보거나 바꾸기 전에 서버의 목록을 받아
+//   계정 AIK로 검증하고 list_version이 더 높을 때만 받아들인다(서버는 옛 목록을 되돌려 줄 수는 있어도 새 목록을 만들 수는 없다).
 // 이름·플랫폼·상태는 서버 값이다. 역할과 키는 AIK 서명 목록과 맞는 것만 "목록에 있음"으로 본다(서버가 끼워 넣은 기기를 구분한다).
-import { revokeDevice, type AikSigner, type DeviceListJson } from '@sax/remote';
+import { fromB64, revokeDevice, verifyDeviceList, type AikSigner, type DeviceListJson } from '@sax/remote';
 import type { AccountClient, DeviceAuth, ServerDevice } from './remote-ports.ts';
 
 /** 렌더러가 보는 기기 한 대. 키는 내보내지 않는다. */
@@ -28,6 +30,8 @@ export interface DeviceView {
 /** DeviceSession 가운데 쓰는 부분 */
 export interface DeviceManagerSession {
   readonly deviceId: string;
+  /** 계정 AIK 공개키(base64) */
+  readonly aikPub: string;
   readonly deviceList: DeviceListJson;
   readonly auth: DeviceAuth;
   clearToken(): void;
@@ -35,7 +39,7 @@ export interface DeviceManagerSession {
 }
 
 export interface DeviceManagerOptions {
-  client: Pick<AccountClient, 'devices' | 'putDeviceList' | 'leaveDevice'>;
+  client: Pick<AccountClient, 'devices' | 'deviceListByDevice' | 'putDeviceList' | 'leaveDevice'>;
   /** 로그인 전이면 null */
   session: () => DeviceManagerSession | null;
   aik: () => Promise<AikSigner>;
@@ -76,6 +80,7 @@ export class DeviceManager {
     return this.#serial(async () => {
       const s = this.#need();
       if (deviceId === s.deviceId) fail('account.use_leave');
+      await this.#pull(s);
       if (!s.deviceList.entries.some((e) => e.entry.device_id === deviceId)) {
         // 목록에 없는 기기(이미 끊겼거나 계정 웹에서 신청만 한 기기)는 서버 상태만 다시 읽는다
         const rows = await this.#sync();
@@ -111,8 +116,32 @@ export class DeviceManager {
     });
   }
 
+  /**
+   * 기기 목록을 바꾸는 다른 일(새 PC 승인, remote-pclink.ts)을 같은 줄에 세운다(list_version이 겹치지 않게).
+   * call은 토큰이 만료돼 401이면 한 번 다시 한다.
+   */
+  exclusive<T>(f: (s: DeviceManagerSession, call: <R>(g: (auth: DeviceAuth) => Promise<R>) => Promise<R>, pull: () => Promise<void>) => Promise<T>): Promise<T> {
+    return this.#serial(() => {
+      const s = this.#need();
+      return f(s, (g) => this.#call(s, g), () => this.#pull(s));
+    });
+  }
+
+  /** 서버의 최신 목록을 받아들인다(AIK 서명이 맞고 list_version이 더 높고 이 PC가 들어 있을 때만). */
+  async #pull(s: DeviceManagerSession): Promise<void> {
+    const cur = await this.#call(s, (a) => this.#o.client.deviceListByDevice(a));
+    const l = cur.deviceList;
+    if (!l || cur.aikPub !== s.aikPub || !Number.isSafeInteger(l.listVersion) || l.listVersion <= s.deviceList.listVersion) return;
+    if (!verifyDeviceList(l, fromB64(s.aikPub)).ok) return this.#log('main.device_sync', { result: 'list_invalid' });
+    // 이 PC가 빠진 목록(다른 기기에서 이 PC를 끊음)은 받아들이지 않는다. 안내는 화면이 서버 상태(GET /v1/devices)로 한다
+    if (!l.entries.some((e) => e.entry.device_id === s.deviceId && e.entry.role === 'desktop')) return this.#log('main.device_sync', { result: 'self_removed' });
+    await s.setDeviceList(l);
+    this.#log('main.device_sync', { result: 'pulled' });
+  }
+
   async #sync(): Promise<ServerDevice[]> {
     const s = this.#need();
+    await this.#pull(s);
     const rows = await this.#call(s, (a) => this.#o.client.devices(a));
     const gone = rows.filter((d) => d.state === 'revoked' && d.deviceId !== s.deviceId && s.deviceList.entries.some((e) => e.entry.device_id === d.deviceId));
     for (const d of gone) {

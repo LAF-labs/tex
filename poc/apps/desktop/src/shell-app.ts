@@ -56,12 +56,13 @@ import { cancelPick, importPdf, pickFileBytes } from './vault-import.ts';
 import { readBizCert, type BizCertReadPorts } from './bizcert-read.ts';
 import { CounterpartyBook } from './counterparty-book.ts';
 import { nameMissing, ProfileEditLog, ProfileEditor } from './profile-edit.ts';
-import { DesktopAccount, PendingCodeFile, RemoteIdentityFile } from './remote-account.ts';
+import { DesktopAccount, PendingCodeFile, RemoteIdentityFile, type AccountView } from './remote-account.ts';
 import { GatewayAuthHost } from './gateway-auth.ts';
-import type { AccountClient, BillingView, CloudPorts, DeviceAuth, VaultKeysFactory } from './remote-ports.ts';
+import type { AccountClient, BillingView, CloudPorts, DeviceAuth, PcLinkVault, VaultKeysFactory } from './remote-ports.ts';
 import { PairingHost } from './remote-pairing.ts';
 import { PhoneLink, PhoneStore, type TokenSeal } from './phone-link.ts';
 import { DeviceManager } from './remote-devices.ts';
+import { PcLinkHost } from './remote-pclink.ts';
 import { phoneReceiver } from './phone-receive.ts';
 import { closeAction, shouldStayAwake, StayAwake } from './phone-presence.ts';
 import type { VaultDesktopKeys } from './remote-keys.ts';
@@ -346,6 +347,8 @@ export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
 }
 
 /** [홈택스에서 준비]가 지난 실행 재확인(run.reverify)을 기다리는 동안 카드에 띄우는 한 줄. */
+/** 새 PC 연결 중 쓰던 PC의 답을 보는 간격(ADR-048 결정 3). 서버 한도는 계정당 1,200회/시 */
+const LINK_POLL_MS = 4_000;
 const REVERIFY_WAIT_NOTE = '지난 발급을 홈택스 목록에서 확인하고 있어요. 끝나면 바로 시작해요.';
 
 function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Array, store: DocStore, made: { host?: EngineHost }): Shell {
@@ -1307,6 +1310,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     await keepItem(id);
     return r;
   };
+  /** 금고의 계정 열쇠 넘기기(vaultDesktopKeys의 link). 시험 대역 키에는 없다 */
+  const linkVaultOf = (k: DesktopKeys): PcLinkVault => {
+    const v = (k as Partial<VaultDesktopKeys>).link;
+    if (!v) throw Object.assign(new Error('keys'), { code: 'account.keys_unavailable' });
+    return v;
+  };
   // 계정 로그인(A-01)·첫 PC 등록(remote-account.ts). 금고 키는 처음 쓸 때 한 번 읽는다(금고가 먼저 떠 있어야 한다).
   let remoteKeys: Promise<DesktopKeys> | null = null;
   const keysOf = (): Promise<DesktopKeys> => {
@@ -1327,8 +1336,32 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     platform: process.platform === 'darwin' ? 'macos' : 'windows',
     deviceName: opts.remote?.deviceName ?? (process.platform === 'darwin' ? 'Mac PC' : 'Windows PC'),
     pairing: opts.remote?.pairing !== false,
+    // 새 PC 연결(ADR-048 결정 3): 금고의 계정 열쇠 넘기기. 넘겨받은 뒤에는 금고 공개키를 다시 읽는다(AIK가 바뀐다)
+    linkVault: async () => linkVaultOf(await keysOf()),
+    resetKeys: () => {
+      remoteKeys = null;
+    },
     log: (n, d) => log.event(n, d),
   });
+  // 새 PC 연결 중(link_* 단계)에는 쓰던 PC의 답을 몇 초마다 본다. 단계가 바뀌면 화면에 알리고, 끝나면 멈춘다
+  let linkTimer: ReturnType<typeof setInterval> | null = null;
+  const watchLink = <T extends AccountView>(v: T): T => {
+    const linking = v.step.startsWith('link_');
+    if (linking && !linkTimer) {
+      linkTimer = setInterval(() => {
+        void account.linkPoll().then((changed) => {
+          const now = account.view();
+          if (changed) send({ type: 'account', account: now });
+          if (!now.step.startsWith('link_')) watchLink(now);
+        });
+      }, LINK_POLL_MS);
+      linkTimer.unref?.();
+    } else if (!linking && linkTimer) {
+      clearInterval(linkTimer);
+      linkTimer = null;
+    }
+    return v;
+  };
   let accountReady: Promise<unknown> | null = null;
   const accountInit = () => (accountReady ??= account.init());
   // 엔진 → 게이트웨이 인증(gateway-auth.ts): gateway 범위 기기 토큰으로 만든 헤더만 auth 포트로 간다. 로그인 전이면 account.signed_out.
@@ -1451,6 +1484,20 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       session: () => account.device(),
       aik: async () => (await keysOf()).aik,
       dropPhone: async (id) => void (await phones()?.removeDevice(id)),
+      log: (n, d) => log.event(n, d),
+    }));
+  };
+  // 새 PC 승인(remote-pclink.ts, ADR-048 결정 3): 기기 목록을 바꾸는 일이라 기기 관리와 같은 줄에 선다
+  let pcLinkHost: PcLinkHost | null = null;
+  const pcLinkHostOf = (): PcLinkHost => {
+    const client = opts.remote?.cloud?.account;
+    const mgr = devicesOf();
+    if (!client) throw new Error('account_required');
+    return (pcLinkHost ??= new PcLinkHost({
+      client,
+      exclusive: (f) => mgr.exclusive(f),
+      aik: async () => (await keysOf()).aik,
+      vault: async () => linkVaultOf(await keysOf()),
       log: (n, d) => log.event(n, d),
     }));
   };
@@ -2097,12 +2144,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       // 6자리가 차면 렌더러가 바로 부른다: 숫자 키·붙여 넣기도 main이 본 입력으로 친다(클릭은 3초 전일 수 있다). 메뉴 붙여 넣기는 [확인] 클릭으로.
       needTyping(3_000);
       await accountInit();
-      return account.verify(String(p.code));
+      return watchLink(await account.verify(String(p.code)));
     },
     'account.password': async (p) => {
       needGesture(3_000);
       await accountInit();
-      return account.passwordLogin(String(p.email), p.password);
+      return watchLink(await account.passwordLogin(String(p.email), p.password));
     },
     'account.setPassword': async (p) => {
       needGesture(3_000);
@@ -2122,7 +2169,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       // [바꾸기]·Enter가 보통이지만, 코드·새 비밀번호를 치는 키 입력도 main이 본 입력으로 친다(account.verify와 같다)
       needTyping(3_000);
       await accountInit();
-      return account.finishReset(String(p.code), p.password);
+      return watchLink(await account.finishReset(String(p.code), p.password));
     },
     'account.back': async () => {
       await accountInit();
@@ -2138,7 +2185,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       phoneLink?.stop();
       phoneLink = null;
       syncAwake();
-      const v = await account.signOut();
+      const v = watchLink(await account.signOut());
       pushBoard();
       return v;
     },
@@ -2221,10 +2268,47 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       phoneLink?.stop();
       phoneLink = null;
       deviceMgr = null;
+      pcLinkHost = null;
       syncAwake();
-      const v = await account.signOut();
+      const v = watchLink(await account.signOut());
       pushBoard();
       return v;
+    },
+    // 새 PC 연결(ADR-048 결정 3). 새 PC 쪽: "쓰던 PC에 '연결됐어요'가 떴어요"를 누른 뒤에만 금고가 계정 열쇠를 받는다
+    'account.linkAccept': async () => {
+      needGesture(3_000);
+      await accountInit();
+      const v = watchLink(await account.linkAccept());
+      if (v.step === 'signed_in') pushBoard();
+      return v;
+    },
+    'account.linkCancel': async () => {
+      needGesture(3_000);
+      await accountInit();
+      return watchLink(await account.linkCancel());
+    },
+    // 쓰던 PC 쪽: 신청 보기, [연결], 새 PC 화면의 6자리 넣기, [거절]. 6자리가 맞으면 목록을 올리고 금고가 계정 열쇠를 봉인해 보낸다
+    'pclink.list': async () => {
+      await accountInit();
+      return { requests: await pcLinkHostOf().list() };
+    },
+    'pclink.begin': async (p) => {
+      needGesture(3_000);
+      await accountInit();
+      return { requests: await pcLinkHostOf().begin(String(p.deviceId)) };
+    },
+    'pclink.confirm': async (p) => {
+      // 계정 열쇠를 넘기는 승인이다: 숫자 키 입력만으로는 받지 않고 [확인] 클릭·Enter를 본 뒤에만 한다
+      needGesture(3_000);
+      await accountInit();
+      const r = await pcLinkHostOf().confirm(String(p.deviceId), String(p.code));
+      if (r.ok) send({ type: 'account', account: account.view() });
+      return r;
+    },
+    'pclink.reject': async (p) => {
+      needGesture(3_000);
+      await accountInit();
+      return { requests: await pcLinkHostOf().reject(String(p.deviceId)) };
     },
     'onboarding.reply': async (p) => {
       needGesture(3_000);
@@ -2552,6 +2636,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     clearInterval(boardDayTimer);
     clearInterval(registryTimer);
     clearInterval(keepTimer);
+    if (linkTimer) clearInterval(linkTimer);
     daemon?.stop();
     powerMonitor.removeListener('resume', onResume);
     clearInterval(idleTimer);

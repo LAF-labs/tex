@@ -717,8 +717,8 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     assert.equal((await e.req('PUT', base, { headers: bearer(s), body: { hello: { ...hello, Sx: k() } } })).json.error, 'request.param_rejected');
     assert.equal((await e.req('PUT', base, { headers: bearer(s), body: { hello: { ...hello, extra: 1 } } })).json.error, 'request.param_rejected');
     assert.equal((await e.req('PUT', '/v1/pc-links/not-a-uuid', { headers: bearer(s), body: { hello } })).json.error, 'request.param_rejected');
-    // 이미 활성인 기기 이름으로는 못 연다
-    assert.equal((await e.req('PUT', `/v1/pc-links/${d2.id}`, { headers: bearer(s), body: { hello: { ...hello, device_id: d2.id, Sx: d2.S.b64, Vx: d2.V.b64 } } })).status, 404);
+    // 폰이나 남의 기기 ID로는 못 연다
+    assert.equal((await e.req('PUT', `/v1/pc-links/${ps[0]!.id}`, { headers: bearer(s), body: { hello: { ...hello, device_id: ps[0]!.id, Sx: ps[0]!.S.b64, Vx: ps[0]!.V.b64 } } })).status, 404);
     assert.equal((await e.req('PUT', base, { headers: bearer(s), body: { hello } })).status, 204);
     // 다른 계정은 보지 못한다
     const other = await login(e, 'link-other@example.com');
@@ -756,6 +756,10 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     assert.deepEqual((await e.req('GET', base, { headers: bearer(s) })).json, { challenge, grant });
     assert.equal((await e.req('DELETE', base, { headers: bearer(s) })).status, 204);
     assert.equal((await e.req('GET', base, { headers: bearer(s) })).status, 404);
+    assert.equal((await e.req('DELETE', base, { headers: bearer(s) })).status, 204);
+    // 활성이 된 PC도 다시 신청할 수 있다(RK를 받지 못하고 끊긴 경우). 쓰던 PC 목록에 다시 보인다
+    assert.equal((await e.req('PUT', base, { headers: bearer(s), body: { hello } })).status, 204);
+    assert.deepEqual(((await pc.call('GET', '/v1/pc-links')).json.links as Array<{ deviceId: string }>).map((x) => x.deviceId), [d3.id]);
     assert.equal((await e.req('DELETE', base, { headers: bearer(s) })).status, 204);
 
     // 기존 PC가 거절하면(6자리가 틀림) 지워진다. 7일이 지난 신청은 정리가 지운다
