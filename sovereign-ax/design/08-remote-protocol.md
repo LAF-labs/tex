@@ -1,5 +1,6 @@
 # D08. 리모트 컨트롤 프로토콜
 
+> 2026-11-17 ADR-048 결정 5(계정 공유 기록): §6 메시지 표에 `share.key`(PC→폰, remote-envelope v1.9, hello 기능 `share.v1`)를 더했다. PC가 폰에 계정 공유 기록 열쇠를 준다.
 > 2026-11-06 팀장 결정(클라우드 배포 PR #135): §8 relay·account 분리 저장은 Phase 1에서 같은 PostgreSQL 안의 스키마·역할 분리로 한다(역할 간 교차 GRANT 0, 시험으로 고정). Phase 2에 DB를 분리한다. 잔여 위험은 D19 §8.
 > 2026-11-06 본문 정리(팀장 지시, 폰 PR #118): §4.1 셋째 항목과 §4.2 3단계에 남은 "서버 기기 목록 대조"를 머리말 결정(PR #102)대로 고쳐 썼다. 3단계는 QR 검사(`exp`, 릴레이 허용 목록)만 한다. 기기 목록 AIK 서명 검사와 24시간 경고는 7단계 `PAIR_OK` 수신 뒤·키 저장 전에 하고, 다시 연결이면 앞서 고정한 `AIK_pub`와 같아야 한다(C-01). 모바일 enroll은 같은 키로 다시 등록하면 멱등 200(팀장 결정, 클라우드 후속 PR). §1 잔여 위험(TOFU)도 같은 기준으로 고쳤다. 7단계에 저장 전 계정 확인 화면(계정 이메일 전체·참고용 PC 이름, [내 계정 맞음])과 피해 범위(팀장 결정 2026-11-06)를 넣었다. 서버 서명 `acct_claim`(`SAX-acct-claim-v1`, 이메일 전체, `exp = iat + 10분`, account 서비스 전용 키, 앱 고정)은 결정(팀장, 2026-11-06)이다. §2.1 표와 `PAIR_OK` 필드에 넣었다.
 > 2026-11-06 팀장 결정(폰 통합 시험 PR #102): 폰에는 계정 로그인이 없다. §4.2 모바일 enroll은 7단계에서 PC가 데스크톱 기기 토큰으로 대신 한다(소비된 1회용 룸 id 결속, 계정당 모바일 상한). 3단계 기기 목록 조회는 `PAIR_OK`의 AIK 서명 목록 검사로 대신하고, 6단계의 `Sm` 대조는 하지 않는다. §8 `relay.mailbox_not_found`는 단일 코드(존재 오라클 방지). §7 PC → 폰 ack 없음, 폰 7일 보관·24시간 뒤 재전송, PC 드레인은 offer id·SHA 기준 멱등.
@@ -62,6 +63,7 @@
 | `SAX-run-token-v1` | 서버: 모델 게이트웨이 키 | 실행당 예산 `runToken` 클레임 (D09 §3, D04 §7, M4-6) |
 | `SAX-kv-v1` | `Vd` | 금고 비밀 봉인 키 `Kv_pub` 배포·연 1회 회전(`PAIR_OK`·`HELLO`, D05 §5) |
 | `SAX-SAS-v1`, `SAX-pair-v1`, `SAX-session-v1` | — | SAS 유도, Noise prologue |
+| `SAX-share-v1` | 계정 공유 기록 서명 키 `Ws`(PC 줄), `Vm`(폰이 맡긴 일) | 계정 공유 기록의 줄 `JCS(core)`와 줄 봉인 aad 접두(D07 §10, ADR-048 결정 5) |
 | `SAX-pclink-commit-v1`, `SAX-pclink-v1`, `SAX-pclink-sas-v1`, `SAX-pclink-rk-v1` | — | 새 PC 연결(§4.3, ADR-048 결정 3): 약속 해시, 대조 해시, 6자리 유도, RK 봉인 HPKE info. 서명 용도가 아니다 |
 
 - 클라우드 경계의 서명 맥락(팀장 결정 2026-11-05): 클라이언트 서명은 `Vx`: `SAX-dpop-v1`, AIK: `SAX-acct-op-v1`·`SAX-devlist-v1`·`SAX-revoke-v1`·`SAX-cert-v1`이다. 서버 서명은 `SAX-token-v1`·`SAX-run-token-v1`·`SAX-acct-claim-v1`(2026-11-06)이다. 서버가 AIK 맥락으로 서명하는 일은 없다.
@@ -81,6 +83,8 @@
                                             계정의 모든 데스크톱이 같은 K_idx를 쓴다. 새 PC는 A-03에서 켜져 있는 기존 데스크톱이 넘긴다(ADR-024 결정 4)
                                             서버 dedup 토큰에는 쓰지 않는다(C-13). RK 교체 시 재계산·재등록
      ─ HKDF("audit")                → K_audit 감사 로그 체크포인트 MAC(폰과 공유)
+     ─ HKDF("share/v1/" ‖ e)        → K_share(e) 계정 공유 기록 줄 봉인 키. e = 기기 목록의 폐기 레코드 수. 폰은 PC가 종단간 통로로 지금 세대만 준다(D07 §10)
+     ─ HKDF("share/sig/v1")         → Ws    Ed25519 계정 공유 기록 서명 키(PC 줄). 금고 안에서만 서명하고 폰은 공개키만 받는다(D07 §10)
   (K_meta는 v1.3에서 삭제. 메타데이터 레코드 무결성은 Sign_Vd, D07 §5. K_chk·복구 문구는 AUDIT-D에서 삭제, ADR-029)
 기기별 랜덤 키(RK와 무관, 기기 밖으로 안 나감)
   Sx X25519 정적키(Noise) · Vx Ed25519 서명키(가역 승인·체크포인트·봉투) · Qx X25519 inbox 키(HPKE, 7일 로테이션 [제안])
@@ -214,6 +218,7 @@ pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
 - **사진(DATA) 예외**(폰 PR #60·#84, 팀장 결정 2026-11-05): 폰이 찍은 영수증 사진은 아래 블롭 규칙을 쓰지 않고 `receipt.offer`·`receipt.chunk`로 직접 보낸다. WSS 라이브가 켜진 뒤의 기본 경로는 라이브 세션이다(청크 49,152B). 라이브가 없으면(Phase 1은 늘 그렇다) intent-envelope `xfer` 봉투로 HTTPS 우편함 큐에 넣는다(청크 32 KiB = 32,768B, §7). 어느 쪽이든 E2EE 암호문이고 큐 TTL은 24시간, 받는 쪽이 ack하면 지운다.
 - **종이 세금계산서**(remote-envelope v1.7, 2026-11-16): 폰이 종이(손글씨·인쇄) 세금계산서·계산서를 찍으면 `receipt.offer`에 사장님이 확인한 값 `paperInvoice`(종류·작성일·공급자/공급받는자·공급가액·세액·합계·품목 ≤ 20·영수/청구·칸별 신뢰도 0~100 정수)를 싣는다. PC는 hello `capabilities`에 `receipt.v2`를 알린다. 폰 값은 후보다: PC가 자기 사업자번호로 매출·매입을 정하고, 합계·품목 합·사업자번호 체크섬을 `checkPaperInvoice`로 다시 본 뒤 원본 사진과 함께 보관하고 세무사 꾸러미에 원본 사진 + `종이 세금계산서 YYYY-MM.csv`로 넣는다. 틀린 칸은 '확인 필요'로 표시한다(받기는 거부하지 않는다).
 - **폰 발급 명령**(remote-envelope v1.8, 2026-11-17, ADR-046 결정 2): 폰은 `cmd.run{playbookId: "hometax.invoice.issue"}`(라이브) 또는 의도 봉투(큐)로 세금계산서 발급을 시작한다. `inputs`는 `counterpart{counterpartyRef}`·`amounts{supply, tax}`·`items[1]`·`issueDay`뿐이고 사업자번호·이메일 원문은 넣지 않는다(§7, C-34). 받는 이메일은 PC가 그 거래처에 저장된 값을 쓴다. PC는 `cmd.ack`로 바로 답하고, 진행은 `run.event.phase`로, 비가역 승인은 §6.1 `gate.request`로 보낸다. 처음 거래처·하루 한도를 넘긴 건은 `cmd.ack.state = pc_only`로 PC 화면 승인으로 돌린다. 폰 쪽 입력 확인·조립은 `@sax/remote`의 `checkIssueRequest`·`issueCmd`다. PC 쪽은 `apps/desktop` `phone-issue.ts`(초안을 만들고 [홈택스에서 준비]를 바로 시작, 처리한 `cmdId`는 `remote-cmds.json`에 먼저 적음, 작성일자는 오늘(KST)만, 세액은 공급가액의 10%만)와 `phone-copy.ts`·`phone-session.ts`(세션을 열 때 사본 한 번)다. 폰 승인 중계(`gate.request` → 폰)가 PC에 들어가기 전까지는 받은 명령이 모두 `pc_only`이고, 사본의 `phoneApprovable`도 모두 `false`다.
+- **계정 공유 기록 열쇠**(remote-envelope v1.9, 2026-11-17, ADR-048 결정 5): 폰은 RK가 없어서 계정 공유 기록(D07 §10)을 읽을 열쇠를 PC에서 받는다. PC는 `share.key`로 `K_share(0..e)`와 `Ws` 공개키를 준다(`poc/apps/desktop/src/phone-link.ts`, 열쇠는 금고 `crypto.shareKey`가 만든다). 폰은 받은 묶음을 가진 것과 견준다(`readShareKeyBody`): 같은 계정의 열쇠는 바뀌지 않으므로 겹치는 세대의 값과 서명 키가 같고 세대가 줄지 않은 묶음만 받는다. 끊긴 폰은 서버가 막고 새 세대 열쇠를 받지 못한다. 폰은 계정을 나갈 때 열쇠를 지운다. 폰이 줄을 읽는 호출(`GET /v1/share/rows`, `GET /v1/share/rows/after/{seq}`)과 화면은 폰 앱 쪽 일이다.
 - 수신 측은 `ctr` 슬라이딩 윈도(1024)로 중복·역전을 거른다. Noise 전송 한도 65,535B. **PDF·이미지는 릴레이로 보내지 않고** 블롭 저장소에 올린 뒤 `blob_id`와 래핑 DEK만 보낸다(캡차 크롭 ≤ 200KB는 예외적으로 인라인 허용, 버킷 패딩).
 - 서명·MAC 입력에는 항상 §2.1의 컨텍스트 문자열, `pair_id`, 방향(`from/to`)을 포함한다(반사 공격 무효).
 - `inner.ttl`(≤ 86,400초)은 **라이브 메시지 전용**이다. 오프라인 의도의 만료는 의도 봉투 안쪽 `exp`(≤ 72시간)가 정하며 별도 스키마를 쓴다(C/X-14 해소, §7).
@@ -242,6 +247,7 @@ pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
 | `file.offer` | PC→폰 | `{docId(UUIDv4), docType, bytes, blobId, wDEK, kekVer}` | 본문은 블롭 경유. 문서 단위 wDEK 1개만 |
 | `query.documents` / `query.result` | 폰→PC / PC→폰 | 보관함 조회 | |
 | `phone.copy` | PC→폰 | `{asOf, counterparties[≤100]{ref, name, aliases?, bizNo?, emailHint?, phoneApprovable?, last?}, toIssue?[≤20], money?{asOf, accounts, receivable, payable, cashflow}, todayApprovalsLeft?}` | v1.8(ADR-046 결정 2·5). 라이브 세션을 열 때마다 PC가 보내는 화면용 사본이다. 폰은 마지막 사본을 기기 안 암호화 저장소에 두고 PC가 꺼져 있을 때 "기준 시각"과 함께 보여 준다. 대화 원문·홈택스 비밀·계좌번호 전체는 넣지 않는다(스키마가 모르는 칸을 막는다). 한 프레임에 안 들어가면 오래 안 쓴 거래처부터 뺀다(`fitPhoneCopy`). PC는 hello `capabilities`에 `copy.v1`, 폰 발급 명령을 받으면 `issue.v1`을 알린다 |
+| `share.key` | PC→폰 | `{shareSignPub(32B), shareKeys[1..65]{epoch, shareKey(32B)}}` | v1.9(ADR-048 결정 5, D07 §10). 라이브 세션 전용. 계정 공유 기록 열쇠 `K_share(e)`를 세대 0부터 지금 세대까지 빠짐없이, PC 줄 서명 확인용 `Ws` 공개키와 같이 준다. 폰이 hello에서 `share.v1`을 알렸고 PC의 기기 목록(AIK 검증)에 지금 있는 폰일 때만 보낸다. 세션을 열 때마다, 그리고 세대가 오르면(기기를 끊으면) 연결된 폰에 다시 보낸다. 폰은 RK를 받지 않는다 |
 | `rotate.static` / `close` / `ping` / `pong` | | `rotate.static{oldStatic, newStatic, ts, sig}` | §5 |
 
 ### 6.1 원격 비가역 승인 규칙 (C-06, ADR-016, 스파이크 SP-2)

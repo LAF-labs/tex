@@ -222,12 +222,16 @@ interface VaultCrypto {
   linkKey(): PublicKey;                                                                     // [새 PC] 넘겨받기 키 Hx(메모리에만, 한 번 쓰면 지운다)
   rkSeal(recipient: PublicKey, info: 'SAX-pclink-rk-v1', aad: Bytes32): { enc, ct };        // [쓰던 PC] RK를 Hx로 HPKE 봉인. 24시간에 3번까지
   rkImport(enc, ct, info: 'SAX-pclink-rk-v1', aad: Bytes32, aikPub: PublicKey): PublicKey;  // [새 PC] 열어서 AIK가 aikPub와 같을 때만 RK 교체, 쓰던 RK는 보관
+  // 계정 공유 기록(ADR-048 결정 5, D07 §10)
+  shareKey(epoch: 0..64): { key: Bytes32, signPub: PublicKey };                             // K_share(e)와 Ws 공개키. key는 main으로 나간다(줄 봉인·개봉, 폰 전달)
+  signShare(msg: Uint8Array): Signature;                                                    // Ws로 "SAX-share-v1"‖msg 서명(PC가 쓴 줄)
 }
 ```
 
 - **용도 문자열 허용 목록**: `vault.vdPurposes`는 금고 바이너리 상수이며 D08이 정의한 서명 문맥(`Kv` 배포, 우편함 번들, 감사 체크포인트, 인덱스 레코드 서명, 정적키 교체 등)만 담는다. 목록 밖 `purpose`는 거부한다. 서명 대상은 `purpose‖msg`로 도메인 분리한다. 목록의 정본은 D08 §2.1(서명·MAC 용도 컨텍스트 표)이다.
 - **호출 감사**: 연산별 호출 횟수·용도를 금고 감사 로그에 남기고, 실행당·시간당 기대치를 넘으면 보안 이벤트 `vault.crypto_rate_anomaly`를 남긴다.
 - **계정 루트 키 넘기기**(ADR-048 결정 3, `[검토]` SP-5): `rkSeal`은 RK를 금고 밖으로 내보내는 유일한 연산이다. 6자리 확인은 main이 하고 금고는 알지 못하므로, 침해된 main은 공격자 키로 RK를 봉인받을 수 있다. 금고는 24시간에 3번으로 막고(금고 프로세스가 떠 있는 동안의 셈이라 다시 띄우면 처음부터 센다) `vault.rk_sealed`를 남긴다. 서버는 새 PC 활성화를 메일로 알린다. `rkImport`는 `linkKey`로 만든 키로만 열고, 연 RK에서 나온 AIK 공개키가 기대한 값과 같을 때만 바꾸며, 쓰던 RK를 보관 항목(`account/rk-prev-<시각>`)으로 먼저 옮긴다. 침해된 main이 엉뚱한 RK를 넣으면 이 PC의 AIK가 바뀌어 계정 서버가 서명을 받지 않는다(가용성 피해뿐이고 보관 항목으로 되돌린다).
+- **계정 공유 기록 키**(ADR-048 결정 5, `[검토]` SP-5): `shareKey`가 주는 `K_share(e)`는 RK에서 한 방향으로 나온 키라 공유 기록 줄(발급 기록·거래처·돈 요약의 사본)만 연다. main이 줄을 봉인·개봉하고 폰에 종단간 통로로 주려면 키가 main에 있어야 해서 금고 밖으로 내보낸다. 침해된 main은 이 키로 서버의 줄을 읽을 수 있다(그 main이 이미 화면으로 보는 범위다). 서명 키 `Ws`는 나가지 않아서, 침해가 끝난 뒤에는 PC 줄을 지어내지 못한다.
 - 한계: 금고는 오라클이 된다(§1). 침해된 main은 침해 기간 동안 허용 용도 안의 서명·개봉을 요청할 수 있다. 침해된 엔진은 키 연산을 요청할 수 없고, main이 준 gateway 범위 헤더만 쓸 수 있다(ADR-040). 키 자체는 유출되지 않으므로 침해 종료 후 영구 사칭은 막는다.
 
 용도 문자열 정본(D08 §2.1): `vdPurposes` = {`SAX-qbundle-v1`, `SAX-ckpt-v1`, `SAX-docrec-v1`, `SAX-consent-v1`(로컬), `SAX-dpop-v1`, `SAX-rotate-v1`, `SAX-kv-v1`}, `AikPurpose` = {`SAX-devlist-v1`, `SAX-revoke-v1`, `SAX-cert-v1`, `SAX-aik-rotate-v1`, `SAX-kek-v1`, `SAX-acct-op-v1`}. `hpkeOpen`의 aad는 `"SAX-env-v1"‖mbx_epoch`(D08 §7). 레코드 무결성 키 `K_meta`는 v1.3에서 삭제되었다(레코드는 `Vd` 서명).

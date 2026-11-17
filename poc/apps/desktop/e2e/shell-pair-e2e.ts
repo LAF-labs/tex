@@ -156,6 +156,13 @@ function fakeCloud() {
     acquireIssueLock: async () => ({ lockId: 'fake-lock-0000000000000000', expiresAt: Date.now() + 90_000 }),
     renewIssueLock: async () => ({ expiresAt: Date.now() + 90_000 }),
     releaseIssueLock: async () => {},
+    // 계정 공유 기록: 이 대역은 기기가 하나라 동기화가 서버를 부르지 않는다
+    putShareRow: async () => ({ seq: 1 }),
+    shareRows: async () => ({ rows: [], head: 0, epoch: 0, more: false }),
+    shareTasks: async () => [],
+    claimShareTask: async () => ({ claimExpiresAt: Date.now() + 900_000 }),
+    releaseShareTask: async () => {},
+    cancelShareTask: async () => {},
     accountDeletion: async () => ({ deleteAfter: null }),
     requestAccountDelete: async () => ({ deleteAfter: Date.now() + 7 * 86_400_000 }),
     cancelAccountDelete: async () => {},

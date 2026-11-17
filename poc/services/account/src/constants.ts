@@ -97,6 +97,34 @@ export const ISSUE_LOCK = {
   callsPerDeviceHour: 1200,
 } as const;
 
+/** 계정 공유 기록(ADR-048 결정 5, D07 §10). 값은 @sax/remote share.ts와 같아야 한다(시험이 대조한다). */
+export const SHARE = {
+  kinds: ['issue', 'party', 'self', 'money', 'task', 'task_result'],
+  /** 새 줄이 오면 같은 종류의 앞 줄을 지우는 종류(계정에 마지막 한 장만 뜻이 있다. 받을 돈·낼 돈 요약) */
+  latestOnlyKinds: ['money'],
+  /** 폰이 올릴 수 있는 종류 */
+  mobileKinds: ['task'],
+  /** 줄 본문(b64url) 최대 길이: 가장 큰 패딩 버킷 16,384 + 논스 24 + 태그 16 */
+  maxBodyChars: 21_899,
+  /** 세대 상한 = 기기 목록의 폐기 레코드 상한(64) */
+  maxEpoch: 64,
+  /** 계정당 줄 수 상한(끝난 일의 줄은 30일 뒤 지운다) */
+  maxRows: 50_000,
+  /** 한 번에 주는 줄 수와 본문 합계(문자) */
+  pageRows: 200,
+  pageChars: 1_000_000,
+  /** 맡긴 일의 유효 시간(D08 §7 queue.ttlHours). 지나면 맡김을 주지 않는다 */
+  taskTtlMs: 72 * 3_600_000,
+  /** 맡은 PC가 죽었을 때 다른 PC가 다시 맡을 수 있게 되는 시간. 맡은 PC는 5분마다 다시 맡아 늘린다 */
+  claimMs: 15 * 60_000,
+  /** 끝난·취소된·유효 시간이 지난 일을 지우기까지 */
+  closedTaskDays: 30,
+  /** 올리기·맡기, 기기당 시간 */
+  writesPerDeviceHour: 600,
+  /** 받기·일 목록, 기기당 시간(1분마다 받기 + 여유) */
+  readsPerDeviceHour: 1200,
+} as const;
+
 export const PROFILE = {
   slotMax: 2,
   rebindMinDays: 90,

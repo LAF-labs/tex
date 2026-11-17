@@ -28,7 +28,7 @@ import {
 import { TERMS_VERSION, resultPageHtml } from './pg-toss.ts';
 import { PLAN, type DeviceStopHook, type MailSender, type PairingRooms, type NoticeKind, type PaymentEvent, type PaymentGateway } from './adapters.ts';
 import { certSigOk, entrySigOk, opSigOk, revokeSigOk, type AcctOp, type DeviceList, type SignedCert } from './aik.ts';
-import { ACCOUNT, BILLING, DEVICE, ISSUE_LOCK, MS, NOTICE, PASSWORD, PC_LINK, PROFILE } from './constants.ts';
+import { ACCOUNT, BILLING, DEVICE, ISSUE_LOCK, MS, NOTICE, PASSWORD, PC_LINK, PROFILE, SHARE } from './constants.ts';
 import { checkPasswordPolicy, withFloor, type CommonPasswords, type PasswordHasher } from './password.ts';
 import { verifyAssertion, verifyRegistration, WebAuthnError, type AssertionInput, type RegistrationInput, type RpConfig } from './webauthn.ts';
 
@@ -67,6 +67,36 @@ interface AccountRow {
   device_list_json: string | null;
   last_biz_change_at: number | null;
   delete_after: number | null;
+}
+
+export type ShareKind = (typeof SHARE.kinds)[number];
+/** 받는 쪽에 주는 줄. at은 서버가 받은 시각(ms)이다(줄 안의 at은 쓴 기기의 시계). */
+export interface ShareRowOut {
+  seq: number;
+  rowId: string;
+  kind: ShareKind;
+  epoch: number;
+  deviceId: string;
+  at: number;
+  body: string;
+}
+export interface ShareTaskOut {
+  taskId: string;
+  state: 'open' | 'claimed' | 'done' | 'cancelled' | 'expired';
+  createdBy: string;
+  claimedBy: string | null;
+  claimExpiresAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+interface ShareTaskRow {
+  task_id: string;
+  state: 'open' | 'claimed' | 'done' | 'cancelled';
+  created_by: string;
+  claimed_by: string | null;
+  claim_expires_at: number | null;
+  created_at: number;
+  updated_at: number;
 }
 
 interface DeviceRow {
@@ -1551,6 +1581,148 @@ export class AccountService {
     return { held: true, deviceId: cur.device_id, expiresAt: Number(cur.expires_at) };
   }
 
+  // ---- 계정 공유 기록(ADR-048 결정 5, D07 §10) ----
+  // 계정의 PC와 폰이 발급 기록·거래처·내 사업자·돈 요약·맡긴 일을 같이 쓴다. 서버는 줄의 종류·순번·시각·크기·올린 기기와 일의 상태만 본다.
+  // 내용은 계정 열쇠에서 나온 키로 봉인한 암호문이고 서명도 그 안에 있어서, 서버는 줄을 지어내지도 읽지도 못한다(숨기거나 순서를 바꿀 수는 있다).
+
+  /**
+   * 줄 올리기. 같은 줄 id를 같은 내용으로 다시 올리면 처음 순번을 그대로 준다(끊긴 응답 뒤 다시 올리기).
+   * 기기가 하나뿐인 계정은 받지 않는다(서버가 발급 시각을 알 이유가 없다, E-07). 폰은 맡긴 일(task)만 올린다.
+   * task_result는 그 일을 맡은 데스크톱만 올리고, 올리면 일이 끝난 것으로 바뀐다.
+   * 돈 요약(money)은 새 줄을 받으면 그 계정의 앞 요약 줄을 지운다(SHARE.latestOnlyKinds).
+   */
+  async putShareRow(
+    requester: { accountId: string; deviceId: string; role: 'desktop' | 'mobile' },
+    row: { rowId: string; kind: ShareKind; epoch: number; body: string; taskId?: string },
+  ): Promise<{ seq: number }> {
+    if (requester.role !== 'desktop' && !(SHARE.mobileKinds as readonly string[]).includes(row.kind)) fail('account.scope_denied');
+    if ((row.kind === 'task_result') !== (row.taskId !== undefined)) fail('request.param_rejected');
+    return this.db.tx(async (q) => {
+      await q.one(`SELECT id FROM accounts WHERE id = $1${q.forUpdate}`, [requester.accountId]);
+      const now = this.now();
+      const dup = await q.one<{ seq: number; kind: string; epoch: number; device_id: string; sealed: string }>(
+        'SELECT seq, kind, epoch, device_id, sealed FROM share_rows WHERE account_id = $1 AND row_id = $2',
+        [requester.accountId, row.rowId],
+      );
+      if (dup) {
+        if (dup.kind !== row.kind || Number(dup.epoch) !== row.epoch || dup.device_id !== requester.deviceId || dup.sealed !== row.body) fail('account.share_row_conflict');
+        return { seq: Number(dup.seq) };
+      }
+      const devs = await q.one<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE account_id = $1 AND state = 'active'", [requester.accountId]);
+      if (Number(devs?.n ?? 0) < 2) fail('account.share_single_device');
+      const head = await q.one<{ next_seq: number; epoch: number }>('SELECT next_seq, epoch FROM share_heads WHERE account_id = $1', [requester.accountId]);
+      if (head && row.epoch < Number(head.epoch)) fail('account.share_epoch_stale');
+      const rows = await q.one<{ n: number }>('SELECT COUNT(*) AS n FROM share_rows WHERE account_id = $1', [requester.accountId]);
+      if (Number(rows?.n ?? 0) >= SHARE.maxRows) fail('account.share_full');
+      if (row.kind === 'task_result') {
+        const n = await q.run("UPDATE share_tasks SET state = 'done', claim_expires_at = NULL, updated_at = $1 WHERE account_id = $2 AND task_id = $3 AND state = 'claimed' AND claimed_by = $4", [
+          now,
+          requester.accountId,
+          row.taskId!,
+          requester.deviceId,
+        ]);
+        if (!n) fail('account.task_not_claimed');
+      }
+      const seq = Number(head?.next_seq ?? 1);
+      await q.run('INSERT INTO share_rows (account_id, seq, row_id, kind, epoch, device_id, task_id, sealed, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)', [
+        requester.accountId,
+        seq,
+        row.rowId,
+        row.kind,
+        row.epoch,
+        requester.deviceId,
+        row.kind === 'task' ? row.rowId : (row.taskId ?? null),
+        row.body,
+        now,
+      ]);
+      if (row.kind === 'task') {
+        await q.run("INSERT INTO share_tasks (account_id, task_id, state, created_by, created_at, updated_at) VALUES ($1, $2, 'open', $3, $4, $4)", [requester.accountId, row.rowId, requester.deviceId, now]);
+      }
+      // 마지막 한 장만 뜻이 있는 종류(돈 요약)는 앞 줄을 지운다. 읽는 쪽은 (at, dev)로 고르므로 순번에 기대지 않는다
+      if ((SHARE.latestOnlyKinds as readonly string[]).includes(row.kind)) {
+        await q.run('DELETE FROM share_rows WHERE account_id = $1 AND kind = $2 AND seq < $3', [requester.accountId, row.kind, seq]);
+      }
+      if (head) await q.run('UPDATE share_heads SET next_seq = $1, epoch = $2 WHERE account_id = $3', [seq + 1, Math.max(Number(head.epoch), row.epoch), requester.accountId]);
+      else await q.run('INSERT INTO share_heads (account_id, next_seq, epoch) VALUES ($1, $2, $3)', [requester.accountId, seq + 1, row.epoch]);
+      return { seq };
+    });
+  }
+
+  /** 줄 받기: after보다 큰 순번을 순서대로. 한 번에 SHARE.pageRows줄·본문 합계 SHARE.pageChars까지이고, 더 있으면 more. head는 마지막으로 준 순번(없으면 0)이다. */
+  async shareRows(accountId: string, after: number): Promise<{ rows: ShareRowOut[]; head: number; epoch: number; more: boolean }> {
+    const head = await this.db.one<{ next_seq: number; epoch: number }>('SELECT next_seq, epoch FROM share_heads WHERE account_id = $1', [accountId]);
+    if (!head) return { rows: [], head: 0, epoch: 0, more: false };
+    const got = await this.db.all<{ seq: number; row_id: string; kind: ShareKind; epoch: number; device_id: string; sealed: string; created_at: number }>(
+      `SELECT seq, row_id, kind, epoch, device_id, sealed, created_at FROM share_rows WHERE account_id = $1 AND seq > $2 ORDER BY seq LIMIT ${SHARE.pageRows + 1}`,
+      [accountId, after],
+    );
+    const rows: ShareRowOut[] = [];
+    let chars = 0;
+    for (const r of got.slice(0, SHARE.pageRows)) {
+      if (rows.length && chars + r.sealed.length > SHARE.pageChars) break;
+      chars += r.sealed.length;
+      rows.push({ seq: Number(r.seq), rowId: r.row_id, kind: r.kind, epoch: Number(r.epoch), deviceId: r.device_id, at: Number(r.created_at), body: r.sealed });
+    }
+    return { rows, head: Number(head.next_seq) - 1, epoch: Number(head.epoch), more: rows.length < got.length };
+  }
+
+  /** 맡긴 일의 상태(내용은 줄에 있다). 열린 일이 유효 시간을 넘겼으면 expired로 보인다. 지워지기 전(30일)의 끝난 일도 준다. */
+  async shareTasks(accountId: string): Promise<ShareTaskOut[]> {
+    const now = this.now();
+    const rows = await this.db.all<ShareTaskRow>('SELECT task_id, state, created_by, claimed_by, claim_expires_at, created_at, updated_at FROM share_tasks WHERE account_id = $1 ORDER BY created_at, task_id', [accountId]);
+    return rows.map((t) => {
+      const lease = t.claim_expires_at === null ? null : Number(t.claim_expires_at);
+      const expired = Number(t.created_at) + SHARE.taskTtlMs <= now;
+      const live = t.state === 'claimed' && lease !== null && lease > now;
+      // 맡은 PC가 죽어 맡김이 만료된 일은 다시 열린 것으로 보인다(유효 시간이 남았을 때)
+      const state: ShareTaskOut['state'] = t.state === 'done' || t.state === 'cancelled' ? t.state : live ? 'claimed' : expired ? 'expired' : 'open';
+      return { taskId: t.task_id, state, createdBy: t.created_by, claimedBy: live ? t.claimed_by : null, claimExpiresAt: live ? lease : null, createdAt: Number(t.created_at), updatedAt: Number(t.updated_at) };
+    });
+  }
+
+  /**
+   * 일 맡기(데스크톱). 한 번에 한 PC만 성공한다. 맡은 PC가 다시 부르면 만료만 늘린다.
+   * 다른 PC의 맡김이 살아 있으면 account.task_claimed, 끝났거나 취소됐거나 유효 시간(72시간)이 지났으면 account.task_closed.
+   */
+  async claimShareTask(requester: { accountId: string; deviceId: string }, taskId: string): Promise<{ claimExpiresAt: number }> {
+    return this.db.tx(async (q) => {
+      const t = await q.one<ShareTaskRow>(`SELECT task_id, state, created_by, claimed_by, claim_expires_at, created_at, updated_at FROM share_tasks WHERE account_id = $1 AND task_id = $2${q.forUpdate}`, [requester.accountId, taskId]);
+      if (!t) fail('account.task_not_found');
+      if (t.state === 'done' || t.state === 'cancelled') fail('account.task_closed');
+      const now = this.now();
+      const mine = t.state === 'claimed' && t.claimed_by === requester.deviceId;
+      if (t.state === 'claimed' && !mine && Number(t.claim_expires_at ?? 0) > now) fail('account.task_claimed');
+      // 유효 시간은 새로 맡을 때만 본다. 이미 맡아 돌리는 PC는 끝까지 늘릴 수 있다
+      if (!mine && Number(t.created_at) + SHARE.taskTtlMs <= now) fail('account.task_closed');
+      const claimExpiresAt = now + SHARE.claimMs;
+      await q.run("UPDATE share_tasks SET state = 'claimed', claimed_by = $1, claim_expires_at = $2, updated_at = $3 WHERE account_id = $4 AND task_id = $5", [requester.deviceId, claimExpiresAt, now, requester.accountId, taskId]);
+      return { claimExpiresAt };
+    });
+  }
+
+  /** 맡은 일 내려놓기(맡은 PC가 못 하게 됐을 때). 내가 맡은 일일 때만 다시 연다. 아니어도 오류가 아니다. */
+  async releaseShareTask(requester: { accountId: string; deviceId: string }, taskId: string): Promise<void> {
+    await this.db.run("UPDATE share_tasks SET state = 'open', claimed_by = NULL, claim_expires_at = NULL, updated_at = $1 WHERE account_id = $2 AND task_id = $3 AND state = 'claimed' AND claimed_by = $4", [
+      this.now(),
+      requester.accountId,
+      taskId,
+      requester.deviceId,
+    ]);
+  }
+
+  /** 일 취소(계정의 어느 기기든). 다른 기기가 맡아 돌리는 중이면 account.task_claimed, 이미 끝났으면 account.task_closed. 이미 취소된 일은 그대로 둔다. */
+  async cancelShareTask(requester: { accountId: string; deviceId: string }, taskId: string): Promise<void> {
+    await this.db.tx(async (q) => {
+      const t = await q.one<ShareTaskRow>(`SELECT task_id, state, created_by, claimed_by, claim_expires_at, created_at, updated_at FROM share_tasks WHERE account_id = $1 AND task_id = $2${q.forUpdate}`, [requester.accountId, taskId]);
+      if (!t) fail('account.task_not_found');
+      if (t.state === 'cancelled') return;
+      if (t.state === 'done') fail('account.task_closed');
+      const now = this.now();
+      if (t.state === 'claimed' && t.claimed_by !== requester.deviceId && Number(t.claim_expires_at ?? 0) > now) fail('account.task_claimed');
+      await q.run("UPDATE share_tasks SET state = 'cancelled', claimed_by = NULL, claim_expires_at = NULL, updated_at = $1 WHERE account_id = $2 AND task_id = $3", [now, requester.accountId, taskId]);
+    });
+  }
+
   private async otherActiveDesktop(q: Sql, accountId: string, except: string): Promise<boolean> {
     const r = await q.one<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE account_id = $1 AND role = 'desktop' AND state = 'active' AND device_id <> $2", [accountId, except]);
     return Number(r?.n ?? 0) > 0;
@@ -1560,6 +1732,10 @@ export class AccountService {
     // 정지·폐기된 PC가 잡고 있던 발급 잠금은 바로 놓는다(그 PC는 갱신도 못 한다)
     await this.db.run('DELETE FROM issue_locks WHERE device_id = $1', [deviceId]).catch(() => undefined);
     await this.db.run('DELETE FROM pc_links WHERE device_id = $1', [deviceId]).catch(() => undefined);
+    // 정지·폐기된 PC가 맡고 있던 일은 다시 연다(다른 PC가 맡는다)
+    await this.db
+      .run("UPDATE share_tasks SET state = 'open', claimed_by = NULL, claim_expires_at = NULL, updated_at = $1 WHERE claimed_by = $2 AND state = 'claimed'", [this.now(), deviceId])
+      .catch(() => undefined);
     for (const h of this.d.stopHooks ?? []) await h.stopped(deviceId).catch(() => undefined);
   }
 
@@ -1725,6 +1901,16 @@ export class AccountService {
     await this.db.run('DELETE FROM login_codes WHERE expires_at <= $1', [now]);
     await this.db.run('DELETE FROM issue_locks WHERE expires_at <= $1', [now]);
     await this.db.run('DELETE FROM pc_links WHERE expires_at <= $1', [now]);
+    // 계정 공유 기록: 끝난·취소된 일과 유효 시간이 지난 일은 30일 뒤 줄과 함께 지운다(발급 기록·거래처 줄은 계정이 있는 동안 둔다)
+    const closedBefore = now - SHARE.closedTaskDays * MS.D;
+    const staleTask = (t: string) =>
+      `(${t}state IN ('done', 'cancelled') AND ${t}updated_at <= $1) OR (${t}state IN ('open', 'claimed') AND ${t}created_at <= $2 AND (${t}claim_expires_at IS NULL OR ${t}claim_expires_at <= $3))`;
+    const staleArgs = [closedBefore, closedBefore - SHARE.taskTtlMs, now];
+    await this.db.run(
+      `DELETE FROM share_rows WHERE task_id IS NOT NULL AND EXISTS (SELECT 1 FROM share_tasks t WHERE t.account_id = share_rows.account_id AND t.task_id = share_rows.task_id AND (${staleTask('t.')}))`,
+      staleArgs,
+    );
+    await this.db.run(`DELETE FROM share_tasks WHERE ${staleTask('')}`, staleArgs);
     await this.db.run('DELETE FROM oauth_codes WHERE expires_at <= $1', [now]);
     await this.db.run('DELETE FROM webauthn_challenges WHERE expires_at <= $1', [now]);
     await this.db.run('DELETE FROM sessions WHERE expires_at <= $1', [now]);

@@ -3,8 +3,11 @@
 // 이 모듈은 아무것도 저장하지 않는다: 계정 세션·기기 토큰은 호출자(main 메모리)가 넘기고, 응답의 토큰은 그대로 돌려줄 뿐 파일·로그에 두지 않는다.
 // 오류는 Error.code에 서버 코드(`<영역>.<코드>`) 또는 `net.<egress 코드>`만 담는다. 메시지에 본문·URL·토큰·이메일을 넣지 않는다.
 import { CLOUD_ORIGIN, CLOUD_WS_HOST, EgressError, type CloudMethod, type Egress } from '@sax/net';
-import type { AccountClient, AccountLogin, CloudPorts, DeviceAuth, PcLinkRequest, RelayHttpClient, ServerDevice } from './remote-ports.ts';
+import type { AccountClient, AccountLogin, CloudPorts, DeviceAuth, PcLinkRequest, RelayHttpClient, ServerDevice, SharePage, ShareServerRow, ShareTaskState } from './remote-ports.ts';
 import {
+  SHARE_KINDS,
+  SHARE_MAX_BODY_CHARS,
+  SHARE_MAX_EPOCH,
   b64url,
   relayOrigin,
   relayQueue,
@@ -64,6 +67,25 @@ function login(b: unknown): AccountLogin {
 }
 /** remember는 참일 때만 본문에 싣는다. */
 const rem = (remember?: boolean) => (remember ? { remember: true } : {});
+
+/** 공유 기록 줄 id·일 id(무작위 16B base64url) */
+const SHARE_ID = /^[A-Za-z0-9_-]{22}$/;
+const SHARE_BODY = /^[A-Za-z0-9_-]+$/;
+const SHARE_TASK_STATES = ['open', 'claimed', 'done', 'cancelled', 'expired'];
+const shareId = (v: unknown): string => {
+  if (typeof v !== 'string' || !SHARE_ID.test(v)) throw new CloudPortError('request.param_rejected');
+  return v;
+};
+const shareEpochOk = (v: unknown): v is number => int(v) && v >= 0 && v <= SHARE_MAX_EPOCH;
+/** 서버가 준 줄의 겉모양만 본다(속은 호출자가 연다). 모양이 틀린 줄이 하나라도 있으면 쪽 전체를 버린다 */
+function shareRow(v: unknown): ShareServerRow {
+  if (
+    !isObj(v) || !int(v.seq) || v.seq < 1 || typeof v.rowId !== 'string' || !SHARE_ID.test(v.rowId) || !(SHARE_KINDS as readonly unknown[]).includes(v.kind) || !shareEpochOk(v.epoch)
+    || typeof v.deviceId !== 'string' || !UUID4.test(v.deviceId) || !int(v.at) || typeof v.body !== 'string' || v.body.length > SHARE_MAX_BODY_CHARS || !SHARE_BODY.test(v.body)
+  ) shape();
+  const r = v as unknown as ShareServerRow;
+  return { seq: r.seq, rowId: r.rowId, kind: r.kind, epoch: r.epoch, deviceId: r.deviceId, at: r.at, body: r.body };
+}
 
 /** 발급 잠금 값(서버 randomToken, base64url). 모양만 본다 */
 const ISSUE_LOCK_ID = /^[A-Za-z0-9_-]{22,64}$/;
@@ -342,6 +364,55 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
     async releaseIssueLock(auth, lockId) {
       const url = `${accountOrigin}/v1/issue-lock/release`;
       await call('POST', url, [204], { headers: await authed(auth, 'POST', url), body: { lockId } });
+    },
+    async putShareRow(auth, row) {
+      const url = `${accountOrigin}/v1/share/rows/${shareId(row.rowId)}`;
+      const body = { kind: row.kind, epoch: row.epoch, body: row.body, ...(row.taskId === undefined ? {} : { taskId: shareId(row.taskId) }) };
+      const b = await call('PUT', url, [200], { headers: await authed(auth, 'PUT', url), body });
+      if (!isObj(b) || !int(b.seq) || b.seq < 1) shape();
+      return { seq: (b as { seq: number }).seq };
+    },
+    async shareRows(auth, after) {
+      if (!int(after) || after < 0) throw new CloudPortError('request.param_rejected');
+      const url = after === 0 ? `${accountOrigin}/v1/share/rows` : `${accountOrigin}/v1/share/rows/after/${after}`;
+      const b = await call('GET', url, [200], { headers: await authed(auth, 'GET', url) });
+      if (!isObj(b) || !Array.isArray(b.rows) || b.rows.length > 200 || !int(b.head) || b.head < 0 || !shareEpochOk(b.epoch) || typeof b.more !== 'boolean') shape();
+      const r = b as { rows: unknown[]; head: number; epoch: number; more: boolean };
+      const rows = r.rows.map(shareRow);
+      // 순번은 after보다 크고 오름차순이어야 한다(아니면 커서가 꼬인다)
+      let last = after;
+      for (const x of rows) {
+        if (x.seq <= last) shape();
+        last = x.seq;
+      }
+      return { rows, head: r.head, epoch: r.epoch, more: r.more } satisfies SharePage;
+    },
+    async shareTasks(auth) {
+      const url = `${accountOrigin}/v1/share/tasks`;
+      const b = await call('GET', url, [200], { headers: await authed(auth, 'GET', url) });
+      if (!isObj(b) || !Array.isArray(b.tasks)) shape();
+      return (b as { tasks: unknown[] }).tasks.map((t): ShareTaskState => {
+        if (
+          !isObj(t) || typeof t.taskId !== 'string' || !SHARE_ID.test(t.taskId) || !SHARE_TASK_STATES.includes(t.state as string) || typeof t.createdBy !== 'string' || !UUID4.test(t.createdBy)
+          || !(t.claimedBy === null || (typeof t.claimedBy === 'string' && UUID4.test(t.claimedBy))) || !(t.claimExpiresAt === null || int(t.claimExpiresAt)) || !int(t.createdAt) || !int(t.updatedAt)
+        ) shape();
+        const x = t as unknown as ShareTaskState;
+        return { taskId: x.taskId, state: x.state, createdBy: x.createdBy, claimedBy: x.claimedBy, claimExpiresAt: x.claimExpiresAt, createdAt: x.createdAt, updatedAt: x.updatedAt };
+      });
+    },
+    async claimShareTask(auth, taskId) {
+      const url = `${accountOrigin}/v1/share/tasks/${shareId(taskId)}/claim`;
+      const b = await call('POST', url, [200], { headers: await authed(auth, 'POST', url), body: {} });
+      if (!isObj(b) || !int(b.claimExpiresAt)) shape();
+      return { claimExpiresAt: (b as { claimExpiresAt: number }).claimExpiresAt };
+    },
+    async releaseShareTask(auth, taskId) {
+      const url = `${accountOrigin}/v1/share/tasks/${shareId(taskId)}/release`;
+      await call('POST', url, [204], { headers: await authed(auth, 'POST', url), body: {} });
+    },
+    async cancelShareTask(auth, taskId) {
+      const url = `${accountOrigin}/v1/share/tasks/${shareId(taskId)}/cancel`;
+      await call('POST', url, [204], { headers: await authed(auth, 'POST', url), body: {} });
     },
     async leaveDevice(auth) {
       const url = `${accountOrigin}/v1/devices/self/leave`;

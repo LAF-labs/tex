@@ -7,7 +7,7 @@
 //   응답 본문·URL·토큰·이메일은 오류·로그에 넣지 않는다. 네트워크 실패는 code 'net.<이유>'(egress 코드 그대로).
 // - 계정 세션 문자열과 기기 토큰은 main 메모리에만 있다. 렌더러·로그·파일로 나가지 않는다. 기기 토큰은 DeviceTokenCache(15분, 영속 없음).
 // - 기기 범위 호출의 인증 헤더는 데스크톱이 만들어 넘긴다(DeviceAuth). 클라이언트는 그 헤더를 그대로 붙인다.
-import type { DeviceListJson, DesktopKeys, DeviceToken, DpopSigner, MailboxTokens, PcLinkChallenge, PcLinkGrant, PcLinkHello, PcLinkReveal, RelayQueue, SignedAcctClaim, SignedCert, WebSocketLike } from '@sax/remote';
+import type { DeviceListJson, DesktopKeys, DeviceToken, DpopSigner, MailboxTokens, PcLinkChallenge, PcLinkGrant, PcLinkHello, PcLinkReveal, RelayQueue, ShareKind, ShareRowWire, SignedAcctClaim, SignedCert, WebSocketLike } from '@sax/remote';
 
 /** 기기 범위 토큰 헤더(Authorization: DPoP <token> + DPoP 증명). htu는 요청 URL 전체(쿼리 없음). 데스크톱이 deviceAuthHeaders로 만든다. */
 export type DeviceAuth = (htm: 'GET' | 'POST' | 'PUT' | 'DELETE', htu: string) => Promise<Record<string, string>>;
@@ -139,6 +139,20 @@ export interface AccountClient {
   acquireIssueLock(auth: DeviceAuth): Promise<{ lockId: string; expiresAt: number }>;
   renewIssueLock(auth: DeviceAuth, lockId: string): Promise<{ expiresAt: number }>;
   releaseIssueLock(auth: DeviceAuth, lockId: string): Promise<void>;
+  // ---- 계정 공유 기록(기기 토큰 share 범위. ADR-048 결정 5, D07 §10, API.md 계정 공유 기록) ----
+  // 줄은 암호문이다. 받은 줄은 믿지 않는다(호출자가 @sax/remote openShareRow로 열고 서명을 본다).
+  /** PUT /v1/share/rows/:rowId. 같은 줄을 같은 내용으로 다시 올리면 처음 순번, 다른 내용이면 account.share_row_conflict. */
+  putShareRow(auth: DeviceAuth, row: ShareRowWire & { taskId?: string }): Promise<{ seq: number }>;
+  /** GET /v1/share/rows(after 0) 또는 /v1/share/rows/after/:seq. 한 번에 200줄까지, 더 있으면 more. */
+  shareRows(auth: DeviceAuth, after: number): Promise<SharePage>;
+  /** GET /v1/share/tasks: 맡긴 일의 상태(내용은 줄에 있다). */
+  shareTasks(auth: DeviceAuth): Promise<ShareTaskState[]>;
+  /** POST /v1/share/tasks/:id/claim: 한 번에 한 PC만. 다른 PC가 맡고 있으면 account.task_claimed, 끝났으면 account.task_closed. */
+  claimShareTask(auth: DeviceAuth, taskId: string): Promise<{ claimExpiresAt: number }>;
+  /** POST /v1/share/tasks/:id/release: 내가 맡은 일을 다시 연다. */
+  releaseShareTask(auth: DeviceAuth, taskId: string): Promise<void>;
+  /** POST /v1/share/tasks/:id/cancel. */
+  cancelShareTask(auth: DeviceAuth, taskId: string): Promise<void>;
   /** 탈퇴(기기 토큰, 데스크톱만): GET /v1/account/deletion, POST delete-request(7일 유예·구독 해지), POST delete-cancel. */
   accountDeletion(auth: DeviceAuth): Promise<{ deleteAfter: number | null }>;
   requestAccountDelete(auth: DeviceAuth): Promise<{ deleteAfter: number }>;
@@ -157,6 +171,41 @@ export interface ServerDevice {
   Vx: string;
   /** 삭제 유예 끝(ms). 없으면 null */
   deleteAfter: number | null;
+}
+
+/** 서버가 준 공유 기록 줄 하나. deviceId·at(서버가 받은 시각)은 서버 값이고 줄 안의 dev·at과 다를 수 있다(믿는 것은 줄 안의 값). */
+export interface ShareServerRow extends ShareRowWire {
+  seq: number;
+  deviceId: string;
+  at: number;
+}
+export interface SharePage {
+  rows: ShareServerRow[];
+  /** 계정의 마지막 순번(없으면 0). 이미 받은 순번보다 낮으면 서버가 되감은 것이다 */
+  head: number;
+  /** 서버가 지금까지 본 가장 높은 세대(참고 값. 세대는 기기 목록에서 정한다) */
+  epoch: number;
+  more: boolean;
+}
+export interface ShareTaskState {
+  taskId: string;
+  state: 'open' | 'claimed' | 'done' | 'cancelled' | 'expired';
+  createdBy: string;
+  claimedBy: string | null;
+  claimExpiresAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+export type { ShareKind };
+
+/**
+ * 금고의 계정 공유 기록 키 연산(crypto.shareKey·signShare, D05 §5.1). RK와 서명 키 Ws는 금고 밖으로 나오지 않는다.
+ * key(e)가 주는 K_share(e)는 호출자가 쓰고 지운다(fill(0)).
+ */
+export interface ShareVault {
+  key(epoch: number): Promise<{ key: Uint8Array; signPub: Uint8Array }>;
+  /** Ws로 "SAX-share-v1" ‖ msg를 서명한다(@sax/remote ShareSign) */
+  sign(msg: Uint8Array): Promise<Uint8Array>;
 }
 
 /** 쓰던 PC가 보는 새 PC 신청 한 건(GET /v1/pc-links). 이름·플랫폼은 새 PC가 신청 때 적은 값이다(서버 값, 믿지 않는다). */

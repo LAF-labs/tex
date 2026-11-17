@@ -169,7 +169,7 @@ describe('vaultDesktopKeys(금고 control 포트)', () => {
   it('어댑터 소스: 금고 control rpc만 부른다(키 바이트·전역 fetch·파일 없음)', async () => {
     const src = await fs.readFile(path.resolve(import.meta.dirname, '../apps/desktop/src/remote-keys.ts'), 'utf8');
     const methods = [...src.matchAll(/control\('([a-zA-Z.]+)'/g)].map((m) => m[1]).sort();
-    assert.deepEqual([...new Set(methods)], ['crypto.hpkeOpen', 'crypto.linkKey', 'crypto.noiseDH', 'crypto.publicKeys', 'crypto.rkImport', 'crypto.rkSeal', 'crypto.signAik', 'crypto.signVd']);
+    assert.deepEqual([...new Set(methods)], ['crypto.hpkeOpen', 'crypto.linkKey', 'crypto.noiseDH', 'crypto.publicKeys', 'crypto.rkImport', 'crypto.rkSeal', 'crypto.shareKey', 'crypto.signAik', 'crypto.signShare', 'crypto.signVd']);
     assert.doesNotMatch(src, /\bfetch\(|node:fs|writeFile|secretKey|privateKey/);
     assert.match(src, /vaultDesktopKeys satisfies VaultKeysFactory/);
   });

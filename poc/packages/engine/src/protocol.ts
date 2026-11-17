@@ -129,6 +129,12 @@ export const BANK_COMMANDS = [
   'bank.addCpAccount', 'bank.deleteCpAccount', 'bank.revealCpAccount', 'bank.addAlias', 'bank.deleteAlias', 'bank.setPayTerms', 'bank.setDefaultTerms', 'bank.categorize',
 ] as const;
 /**
+ * 계정 공유 기록의 장부 쪽(ADR-048 결정 5, D07 §10). 처리는 엔진 share/service.ts ShareService다. main의 share-sync.ts만 부른다(렌더러에 열지 않는다).
+ * share.collect는 장부에서 올릴 줄을 모으고, pending·sent·dropped는 올리기, cursor·apply는 받기다. 봉인·서명·서버 호출은 main이 한다.
+ */
+export const SHARE_READ_QUERIES = ['db.query.share.pending', 'db.query.share.cursor', 'db.query.share.status'] as const;
+export const SHARE_COMMANDS = ['share.collect', 'share.sent', 'share.dropped', 'share.apply'] as const;
+/**
  * 실행 명령(main → 엔진 중계 통로). 승인·증언은 여기 없다. 게이트 전용 포트로만 다닌다(ADR-021, D01 §2.1). run.inspect는 값 없는 원장 상태·저널 종류(e2e).
  * run.start = H-01 세금계산서, run.startCert {runId, playbookId, inputs} = 홈택스 민원증명(cert.ts CertStartParams, 승인 카드 cert.confirm).
  * run.reverify는 재시작 뒤 원장 in_doubt 행을 발급목록 조회로만 확정한다(run/reverify.ts). 발급·클릭은 없다.

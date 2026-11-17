@@ -105,6 +105,10 @@
       "destination": "/api/sax?__p=/v1/issue-lock/:path*"
     },
     {
+      "source": "/v1/share/:path*",
+      "destination": "/api/sax?__p=/v1/share/:path*"
+    },
+    {
       "source": "/v1/pc-links/:path*",
       "destination": "/api/sax?__p=/v1/pc-links/:path*"
     },

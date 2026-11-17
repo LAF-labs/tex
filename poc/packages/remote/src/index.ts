@@ -23,6 +23,7 @@ export * from './queue.ts';
 export * from './relay.ts';
 export * from './ws-link.ts';
 export * from './session.ts';
+export * from './share.ts';
 export * from './transfer.ts';
 export * from './ulid.ts';
 export { SCHEMA_ID, SCHEMA_TITLE, MESSAGE_TYPES, BINARY_KEYS } from './schema.gen.ts';

@@ -453,4 +453,28 @@ CREATE TABLE txn_category_rules (
 );
 `,
   },
+  {
+    // 계정 공유 기록(ADR-048 결정 5, D07 §10): 이 PC가 올릴 줄(share_out)과 다른 기기에서 받은 줄(share_in), 받은 자리(share_state).
+    // 본문은 DB 전체 암호화 안의 평문 JSON이다(거래처·받을 돈과 같은 등급). 서버로 가는 봉인은 main이 올릴 때 한다.
+    // ref: 발급 기록은 승인번호, 거래처는 사업자번호, 내 사업자·돈 요약은 ''(계정에 하나).
+    version: 14,
+    name: 'share_log',
+    sql: `
+CREATE TABLE share_out (
+  row_id TEXT PRIMARY KEY, kind TEXT NOT NULL, ref TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, body_json TEXT NOT NULL, task_id TEXT,
+  state TEXT CHECK(state IN ('pending','sent','dropped')) NOT NULL DEFAULT 'pending', seq INTEGER, reason TEXT,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX ix_share_out_state ON share_out(state);
+CREATE INDEX ix_share_out_ref ON share_out(kind, ref);
+CREATE TABLE share_in (
+  row_id TEXT PRIMARY KEY, seq INTEGER NOT NULL, kind TEXT NOT NULL, ref TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, dev TEXT NOT NULL,
+  by_role TEXT CHECK(by_role IN ('desktop','mobile')) NOT NULL, epoch INTEGER NOT NULL, body_json TEXT NOT NULL, received_at TEXT NOT NULL
+);
+CREATE INDEX ix_share_in_ref ON share_in(kind, ref);
+CREATE TABLE share_state (id INTEGER PRIMARY KEY CHECK(id = 1), cursor INTEGER NOT NULL DEFAULT 0);
+INSERT INTO share_state (id, cursor) VALUES (1, 0);
+CREATE TABLE share_party (ref TEXT PRIMARY KEY, body_json TEXT NOT NULL, updated_at TEXT NOT NULL);
+`,
+  },
 ];

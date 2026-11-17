@@ -26,6 +26,8 @@ export const CTX = {
   pclink: 'SAX-pclink-v1',
   pclinkSas: 'SAX-pclink-sas-v1',
   pclinkRk: 'SAX-pclink-rk-v1',
+  /** 계정 공유 기록(ADR-048 결정 5, D07 §10): 줄 서명(PC는 계정 공유 기록 서명 키 Ws, 폰은 Vm)과 줄 봉인 aad 접두. */
+  share: 'SAX-share-v1',
 } as const;
 
 /** AIK 용도(D05 §5.1 AikPurpose). */
@@ -37,7 +39,7 @@ export type VdPurpose = typeof CTX.qbundle | typeof CTX.ckpt | typeof CTX.docrec
 export const VD_PURPOSES: readonly VdPurpose[] = [CTX.qbundle, CTX.ckpt, CTX.docrec, CTX.consent, CTX.dpop, CTX.rotate, CTX.kv];
 
 /** 폰 Vm 용도. 비가역 승인(SAX-approve-v1 with Px)은 M7-7(제안)이라 Phase 1 폰에 없다. */
-export type VmPurpose = typeof CTX.env | typeof CTX.qbundle | typeof CTX.rotate | typeof CTX.dpop;
-export const VM_PURPOSES: readonly VmPurpose[] = [CTX.env, CTX.qbundle, CTX.rotate, CTX.dpop];
+export type VmPurpose = typeof CTX.env | typeof CTX.qbundle | typeof CTX.rotate | typeof CTX.dpop | typeof CTX.share;
+export const VM_PURPOSES: readonly VmPurpose[] = [CTX.env, CTX.qbundle, CTX.rotate, CTX.dpop, CTX.share];
 
 export type NoiseCtx = typeof CTX.pair | typeof CTX.session;
