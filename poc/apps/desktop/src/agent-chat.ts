@@ -405,7 +405,9 @@ export class AgentChat {
     const show: AgentShow[] = [];
     const cards = new Set<string>();
     // 문장 슬롯이 가리키는 결과는 모델이 show에 넣지 않아도 보인다: 답 문장의 값이 늘 같이 보이는 표에 있다.
-    const slotRefs = reply.filtered ? [] : [...reply.text.matchAll(SLOT_RE)].map((m) => m[1]!);
+    // 'repeat'·'closed'는 엔진이 쓴 문장이라 토큰·슬롯이 맞다(조회 되풀이의 건수·합계, 카드의 거래처·금액). 다른 걸러진 답은 쓰지 않는다.
+    const slotted = !reply.filtered || reply.filtered === 'repeat' || reply.filtered === 'closed';
+    const slotRefs = slotted ? [...reply.text.matchAll(SLOT_RE)].map((m) => m[1]!) : [];
     for (const ref of [...new Set([...reply.show, ...slotRefs])]) {
       const res = s.results.get(ref);
       const runId = s.runOfRef.get(ref);
@@ -422,7 +424,7 @@ export class AgentChat {
     const unknown = name && !this.ports.counterparties().some((c) => c.name === name) ? { name, text: `${name}${finalOf(name) ? fixJosa(name, '은 장부에 없는 거래처예요.') : '은(는) 장부에 없는 거래처예요.'}` } : null;
     return {
       kind: 'agent',
-      text: reply.filtered ? reply.text : this.fill(s, reply),
+      text: slotted ? this.fill(s, reply) : reply.text,
       show,
       // 이번 턴에 초안을 만들었으면 부가세는 묻지 않는다: 기본값(별도)으로 바로 준비하고 승인 카드에서 다시 본다(대표 실사용 2026-11-14).
       // 진짜 빠진 값(금액·거래처)만 묻는다.
