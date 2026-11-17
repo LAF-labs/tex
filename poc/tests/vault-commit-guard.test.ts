@@ -42,6 +42,14 @@ async function emitPaused(f: FakeRelay, params: Record<string, unknown>, sid = f
   await f.relay.drained();
 }
 const engineGot = (f: FakeRelay, method: string) => f.toEngine.filter((m) => m.method === method);
+/** 조건이 참이 될 때까지 기다린다(고정 대기 없음). 상한은 느린 Windows 러너 기준. */
+async function until(pred: () => boolean, what: string, ms = 30_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!pred()) {
+    if (Date.now() > end) throw new Error(`timeout: ${what}`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
 
 describe('R-C1 본문 해석(form·json·xml)', () => {
   it('form: 이름으로 꺼내고(+·%인코딩 풀기), 같은 해시가 나온다', () => {
@@ -279,12 +287,11 @@ describe('R-C1 대조(실제 Chrome, 금고 서비스)', () => {
     assert.deepEqual(await result, { intentId: 'ok', stepId: 'issue', match: true });
     const ev = await eng.waitEvent((e) => e.method === 'Fetch.requestPaused' && e.sessionId === sid, mark);
     assert.doesNotMatch(JSON.stringify(ev), /alice|postData/);
-    // 이어 보낸 뒤의 /submit 응답 페이지 로드를 기다린다. 서버는 본문을 다 받고 나서 응답한다(fixtures/server.ts).
-    // 예전에는 mark(로그인 화면 이동 전)부터 찾아 /login의 loadEventFired에 바로 걸리고 2.5초 폴링만 남았다(windows-latest에서 흔들림).
-    const sent = eng.events.length;
+    // 이어 보낸 요청이 서버에 닿는지를 서버 쪽에서 직접 본다(fixtures/server.ts는 본문을 다 받은 뒤 기록한다).
+    // 예전에는 /submit 응답 페이지의 Page.loadEventFired를 10초 기다렸다. 로드 이벤트는 응답 뒤 문서 커밋·하위 자원까지 끝나야 오고
+    // 금고 중계 줄 뒤에서 엔진에 닿아, 느린 windows-latest(파일 3개 동시)에서는 서버가 이미 받았는데도 10초 안에 오지 않았다.
     await eng.send('Fetch.continueRequest', { requestId: ev.params!.requestId }, sid);
-    await eng.waitEvent((e) => e.method === 'Page.loadEventFired' && e.sessionId === sid, sent);
-    assert.ok(fx.bodies.some((b) => b.includes('user=alice')), '서버가 받았다');
+    await until(() => fx.bodies.some((b) => b.includes('user=alice')), '서버가 받았다');
     assert.ok(!JSON.stringify(eng.events.slice(mark)).includes('alice'), '엔진 이벤트에 본문 값이 없다');
   });
 
