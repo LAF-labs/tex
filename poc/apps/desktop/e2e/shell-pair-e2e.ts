@@ -138,6 +138,8 @@ function fakeCloud() {
       calls.push(v.ok ? 'devlist' : 'devlist_bad');
       deviceList = l;
     },
+    devices: async () => [],
+    leaveDevice: async () => {},
     accountDeletion: async () => ({ deleteAfter: null }),
     requestAccountDelete: async () => ({ deleteAfter: Date.now() + 7 * 86_400_000 }),
     cancelAccountDelete: async () => {},
