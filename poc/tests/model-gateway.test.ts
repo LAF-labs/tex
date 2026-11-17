@@ -9,6 +9,7 @@ import {
   DecisionCache,
   DefaultModelLayer,
   GatewayDecideAdapter,
+  L1_MODEL,
   OpenAIDecisionsAdapter,
   OpenAIResponsesAdapter,
   QUERY_PARSE,
@@ -39,7 +40,7 @@ function setup(mock: GatewayMock, opts: { now?: () => number; cache?: boolean; e
     gateway: { auth: { headers: async (r) => ({ authorization: 'DPoP device-token', dpop: `proof-${r.method}-${r.bodySha256}` }) }, bundles: catalog.allowEntries() },
     onSecurityEvent: (e) => events.push(e),
   });
-  const decider = new GatewayDecideAdapter({ egress });
+  const decider = new GatewayDecideAdapter({ egress, model: L1_MODEL });
   const cache = opts.cache === false ? undefined : new DecisionCache({ now: opts.now });
   const layer = new DefaultModelLayer({ catalog, profiles, decider, cache });
   return { egress, decider, layer, cache, events };

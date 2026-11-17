@@ -21,7 +21,7 @@ export interface GatewayDecideBody {
 }
 
 export interface GatewayRespondBody {
-  toolset: 'selector_repair' | 'summarize' | 'intent_fill' | 'query_parse' | 'chat_reply' | 'chat_agent' | 'page_judge' | 'browser_agent' | 'computer_use' | 'chat_phone' | 'chat_digest';
+  toolset: 'selector_repair' | 'summarize' | 'intent_fill' | 'query_parse' | 'chat_reply' | 'chat_agent' | 'page_judge' | 'browser_agent' | 'computer_use' | 'chat_phone' | 'chat_digest' | 'decision_pick';
   messages: Array<{ role: 'user'; content: Array<{ type: 'input_text'; text: RedactedText } | { type: 'input_image'; image_url: string }> }>;
   replay?: Array<{ item: object; tag: string } | { type: 'function_call_output'; call_id: string; output: RedactedText }>;
   runToken: string;
@@ -81,7 +81,7 @@ export interface L2Usage {
 }
 
 /** 판정·에이전트 툴셋(게이트웨이 GATEWAY.agentPerRun과 같은 예산). */
-const AGENT_TOOLSETS: ReadonlySet<string> = new Set(['page_judge', 'browser_agent', 'computer_use']);
+const AGENT_TOOLSETS: ReadonlySet<string> = new Set(['page_judge', 'browser_agent', 'computer_use', 'decision_pick']);
 /**
  * 화면 사진은 computer_use 툴셋의 메시지에만, 요청당 한 장, 가린 JPEG data URL로만(대표 결정 2026-11-16, B-18 예외).
  * 상한은 @sax/model MASKED_SHOT_MAX_BYTES와 같다(tests/computer-use-guard.test.ts가 대조).

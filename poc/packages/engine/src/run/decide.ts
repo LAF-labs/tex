@@ -40,6 +40,8 @@ export interface DecideRecord {
   l0Only: boolean;
   injectionHit: boolean;
   reason?: string;
+  /** 응답이 밝힌 모델(별칭이 풀린 버전, 예: typesafe/jev-1.14-20261014) */
+  model?: string;
 }
 
 export interface DecideRunnerInput {
@@ -124,7 +126,7 @@ export class DecideRunner {
       this.i.journal('decide.unavailable', { stepId: s.id, bundle: s.bundle });
       return fail('decide.unavailable');
     }
-    const rec: DecideRecord = { stepId: s.id, bundle: s.bundle, outcome: r.outcome, rule: r.rule, provider: r.provider, l0Only: r.l0Only, injectionHit: !!r.injectionHit, ...(r.reason ? { reason: r.reason } : {}) };
+    const rec: DecideRecord = { stepId: s.id, bundle: s.bundle, outcome: r.outcome, rule: r.rule, provider: r.provider, l0Only: r.l0Only, injectionHit: !!r.injectionHit, ...(r.reason ? { reason: r.reason } : {}), ...(r.model ? { model: String(r.model).slice(0, 64) } : {}) };
     this.lastRec = rec;
     this.i.journal('decide.result', { ...rec });
     const reserved = RESERVED_OUTCOME_CODES[r.outcome];
