@@ -14,6 +14,7 @@ const COUNTED: Readonly<Record<string, string>> = {
   'fallback.heal_dropped': 'heal_dropped',
   'agentpath.replayed': 'replay',
   'agentpath.replay_failed': 'replay_failed',
+  'locate.decision_asked': 'pick',
   'locate.asked': 'locate',
   'fallback.checkpoint': 'reentry',
   'judge.applied': 'judge',

@@ -17,6 +17,7 @@ export const ESCALATION: readonly RungCost[] = [
   { id: 'retry', krw: 0, time: '재시도 3번, 대상 대기 포함 수십 초', basis: '패키지 recovery·정책 stepMax' },
   { id: 'replay', krw: 0, time: '걸음당 1초 안팎', basis: '앞 실행에서 에이전트·화면 보기가 넘긴 길(run/agent-path.ts)' },
   { id: 'refind', krw: 0, time: '1초 안팎', basis: '패키지 role·label 후보' },
+  { id: 'pick', krw: 0.15, time: '호출당 0.4초, 스텝·항목당 1번', basis: 'decision_pick(OpenRouter decisions ~typesafe/jev-latest, 입력 약 2,300토큰 × $0.042/M, 출력 0)' },
   { id: 'locate', krw: 3, time: '호출당 3~10초, 스텝당 2번까지', basis: 'selector_repair(respond 모델, DeepSeek 단가 추정 2~4원)' },
   { id: 'checkpoint', krw: 0, time: '앞 체크포인트부터 다시(수십 초)', basis: '체크포인트 재진입, 실행당 체크포인트마다 1번' },
   { id: 'judge', krw: 11, time: '호출당 5~50초', basis: 'page_judge(jev-router, 대표 실측 걸음당 약 11원)' },
@@ -25,11 +26,12 @@ export const ESCALATION: readonly RungCost[] = [
   { id: 'human', krw: 0, time: '사장님 차례(분 단위)', basis: '사람 대기(핸드오프), 그다음 칸은 홈택스 직접 발급 → API' },
 ];
 
-/** 같은 실행의 L1 decide(안전 판정, gpt-6-luna Decisions) 호출당 원(추정 0.26원). 일 한도를 넘어도 안전 판정은 간다(PR #384). */
-export const DECIDE_KRW = 0.26;
+/** 같은 실행의 L1 decide(안전 판정, ~typesafe/jev-latest decisions, 입력 약 3,100토큰 × $0.042/M ≈ 0.18원) 호출당 원. 일 한도를 넘어도 안전 판정은 간다(PR #384). */
+export const DECIDE_KRW = 0.18;
 
 /** 저널 이벤트 → 칸(예행 보고서의 추정 금액). */
 export const COST_EVENTS: Readonly<Record<string, string>> = {
+  'locate.decision_asked': 'pick',
   'locate.asked': 'locate',
   'judge.applied': 'judge',
   'judge.dialog': 'judge',

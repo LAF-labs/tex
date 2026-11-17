@@ -161,7 +161,8 @@ export class GatewayJudgeModel implements JudgeModel {
     const button = o.button !== null && req.screen.some((x) => x.n === o.button) ? o.button : null;
     const field = o.field !== null && req.fields.includes(o.field) ? o.field : null;
     if (o.prescription === 'dismiss_dialog' && !(req.dialog ? o.dialog_answer : button)) return null;
-    if (o.prescription === 'fix_field' && !field) return null;
+    // 고칠 칸이 후보에 없다(위치 찾기를 이미 했거나 모르는 키): 칸이 바뀐 화면이라는 판정은 살려 에이전트로 넘긴다(실모델 예행 2026-11-16).
+    if (o.prescription === 'fix_field' && !field) return { situation: o.situation, prescription: 'agent_mode', button: null, dialogAnswer: null, field: null };
     return { situation: o.situation, prescription: o.prescription, button, dialogAnswer: req.dialog ? o.dialog_answer : null, field };
   }
 }

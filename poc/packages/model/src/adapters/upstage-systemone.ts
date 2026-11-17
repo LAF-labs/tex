@@ -21,8 +21,8 @@ export interface SystemOneRequest {
 }
 
 export class UpstageSystemOneAdapter implements DecideAdapter {
-  readonly provider = 'upstage' as const;
-  readonly model = SOLAR_DECIDE;
+  readonly provider: 'upstage' | 'openai_compat' = 'upstage';
+  readonly model: string = SOLAR_DECIDE;
   /** R6: 선택지 2~26, 질문별 refusal 없음, 문맥 512K(바이트 상한은 보수적으로 그 절반) */
   readonly limits: AdapterLimits = { maxChoices: 26, maxQuestions: 64, refusals: false, maxRequestBytes: 256_000 };
 
