@@ -82,7 +82,8 @@ describe('민원증명 제품 실행(run.startCert, 가짜 민원증명 페이�
       };
       tick();
     });
-  const gateFor = (runId: string, nth = 0) => next(() => (gateMsgs.filter((m) => m.t === 'gate.request' && m.req.runId === runId)[nth] as { req: GateRequest } | undefined)?.req);
+  // 두 번째 카드는 접수 실패 → 발급목록 재확인(요청이 잦아들 때까지 기다림) → 양식 다시 채우기를 거쳐 오므로 느린 CI 러너에서 30초를 넘길 수 있다
+  const gateFor = (runId: string, nth = 0) => next(() => (gateMsgs.filter((m) => m.t === 'gate.request' && m.req.runId === runId)[nth] as { req: GateRequest } | undefined)?.req, nth > 0 ? 60_000 : 30_000);
   const endOf = (runId: string) => next(() => events.find((e) => e.runId === runId && e.type === 'end') as Extract<RunEvent, { type: 'end' }> | undefined, 60_000);
   const approval = (req: GateRequest): LocalApproval => ({
     v: 2, runId: req.runId, gateStepId: req.gateStepId, reqId: req.reqId, approvalNonce: req.approvalNonce, actionHash: req.actionHash, exp: Date.now() + 120_000, presence: 'click', mac: 'not-verified-in-phase1',
