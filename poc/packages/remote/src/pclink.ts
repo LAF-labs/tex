@@ -166,9 +166,13 @@ export class PcLinkApprover {
     return true;
   }
 
-  /** 사용자가 넣은 6자리. 틀리면 남은 횟수가 줄고, 다 쓰면 실패. */
+  /**
+   * 사용자가 넣은 6자리. 틀리면 남은 횟수가 줄고, 다 쓰면 실패.
+   * 이미 맞힌 뒤(approved)에도 다시 부를 수 있다: 승인 뒤 단계(봉인·보내기)가 실패해 사용자가 같은 6자리로 다시 할 때다.
+   * 그때 틀리면 승인을 거두고(awaiting_sas) 횟수를 센다.
+   */
   confirm(code: string): boolean {
-    if (this.#state !== 'awaiting_sas' || !this.#transcript) throw new Error('pclink: not awaiting sas');
+    if ((this.#state !== 'awaiting_sas' && this.#state !== 'approved') || !this.#transcript) throw new Error('pclink: not awaiting sas');
     if (this.#now() > this.#deadline) {
       this.#state = 'failed';
       return false;
@@ -179,7 +183,7 @@ export class PcLinkApprover {
       return true;
     }
     this.#tries++;
-    if (this.#tries >= PCLINK_SAS_MAX_TRIES) this.#state = 'failed';
+    this.#state = this.#tries >= PCLINK_SAS_MAX_TRIES ? 'failed' : 'awaiting_sas';
     return false;
   }
 

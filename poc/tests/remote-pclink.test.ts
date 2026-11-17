@@ -132,6 +132,22 @@ describe('새 PC 연결: 가운데에서 바꾸는 경우', () => {
     t += PCLINK_STEP_MS + 1;
     assert.equal(late.confirm(r2.sas), false);
     assert.equal(late.state, 'failed');
+
+    // 맞힌 뒤에도 다시 넣을 수 있다(승인 뒤 단계가 실패해 다시 할 때). 그때 틀리면 승인을 거두고 횟수를 센다
+    const n3 = newPc();
+    const again = new PcLinkApprover(n3.hello, { deviceId: e.deviceId, aikPub: e.aik.publicKey }, () => t);
+    const r3 = pcLinkReveal(n3.hello, again.challenge, n3.nonce);
+    again.reveal(r3.reveal);
+    assert.equal(again.confirm(r3.sas), true);
+    assert.equal(again.confirm(r3.sas), true);
+    assert.deepEqual([again.state, again.triesLeft], ['approved', 3]);
+    assert.equal(again.confirm(r3.sas === '000000' ? '000001' : '000000'), false);
+    assert.deepEqual([again.state, again.triesLeft], ['awaiting_sas', 2]);
+    await assert.rejects(again.listWithNew(e.aik, e.list), /not approved/);
+    assert.equal(again.confirm(r3.sas), true);
+    t += PCLINK_STEP_MS + 1;
+    assert.equal(again.confirm(r3.sas), false, '10분이 지나면 맞아도 끝난다');
+    assert.equal(again.state, 'failed');
   });
 
   it('새 PC는 다른 AIK로 서명한 목록·인증서, 자기 키가 바뀐 목록, 승인한 PC가 없는 목록, 다른 신청의 봉인문을 받지 않는다', async () => {
