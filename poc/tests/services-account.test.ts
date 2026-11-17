@@ -114,6 +114,7 @@ function caller(e: Env, aik: EdKey, d: Device) {
 async function fleet(e: Env, email: string, phones = 2): Promise<{ s: string; pc: Awaited<ReturnType<typeof desktop>>; d2: Device; ps: Device[]; state: (id: string) => Promise<Record<string, unknown>> }> {
   const s = await login(e, email);
   const pc = await desktop(e, s);
+  e.clock.advance(60_000); // 두 번째 PC는 AIK 고정 뒤에 붙는다(첫 PC와 등록 시각이 같을 수 없다)
   const d2 = device('desktop', e.clock.now());
   const ps = Array.from({ length: phones }, () => device('mobile', e.clock.now()));
   assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: d2.id, role: 'desktop', platform: 'macos', name: '집 PC', Sx: d2.S.b64, Vx: d2.V.b64 } })).status, 201);
@@ -609,6 +610,12 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     const { pc, d2, ps, state } = await fleet(e, 'halt@example.com', 2);
     const [p1, p2] = ps as [Device, Device];
     const phone = caller(e, pc.aik, p1);
+    // 폰은 devices 범위로 기기 목록(서버 상태)과 AIK 서명 목록을 읽는다. 목록을 바꾸지는 못한다
+    assert.equal(((await phone('GET', '/v1/devices')).json.devices as unknown[]).length, 4);
+    const dl = await phone('GET', '/v1/device-list');
+    assert.equal(dl.json.aikPub, pc.aik.b64);
+    assert.equal(dl.json.deviceList.listVersion, 2);
+    assert.equal((await phone('PUT', '/v1/device-list', { deviceList: dl.json.deviceList })).json.error, 'account.scope_denied');
     // 잃어버린 폰
     const r = await phone('POST', `/v1/devices/${p2.id}/stop`);
     assert.equal(r.status, 202, r.text);
@@ -896,9 +903,9 @@ describe('유료 기능 권리(체험 1달): 체험이 끝나고 구독이 없�
     assert.ok((t.json.scopes as string[]).includes('relay'));
     const g = await tok(['gateway']);
     assert.deepEqual([g.status, g.json.error], [402, 'account.subscription_required']);
-    // 폰 대화(chat 범위, ADR-047)도 유료 기능이다: 체험 뒤에는 빠지고 relay·push는 남는다. chat만 달라면 402
+    // 폰 대화(chat 범위, ADR-047)도 유료 기능이다: 체험 뒤에는 빠지고 relay·push·devices(기기 끊기, ADR-048)는 남는다. chat만 달라면 402
     const pt = await ptok();
-    assert.deepEqual(pt.json.scopes, ['relay', 'push']);
+    assert.deepEqual(pt.json.scopes, ['relay', 'push', 'devices']);
     const pg = await ptok(['chat']);
     assert.deepEqual([pg.status, pg.json.error], [402, 'account.subscription_required']);
     // 모의 PG로 구독 활성

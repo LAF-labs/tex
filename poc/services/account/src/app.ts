@@ -343,10 +343,10 @@ export function accountRouter(o: AccountAppOpts): Router {
     const b = V.pinAik(ctx.body);
     return json(201, await svc.pinFirstDesktop(s, b));
   });
-  r.add('GET', '/v1/devices', async (ctx) => {
-    const dpop = String(ctx.headers.authorization ?? '').startsWith('DPoP ');
-    return json(200, { devices: await svc.listDevices(dpop ? (await deviceMgmt(ctx)).acc : (await session(ctx)).accountId) });
-  });
+  /** 기기 목록 읽기: 계정 세션, 데스크톱(devlist) 또는 폰(devices) 기기 토큰 */
+  const sessionOrMgmt = async (ctx: Ctx): Promise<string> =>
+    String(ctx.headers.authorization ?? '').startsWith('DPoP ') ? (await deviceMgmt(ctx)).acc : (await session(ctx)).accountId;
+  r.add('GET', '/v1/devices', async (ctx) => json(200, { devices: await svc.listDevices(await sessionOrMgmt(ctx)) }));
   // 연결 끊기(기기 토큰, ADR-048 결정 6). 이 기기가 스스로 나감: 바로 폐기
   r.add('POST', '/v1/devices/self/leave', async (ctx) => {
     const c = await deviceMgmt(ctx);
@@ -387,7 +387,7 @@ export function accountRouter(o: AccountAppOpts): Router {
     await svc.cancelDelete(await session(ctx), ctx.params.id!);
     return json(204, undefined);
   });
-  r.add('GET', '/v1/device-list', async (ctx) => json(200, await svc.deviceList(await sessionOrDevice(ctx))));
+  r.add('GET', '/v1/device-list', async (ctx) => json(200, await svc.deviceList(await sessionOrMgmt(ctx))));
   // 서버 서명 계정 클레임(페어링 7단계, PC가 PAIR_OK에 싣는다). 데스크톱 기기 토큰만
   r.add('GET', '/v1/acct-claim', async (ctx) => {
     const c = await device(ctx, 'devlist');

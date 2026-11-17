@@ -61,6 +61,8 @@ interface AccountRow {
   status: string;
   created_at: number;
   aik_pub: string | null;
+  /** AIK를 고정한 시각(첫 PC의 등록 시각과 같다) */
+  aik_pinned_at: number | null;
   device_list_version: number;
   device_list_json: string | null;
   last_biz_change_at: number | null;
