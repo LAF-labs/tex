@@ -47,6 +47,7 @@ import type { RateGuard } from '../policy.ts';
 import type { LookupDef, PortalConfig } from '../portal.ts';
 import type { RunStatus } from '../run-end.ts';
 import { SIGNAL_DICT, type SignalDict } from '../signals.ts';
+import { ISSUE_LOCK_LOST, ISSUE_LOCK_RETRY_MS, ISSUE_LOCK_WAIT_MS, ISSUE_LOCKED_ELSEWHERE, type IssueLockPort } from '../issue-lock.ts';
 import { readbackCard } from './card.ts';
 import { RunController, type HumanPort, type RunOutcome } from './controller.ts';
 import { bundleInfoFrom, DecideRunner } from './decide.ts';
@@ -161,6 +162,14 @@ export interface IrRunInput {
    * engine-cert가 금고 비밀 창(D05 §3.5)을 여기 붙인다(B1 로그인 s4, B2 발급 서명 s21 signFlow human:secret).
    */
   human?: HumanPort;
+  /**
+   * 발급 잠금(ADR-048 결정 7, issue-lock.ts). 세금계산서 발급(kind invoice)만 쓴다: 게이트 앞(기준선 조회 전)에 잡고, 커밋 직전에 갱신하고, 쉬거나 끝나면 놓는다.
+   * 없으면(계정 연결 없는 기동·시험) 잠그지 않는다. 잠금이 필요한지는 main이 정한다(PC 한 대 계정은 서버를 부르지 않는다).
+   */
+  issueLock?: IssueLockPort;
+  /** 다른 PC가 잡고 있을 때 기다리는 상한·간격(ms, 기본 10분·5초). 시험용. */
+  issueLockWaitMs?: number;
+  issueLockRetryMs?: number;
   /** 사람 대기 한 번의 상한(ms, 기본 30분). 시험용. */
   handoffCapMs?: number;
   /** 실행 전체 수명 상한(ms, 대기 포함, 기본 2시간). 시험용. */
@@ -320,6 +329,8 @@ export class IrRun {
   private cmdWake: ((c: HandoffCommand) => void) | null = null;
   /** 사람 대기 중인 조율기 상태(manualDone은 HandedOff에서만). */
   private waitingState: RunStateName | null = null;
+  /** 발급 잠금을 main에 잡아 달라고 했다(놓을 때까지). 쉬거나 끝날 때 놓는다. */
+  private lockAsked = false;
   /** 비밀 차례 [중지](금고 창 닫기 요청). */
   private readonly secretAbort = new AbortController();
   /** [중지] 전용 신호: 실행기가 진행 중인 화면 대기·재시도 지연을 버리고 멈춘다(core/interp.ts stop). halt(걸쇠)는 쓰지 않는다(걸쇠 코드로 멈춰야 한다). */
@@ -448,6 +459,51 @@ export class IrRun {
       this.cmdWake = wake;
       if (this.stopRequested) wake('stop');
     });
+  }
+
+  /**
+   * 게이트 앞에서 발급 잠금을 잡는다. 다른 PC가 잡고 있으면 상한(기본 10분)까지 다시 잡아 본다. [중지]가 오면 그만둔다.
+   * 세금계산서 발급이 아니거나 잠금 포트가 없으면 바로 통과한다.
+   */
+  private async takeIssueLock(clock: Clock): Promise<ActResult> {
+    const lock = this.i.kind === 'cert' ? undefined : this.i.issueLock;
+    if (!lock) return { ok: true };
+    const until = clock.now() + (this.i.issueLockWaitMs ?? ISSUE_LOCK_WAIT_MS);
+    let waited = false;
+    for (;;) {
+      this.lockAsked = true;
+      const r = await this.orStop(lock.acquire().catch((): ActResult => ({ ok: false, code: 'issue.lock_unavailable' })), { ok: false, code: 'run.aborted' } as ActResult);
+      if (this.stopRequested) {
+        this.dropIssueLock();
+        return { ok: false, code: 'run.aborted' };
+      }
+      if (r.ok) {
+        if (waited) {
+          this.i.journal('issue.lock_wait_done', {});
+          this.i.phase('gate', 'now');
+        }
+        return r;
+      }
+      if (r.code !== ISSUE_LOCKED_ELSEWHERE || clock.now() >= until) {
+        this.i.journal('issue.lock_refused', { code: r.code });
+        this.dropIssueLock();
+        return r;
+      }
+      if (!waited) {
+        // 다른 PC가 발급 중이다: 승인 단계에 그 까닭을 한 줄로 보이고(멈춘 것이 아니다) 끝나기를 기다린다
+        this.i.journal('issue.lock_wait', {});
+        this.i.phase('gate', 'now', ISSUE_LOCKED_ELSEWHERE);
+      }
+      waited = true;
+      await this.orStop(clock.sleep(Math.min(this.i.issueLockRetryMs ?? ISSUE_LOCK_RETRY_MS, Math.max(0, until - clock.now()))), undefined);
+    }
+  }
+
+  /** 잠금을 놓는다(잡아 달라고 한 적이 있을 때만 main에 알린다). */
+  private dropIssueLock(): void {
+    if (!this.lockAsked) return;
+    this.lockAsked = false;
+    this.i.issueLock?.release();
   }
 
   /** 재개할 수 있는 멈춤인가. 게이트 만료·정지 하향·걸쇠(차단 신호 등)는 끝낸다(부장 결정 2026-11-11 ①). */
@@ -649,6 +705,8 @@ export class IrRun {
     const handlers: Handlers = { ...BASIC_HANDLERS, decide: decide ? decide.handler : async (): Promise<Outcome> => ({ t: 'fail', code: 'decide.unavailable' }) };
     let phase: string | null = null;
     const kind = i.kind ?? 'invoice';
+    // 발급 잠금은 세금계산서 발급만(ADR-048 결정 7 "대상"). 민원증명은 잠그지 않는다
+    const lock = kind === 'invoice' ? i.issueLock : undefined;
     const phaseOf: Readonly<Record<string, string>> = kind === 'cert' ? certPhases(ir) : PHASE_OF;
     const ledgerStates = (): LedgerState[] => {
       const r = i.ledger.get(i.intentId, 's21');
@@ -718,8 +776,13 @@ export class IrRun {
         const safe = decide?.safeForGate() ?? { ok: true as const };
         if (!safe.ok) return safe;
         if (this.stopRequested) return { ok: false, code: 'run.aborted' };
+        // 발급 잠금은 기준선보다 먼저 잡는다(기준선 뒤에 잡으면 두 PC가 서로 모르는 기준선으로 같은 건을 낼 수 있다, ADR-048 결정 7)
+        const locked = await this.takeIssueLock(clock);
+        if (!locked.ok) return locked;
         return takeBaseline(verifyDeps, ir, g);
       },
+      // 커밋 직전: 잠금 갱신을 서버가 받아 줘야 누른다. 안 되면 토큰을 쓰지 않고 멈춘다(재개하면 게이트 앞부터 다시)
+      ...(lock ? { beforeCommit: async (): Promise<ActResult> => (this.lockAsked ? lock.renew().catch((): ActResult => ({ ok: false, code: ISSUE_LOCK_LOST })) : { ok: false, code: ISSUE_LOCK_LOST }) } : {}),
       wmaxMs: (x) => wmaxMs(analysis, x, 30_000),
       commitWindowMs: 600_000,
       gate: {
@@ -764,6 +827,8 @@ export class IrRun {
       },
       onEffect: (effect, at) => {
         if (effect.startsWith('ledger.')) commit.ledgerEffect(effect, at);
+        // 발급 여부가 원장에 확정되면 잠금을 놓는다(뒤의 PDF·메일 확인 동안 다른 PC를 막지 않는다). 발급 안 됨이면 게이트 앞에서 다시 잡는다
+        if (effect.startsWith('ledger.committed') || effect.startsWith('ledger.not_committed')) this.dropIssueLock();
         // 발급 안 됨으로 정해지면 커밋 구간이 끝난다(D02 §8 not_committed → s11 재게이트). 그 뒤로는 다시 [중지]를 받는다.
         if (effect.startsWith('ledger.not_committed')) this.armed = false;
       },
@@ -782,6 +847,8 @@ export class IrRun {
       out = await c.start();
       // 사람 대기(B3): 핸드오프·Paused에서 끝내지 않고 명령을 기다린다. 재개는 조율기 규칙(같은 체크포인트, 토큰 폐기, 원장 미종결이면 verify).
       while (this.resumable(out)) {
+        // 사람을 기다리는 동안은 잠금을 놓는다(다른 PC를 막지 않는다). 재개하면 게이트 앞에서 다시 잡는다. 커밋 뒤 확인을 못 한 채 멈춘 경우도 놓는다(원장이 in_doubt로 남는다)
+        this.dropIssueLock();
         const left = Math.min(capMs, lifeLeft());
         const phase = PHASE_OF[out.at ?? ''] ?? 'login';
         this.waitingState = out.state;
@@ -829,6 +896,7 @@ export class IrRun {
     } finally {
       // E2: 끝난 실행에 조율기 타이머(HandedOff 상한)가 남지 않게.
       c.dispose();
+      this.dropIssueLock();
       if (phase) i.phase(phase, 'done');
       enforcer.finish({ userStopped: this.stopRequested });
       await this.wiring?.dispose().catch(() => {});

@@ -10,11 +10,11 @@ import { MessageChannel } from 'node:worker_threads';
 import { VaultClient } from '@sax/engine';
 import { appPaths, FileEventLog, wrapPort } from '@sax/platform';
 import {
-  AIK_PURPOSES as REMOTE_AIK, deviceAuthHeaders, initialDeviceList, issueCert, signKv, VD_PURPOSES as REMOTE_VD,
+  AIK_PURPOSES as REMOTE_AIK, checkPcLinkGrant, CTX, deviceAuthHeaders, initialDeviceList, issueCert, PcLinkApprover, pcLinkHello, pcLinkReveal, signKv, VD_PURPOSES as REMOTE_VD,
   verifyCert, verifyDeviceList, verifyKv, type AikSigner, type VdSigner,
 } from '@sax/remote';
 import {
-  AIK_PURPOSES, aikSeedFromRk, CRYPTO_KEY_ITEMS, CRYPTO_RATE_PER_HOUR, ed25519FromSeed, hpkeOpenBase, MemoryKeyStore, RPC_BY_PORT,
+  AIK_PURPOSES, aikSeedFromRk, CRYPTO_KEY_ITEMS, CRYPTO_RATE_PER_HOUR, ed25519FromSeed, hpkeOpenBase, hpkeSealBase, MemoryKeyStore, RK_LINK_INFO, RK_PREV_ITEM, RK_SEALS_PER_DAY, RPC_BY_PORT,
   Vault, VaultCrypto, VD_PURPOSES, x25519FromSeed, type KeyStore, type VaultPublicKeys,
 } from '@sax/vault';
 import { certSigOk, entrySigOk, opSigOk, revokeSigOk, type AcctOp } from '../services/account/src/index.ts';
@@ -47,6 +47,18 @@ describe('HPKE Base 개봉(RFC 9180 A.2.1 시험 벡터)', () => {
     const r = x25519FromSeed(skRm);
     assert.deepEqual(r.pub, pkRm);
     assert.deepEqual(hpkeOpenBase(r.priv, r.pub, encap, info, aad0, ct0), pt);
+  });
+
+  it('봉인: RFC 9180 A.2.1의 임시 키로 같은 enc·암호문이 나온다, 임시 키를 주지 않으면 매번 다르고 열린다', () => {
+    const skEm = hex('f4ec9b33b792c372c1d2c2063507b684ef925b8c75a42dbcbf57d63ccd381600');
+    const s = hpkeSealBase(pkRm, info, aad0, pt, skEm);
+    assert.deepEqual([s.enc, s.ct], [encap, ct0]);
+    const r = x25519FromSeed(skRm);
+    const a = hpkeSealBase(pkRm, info, aad0, pt);
+    const b = hpkeSealBase(pkRm, info, aad0, pt);
+    assert.notDeepEqual(a.enc, b.enc);
+    assert.deepEqual(hpkeOpenBase(r.priv, r.pub, a.enc, info, aad0, a.ct), pt);
+    assert.throws(() => hpkeSealBase(new Uint8Array(32), info, aad0, pt), /bad_point/);
   });
 
   it('암호문·aad·info·enc가 하나라도 다르면 open_failed', () => {
@@ -201,7 +213,122 @@ describe('금고 장기 키 연산', () => {
   });
 });
 
-const CRYPTO_METHODS = ['crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen'] as const;
+describe('계정 루트 키 넘기기(ADR-048 결정 3, D08 §4.3)', () => {
+  const info = RK_LINK_INFO;
+  const aad = new Uint8Array(32).fill(7);
+
+  it('쓰던 PC가 봉인한 RK를 새 PC가 넘겨받으면 AIK가 같아진다, 쓰던 RK는 보관 항목으로 옮긴다, 넘겨받기 키는 한 번만 쓴다', async () => {
+    const t = 5_000_000;
+    const oldPc = setup(new MemoryKeyStore(), () => t);
+    const newKs = new MemoryKeyStore();
+    const newPc = setup(newKs, () => t);
+    const aikOld = (await oldPc.c.publicKeys()).aik;
+    const before = await newPc.c.publicKeys();
+    const rkBefore = (await newKs.get(CRYPTO_KEY_ITEMS.rk, 32))!;
+    assert.notDeepEqual(before.aik, aikOld);
+    const hx = await newPc.c.linkKey();
+    const sealed = await oldPc.c.rkSeal({ recipient: hx, info, aad });
+    assert.deepEqual([sealed.enc.length, sealed.ct.length], [32, 48]);
+    assert.deepEqual(await newPc.c.rkImport({ ...sealed, info, aad, aikPub: aikOld }), aikOld);
+    const after = await newPc.c.publicKeys();
+    assert.deepEqual(after.aik, aikOld);
+    // 기기 키는 그대로다(RK와 무관)
+    assert.deepEqual([after.noiseStatic, after.vd, after.qd, after.kv], [before.noiseStatic, before.vd, before.qd, before.kv]);
+    assert.deepEqual(await newKs.get(`${RK_PREV_ITEM}${t}`, 32), rkBefore);
+    // 새 AIK로 서명한다
+    const sig = await newPc.c.signAik({ purpose: 'SAX-devlist-v1', msg: utf8('x') });
+    assert.ok(verifyCtx(aikOld, 'SAX-devlist-v1', utf8('x'), sig));
+    // 넘겨받기 키는 지워졌다
+    await assert.rejects(newPc.c.rkImport({ ...sealed, info, aad, aikPub: aikOld }), /no_link_key/);
+    // 로그에는 결과만 남는다
+    assert.ok(oldPc.log.lines.some((l) => l.includes('vault.rk_sealed')));
+    assert.ok(newPc.log.lines.some((l) => l.includes('vault.rk_imported')));
+    const rkHex = Buffer.from((await newKs.get(CRYPTO_KEY_ITEMS.rk, 32))!).toString('hex');
+    for (const l of [...oldPc.log.lines, ...newPc.log.lines]) assert.ok(!l.includes(rkHex) && !l.includes(Buffer.from(hx).toString('hex')));
+    // 다시 띄워도 넘겨받은 RK다
+    assert.deepEqual((await setup(newKs).c.publicKeys()).aik, aikOld);
+  });
+
+  it('기대한 AIK와 다르거나, 다른 대조 해시·다른 키로 봉인됐거나, 형식이 다르면 아무것도 바꾸지 않는다', async () => {
+    const oldPc = setup();
+    const newKs = new MemoryKeyStore();
+    const newPc = setup(newKs);
+    const aikOld = (await oldPc.c.publicKeys()).aik;
+    const mine = (await newPc.c.publicKeys()).aik;
+    await assert.rejects(newPc.c.rkImport({ enc: new Uint8Array(32).fill(9), ct: new Uint8Array(48), info, aad, aikPub: aikOld }), /no_link_key/);
+    const hx = await newPc.c.linkKey();
+    const sealed = await oldPc.c.rkSeal({ recipient: hx, info, aad });
+    // 서버가 기존 PC인 척 다른 RK를 봉인해 준 경우: AIK가 다르다
+    const other = setup();
+    await other.c.publicKeys();
+    const evil = await other.c.rkSeal({ recipient: hx, info, aad });
+    await assert.rejects(newPc.c.rkImport({ ...evil, info, aad, aikPub: aikOld }), /aik_mismatch/);
+    await assert.rejects(newPc.c.rkImport({ ...sealed, info, aad: new Uint8Array(32).fill(8), aikPub: aikOld }), /open_failed/);
+    const forged = sealed.ct.slice();
+    forged[0]! ^= 1;
+    await assert.rejects(newPc.c.rkImport({ enc: sealed.enc, ct: forged, info, aad, aikPub: aikOld }), /open_failed/);
+    for (const bad of [
+      { ...sealed, info: 'SAX-env-v1', aad, aikPub: aikOld }, { ...sealed, info, aad: aad.subarray(1), aikPub: aikOld },
+      { enc: sealed.enc, ct: sealed.ct.subarray(1), info, aad, aikPub: aikOld }, { ...sealed, info, aad, aikPub: aikOld.subarray(1) }, { ...sealed, info, aad },
+    ]) await assert.rejects(newPc.c.rkImport(bad), /bad_params/);
+    assert.deepEqual((await newPc.c.publicKeys()).aik, mine);
+    assert.equal(newPc.log.lines.filter((l) => l.includes('vault.rk_import_failed')).length, 3);
+    // 넘겨받기 키를 다시 만들면 앞 키로 봉인한 것은 열리지 않는다
+    await newPc.c.linkKey();
+    await assert.rejects(newPc.c.rkImport({ ...sealed, info, aad, aikPub: aikOld }), /open_failed/);
+    // 같은 RK를 다시 받으면 보관 항목을 만들지 않는다
+    const again = setup(newKs);
+    const hx2 = await again.c.linkKey();
+    await again.c.rkImport({ ...(await oldPc.c.rkSeal({ recipient: hx2, info, aad })), info, aad, aikPub: aikOld });
+    const third = new VaultCrypto({ keyStore: newKs, log: again.log, now: () => 777 });
+    const hx3 = await third.linkKey();
+    await third.rkImport({ ...(await oldPc.c.rkSeal({ recipient: hx3, info, aad })), info, aad, aikPub: aikOld });
+    assert.equal(await newKs.get(`${RK_PREV_ITEM}777`, 32), null);
+  });
+
+  it('봉인은 24시간에 3번까지, 형식이 다르면 bad_params, 낮은 차수 점은 bad_point', async () => {
+    let t = 1_000;
+    const { c, log } = setup(new MemoryKeyStore(), () => t);
+    const to = x25519FromSeed(new Uint8Array(32).fill(3)).pub;
+    for (const bad of [{ recipient: to, info: 'SAX-env-v1', aad }, { recipient: to.subarray(1), info, aad }, { recipient: to, info, aad: new Uint8Array(31) }, { recipient: to, info }]) await assert.rejects(c.rkSeal(bad), /bad_params/);
+    await assert.rejects(c.rkSeal({ recipient: new Uint8Array(32), info, aad }), /bad_point/);
+    for (let i = 0; i < RK_SEALS_PER_DAY; i++) await c.rkSeal({ recipient: to, info, aad });
+    await assert.rejects(c.rkSeal({ recipient: to, info, aad }), /rate_limited/);
+    assert.ok(log.lines.some((l) => l.includes('vault.rk_seal_denied')));
+    assert.equal(log.lines.filter((l) => l.includes('vault.rk_sealed')).length, RK_SEALS_PER_DAY);
+    t += 86_400_001;
+    await c.rkSeal({ recipient: to, info, aad });
+  });
+
+  it('@sax/remote 연결 프로토콜과 맞물린다: 6자리가 맞은 뒤 금고가 봉인하고, 새 PC 금고가 받아 같은 AIK로 서명한다', async () => {
+    const oldPc = setup();
+    const newPc = setup();
+    const o = await oldPc.c.publicKeys();
+    const n = await newPc.c.publicKeys();
+    const aik: AikSigner = { publicKey: o.aik, sign: (purpose, msg) => oldPc.c.signAik({ purpose, msg }) };
+    const oldId = '11111111-1111-4111-8111-111111111111';
+    const newId = '22222222-2222-4222-8222-222222222222';
+    const list = await initialDeviceList(aik, { deviceId: oldId, role: 'desktop', noisePub: o.noiseStatic, signPub: o.vd, registeredAt: 1 });
+    const { hello, nonce } = pcLinkHello({ deviceId: newId, noisePub: n.noiseStatic, signPub: n.vd, linkPub: await newPc.c.linkKey() });
+    const approver = new PcLinkApprover(hello, { deviceId: oldId, aikPub: o.aik });
+    const shown = pcLinkReveal(hello, approver.challenge, nonce);
+    assert.equal(approver.reveal(shown.reveal), true);
+    assert.equal(approver.confirm(shown.sas), true);
+    const grant = await approver.grant({ aik, deviceList: await approver.listWithNew(aik, list), sealRk: (recipient, inf, a) => oldPc.c.rkSeal({ recipient, info: new TextDecoder().decode(inf), aad: a }) });
+    const chk = checkPcLinkGrant(hello, approver.challenge, shown.transcript, grant);
+    assert.equal(chk.ok, true, JSON.stringify(chk.ok ? {} : chk));
+    if (!chk.ok) return;
+    assert.equal(new TextDecoder().decode(chk.info), CTX.pclinkRk);
+    assert.equal(CTX.pclinkRk, RK_LINK_INFO);
+    assert.deepEqual(await newPc.c.rkImport({ enc: chk.enc, ct: chk.ct, info: RK_LINK_INFO, aad: chk.aad, aikPub: chk.aikPub }), o.aik);
+    // 새 PC가 넘겨받은 AIK로 목록을 서명하면 계정의 AIK로 검증된다
+    const aik2: AikSigner = { publicKey: o.aik, sign: (purpose, msg) => newPc.c.signAik({ purpose, msg }) };
+    const c2 = await issueCert(aik2, { device_id: newId, role: 'desktop', Sx: n.noiseStatic, Vx: n.vd, not_after: Date.now() + 86_400_000 });
+    assert.ok(verifyCert(c2, o.aik));
+  });
+});
+
+const CRYPTO_METHODS = ['crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen', 'crypto.linkKey', 'crypto.rkSeal', 'crypto.rkImport'] as const;
 
 /** 금고 서비스 control 포트(main, VaultClient)로 만든 데스크톱 키(packages/remote DesktopKeys 모양). `engine`은 거부 확인용. */
 async function vaultDesktop() {
@@ -230,7 +357,7 @@ async function vaultDesktop() {
 }
 
 describe('받는 쪽 검증(금고 control 포트 경유)', () => {
-  it('엔진 포트: crypto.* 다섯 개 모두 denied(vault.rpc_denied), 키 연산은 하지 않는다', async () => {
+  it('엔진 포트: crypto.* 여덟 개 모두 denied(vault.rpc_denied), 키 연산은 하지 않는다(RK 봉인도 못 부른다)', async () => {
     const d = await vaultDesktop();
     try {
       const before = d.log.lines.filter((l) => l.includes('vault.crypto_op')).length;
@@ -241,6 +368,9 @@ describe('받는 쪽 검증(금고 control 포트 경유)', () => {
         'crypto.signVd': { purpose: 'SAX-dpop-v1', msg: utf8('x') },
         'crypto.signAik': { purpose: 'SAX-acct-op-v1', msg: utf8('x') },
         'crypto.hpkeOpen': { enc: new Uint8Array(32), ct: new Uint8Array(32), info: 'SAX-env-v1', aad: utf8('SAX-env-v1\u0001') },
+        'crypto.linkKey': {},
+        'crypto.rkSeal': { recipient: peer.pub, info: RK_LINK_INFO, aad: new Uint8Array(32) },
+        'crypto.rkImport': { enc: new Uint8Array(32).fill(9), ct: new Uint8Array(48), info: RK_LINK_INFO, aad: new Uint8Array(32), aikPub: new Uint8Array(32) },
       };
       for (const m of CRYPTO_METHODS) {
         await assert.rejects(d.engine.rpc(m, params[m]), /vault: denied/, m);
@@ -251,6 +381,12 @@ describe('받는 쪽 검증(금고 control 포트 경유)', () => {
       assert.deepEqual(await d.control.rpc('crypto.publicKeys'), d.pk);
       assert.equal(((await d.control.rpc('crypto.signVd', params['crypto.signVd'])) as { sig: Uint8Array }).sig.length, 64);
       assert.equal(((await d.control.rpc('crypto.signAik', params['crypto.signAik'])) as { sig: Uint8Array }).sig.length, 64);
+      // 연결 연산의 결과 모양: {pub}·{enc, ct}·{aik}
+      const link = await d.control.rpc<{ pub: Uint8Array }>('crypto.linkKey');
+      assert.equal(link.pub.length, 32);
+      const sealed = await d.control.rpc<{ enc: Uint8Array; ct: Uint8Array }>('crypto.rkSeal', { recipient: link.pub, info: RK_LINK_INFO, aad: new Uint8Array(32) });
+      assert.deepEqual([Object.keys(sealed).sort(), sealed.enc.length, sealed.ct.length], [['ct', 'enc'], 32, 48]);
+      assert.deepEqual(await d.control.rpc('crypto.rkImport', { ...sealed, info: RK_LINK_INFO, aad: new Uint8Array(32), aikPub: d.pk.aik }), { aik: d.pk.aik });
     } finally {
       await d.close();
     }

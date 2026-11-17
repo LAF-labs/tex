@@ -440,7 +440,7 @@ describe('셸 배선(소스 검사)', () => {
     const { SHELL_METHODS, USER_ACTION_METHODS } = await import('../apps/desktop/src/ipc.ts');
     assert.equal(USER_ACTION_METHODS['account.password'], 3_000);
     assert.deepEqual(Object.keys(SHELL_METHODS['account.password']), ['email', 'password']);
-    assert.match(src, /'account\.password': async \(p\) => \{\s*needGesture\(3_000\);\s*await accountInit\(\);\s*return account\.passwordLogin\(String\(p\.email\), p\.password\);\s*\}/);
+    assert.match(src, /'account\.password': async \(p\) => \{\s*needGesture\(3_000\);\s*await accountInit\(\);\s*return watchLink\(await account\.passwordLogin\(String\(p\.email\), p\.password\)\);\s*\}/);
   });
   it('로그인 화면: 비밀번호는 보낸 뒤 비우고, 틀림·없는 계정·잠금은 한 안내(안에 [이메일 코드로 로그인])', () => {
     const shell = fs.readFileSync(path.join(import.meta.dirname, '../apps/desktop/static/shell/shell.js'), 'utf8');
@@ -466,7 +466,7 @@ describe('셸 배선(소스 검사)', () => {
     assert.equal(USER_ACTION_METHODS['account.finishReset'], 3_000);
     assert.deepEqual(Object.keys(SHELL_METHODS['account.startReset']), ['email']);
     assert.deepEqual(Object.keys(SHELL_METHODS['account.finishReset']), ['code', 'password']);
-    assert.match(src, /'account\.finishReset': async \(p\) => \{\s*(\/\/[^\n]*\n\s*)?needTyping\(3_000\);\s*await accountInit\(\);\s*return account\.finishReset\(String\(p\.code\), p\.password\);\s*\}/);
+    assert.match(src, /'account\.finishReset': async \(p\) => \{\s*(\/\/[^\n]*\n\s*)?needTyping\(3_000\);\s*await accountInit\(\);\s*return watchLink\(await account\.finishReset\(String\(p\.code\), p\.password\)\);\s*\}/);
     const shell = fs.readFileSync(path.join(import.meta.dirname, '../apps/desktop/static/shell/shell.js'), 'utf8');
     assert.match(shell, /method === 'account\.finishReset'\) l\.draft\.password = '';/);
   });

@@ -18,7 +18,7 @@ import {
   type Limits,
 } from '@sax/svc-shared';
 import { deviceListSchema, signedCertSchema, signedOpSchema, type AcctOp, type DeviceList, type SignedCert } from './aik.ts';
-import { ACCOUNT, DEVICE, MS, PASSWORD } from './constants.ts';
+import { ACCOUNT, DEVICE, ISSUE_LOCK, MS, PASSWORD, PC_LINK } from './constants.ts';
 import { pageHeaders } from './pg-toss.ts';
 import { withFloor } from './password.ts';
 import type { AccountService, AuthMethod, BillingCaller, Session } from './service.ts';
@@ -74,6 +74,17 @@ const V = {
   op: validator<{ op: AcctOp; aikSig: string }>(signedOpSchema),
   /** scopes(선택): 범위 축소(ADR-040 결정 1). 비어 있지 않고 중복 없는 알려진 범위 이름 */
   deviceToken: validator<{ cert: SignedCert; scopes?: Scope[] }>(obj({ cert: signedCertSchema, scopes: { type: 'array', minItems: 1, maxItems: ALL_SCOPES.length, uniqueItems: true, items: { enum: [...ALL_SCOPES] } } }, ['cert'])),
+  linkId: validator<{ id: string }>(obj({ id: S.uuid4 })),
+  // 새 PC 연결 우편함(D08 §4.3). 모양과 크기만 본다. 약속·6자리·서명·봉인문의 진위는 두 PC가 본다
+  pcLinkHello: validator<{ hello: { v: 1; device_id: string; Sx: string; Vx: string; Hx: string; commit: string } }>(
+    obj({ hello: obj({ v: { const: 1 }, device_id: S.uuid4, Sx: S.b64key32, Vx: S.b64key32, Hx: S.b64key32, commit: S.b64key32 }) }),
+  ),
+  pcLinkChallenge: validator<{ challenge: { v: 1; device_id: string; aik_pub: string; nonce: string } }>(obj({ challenge: obj({ v: { const: 1 }, device_id: S.uuid4, aik_pub: S.b64key32, nonce: S.b64key32 }) })),
+  pcLinkReveal: validator<{ reveal: { v: 1; nonce: string } }>(obj({ reveal: obj({ v: { const: 1 }, nonce: S.b64key32 }) })),
+  pcLinkGrant: validator<{ grant: { v: 1; cert: SignedCert; deviceList: DeviceList; enc: string; ct: string } }>(
+    obj({ grant: obj({ v: { const: 1 }, cert: signedCertSchema, deviceList: deviceListSchema, enc: S.b64key32, ct: { type: 'string', pattern: '^[A-Za-z0-9+/]{64}$' } }) }),
+  ),
+  issueLockId: validator<{ lockId: string }>(obj({ lockId: S.token })),
   bindBiz: validator<{ bizHmac: string; rkOp?: { op: AcctOp; aikSig: string } }>(obj({ bizHmac: S.hex32, rkOp: signedOpSchema }, ['bizHmac'])),
 } as const;
 
@@ -428,6 +439,69 @@ export function accountRouter(o: AccountAppOpts): Router {
   });
   r.add('DELETE', '/v1/slots/:slot', async (ctx) => {
     await svc.deleteSlot((await device(ctx, 'slots')).acc, ctx.params.slot!);
+    return json(204, undefined);
+  });
+
+  // 새 PC 연결 우편함(ADR-048 결정 3, D08 §4.3). 새 PC는 계정 세션으로(아직 기기 토큰이 없다), 기존 PC는 데스크톱 기기 토큰으로 부른다
+  const accSalt = limits.idSalt('acc');
+  const linkId = (ctx: Ctx) => V.linkId({ id: ctx.params.id }).id;
+  const linkNew = async (ctx: Ctx) => {
+    const s = await session(ctx);
+    await limit(`pclink:s:${await accSalt.hash(s.accountId)}`, PC_LINK.callsPerHour, MS.H);
+    return s;
+  };
+  const linkOld = async (ctx: Ctx) => {
+    const c = await device(ctx, 'devlist');
+    await limit(`pclink:d:${await devSalt.hash(c.dev)}`, PC_LINK.callsPerHour, MS.H);
+    return { accountId: c.acc, deviceId: c.dev };
+  };
+  const dpopAuth = (ctx: Ctx) => String(ctx.headers.authorization ?? '').startsWith('DPoP ');
+  r.add('GET', '/v1/pc-links', async (ctx) => json(200, { links: await svc.pcLinks((await linkOld(ctx)).accountId) }));
+  r.add('PUT', '/v1/pc-links/:id', async (ctx) => {
+    const s = await linkNew(ctx);
+    await limit(`pclink:h:${await accSalt.hash(s.accountId)}`, PC_LINK.hellosPerAccountHour, MS.H);
+    await svc.putPcLinkHello(s, linkId(ctx), V.pcLinkHello(ctx.body).hello);
+    return json(204, undefined);
+  });
+  r.add('GET', '/v1/pc-links/:id', async (ctx) => json(200, await svc.pcLinkForNew(await linkNew(ctx), linkId(ctx))));
+  r.add('POST', '/v1/pc-links/:id/reveal', async (ctx) => {
+    await svc.putPcLinkReveal(await linkNew(ctx), linkId(ctx), V.pcLinkReveal(ctx.body).reveal);
+    return json(204, undefined);
+  });
+  r.add('POST', '/v1/pc-links/:id/challenge', async (ctx) => {
+    await svc.putPcLinkChallenge(await linkOld(ctx), linkId(ctx), V.pcLinkChallenge(ctx.body).challenge);
+    return json(204, undefined);
+  });
+  r.add('POST', '/v1/pc-links/:id/grant', async (ctx) => {
+    await svc.putPcLinkGrant(await linkOld(ctx), linkId(ctx), V.pcLinkGrant(ctx.body).grant);
+    return json(204, undefined);
+  });
+  r.add('DELETE', '/v1/pc-links/:id', async (ctx) => {
+    // 쓰던 PC가 지우면(거절) 아직 활성화되지 않은 그 PC의 신청 기록도 지운다. 새 PC가 지우면 우편함만 비운다
+    const old = dpopAuth(ctx);
+    await svc.deletePcLink(old ? (await linkOld(ctx)).accountId : (await linkNew(ctx)).accountId, linkId(ctx), old);
+    return json(204, undefined);
+  });
+
+  // 발급 잠금(ADR-048 결정 7, 데스크톱 기기 토큰). PC가 2대 이상인 계정의 PC만 부른다(PC가 자기 기기 목록으로 판단)
+  const issueLock = async (ctx: Ctx) => {
+    const c = await device(ctx, 'devlist');
+    await limit(`issuelock:${await devSalt.hash(c.dev)}`, ISSUE_LOCK.callsPerDeviceHour, MS.H);
+    return { accountId: c.acc, deviceId: c.dev };
+  };
+  r.add('GET', '/v1/issue-lock', async (ctx) => {
+    const c = await issueLock(ctx);
+    const l = await svc.issueLock(c.accountId);
+    return json(200, { ...l, mine: l.deviceId === c.deviceId });
+  });
+  r.add('POST', '/v1/issue-lock/acquire', async (ctx) => json(200, await svc.acquireIssueLock(await issueLock(ctx))));
+  r.add('POST', '/v1/issue-lock/renew', async (ctx) => {
+    const c = await issueLock(ctx);
+    return json(200, await svc.renewIssueLock(c, V.issueLockId(ctx.body).lockId));
+  });
+  r.add('POST', '/v1/issue-lock/release', async (ctx) => {
+    const c = await issueLock(ctx);
+    await svc.releaseIssueLock(c, V.issueLockId(ctx.body).lockId);
     return json(204, undefined);
   });
 

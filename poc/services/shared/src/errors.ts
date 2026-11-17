@@ -51,6 +51,12 @@ export const ERROR_STATUS = {
   'account.device_limit': 409,
   /** 계정에 남은 마지막 활성 데스크톱은 스스로 나가거나 폰이 정지할 수 없다(ADR-048 결정 6) */
   'account.last_desktop': 409,
+  /** 발급 잠금(ADR-048 결정 7): 다른 PC가 잡고 있다 / 내 잠금이 만료됐거나 다른 PC로 넘어갔다 */
+  'account.issue_locked': 409,
+  'account.issue_lock_lost': 409,
+  /** 새 PC 연결 우편함(ADR-048 결정 3): 신청이 없다 / 지금 단계에서 받을 수 없는 메시지다(이미 다른 PC가 답했다 등) */
+  'account.link_not_found': 404,
+  'account.link_state': 409,
   'account.device_churn_limit': 429,
   'account.device_not_found': 404,
   'account.device_suspended': 403,
@@ -154,6 +160,10 @@ export const PROPOSED_D16: readonly ErrorCode[] = [
   'account.current_password_required',
   'account.current_password_invalid',
   'account.last_desktop',
+  'account.issue_locked',
+  'account.issue_lock_lost',
+  'account.link_not_found',
+  'account.link_state',
   'relay.unauthorized',
   'relay.device_suspended',
   'push.unauthorized',

@@ -86,6 +86,12 @@ const EXACT: Readonly<Record<string, Branch | 'human_wait'>> = {
   'gate.denied': 'stop',
   'gate.expired': 'stop',
   'issue.consent_declined': 'stop',
+  // 발급 잠금(ADR-048 결정 7): 다른 PC가 발급 중이거나 겹치는지 확인하지 못했다. 다른 길로 가면 같은 건이 두 번 생길 수 있어 멈춘다.
+  // API 칸을 붙일 때는 그 칸도 같은 잠금을 잡아야 한다(지금 잠금은 홈택스 자동 발급에만 걸려 있다).
+  'issue.locked_elsewhere': 'stop',
+  'issue.lock_unavailable': 'stop',
+  'issue.lock_lost': 'stop',
+  'commit.precheck_failed': 'stop',
   'issue.manual_reported': 'stop',
   // 서버 정지·상한
   'policy.irreversible_per_day': 'stop',

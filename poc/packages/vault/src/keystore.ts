@@ -7,6 +7,11 @@ export interface KeyStore {
   get(name: string, bytes: number): Promise<Uint8Array | null>;
   /** 새 키를 만들어 기록한다. 부르는 쪽이 "없음"을 확인한 뒤에만 부른다. */
   create(name: string, bytes: number): Promise<Uint8Array>;
+  /**
+   * 정해진 값을 기록한다(있으면 덮는다). 계정 루트 키 넘겨받기(crypto.rkImport) 전용이다:
+   * 부르는 쪽이 쓰던 값을 보관 항목에 먼저 옮긴다. 다른 키에는 쓰지 않는다(N-30: 조용히 덮지 않는다).
+   */
+  put(name: string, value: Uint8Array): Promise<void>;
 }
 
 export const KEYCHAIN_SERVICE = 'SovereignAX';
@@ -30,6 +35,10 @@ export class OsKeyStore implements KeyStore {
     await (await this.entry(name)).setSecret(fresh);
     return fresh;
   }
+
+  async put(name: string, value: Uint8Array): Promise<void> {
+    await (await this.entry(name)).setSecret(Uint8Array.from(value));
+  }
 }
 
 export class MemoryKeyStore implements KeyStore {
@@ -46,6 +55,10 @@ export class MemoryKeyStore implements KeyStore {
     const k = new Uint8Array(randomBytes(bytes));
     this.keys.set(name, k);
     return Uint8Array.from(k);
+  }
+
+  async put(name: string, value: Uint8Array): Promise<void> {
+    this.keys.set(name, Uint8Array.from(value));
   }
 
   /** 시험용: 항목을 그대로 넣는다(길이 불일치 재현). */

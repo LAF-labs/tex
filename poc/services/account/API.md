@@ -141,6 +141,35 @@ PG에는 무작위 `pgCustomerRef`만 넘기고 이메일을 주지 않는다. �
 |---|---|---|---|---|
 | `POST /v1/device-tokens` | DPoP(Vx, `ath = b64u(sha256(JCS(cert)))`) | `{cert:{cert:{device_id, role, Sx, Vx, Kx?, Px?, not_after}, aikSig}, scopes?: string[]}` | `200 {token, expiresAt, scopes}`(`scopes`는 실제로 준 범위, 역할 범위 순서) | `account.cert_invalid`(AIK 서명·만료·91일 초과·키 불일치), `account.device_suspended`, `request.param_rejected`(`scopes`가 빈 배열·모르는 이름·중복이면 검증 전 스키마에서, 역할 범위의 부분집합이 아니면 검증 뒤), IP당 600회/시(검증 전), 기기당 60회/시(인증서·DPoP 검증 통과 뒤에만 셈). `scopes`가 없으면 역할 전체(하위 호환). 범위 축소는 엔진용 gateway 전용 토큰 등에 쓴다(ADR-040 결정 1). 역할 범위는 데스크톱 `gateway, relay, wake, slots, devlist, acct_op`, 폰 `relay, push, chat, devices`(ADR-047, `devices`는 ADR-048 결정 6: 기기 목록 보기·스스로 나가기·다른 기기 정지). 유료 범위(`gateway`·`chat`)는 체험·구독 중일 때만 주고 토큰에 `tier`를 싣는다: 권리가 없으면 그 범위만 빼고 주고, 유료 범위만 요청했으면 `402 account.subscription_required`. 발급 기록은 이벤트 이름 `account.device_token_issued.<역할>.<범위를 -로 이음 \| all>`뿐이다(기기·계정 ID 없음) |
 
+## 발급 잠금(ADR-048 결정 7)
+
+PC가 2대 이상인 계정에서 홈택스 발급은 잠금을 잡은 PC 하나만 들어간다. 계정당 하나이고, 잡고 있는 동안만 한 줄이 있다(잡은 기기·무작위 값·만료). 놓으면 지운다. 서버는 무엇을 몇 번 발급하는지 모른다. PC가 1대인 계정의 PC는 부르지 않는다(PC가 자기 기기 목록으로 판단한다). 기기당 합계 1,200회/시.
+
+| 메서드·경로 | 인증 | 요청 | 응답 | 오류 |
+|---|---|---|---|---|
+| `GET /v1/issue-lock` | 기기:devlist | — | `200 {held, deviceId, expiresAt, mine}` | 잡은 기기 이름은 PC가 자기 기기 목록에서 찾는다. 잠금 값은 주지 않는다 |
+| `POST /v1/issue-lock/acquire` | 기기:devlist | — | `200 {lockId, expiresAt}` | `409 account.issue_locked`(다른 데스크톱이 잡고 있다). 같은 데스크톱이 다시 잡으면 새 값이고 앞 값은 죽는다. 만료는 90초 |
+| `POST /v1/issue-lock/renew` | 기기:devlist | `{lockId}` | `200 {expiresAt}` | `409 account.issue_lock_lost`(만료됐거나 넘어갔다. PC는 커밋하지 않는다). PC는 30초마다, 그리고 커밋 직전에 부른다 |
+| `POST /v1/issue-lock/release` | 기기:devlist | `{lockId}` | `204` | 내 값이 아니어도 204(아무 일도 없다) |
+
+잡고 있던 데스크톱이 정지·폐기되면 잠금도 바로 지운다. 만료된 줄은 주기 작업이 지운다.
+
+## 새 PC 연결 우편함(ADR-048 결정 3, D08 §4.3)
+
+새 PC가 계정 루트키(RK)를 쓰던 PC에서 넘겨받을 때 두 PC가 주고받는 메시지 넷을 맡아 둔다. 서버는 순서와 모양·크기만 본다(hello → challenge → reveal → grant). 약속 해시·6자리·AIK 서명·RK 봉인문이 맞는지는 두 PC가 본다. 서버에 남는 것은 공개키·난수·AIK 서명 목록·인증서와 RK 봉인문(HPKE, 새 PC의 연결 전용 키로만 열린다)이고, 새 PC가 받아 가면 지우며 7일이 지나면 주기 작업이 지운다. 새 PC는 아직 기기 토큰이 없어 계정 세션으로 부르고, 쓰던 PC는 데스크톱 기기 토큰으로 부른다. `:id`는 새 PC의 기기 ID다. 계정당 신청 10회/시, 계정·기기당 합계 1,200회/시.
+
+| 메서드·경로 | 인증 | 요청 | 응답 | 오류 |
+|---|---|---|---|---|
+| `PUT /v1/pc-links/:id` | 세션 | `{hello:{v:1, device_id, Sx, Vx, Hx, commit}}` | `204` | `404 account.device_not_found`(내 계정의 신청 중이거나 활성인 데스크톱이 아니다), `request.param_rejected`(등록한 키와 다르다). 다시 올리면 앞 단계를 지우고 새로 시작한다. 활성 PC도 받는 까닭: 목록에는 올랐는데 RK를 받지 못하고 끊긴 PC가 다시 받는다 |
+| `GET /v1/pc-links/:id` | 세션 | — | `200 {challenge, grant}`(없으면 null) | `404 account.link_not_found` |
+| `POST /v1/pc-links/:id/reveal` | 세션 | `{reveal:{v:1, nonce}}` | `204` | `409 account.link_state`(challenge가 아직 없거나 이미 올렸다) |
+| `GET /v1/pc-links` | 기기:devlist | — | `200 {links:[{deviceId, name, platform, createdAt, hello, challengedBy, reveal}]}` | 끝났거나(grant) 만료된 신청은 빠진다. 이름·플랫폼은 새 PC가 신청 때 적은 값이다 |
+| `POST /v1/pc-links/:id/challenge` | 기기:devlist | `{challenge:{v:1, device_id, aik_pub, nonce}}` | `204` | `request.param_rejected`(`device_id`가 부르는 기기가 아니다), `409 account.link_state`(다른 PC가 먼저 답했다) |
+| `POST /v1/pc-links/:id/grant` | 기기:devlist | `{grant:{v:1, cert, deviceList, enc, ct}}` | `204` | `409 account.link_state`(답한 PC가 아니다, reveal이 없다, 새 PC가 아직 활성이 아니다, 이미 올렸다). 쓰던 PC는 새 목록(`PUT /v1/device-list`)을 먼저 올린 뒤 부른다 |
+| `DELETE /v1/pc-links/:id` | 세션 또는 기기:devlist | — | `204` | 없어도 204. 새 PC(세션)는 받아 간 뒤나 그만둘 때 부르고 우편함만 비운다(신청 중인 기기 기록은 남아 같은 PC가 다시 시도할 때 쓴다). 쓰던 PC(기기 토큰)는 6자리가 다르거나 거절할 때 부르고, 아직 활성화되지 않은 그 데스크톱의 신청 기록도 지워 자리를 비운다(활성 기기는 건드리지 않는다) |
+
+새 PC가 정지·폐기되면 그 신청도 바로 지운다. 답한 PC가 사라져 멈춘 신청은 새 PC가 hello를 다시 올려 새로 시작한다.
+
 ## 프로필 슬롯·사업자 HMAC(B-28, C-09)
 
 | 메서드·경로 | 인증 | 요청 | 응답 | 오류 |
