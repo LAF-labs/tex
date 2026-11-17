@@ -39,11 +39,12 @@ describe('폰 발급 명령', () => {
 });
 
 describe('cmd.ack', () => {
-  it('accepted·pc_only는 runId, rejected는 이유가 있어야 한다', () => {
+  it('accepted·start_gate·pc_only는 runId, rejected는 이유가 있어야 한다', () => {
     const c = { pairId: PAIR, from: 'desktop' as const, seq: 2 };
     assert.ok(encodeEnvelope(makeEnvelope('cmd.ack', { cmdId: ulid(), state: 'pc_only', runId: ulid() }, c)));
     assert.ok(encodeEnvelope(makeEnvelope('cmd.ack', { cmdId: ulid(), state: 'rejected', reason: 'counterparty_unknown' }, c)));
     assert.throws(() => encodeEnvelope(makeEnvelope('cmd.ack', { cmdId: ulid(), state: 'accepted' }, c)));
+    assert.throws(() => encodeEnvelope(makeEnvelope('cmd.ack', { cmdId: ulid(), state: 'start_gate' }, c)));
     assert.throws(() => encodeEnvelope(makeEnvelope('cmd.ack', { cmdId: ulid(), state: 'rejected' }, c)));
   });
 });
