@@ -66,6 +66,8 @@ export interface MatchInput {
   /** 'receivableId|txnId' */
   rejects: Set<string>;
   feeTolerance?: number;
+  /** in = 받을 돈(입금), out = 낼 돈(출금, 11 §2.3). 규칙은 같고 근거 문구만 다르다 */
+  side?: Side;
 }
 
 export interface AutoMatch {
@@ -91,6 +93,18 @@ function inWindow(r: MatchReceivable, day: string): boolean {
 }
 
 const won = (n: number) => `${n.toLocaleString('ko-KR')}원`;
+
+export type Side = 'in' | 'out';
+
+const SIGNAL_TEXT_OUT: Record<NameSignal, string> = {
+  cp_account: '등록한 거래처 계좌로 보낸 돈이에요',
+  alias: '기억해 둔 받는 분 이름이에요',
+  holder: '받는 분이 거래처 계좌 예금주예요',
+  assigned: '이 거래처 출금으로 정하셨어요',
+  name: '받는 분 이름이 상호와 같아요',
+  rep: '받는 분 이름이 대표자 이름과 같아요',
+  prefix: '받는 분 이름이 상호 앞부분과 같아요(잘린 이름일 수 있어요)',
+};
 
 const SIGNAL_TEXT: Record<NameSignal, string> = {
   cp_account: '등록한 거래처 계좌에서 온 돈이에요',
@@ -159,8 +173,11 @@ function sumRuns(list: MatchReceivable[], amount: number): MatchReceivable[][] {
 const FIT_RANK: Record<AmountFit, number> = { exact: 5, fee: 4, sum: 3, partial: 2, over: 1 };
 
 /** 줄 하나의 후보(사람이 뗀 짝 제외). 앞이 가장 그럴듯함 */
-export function candidatesFor(txn: MatchTxn, receivables: MatchReceivable[], cps: Map<string, CpIndex>, rejects: Set<string>, tol = FEE_TOLERANCE): Candidate[] {
+export function candidatesFor(txn: MatchTxn, receivables: MatchReceivable[], cps: Map<string, CpIndex>, rejects: Set<string>, tol = FEE_TOLERANCE, side: Side = 'in'): Candidate[] {
   const amt = txn.unallocated;
+  const isOut = side === 'out';
+  const texts = isOut ? SIGNAL_TEXT_OUT : SIGNAL_TEXT;
+  const who = isOut ? '받는 분' : '입금자';
   if (amt <= 0) return [];
   const sig = nameSignals(txn, cps);
   const open = receivables.filter((r) => r.remaining > 0 && inWindow(r, txn.day) && !rejects.has(`${r.id}|${txn.id}`));
@@ -172,21 +189,21 @@ export function candidatesFor(txn: MatchTxn, receivables: MatchReceivable[], cps
     const s = sig.get(key) ?? null;
     const st: Strength | 0 = s ? STRENGTH[s] : 0;
     const exact = list.filter((r) => r.remaining === amt);
-    const why = s ? SIGNAL_TEXT[s] : null;
+    const why = s ? texts[s] : null;
     for (const r of exact) {
       if (st >= 1) out.push({ receivableIds: [r.id], cpKey: key, fit: 'exact', signal: s, strength: st, amounts: [amt], feeGap: 0, reason: `금액이 같고 ${why}` });
-      else if (exactAll.length === 1) out.push({ receivableIds: [r.id], cpKey: key, fit: 'exact', signal: null, strength: 0, amounts: [amt], feeGap: 0, reason: txn.payer ? `금액은 같고 입금자 '${txn.payer}'는 처음 보는 이름이에요` : '금액은 같고 입금자 이름이 없어요' });
+      else if (exactAll.length === 1) out.push({ receivableIds: [r.id], cpKey: key, fit: 'exact', signal: null, strength: 0, amounts: [amt], feeGap: 0, reason: txn.payer ? `금액은 같고 ${who} '${txn.payer}'는 처음 보는 이름이에요` : `금액은 같고 ${who} 이름이 없어요` });
       else out.push({ receivableIds: [r.id], cpKey: key, fit: 'exact', signal: null, strength: 0, amounts: [amt], feeGap: 0, reason: '금액이 같은 건이 여러 개예요. 작성일이 이른 건부터 보여 드려요' });
     }
     if (exact.length || st < 2) continue;
     for (const r of list) {
       const gap = r.remaining - amt;
       if (gap > 0 && gap <= tol) out.push({ receivableIds: [r.id], cpKey: key, fit: 'fee', signal: s, strength: st, amounts: [amt], feeGap: gap, reason: `수수료 ${won(gap)}을 빼고 받은 것 같아요 · ${why}` });
-      else if (gap > tol) out.push({ receivableIds: [r.id], cpKey: key, fit: 'partial', signal: s, strength: st, amounts: [amt], feeGap: 0, reason: `일부 받음 ${won(amt)} · 남은 ${won(gap)} · ${why}` });
-      else if (gap < 0) out.push({ receivableIds: [r.id], cpKey: key, fit: 'over', signal: s, strength: st, amounts: [r.remaining], feeGap: 0, reason: `남은 돈보다 ${won(-gap)} 많아요(여러 건을 한 번에 보냈거나 먼저 보낸 돈일 수 있어요) · ${why}` });
+      else if (gap > tol) out.push({ receivableIds: [r.id], cpKey: key, fit: 'partial', signal: s, strength: st, amounts: [amt], feeGap: 0, reason: `일부 ${isOut ? '냄' : '받음'} ${won(amt)} · 남은 ${won(gap)} · ${why}` });
+      else if (gap < 0) out.push({ receivableIds: [r.id], cpKey: key, fit: 'over', signal: s, strength: st, amounts: [r.remaining], feeGap: 0, reason: `남은 돈보다 ${won(-gap)} 많아요(${isOut ? '여러 건을 한 번에 냈거나 미리 낸 돈일 수 있어요' : '여러 건을 한 번에 보냈거나 먼저 보낸 돈일 수 있어요'}) · ${why}` });
     }
     for (const run of sumRuns([...list].sort((a, b) => (a.writtenOn < b.writtenOn ? -1 : a.writtenOn > b.writtenOn ? 1 : 0)), amt))
-      out.push({ receivableIds: run.map((r) => r.id), cpKey: key, fit: 'sum', signal: s, strength: st, amounts: run.map((r) => r.remaining), feeGap: 0, reason: `${run.length}건을 한 번에 보낸 것 같아요 · ${why}` });
+      out.push({ receivableIds: run.map((r) => r.id), cpKey: key, fit: 'sum', signal: s, strength: st, amounts: run.map((r) => r.remaining), feeGap: 0, reason: `${run.length}건을 한 번에 ${isOut ? '낸' : '보낸'} 것 같아요 · ${why}` });
   }
   const first = (c: Candidate) => open.find((r) => r.id === c.receivableIds[0])!.writtenOn;
   out.sort((a, b) => b.strength - a.strength || FIT_RANK[b.fit] - FIT_RANK[a.fit] || (first(a) < first(b) ? -1 : first(a) > first(b) ? 1 : 0) || (a.receivableIds[0]! < b.receivableIds[0]! ? -1 : 1));
@@ -211,13 +228,15 @@ export function autoOf(txn: MatchTxn, all: Candidate[], cps: Map<string, CpIndex
  */
 export function runMatch(input: MatchInput): MatchResult {
   const cps = indexCps(input.counterparties);
-  const tol = input.feeTolerance ?? FEE_TOLERANCE;
+  const side = input.side ?? 'in';
+  // 출금은 내가 보내는 돈이라 거래처가 수수료를 빼는 일이 없다(이체 수수료는 따로 찍힌다, 11 §2.3)
+  const tol = side === 'out' ? 0 : (input.feeTolerance ?? FEE_TOLERANCE);
   const recv = input.receivables.map((r) => ({ ...r }));
   const txns = [...input.txns].sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : a.id < b.id ? -1 : 1)).map((t) => ({ ...t }));
   const auto: AutoMatch[] = [];
   for (const t of txns) {
     if (t.unallocated <= 0) continue;
-    const cands = candidatesFor(t, recv, cps, input.rejects, tol);
+    const cands = candidatesFor(t, recv, cps, input.rejects, tol, side);
     const a = autoOf(t, cands, cps);
     if (!a) continue;
     const r = recv.find((x) => x.id === a.receivableIds[0])!;
@@ -226,6 +245,6 @@ export function runMatch(input: MatchInput): MatchResult {
     t.unallocated = 0;
   }
   const candidates = new Map<string, Candidate[]>();
-  for (const t of txns) if (t.unallocated > 0) candidates.set(t.id, candidatesFor(t, recv, cps, input.rejects, tol));
+  for (const t of txns) if (t.unallocated > 0) candidates.set(t.id, candidatesFor(t, recv, cps, input.rejects, tol, side));
   return { auto, candidates };
 }
