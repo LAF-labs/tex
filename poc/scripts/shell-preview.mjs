@@ -616,7 +616,9 @@ Object.assign(scenes, {
   async issueDate(win) {
     await js(win, `(() => { const i = document.querySelector('#composer'); i.value = 'A상사 지난달 말일자로 10개 33만원씩 끊어줘'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
     await sleep(300);
-    const back = { writeDate: dayOffset(-20), writeDateSet: true, quantity: 10, unitPrice: 330000 };
+    const t = dayOffset(0);
+    const lastMonthEnd = new Date(Date.UTC(Number(t.slice(0, 4)), Number(t.slice(5, 7)) - 1, 0)).toISOString().slice(0, 10);
+    const back = { writeDate: lastMonthEnd, writeDateSet: true, quantity: 10, unitPrice: 330000 };
     ev(win, { type: 'run', run: { ...mkRun('draft'), ...back, issueDateHeld: true } });
     await sleep(100);
     await shot(win, '04d-draft-issue-date-held');
