@@ -233,7 +233,19 @@ describe('계정 화면 경로(#224 비밀번호 로그인이 실제 앱에서 n
       await assert.rejects(eg.cloud({ method: m as never, url: CLOUD_ORIGIN + p, body: m === 'POST' || m === 'PUT' ? '{}' : undefined }), { code: 'path_not_allowed' }, `${m} ${p}`);
     }
     const ports = cloudPorts({ egress: eg, env: 'prod' });
-    await assert.rejects(ports.account.passwordLogin('a@example.com', 'x'.repeat(12)).then(() => null), (e: Error & { code: string }) => e.code !== 'net.path_not_allowed', '비밀번호 로그인은 허용 목록을 지난다(운영 origin, 네트워크 단계에서 실패)');
+    // 운영 origin으로 진짜 나가지 않게 fetch를 막는다(2026-11-17: 이 줄이 CI·PC 시험마다 운영 /v1/auth/password에 401을 하루 수백 번 남겼다).
+    const realFetch = globalThis.fetch;
+    const hit: string[] = [];
+    globalThis.fetch = (async (url: string | URL) => {
+      hit.push(String(url));
+      throw new TypeError('fetch failed');
+    }) as typeof fetch;
+    try {
+      await assert.rejects(ports.account.passwordLogin('a@example.com', 'x'.repeat(12)).then(() => null), (e: Error & { code: string }) => e.code !== 'net.path_not_allowed', '비밀번호 로그인은 허용 목록을 지난다(운영 origin, 네트워크 단계에서 실패)');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    assert.deepEqual(hit, [CLOUD_ORIGIN + '/v1/auth/password'], '허용 목록을 지나 fetch까지 갔다(실제로는 나가지 않음)');
   });
 
   it('대조: main 계정·릴레이 클라이언트가 부르는 모든 (메서드, 경로)가 CLOUD_ROUTES에 있다(메서드를 더하면 이 표도 채워야 통과)', async () => {
