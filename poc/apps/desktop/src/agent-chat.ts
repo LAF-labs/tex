@@ -349,8 +349,8 @@ export class AgentChat {
           line('나간 돈', cash.out, cash.through),
           line('차이', cash.net, cash.through),
           line('지금 잔액', cash.balance, today),
-          line('앞으로 30일 받을 돈', cash.nextIn, today),
-          line('앞으로 30일 낼 돈', cash.nextOut, today),
+          line('앞으로 한 달 받을 돈', cash.nextIn, today),
+          line('앞으로 한 달 낼 돈', cash.nextOut, today),
         ];
         s.results.set(ref, { kind: 'cash_flow', title: `${Number(month.slice(5))}월 돈 흐름${cash.complete ? '' : '(일부 계좌 거래내역이 모자라 확인된 것만)'}`, rows, cash });
         // 그달을 다 덮지 못한 계좌가 있으면 partial: 모델은 "일부 계좌 거래내역이 모자라 확인 못 함"을 같이 말한다(11 §3.4)

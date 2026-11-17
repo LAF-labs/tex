@@ -629,7 +629,7 @@ describe('AgentChat 낼 돈·돈 흐름(11 §2·§3)', () => {
     assert.deepEqual(cashMonths, ['2026-10']);
     assert.equal(t.text, '일부 계좌는 확인 못 했어요. 들어온 돈 3,300,000원, 나간 돈 1,200,000원이에요.');
     assert.ok(t.show.length === 1 && t.show[0]!.type === 'table' && t.show[0]!.table === 'cash_flow' && t.show[0]!.title.startsWith('10월 돈 흐름(일부'));
-    assert.deepEqual(t.show[0]!.type === 'table' && t.show[0]!.rows.map((r) => [r.counterparty, r.total]), [['들어온 돈', 3_300_000], ['나간 돈', 1_200_000], ['차이', 2_100_000], ['지금 잔액', null], ['앞으로 30일 받을 돈', 550_000], ['앞으로 30일 낼 돈', 440_000]]);
+    assert.deepEqual(t.show[0]!.type === 'table' && t.show[0]!.rows.map((r) => [r.counterparty, r.total]), [['들어온 돈', 3_300_000], ['나간 돈', 1_200_000], ['차이', 2_100_000], ['지금 잔액', null], ['앞으로 한 달 받을 돈', 550_000], ['앞으로 한 달 낼 돈', 440_000]]);
     const t2 = agent(await say(a, '잔액은?', () => reply({ text: '지금 잔액은 {r1.cash.balance}예요.' })));
     assert.equal(t2.text, AGENT_CASH_MISSING_TEXT);
     // 돈 흐름 결과에 행 슬롯을 쓰면 채우지 않는다
