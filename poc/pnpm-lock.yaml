@@ -414,6 +414,9 @@ importers:
       '@napi-rs/keyring':
         specifier: 2.1.2
         version: 2.1.2
+      '@noble/ciphers':
+        specifier: 2.4.0
+        version: 2.4.0
       '@sax/platform':
         specifier: workspace:*
         version: link:../platform

@@ -15,7 +15,7 @@ import {
   verifyCert, verifyDeviceList, verifyKv, type AikSigner, type ShareRowCore, type VdSigner,
 } from '@sax/remote';
 import {
-  AIK_PURPOSES, aikSeedFromRk, CRYPTO_KEY_ITEMS, CRYPTO_RATE_PER_HOUR, ed25519FromSeed, hpkeOpenBase, hpkeSealBase, MemoryKeyStore, RK_LINK_INFO, RK_PREV_ITEM, RK_SEALS_PER_DAY, RPC_BY_PORT,
+  AIK_PURPOSES, aikSeedFromRk, CRYPTO_KEY_ITEMS, CRYPTO_RATE_PER_HOUR, ed25519FromSeed, hpkeOpenBase, hpkeSealBase, MemoryKeyStore, RK_LINK_INFO, RK_PREV_ITEM, RK_SEALS_PER_DAY, RPC_BY_PORT, rpcErrorCode,
   SHARE_EPOCH_MAX, SHARE_KEY_INFO_PREFIX, SHARE_SIGN_CONTEXT, SHARE_SIGN_INFO, SHARE_SIGN_MSG_MAX, Vault, VaultCrypto, VD_PURPOSES, x25519FromSeed, type KeyStore, type VaultPublicKeys,
 } from '@sax/vault';
 import { certSigOk, entrySigOk, opSigOk, revokeSigOk, type AcctOp } from '../services/account/src/index.ts';
@@ -460,6 +460,30 @@ describe('받는 쪽 검증(금고 control 포트 경유)', () => {
     } finally {
       await d.close();
     }
+  });
+
+  it('키 연산이 실패하면 vault.rpc_failed 한 줄: 메서드·포트·사유 코드만(오류 문장은 남기지 않는다)', async () => {
+    const d = await vaultDesktop();
+    try {
+      // 낮은 차수 점으로는 봉인하지 않는다. 부르는 쪽은 코드 없는 오류만 받으니 사유를 금고 로그에 남긴다
+      await assert.rejects(d.control.rpc('crypto.rkSeal', { recipient: new Uint8Array(32), info: RK_LINK_INFO, aad: new Uint8Array(32) }), /bad_point/);
+      await assert.rejects(d.control.rpc('crypto.rkSeal', { recipient: new Uint8Array(31), info: RK_LINK_INFO, aad: new Uint8Array(32) }), /bad_params/);
+      const failed = d.log.lines.filter((l) => l.includes('"vault.rpc_failed"'));
+      assert.equal(failed.length, 2);
+      assert.ok(failed[0]!.includes('"method":"crypto.rkSeal"') && failed[0]!.includes('"port":"control"') && failed[0]!.includes('"error":"bad_point"'), failed[0]);
+      assert.ok(failed[1]!.includes('"error":"bad_params"'), failed[1]);
+      assert.ok(!d.log.lines.some((l) => l.includes('vault.rk_sealed')), '실패한 봉인은 봉인 기록이 없다');
+      // 된 요청은 실패 줄을 남기지 않는다
+      await d.control.rpc('crypto.publicKeys');
+      assert.equal(d.log.lines.filter((l) => l.includes('"vault.rpc_failed"')).length, 2);
+    } finally {
+      await d.close();
+    }
+    // 런타임 오류는 Node 오류 코드만, 그 밖의 문장은 남기지 않는다
+    assert.equal(rpcErrorCode(Object.assign(new Error('Unknown cipher'), { code: 'ERR_CRYPTO_UNKNOWN_CIPHER' })), 'ERR_CRYPTO_UNKNOWN_CIPHER');
+    assert.equal(rpcErrorCode(new Error("ENOENT: no such file or directory, open '/Users/someone/x'")), 'error');
+    assert.equal(rpcErrorCode(new Error('vault.keystore_mismatch')), 'vault.keystore_mismatch');
+    assert.equal(rpcErrorCode(null), 'error');
   });
 
   it('공개키는 Uint8Array 32B 다섯 개, control 포트(main)로 부른다', async () => {
