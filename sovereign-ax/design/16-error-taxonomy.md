@@ -126,6 +126,8 @@
 | `account` | `slot_limit`(409) / `slot_not_found`(404) / `rebind_too_soon`(409) | 프로필 슬롯 2개 초과 / 슬롯 없음 / 사업자 HMAC 재바인딩 90일 안(B-28, D09 §2) | 안내만 |
 | `account` | `device_limit`(409) / `device_churn_limit`(429) / `device_not_found`(404) / `device_suspended`(403) / `not_pending`(409) | 기기 수 상한 / 30일 교체 상한(C-32) / 기기 없음 / 긴급 정지·폐기된 기기 / 대기 상태가 아닌 기기 | 안내만. 정지 해제는 AIK 서명 계정 작업 |
 | `account` | `aik_not_pinned`(409) / `aik_already_pinned`(409) / `aik_signature_invalid`(400) / `list_version_stale`(409) | AIK 미고정 / 이미 고정 / AIK 서명 오류 / 기기 목록 버전이 저장값보다 낮음(D08 §4.1) | 목록 다시 받기 |
+| `account` | `last_desktop`(409) | 계정에 남은 마지막 활성 데스크톱은 스스로 나가거나 폰이 정지할 수 없음(ADR-048 결정 6) | 안내만 |
+| `account` | `link_not_found`(404) / `link_state`(409) | 새 PC 연결 우편함(ADR-048 결정 3, D08 §4.3): 신청이 없거나 지워짐 / 지금 단계에서 받을 수 없는 메시지(순서 밖·이미 있음·승인 창 지남) | 새 PC가 다시 신청 |
 | `account` | `issue_locked`(409) / `issue_lock_lost`(409) | 다른 데스크톱이 발급 잠금을 잡고 있음 / 내 잠금이 만료됐거나 넘어감(ADR-048 결정 7). PC는 각각 `issue.locked_elsewhere`·`issue.lock_lost`로 옮긴다 | 기다렸다 다시 잡기 / 커밋하지 않고 게이트 앞부터 |
 | `account` | `billing_signature_invalid`(400) | PG 웹훅 서명 불일치(**보안 이벤트**) | 무시·기록 |
 | `gateway` | `run_token_invalid`(401) / `run_budget_exceeded`(429) / `device_suspended`(403) | `runToken`(`SAX-run-token-v1`) 오류 / 실행당 예산 초과 / 정지된 기기 | 해당 호출 `unknown`, 예산 초과는 핸드오프 |
