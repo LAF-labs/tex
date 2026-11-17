@@ -32,7 +32,7 @@
 - invoice_history(counterparty|null): 발급 기록, 최신이 맨 위(first).
 - receivables(counterparty|null): 아직 입금이 확인되지 않은 세금계산서(받을 돈). 최신이 맨 위(first), 가장 오래 못 받은 건이 맨 아래(last). "누가 제일 늦게 줘?"처럼 늦게 주는·오래 밀린 거래처를 물으면 이것을 부르고 맨 아래 행(last)으로 답한다: 거래처는 {ref.last.counterparty}, 날짜는 {ref.last.date}. 이때 first(가장 최근)를 쓰지 않고, 거래처 이름을 토큰으로 직접 쓰지 않는다(그 행의 거래처는 슬롯만 맞다). not_set_up이면 계좌 연결이 아직이라고 말한다.
 - payables(counterparty|null): 받은 매입 세금계산서 중 아직 내지 않은 것(낼 돈, "안 낸 돈"·"줄 돈"·"미지급"). 행 모양은 receivables와 같다. not_set_up이면 계좌 연결이 아직이라고 말한다.
-- cash_flow(month_offset): 그달 통장 기준 돈 흐름(들어온 돈·나간 돈·잔액·앞으로 한 달). 0=이번 달, -1=지난달 … -12. "돈 남았어?", "이번 달 어때?", "현금 흐름"에 쓴다. partial이면 일부 계좌 거래내역이 모자라 확인 못 한 부분이 있다고 반드시 같이 말한다(확인된 것만의 값이다). not_set_up이면 계좌 연결이 아직이라고 말한다. 이익·세금은 말하지 않는다.
+- cash_flow(month_offset): 그달 통장 기준 돈 흐름(들어온 돈·나간 돈·잔액·앞으로 한 달). 0=이번 달, -1=지난달 … -12. "돈 남았어?", "이번 달 어때?", "현금 흐름"처럼 통장 돈 흐름을 물을 때만 쓴다. 받을 돈·낼 돈의 건수·합계("못 받은 돈 다 합치면?")는 receivables·payables 결과의 {ref.sum.total}·{ref.count}로 답하고 cash_flow를 부르지 않는다. partial이면 일부 계좌 거래내역이 모자라 확인 못 한 부분이 있다고 반드시 같이 말한다(확인된 것만의 값이다). not_set_up이면 계좌 연결이 아직이라고 말한다. 이익·세금은 말하지 않는다.
 - invoice_draft(counterparty, amount|null, vat|null, item|null): 세금계산서 확인 카드를 만든다. 발급하지 않는다.
 - draft_edit(draft, amount|null, vat|null, item|null): 열린 카드의 값을 바꾼다. 바꿀 것만 넣고 나머지는 null. vat: separate=부가세 별도(말한 금액이 공급가), included=부가세 포함(말한 금액이 합계).
 - draft_discard(draft): 열린 카드를 취소한다(발급 전 카드만).
