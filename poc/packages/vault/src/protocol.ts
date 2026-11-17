@@ -62,6 +62,9 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     // 새 PC 연결(ADR-048 결정 3, D08 §4.3): 계정 루트 키(RK)를 쓰던 PC에서 새 PC로 넘긴다. main의 연결 흐름만 부른다.
     // RK 평문은 어느 쪽에서도 금고 밖으로 나오지 않는다. rkSeal은 금고 프로세스가 떠 있는 동안 하루 3번까지다.
     'crypto.linkKey', 'crypto.rkSeal', 'crypto.rkImport',
+    // 계정 공유 기록(ADR-048 결정 5, D07 §10): 줄을 봉인하는 키 K_share(e)와 PC 줄 서명(Ws). main의 공유 기록 동기화만 부른다.
+    // K_share(e)는 main으로 나간다(줄을 봉인·개봉하고 폰에 종단간 통로로 준다). RK와 Ws 개인키는 나가지 않는다.
+    'crypto.shareKey', 'crypto.signShare',
   ],
   secretInput: ['secret.provide', 'secret.store'],
   // browser(main의 앱 안 브라우저): RPC 없이 CDP 프레임({t:'cdp'})과 닫힘({t:'cdp_closed'})만 오간다. 금고가 브라우저 수준 CDP의 유일한 사용자다.
@@ -563,6 +566,28 @@ export interface RkImportParams {
   aad: Uint8Array;
   aikPub: Uint8Array;
 }
+
+/** K_share(e)의 HKDF info 머리(@sax/remote shareKeyInfo와 같은 글자다). 뒤에 세대(십진수)가 붙는다. */
+export const SHARE_KEY_INFO_PREFIX = 'share/v1/';
+/** Ws 시드의 HKDF info(@sax/remote SHARE_SIGN_INFO와 같은 글자다). */
+export const SHARE_SIGN_INFO = 'share/sig/v1';
+/** Ws 서명 컨텍스트(@sax/remote CTX.share와 같은 글자다). 서명 입력은 utf8(컨텍스트) ‖ msg. */
+export const SHARE_SIGN_CONTEXT = 'SAX-share-v1';
+/** 세대 상한(@sax/remote SHARE_MAX_EPOCH = 기기 목록 폐기 레코드 상한과 같다). */
+export const SHARE_EPOCH_MAX = 64;
+/**
+ * crypto.shareKey: {epoch 0~64} → {key 32B, signPub 32B}. key = HKDF-SHA256(RK, "share/v1/" ‖ epoch), signPub = Ws 공개키.
+ * key는 계정 공유 기록 줄만 연다(발급 기록·거래처·돈 요약의 사본). main은 쓰고 나서 지운다.
+ */
+export interface ShareKeyParams {
+  epoch: number;
+}
+/** crypto.signShare: {msg} → {sig 64B}. Ws로 utf8("SAX-share-v1") ‖ msg를 서명한다(msg는 줄의 JCS(core), 16KB 버킷 안). */
+export interface SignShareParams {
+  msg: Uint8Array;
+}
+/** crypto.signShare 입력 상한(바이트): 가장 큰 줄 버킷. */
+export const SHARE_SIGN_MSG_MAX = 16_384;
 
 // ───────────────────────── 공동인증서 탐지(control) ─────────────────────────
 

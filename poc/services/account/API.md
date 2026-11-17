@@ -154,6 +154,21 @@ PC가 2대 이상인 계정에서 홈택스 발급은 잠금을 잡은 PC 하나
 
 잡고 있던 데스크톱이 정지·폐기되면 잠금도 바로 지운다. 만료된 줄은 주기 작업이 지운다.
 
+## 계정 공유 기록(ADR-048 결정 5, D07 §10)
+
+계정의 PC와 폰이 발급 기록·거래처·내 사업자·받을 돈과 낼 돈 요약·맡긴 일을 같이 쓴다. 줄의 내용과 서명은 계정 열쇠에서 나온 키로 봉인한 암호문 안에 있어서, 서버는 모양(b64url)과 크기만 본다. 서버가 아는 것은 줄의 종류·순번·받은 시각·크기·올린 기기·세대와 맡긴 일의 상태다. 활성 기기가 2대 이상인 계정만 올린다.
+
+| 메서드·경로 | 인증 | 요청 | 응답 | 오류·한도 |
+|---|---|---|---|---|
+| `PUT /v1/share/rows/:rowId` | 기기:share | `{kind: "issue"\|"party"\|"self"\|"money"\|"task"\|"task_result", epoch: 0~64, body: b64url 64~21,899자, taskId?}` | `200 {seq}` | `rowId`·`taskId`는 22자 b64url. 같은 줄을 같은 내용으로 다시 올리면 처음 순번, 다른 내용이면 `409 account.share_row_conflict`. 폰은 `task`만(`403 account.scope_denied`). `task_result`는 `taskId`가 있어야 하고 그 일을 맡은 데스크톱만(`409 account.task_not_claimed`), 올리면 일이 `done`. `money`는 받으면 그 계정의 앞 `money` 줄을 지운다. `409 account.share_single_device`(활성 기기 1대), `409 account.share_epoch_stale`(지금까지 본 세대보다 낮다), `409 account.share_full`(50,000줄). 기기당 600회/시(맡기·내려놓기·취소와 합계) |
+| `GET /v1/share/rows`, `GET /v1/share/rows/after/<seq>` | 기기:share | — | `200 {rows:[{seq, rowId, kind, epoch, deviceId, at, body}], head, epoch, more}` | `after`보다 큰 순번을 순서대로, 한 번에 200줄·본문 합계 1,000,000자까지. 더 있으면 `more: true`. `head`는 마지막으로 준 순번(없으면 0), `at`은 서버가 받은 시각. 쿼리는 받지 않는다(400). 이어 받기를 경로로 하는 것은 PC의 클라우드 출구가 쿼리를 받지 않아서다. 기기당 1,200회/시(일 목록과 합계) |
+| `GET /v1/share/tasks` | 기기:share | — | `200 {tasks:[{taskId, state, createdBy, claimedBy, claimExpiresAt, createdAt, updatedAt}]}` | `state`: `open`·`claimed`·`done`·`cancelled`·`expired`(맡긴 지 72시간이 지난 열린 일). 맡김이 만료된 일은 `open`으로 보인다 |
+| `POST /v1/share/tasks/:taskId/claim` | 기기:share(데스크톱) | — | `200 {claimExpiresAt}` | 한 번에 한 데스크톱만. 15분 뒤 만료되고 맡은 데스크톱이 다시 부르면 늘어난다. `404 account.task_not_found`, `409 account.task_claimed`(다른 데스크톱의 맡김이 살아 있다), `409 account.task_closed`(끝남·취소·72시간 지남. 이미 맡은 데스크톱은 72시간이 지나도 늘릴 수 있다) |
+| `POST /v1/share/tasks/:taskId/release` | 기기:share(데스크톱) | — | `204` | 내가 맡은 일이면 다시 연다. 아니어도 204 |
+| `POST /v1/share/tasks/:taskId/cancel` | 기기:share | — | `204` | 계정의 어느 기기든. `409 account.task_claimed`(다른 기기가 돌리는 중), `409 account.task_closed`(이미 끝남). 이미 취소된 일은 204 |
+
+맡은 데스크톱이 정지·폐기되면 그 일은 바로 다시 열린다. 끝난·취소된 일과 유효 시간이 지난 일은 30일 뒤 그 줄들과 함께 주기 작업이 지운다. 발급 기록·거래처·내 사업자 줄은 계정이 있는 동안 둔다. 돈 요약 줄은 마지막 한 장만 둔다.
+
 ## 새 PC 연결 우편함(ADR-048 결정 3, D08 §4.3)
 
 새 PC가 계정 루트키(RK)를 쓰던 PC에서 넘겨받을 때 두 PC가 주고받는 메시지 넷을 맡아 둔다. 서버는 순서와 모양·크기만 본다(hello → challenge → reveal → grant). 약속 해시·6자리·AIK 서명·RK 봉인문이 맞는지는 두 PC가 본다. 서버에 남는 것은 공개키·난수·AIK 서명 목록·인증서와 RK 봉인문(HPKE, 새 PC의 연결 전용 키로만 열린다)이고, 새 PC가 받아 가면 지우며 7일이 지나면 주기 작업이 지운다. 새 PC는 아직 기기 토큰이 없어 계정 세션으로 부르고, 쓰던 PC는 데스크톱 기기 토큰으로 부른다. `:id`는 새 PC의 기기 ID다. 계정당 신청 10회/시, 계정·기기당 합계 1,200회/시.

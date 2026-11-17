@@ -10,12 +10,13 @@ import { MessageChannel } from 'node:worker_threads';
 import { VaultClient } from '@sax/engine';
 import { appPaths, FileEventLog, wrapPort } from '@sax/platform';
 import {
-  AIK_PURPOSES as REMOTE_AIK, checkPcLinkGrant, CTX, deviceAuthHeaders, initialDeviceList, issueCert, PcLinkApprover, pcLinkHello, pcLinkReveal, signKv, VD_PURPOSES as REMOTE_VD,
-  verifyCert, verifyDeviceList, verifyKv, type AikSigner, type VdSigner,
+  AIK_PURPOSES as REMOTE_AIK, checkPcLinkGrant, CTX, deriveShareKey, deriveShareSignSeed, deviceAuthHeaders, ed25519Public, initialDeviceList, issueCert, newShareRowId, openShareRow, PcLinkApprover,
+  pcLinkHello, pcLinkReveal, sealShareRow, SHARE_MAX_EPOCH, SHARE_PAD_BUCKETS, SHARE_SIGN_INFO as REMOTE_SHARE_SIGN_INFO, shareKeyInfo, signKv, VD_PURPOSES as REMOTE_VD,
+  verifyCert, verifyDeviceList, verifyKv, type AikSigner, type ShareRowCore, type VdSigner,
 } from '@sax/remote';
 import {
   AIK_PURPOSES, aikSeedFromRk, CRYPTO_KEY_ITEMS, CRYPTO_RATE_PER_HOUR, ed25519FromSeed, hpkeOpenBase, hpkeSealBase, MemoryKeyStore, RK_LINK_INFO, RK_PREV_ITEM, RK_SEALS_PER_DAY, RPC_BY_PORT,
-  Vault, VaultCrypto, VD_PURPOSES, x25519FromSeed, type KeyStore, type VaultPublicKeys,
+  SHARE_EPOCH_MAX, SHARE_KEY_INFO_PREFIX, SHARE_SIGN_CONTEXT, SHARE_SIGN_INFO, SHARE_SIGN_MSG_MAX, Vault, VaultCrypto, VD_PURPOSES, x25519FromSeed, type KeyStore, type VaultPublicKeys,
 } from '@sax/vault';
 import { certSigOk, entrySigOk, opSigOk, revokeSigOk, type AcctOp } from '../services/account/src/index.ts';
 import { athOf, jcs, JtiCache, verifyDpop } from '../services/shared/src/index.ts';
@@ -328,7 +329,70 @@ describe('계정 루트 키 넘기기(ADR-048 결정 3, D08 §4.3)', () => {
   });
 });
 
-const CRYPTO_METHODS = ['crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen', 'crypto.linkKey', 'crypto.rkSeal', 'crypto.rkImport'] as const;
+describe('계정 공유 기록 키(ADR-048 결정 5, D07 §10)', () => {
+  const row = (dev: string, epoch = 0): ShareRowCore<'issue'> => ({
+    v: 1, row_id: newShareRowId(), kind: 'issue', epoch, at: 1_800_000_000_000, dev, by: 'desktop',
+    body: { doc: 'tax_invoice', approvalNo: '202611174100000012345678', writtenOn: '2026-11-17', buyerBizNo: '1234567890', buyerName: '가나다상사', supply: 1_000_000, tax: 100_000, how: 'app' },
+  });
+  const DEV = '00000000-0000-4000-8000-000000000001';
+
+  it('상수가 @sax/remote와 같다', () => {
+    assert.equal(`${SHARE_KEY_INFO_PREFIX}3`, shareKeyInfo(3));
+    assert.equal(SHARE_SIGN_INFO, REMOTE_SHARE_SIGN_INFO);
+    assert.equal(SHARE_SIGN_CONTEXT, CTX.share);
+    assert.equal(SHARE_EPOCH_MAX, SHARE_MAX_EPOCH);
+    assert.equal(SHARE_SIGN_MSG_MAX, SHARE_PAD_BUCKETS.at(-1));
+  });
+
+  it('shareKey는 RK에서 나온 K_share(e)와 Ws 공개키다. 금고가 서명한 줄을 다른 기기가 열고 확인한다', async () => {
+    const ks = new MemoryKeyStore();
+    const { c, log } = setup(ks);
+    const k0 = await c.shareKey({ epoch: 0 });
+    const rk = (await ks.get(CRYPTO_KEY_ITEMS.rk, 32))!;
+    assert.deepEqual(k0.key, deriveShareKey(rk, 0));
+    assert.deepEqual(k0.signPub, ed25519Public(deriveShareSignSeed(rk)));
+    const k2 = await c.shareKey({ epoch: 2 });
+    assert.deepEqual(k2.key, deriveShareKey(rk, 2));
+    assert.notDeepEqual(k2.key, k0.key);
+    assert.deepEqual(k2.signPub, k0.signPub);
+    const pk = await c.publicKeys();
+    for (const other of [pk.aik, pk.vd]) assert.notDeepEqual(k0.signPub, other);
+    // 금고 서명으로 봉인한 줄을 공개키만 가진 쪽(폰)이 연다
+    const r = row(DEV);
+    const wire = await sealShareRow(k0.key, r, (msg) => c.signShare({ msg }));
+    assert.deepEqual(openShareRow(k0.key, wire, { sharePub: k0.signPub, mobileSignPub: () => null }), { ok: true, row: r });
+    assert.deepEqual(openShareRow(k0.key, wire, { sharePub: pk.aik, mobileSignPub: () => null }), { ok: false, reason: 'signature' });
+    // 기록에는 연산 이름만 남는다
+    assert.ok(log.lines.some((l) => l.includes('"op":"shareKey"')) && log.lines.some((l) => l.includes('"op":"signShare"')));
+    assert.ok(!log.lines.some((l) => l.includes('1234567890') || l.includes('가나다상사')));
+  });
+
+  it('형식 밖 입력은 bad_params: 세대 범위, 빈·큰 메시지', async () => {
+    const { c } = setup();
+    for (const epoch of [-1, 1.5, SHARE_EPOCH_MAX + 1, '0', undefined]) await assert.rejects(c.shareKey({ epoch } as never), /bad_params/, String(epoch));
+    assert.equal((await c.shareKey({ epoch: SHARE_EPOCH_MAX })).key.length, 32);
+    for (const msg of [new Uint8Array(0), new Uint8Array(SHARE_SIGN_MSG_MAX + 1), 'x', undefined]) await assert.rejects(c.signShare({ msg } as never), /bad_params/);
+    assert.equal((await c.signShare({ msg: new Uint8Array(SHARE_SIGN_MSG_MAX) })).length, 64);
+  });
+
+  it('계정 열쇠를 넘겨받은 새 PC는 같은 K_share와 Ws를 갖는다(쓰던 PC의 줄을 열고, 자기가 쓴 줄을 쓰던 PC가 확인한다)', async () => {
+    const oldPc = setup();
+    const newPc = setup();
+    const before = await newPc.c.shareKey({ epoch: 1 });
+    const want = await oldPc.c.shareKey({ epoch: 1 });
+    assert.notDeepEqual(before.key, want.key);
+    assert.notDeepEqual(before.signPub, want.signPub);
+    const aad = new Uint8Array(32).fill(3);
+    const sealed = await oldPc.c.rkSeal({ recipient: await newPc.c.linkKey(), info: RK_LINK_INFO, aad });
+    await newPc.c.rkImport({ ...sealed, info: RK_LINK_INFO, aad, aikPub: (await oldPc.c.publicKeys()).aik });
+    assert.deepEqual(await newPc.c.shareKey({ epoch: 1 }), want);
+    const r = row(DEV, 1);
+    const wire = await sealShareRow(want.key, r, (msg) => newPc.c.signShare({ msg }));
+    assert.deepEqual(openShareRow((await oldPc.c.shareKey({ epoch: 1 })).key, wire, { sharePub: want.signPub, mobileSignPub: () => null }), { ok: true, row: r });
+  });
+});
+
+const CRYPTO_METHODS = ['crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen', 'crypto.linkKey', 'crypto.rkSeal', 'crypto.rkImport', 'crypto.shareKey', 'crypto.signShare'] as const;
 
 /** 금고 서비스 control 포트(main, VaultClient)로 만든 데스크톱 키(packages/remote DesktopKeys 모양). `engine`은 거부 확인용. */
 async function vaultDesktop() {
@@ -357,7 +421,7 @@ async function vaultDesktop() {
 }
 
 describe('받는 쪽 검증(금고 control 포트 경유)', () => {
-  it('엔진 포트: crypto.* 여덟 개 모두 denied(vault.rpc_denied), 키 연산은 하지 않는다(RK 봉인도 못 부른다)', async () => {
+  it('엔진 포트: crypto.* 열 개 모두 denied(vault.rpc_denied), 키 연산은 하지 않는다(RK 봉인도, 공유 기록 키도 못 부른다)', async () => {
     const d = await vaultDesktop();
     try {
       const before = d.log.lines.filter((l) => l.includes('vault.crypto_op')).length;
@@ -371,6 +435,8 @@ describe('받는 쪽 검증(금고 control 포트 경유)', () => {
         'crypto.linkKey': {},
         'crypto.rkSeal': { recipient: peer.pub, info: RK_LINK_INFO, aad: new Uint8Array(32) },
         'crypto.rkImport': { enc: new Uint8Array(32).fill(9), ct: new Uint8Array(48), info: RK_LINK_INFO, aad: new Uint8Array(32), aikPub: new Uint8Array(32) },
+        'crypto.shareKey': { epoch: 0 },
+        'crypto.signShare': { msg: utf8('x') },
       };
       for (const m of CRYPTO_METHODS) {
         await assert.rejects(d.engine.rpc(m, params[m]), /vault: denied/, m);
@@ -387,6 +453,10 @@ describe('받는 쪽 검증(금고 control 포트 경유)', () => {
       const sealed = await d.control.rpc<{ enc: Uint8Array; ct: Uint8Array }>('crypto.rkSeal', { recipient: link.pub, info: RK_LINK_INFO, aad: new Uint8Array(32) });
       assert.deepEqual([Object.keys(sealed).sort(), sealed.enc.length, sealed.ct.length], [['ct', 'enc'], 32, 48]);
       assert.deepEqual(await d.control.rpc('crypto.rkImport', { ...sealed, info: RK_LINK_INFO, aad: new Uint8Array(32), aikPub: d.pk.aik }), { aik: d.pk.aik });
+      // 공유 기록 키의 결과 모양: {key, signPub}·{sig}
+      const sk = await d.control.rpc<{ key: Uint8Array; signPub: Uint8Array }>('crypto.shareKey', { epoch: 0 });
+      assert.deepEqual([Object.keys(sk).sort(), sk.key.length, sk.signPub.length], [['key', 'signPub'], 32, 32]);
+      assert.equal(((await d.control.rpc('crypto.signShare', params['crypto.signShare'])) as { sig: Uint8Array }).sig.length, 64);
     } finally {
       await d.close();
     }

@@ -10,6 +10,8 @@ export const CLOUD_WS_HOST = 'rooms.tax.laf-co.com';
 export const CLOUD_MAX_BYTES = 256 * 1024;
 /** 우편함 큐 GET 한 쪽 상한(서버는 봉투 바이트 3 MiB까지 한 쪽으로 준다, services/relay/API.md #204. JSON 겉과 여유를 더한다) */
 export const CLOUD_QUEUE_PAGE_MAX_BYTES = 3 * 1024 * 1024 + 256 * 1024;
+/** 계정 공유 기록 한 쪽 상한(서버는 본문 합계 1,000,000자·200줄까지 준다, services/account/API.md. JSON 겉과 여유를 더한다) */
+export const CLOUD_SHARE_PAGE_MAX_BYTES = 1_000_000 + 256 * 1024;
 /** 요청 본문 상한(서버 기본 64KB와 같다) */
 export const CLOUD_MAX_BODY = 64 * 1024;
 
@@ -58,6 +60,15 @@ export const CLOUD_ROUTES: ReadonlyArray<{ name: string; method: CloudMethod; pa
   { name: 'issueLock.acquire', method: 'POST', path: /^\/v1\/issue-lock\/acquire$/ },
   { name: 'issueLock.renew', method: 'POST', path: /^\/v1\/issue-lock\/renew$/ },
   { name: 'issueLock.release', method: 'POST', path: /^\/v1\/issue-lock\/release$/ },
+  // 계정 공유 기록(ADR-048 결정 5, D07 §10, 기기 토큰 share 범위): 암호문 줄 올리기·받기, 맡긴 일 맡기·내려놓기·취소.
+  // 이어 받기는 쿼리가 아니라 경로다(after/<순번>). 경로의 ID는 줄 id(무작위 16B)다
+  { name: 'share.put', method: 'PUT', path: new RegExp(`^/v1/share/rows/${ID22}$`) },
+  { name: 'share.rows', method: 'GET', path: /^\/v1\/share\/rows$/, maxBytes: CLOUD_SHARE_PAGE_MAX_BYTES },
+  { name: 'share.rowsAfter', method: 'GET', path: /^\/v1\/share\/rows\/after\/(0|[1-9][0-9]{0,15})$/, maxBytes: CLOUD_SHARE_PAGE_MAX_BYTES },
+  { name: 'share.tasks', method: 'GET', path: /^\/v1\/share\/tasks$/ },
+  { name: 'share.taskClaim', method: 'POST', path: new RegExp(`^/v1/share/tasks/${ID22}/claim$`) },
+  { name: 'share.taskRelease', method: 'POST', path: new RegExp(`^/v1/share/tasks/${ID22}/release$`) },
+  { name: 'share.taskCancel', method: 'POST', path: new RegExp(`^/v1/share/tasks/${ID22}/cancel$`) },
   // 설정 > 구독(기기 토큰, services/account/API.md 구독). 카드 등록 창은 기본 브라우저가 연다(이 egress 밖)
   { name: 'billing.subscription', method: 'GET', path: /^\/v1\/billing\/subscription$/ },
   { name: 'billing.checkout', method: 'POST', path: /^\/v1\/billing\/checkout$/ },

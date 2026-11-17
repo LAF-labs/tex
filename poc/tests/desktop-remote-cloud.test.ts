@@ -12,8 +12,16 @@ import { after, before, describe, it } from 'node:test';
 import { CLOUD_ORIGIN, CLOUD_WS_HOST, Egress, cloudHeaders, cloudRequestCheck, cloudSocketCheck } from '@sax/net';
 import {
   AIK_PURPOSES,
+  CTX,
   VD_PURPOSES,
+  VM_PURPOSES,
   b64,
+  fromB64url,
+  newShareRowId,
+  openShareRow,
+  sealShareRow,
+  shareEpoch,
+  type ShareRowCore,
   certNotAfter,
   deviceAuthHeaders,
   ed25519Keygen,
@@ -36,6 +44,7 @@ import { DesktopAccount, RemoteIdentityFile } from '../apps/desktop/src/remote-a
 import { cloudPorts, type CloudPorts, type DeviceAuth } from '../apps/desktop/src/remote-cloud.ts';
 import { DeviceManager, type DeviceManagerSession } from '../apps/desktop/src/remote-devices.ts';
 import { vaultDesktopKeys, type VaultDesktopKeys } from '../apps/desktop/src/remote-keys.ts';
+import { ShareSync, type ShareOutItem, type ShareStore } from '../apps/desktop/src/share-sync.ts';
 import { PcLinkHost, PcLinkJoin } from '../apps/desktop/src/remote-pclink.ts';
 import { FileEventLog } from '../packages/platform/src/index.ts';
 import { CRYPTO_KEY_ITEMS, MemoryKeyStore, VaultCrypto } from '../packages/vault/src/index.ts';
@@ -295,6 +304,12 @@ describe('계정 화면 경로(#224 비밀번호 로그인이 실제 앱에서 n
       acquireIssueLock: [auth],
       renewIssueLock: [auth, 'L'.repeat(43)],
       releaseIssueLock: [auth, 'L'.repeat(43)],
+      putShareRow: [auth, { rowId: 'R'.repeat(22), kind: 'issue', epoch: 0, body: 'A'.repeat(728) }],
+      shareRows: [auth, 7],
+      shareTasks: [auth],
+      claimShareTask: [auth, 'T'.repeat(22)],
+      releaseShareTask: [auth, 'T'.repeat(22)],
+      cancelShareTask: [auth, 'T'.repeat(22)],
       billing: [auth],
       billingCheckout: [auth],
       billingCancel: [auth],
@@ -516,6 +531,8 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
         if (m === 'crypto.linkKey') return { pub: await c.linkKey() };
         if (m === 'crypto.rkSeal') return c.rkSeal(p);
         if (m === 'crypto.rkImport') return { aik: await c.rkImport(p) };
+        if (m === 'crypto.shareKey') return c.shareKey(p);
+        if (m === 'crypto.signShare') return { sig: await c.signShare(p) };
         throw new Error(`vault: ${m}`);
       };
       let kp: Promise<VaultDesktopKeys> | null = null;
@@ -539,7 +556,22 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
         return acct.verify(s.mail.lastCode(email)!);
       };
       const mgr = () => new DeviceManager({ client: account, session: () => acct.device(), aik: async () => (await keys()).aik, dropPhone: async () => {} });
-      return { acct, keys, ks, vlog, events, login, mgr, dir };
+      // 계정 공유 기록: 장부 대신 메모리 저장소
+      const out: ShareOutItem[] = [];
+      const got = new Map<string, ShareRowCore>();
+      let cursor = 0;
+      const store: ShareStore = {
+        pending: async (n) => out.slice(0, n),
+        sent: async (rowId) => void out.splice(out.findIndex((i) => i.rowId === rowId), 1),
+        dropped: async (rowId) => void out.splice(out.findIndex((i) => i.rowId === rowId), 1),
+        cursor: async () => cursor,
+        apply: async (rows, c) => {
+          for (const r of rows) got.set(r.row.row_id, r.row);
+          cursor = c;
+        },
+      };
+      const share = new ShareSync({ client: account, device: () => acct.device(), vault: async () => (await keys()).share, store, refreshDeviceList: async () => void (await mgr().list()), log: (n, d) => void events.push(`${n}:${String(d.result ?? '')}`) });
+      return { acct, keys, ks, vlog, events, login, mgr, dir, share, out, got, c };
     };
     try {
       const a = await pc('사무실 PC');
@@ -640,6 +672,61 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       assert.equal((await c3.acct.linkAccept()).step, 'signed_in');
       assert.equal(c3.acct.identity!.aikPub, a.acct.identity!.aikPub);
       assert.deepEqual((await aMgr.list()).map((d) => d.name), ['사무실 PC', '집 PC', '매장 PC']);
+
+      // 계정 공유 기록(ADR-048 결정 5): 한 PC가 올린 줄을 다른 PC들이 같은 계정 열쇠로 열고 금고 서명(Ws)을 확인한다
+      const issueBody = { doc: 'tax_invoice' as const, approvalNo: '202611174100000012345678', writtenOn: '2026-11-17', buyerBizNo: '1234567890', buyerName: '가나다상사', supply: 1_000_000, tax: 100_000, how: 'app' as const };
+      const issueRow = newShareRowId();
+      a.out.push({ rowId: issueRow, kind: 'issue', at: Date.now(), body: issueBody });
+      const up = await a.share.sync();
+      assert.deepEqual([up.state, up.pushed, a.out.length], ['ok', 1, 0]);
+      for (const other of [b, c3]) {
+        const r = await other.share.sync();
+        assert.deepEqual([r.state, r.pulled, r.applied, r.rejected], ['ok', 1, 1, {}]);
+        const row = other.got.get(issueRow)!;
+        assert.deepEqual([row.kind, row.by, row.dev, row.epoch, row.body], ['issue', 'desktop', a.acct.identity!.deviceId, 1, issueBody], '세대는 폐기 레코드 수(폰 하나를 끊었다)');
+      }
+      // 서버에는 암호문만 있다
+      const bAuth = b.acct.device()!.auth;
+      const page = await account.shareRows(bAuth, 0);
+      assert.deepEqual([page.rows.length, page.head, page.epoch, page.rows[0]!.kind, page.rows[0]!.deviceId], [1, 1, 1, 'issue', a.acct.identity!.deviceId]);
+      assert.ok(!JSON.stringify(page).includes('1234567890') && !Buffer.from(fromB64url(page.rows[0]!.body)).includes('가나다상사'));
+      // 폰: 새 PC가 붙인 폰이 일을 맡긴다(폰의 Vm 서명). 쓰던 PC는 그 폰을 아직 모르지만 목록을 다시 받아 확인한다
+      const ph2 = { id: uuid4(), noise: x25519Keygen(), key: ed25519Keygen() };
+      const ph2Vd = softSigner(ph2.key.secretKey, VD_PURPOSES);
+      const ph2Vm = softSigner(ph2.key.secretKey, VM_PURPOSES);
+      const r2 = await fetch(`${s.origin}/v1/devices/enroll`, { method: 'POST', headers: { authorization: `Bearer ${session}`, 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: ph2.id, role: 'mobile', platform: 'android', name: '새 폰', Sx: b64(ph2.noise.publicKey), Vx: b64(ph2.key.publicKey) }) });
+      assert.equal(r2.status, 201);
+      await bMgr.list();
+      const list2 = await addDevice((await b.keys()).aik, bDev.deviceList, { deviceId: ph2.id, role: 'mobile', noisePub: ph2.noise.publicKey, signPub: ph2.key.publicKey, registeredAt: Date.now() });
+      await account.putDeviceList(bDev.auth, list2);
+      await bDev.setDeviceList(list2);
+      const phTok = await account.deviceToken(await issueCert((await b.keys()).aik, { device_id: ph2.id, role: 'mobile', Sx: ph2.noise.publicKey, Vx: ph2.key.publicKey, not_after: certNotAfter() }), ph2Vd);
+      assert.ok(phTok.scopes.includes('share'));
+      const phAuth: DeviceAuth = async (htm, htu) => deviceAuthHeaders(phTok.token, ph2Vd, htm, htu);
+      // PC가 종단간 통로로 준 것: 지금 세대의 K_share와 Ws 공개키
+      const fromPc = await b.c.shareKey({ epoch: shareEpoch(list2) });
+      const seen = await account.shareRows(phAuth, 0);
+      const phOpen = openShareRow(fromPc.key, seen.rows[0]!, { sharePub: fromPc.signPub, mobileSignPub: () => null });
+      assert.ok(phOpen.ok && phOpen.row.kind === 'issue');
+      assert.deepEqual(phOpen.ok && phOpen.row.body, issueBody);
+      const task: ShareRowCore<'task'> = { v: 1, row_id: newShareRowId(), kind: 'task', epoch: 1, at: Date.now(), dev: ph2.id, by: 'mobile', body: { do: 'tax_invoice.issue', buyerBizNo: '1234567890', supply: 500_000, tax: 50_000, item: '11월 용역' } };
+      assert.deepEqual(await account.putShareRow(phAuth, await sealShareRow(fromPc.key, task, (m) => ph2Vm.sign(CTX.share, m))), { seq: 2 });
+      await assert.rejects(account.putShareRow(phAuth, await sealShareRow(fromPc.key, { ...task, row_id: newShareRowId() }, (m) => ph2Vm.sign(CTX.share, m)).then((w) => ({ ...w, kind: 'issue' as const }))), { code: 'account.scope_denied' });
+      const aPull = await a.share.sync();
+      assert.deepEqual([aPull.state, aPull.pulled, aPull.applied, aPull.rejected], ['ok', 2, 2, {}], '자기가 올린 줄과 폰이 맡긴 일');
+      assert.deepEqual(a.got.get(task.row_id), task);
+      assert.ok(a.acct.identity!.deviceList.entries.some((e) => e.entry.device_id === ph2.id), '모르는 폰의 줄을 보고 목록을 다시 받았다');
+      // 일은 PC 한 대만 맡는다
+      const tasks = await account.shareTasks(bAuth);
+      assert.deepEqual(tasks.map((t) => [t.taskId, t.state, t.createdBy]), [[task.row_id, 'open', ph2.id]]);
+      assert.ok((await account.claimShareTask(bAuth, task.row_id)).claimExpiresAt > Date.now());
+      await assert.rejects(account.claimShareTask(a.acct.device()!.auth, task.row_id), { code: 'account.task_claimed' });
+      await account.releaseShareTask(bAuth, task.row_id);
+      await account.cancelShareTask(phAuth, task.row_id);
+      assert.deepEqual((await account.shareTasks(bAuth)).map((t) => t.state), ['cancelled']);
+      // 금고·동기화 기록에 줄의 내용이 없다
+      for (const text of [...a.vlog.lines, ...b.vlog.lines, ...a.events, ...b.events]) assert.ok(!text.includes('1234567890') && !text.includes(issueRow));
+      assert.ok(a.events.includes('main.share_sync:ok'));
 
       // 네 번째 PC는 한도에 걸린다(PC 3대). 로그인 코드 한도(이메일당 5회/시) 때문에 앞에서 받은 세션으로 신청만 해 본다
       const d4 = await pc('네 번째');

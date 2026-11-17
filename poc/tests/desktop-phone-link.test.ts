@@ -7,9 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import {
-  CAP, MemoryRelay, b64, enqueueCash, flushOutbox, fromB64, hpkeOpen, makeCashEntry, makeReceiptOffer, monotonicClock, newFileKey, openMobileSession, openOutboxFile,
+  CAP, MemoryRelay, b64, deriveShareKey, deriveShareSignSeed, ed25519Public, makeShareKeyBody, randomBytes, readShareKeyBody, enqueueCash, flushOutbox, fromB64, hpkeOpen, makeCashEntry, makeReceiptOffer, monotonicClock, newFileKey, openMobileSession, openOutboxFile,
   queueOutbox, sealOutboxFile, sha256Hash, toHex, verifyQBundle, x25519Keygen,
-  type Link, type OuterEnv, type OutboxItem, type OutboxStore, type RelayLink,
+  type Link, type OuterEnv, type OutboxItem, type OutboxStore, type RelayLink, type ShareKeyBody,
 } from '@sax/remote';
 import { LIVE_BACKOFF, PhoneLink, PhoneStore, packTok, unpackTok, type PhoneLinkOptions, type TokenSeal } from '../apps/desktop/src/phone-link.ts';
 import { closeAction, shouldStayAwake, StayAwake } from '../apps/desktop/src/phone-presence.ts';
@@ -321,6 +321,73 @@ describe('PC 폰 수신(phone-link)', () => {
     await until(() => links.length === 2);
     assert.equal(links[1]!.closed, false);
     link.stop();
+  });
+
+  it('계정 공유 기록 열쇠(share.key): 폰이 share.v1을 알린 세션에만 주고, 세대가 오르면 연결된 폰에 다시 준다', async () => {
+    const rk = randomBytes(32);
+    let epochs = 1;
+    let allow = true;
+    const body = () => makeShareKeyBody({ signPub: ed25519Public(deriveShareSignSeed(rk)), keys: Array.from({ length: epochs }, (_, e) => deriveShareKey(rk, e)) });
+    /** PC 한 대와 폰 한 대. give = PC가 열쇠를 줄 길이 있는가, caps = 폰이 hello에서 알리는 기능 */
+    const setup = async (give: boolean, caps: string[]) => {
+      const x = await world();
+      const asked: string[] = [];
+      const logs: Array<Record<string, unknown>> = [];
+      const link = x.mk(true, {
+        ...(give ? { shareKeys: async (deviceId: string) => (asked.push(deviceId), allow ? body() : null) } : {}),
+        log: (n, d) => void (n === 'main.phone_live' && d?.step === 'share_key' && logs.push(d)),
+      });
+      await link.start();
+      await link.add(x.pc);
+      await until(() => link.list().length === 1);
+      await new Promise((r) => setTimeout(r, 20)); // PC가 우편함에 먼저 붙을 시간
+      const phLink = await x.relay.joinMailbox(fromB64(x.phone.mbxId), { read: fromB64(x.phone.tokRead), write: fromB64(x.phone.tokWrite) }, 'mobile');
+      const sess = await openMobileSession(phLink, {
+        pairId: x.phone.pairId, noise: x.w.phone.keys.noise, desktopStatic: x.phone.desktopStatic, nextTimestamp: monotonicClock(0),
+        hello: { appVersion: 'm', deviceListVersion: 2, capabilities: caps },
+      });
+      assert.ok(sess, '세션');
+      await until(() => link.list()[0]!.online);
+      const end = () => {
+        sess.channel.close();
+        phLink.close();
+        link.stop();
+      };
+      return { x, link, sess, asked, logs, end };
+    };
+    // 받겠다고 알리지 않은 폰(옛 앱)에는 묻지도 보내지도 않는다. PC는 줄 수 있다고 알린다
+    const oldApp = await setup(true, [CAP.receipt, CAP.cash]);
+    assert.ok(oldApp.sess.peerHello.capabilities.includes(CAP.share));
+    assert.equal(await oldApp.sess.channel.recv(150), null);
+    assert.deepEqual([oldApp.asked, await oldApp.link.pushShareKeys(), oldApp.logs], [[], 0, []]);
+    oldApp.end();
+    // 열쇠를 줄 길이 없는 PC(옵션 없음)는 share.v1을 알리지 않고 보내지도 않는다
+    const plain = await setup(false, [CAP.share]);
+    assert.ok(!plain.sess.peerHello.capabilities.includes(CAP.share));
+    assert.equal(await plain.sess.channel.recv(150), null);
+    plain.end();
+    // 받겠다고 알린 폰: 세션을 열자마자 온다
+    const a = await setup(true, [CAP.receipt, CAP.cash, CAP.share]);
+    const first = await a.sess.channel.recv(2000);
+    assert.equal(first?.type, 'share.key');
+    const have = readShareKeyBody(first!.body as ShareKeyBody);
+    assert.ok(have && have.keys.length === 1);
+    assert.deepEqual(have.keys[0], deriveShareKey(rk, 0));
+    assert.deepEqual(a.asked, [a.x.pc.phone.deviceId]);
+    // 세대가 올랐다(기기를 끊었다): 연결된 폰에 새 묶음을 다시 준다
+    epochs = 2;
+    assert.equal(await a.link.pushShareKeys(), 1);
+    const second = await a.sess.channel.recv(2000);
+    assert.equal(readShareKeyBody(second!.body as ShareKeyBody, have)?.keys.length, 2);
+    // 이 폰이 목록에 없다고 하면(null) 보내지 않는다. 세션은 그대로 산다
+    allow = false;
+    assert.equal(await a.link.pushShareKeys(), 0);
+    assert.equal(await a.sess.channel.recv(150), null);
+    assert.equal(a.sess.channel.closed, false);
+    assert.deepEqual(a.logs.map((d) => [d.result, d.epochs]), [['sent', 1], ['sent', 2], ['none', undefined]]);
+    assert.ok(!JSON.stringify(a.logs).includes(a.x.pc.phone.deviceId), '로그에 기기 id 없음');
+    a.end();
+    assert.equal(await a.link.pushShareKeys(), 0, '멈춘 뒤에는 보내지 않는다');
   });
 
   it('창 닫기·잠자기 규칙(phone-presence): 폰이 있을 때만 남고, 전원 연결 중에만 잠자기를 막는다', () => {

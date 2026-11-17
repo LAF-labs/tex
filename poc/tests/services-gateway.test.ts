@@ -642,7 +642,7 @@ describe('게이트웨이: 폰 대화 직접 호출(ADR-047, chat 범위)', () =
 
   it('폰 토큰은 chat 범위와 등급만 싣고(gateway 없음), 대화 범위 실행 토큰만 받는다', async () => {
     const c = claimsOf(await phone.token());
-    assert.deepEqual([c.role, c.scp, c.tier], ['mobile', ['relay', 'push', 'chat', 'devices'], 'trial']);
+    assert.deepEqual([c.role, c.scp, c.tier], ['mobile', ['relay', 'push', 'chat', 'devices', 'share'], 'trial']);
     const run = await e.call('/v1/run-tokens', { runId: 'run-12345678' }, phone);
     assert.deepEqual([run.status, run.json.error], [403, 'account.scope_denied']);
     const chat = await e.call('/v1/run-tokens', chatId(), phone);

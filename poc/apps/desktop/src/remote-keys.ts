@@ -2,9 +2,9 @@
 // - 개인키(Sd·Vd·AIK·Q_D·Kv)는 금고 안에만 있다. 여기는 금고 control 포트 rpc를 부르는 얇은 겉이다. DH 결과·평문을 보관하지 않는다.
 // - 용도 문자열은 금고·@sax/remote 허용 목록 그대로(VD_PURPOSES·AIK_PURPOSES, SIGNING.md §8). 밖이면 금고에 보내기 전에 거부한다.
 // - 결과 모양은 금고 NOTES §7: noiseDH → {shared}, signVd·signAik → {sig}, hpkeOpen → {pt}. 모양이 다르면 거부한다(fail-closed).
-import { AIK_PURPOSES, CTX, VD_PURPOSES, type AikPurpose, type DesktopKeys, type HpkeOpenFn, type NoiseCtx, type VdPurpose } from '@sax/remote';
-import { CRYPTO_MSG_MAX, type VaultPublicKeys } from '@sax/vault';
-import type { PcLinkVault, VaultKeysFactory } from './remote-ports.ts';
+import { AIK_PURPOSES, CTX, SHARE_MAX_EPOCH, VD_PURPOSES, type AikPurpose, type DesktopKeys, type HpkeOpenFn, type NoiseCtx, type VdPurpose } from '@sax/remote';
+import { CRYPTO_MSG_MAX, SHARE_SIGN_MSG_MAX, type VaultPublicKeys } from '@sax/vault';
+import type { PcLinkVault, ShareVault, VaultKeysFactory } from './remote-ports.ts';
 
 /** 금고 control 포트 rpc(main의 VaultClient.rpc). remote-ports.ts VaultKeysFactory의 인자와 같다. */
 export type VaultControl = Parameters<VaultKeysFactory>[0];
@@ -16,6 +16,8 @@ export type VaultDesktopKeys = DesktopKeys & {
   qdPublic: Uint8Array;
   /** 새 PC 연결의 계정 열쇠 넘기기(ADR-048 결정 3). importRk 뒤에는 이 객체를 버리고 새로 만든다(AIK 공개키가 바뀐다) */
   link: PcLinkVault;
+  /** 계정 공유 기록 키(ADR-048 결정 5). importRk 뒤에는 값이 바뀐다 */
+  share: ShareVault;
 };
 
 const NOISE_CTX: readonly NoiseCtx[] = [CTX.pair, CTX.session];
@@ -34,7 +36,7 @@ const bytes32 = (v: unknown): Uint8Array => {
   if (!(v instanceof Uint8Array) || v.length !== 32) throw new VaultKeysError('vault.bad_result');
   return new Uint8Array(v);
 };
-const field = (r: unknown, k: 'shared' | 'sig' | 'pt' | 'pub' | 'enc' | 'ct' | 'aik'): Uint8Array => {
+const field = (r: unknown, k: 'shared' | 'sig' | 'pt' | 'pub' | 'enc' | 'ct' | 'aik' | 'key' | 'signPub'): Uint8Array => {
   const v = (r as Record<string, unknown> | null)?.[k];
   if (!(v instanceof Uint8Array)) throw new VaultKeysError('vault.bad_result');
   return v;
@@ -110,6 +112,19 @@ export async function vaultDesktopKeys(control: VaultControl): Promise<VaultDesk
         const aik = bytes32(field(await control('crypto.rkImport', { enc: g.enc, ct: g.ct, info: RK_INFO, aad: g.aad, aikPub: g.aikPub }), 'aik'));
         if (!aik.every((b, i) => b === g.aikPub[i])) throw new VaultKeysError('vault.bad_result');
         return aik;
+      },
+    },
+    share: {
+      async key(epoch) {
+        if (!Number.isSafeInteger(epoch) || epoch < 0 || epoch > SHARE_MAX_EPOCH) throw new VaultKeysError('vault.bad_params');
+        const r = await control('crypto.shareKey', { epoch });
+        return { key: bytes32(field(r, 'key')), signPub: bytes32(field(r, 'signPub')) };
+      },
+      async sign(msg) {
+        if (!(msg instanceof Uint8Array) || msg.length < 1 || msg.length > SHARE_SIGN_MSG_MAX) throw new VaultKeysError('vault.bad_params');
+        const sig = field(await control('crypto.signShare', { msg }), 'sig');
+        if (sig.length !== 64) throw new VaultKeysError('vault.bad_result');
+        return sig;
       },
     },
   };

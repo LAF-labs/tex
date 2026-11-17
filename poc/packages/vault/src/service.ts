@@ -552,6 +552,10 @@ export class Vault {
         return this.crypto.rkSeal(p);
       case 'crypto.rkImport':
         return { aik: await this.crypto.rkImport(p) };
+      case 'crypto.shareKey':
+        return this.crypto.shareKey(p);
+      case 'crypto.signShare':
+        return { sig: await this.crypto.signShare(p) };
       case 'commitGuard.arm':
         return this.requireGuard().arm(p);
       case 'commitGuard.disarm':

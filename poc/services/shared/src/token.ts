@@ -10,15 +10,16 @@ import { fail, type ErrorCode } from './errors.ts';
  * 범위. Phase 1 폰은 relay·push에 더해 chat(ADR-047: PC가 꺼져 있을 때 폰이 게이트웨이로 대화 모델을 직접 부른다)만 받는다.
  * chat은 gateway와 다른 범위다: 게이트웨이는 chat 토큰에 대화 범위 실행 토큰·폰 대화 툴셋·사용량만 열고, 판정·진위확인·CODEF·실행 범위는 열지 않는다.
  */
-export type Scope = 'gateway' | 'relay' | 'wake' | 'push' | 'slots' | 'devlist' | 'acct_op' | 'chat' | 'devices';
-export const DESKTOP_SCOPES: readonly Scope[] = ['gateway', 'relay', 'wake', 'slots', 'devlist', 'acct_op'];
+export type Scope = 'gateway' | 'relay' | 'wake' | 'push' | 'slots' | 'devlist' | 'acct_op' | 'chat' | 'devices' | 'share';
+/** share(ADR-048 결정 5): 계정 공유 기록 줄 올리기·받기, 맡긴 일 상태. 데스크톱과 폰이 다 받는다(쓸 수 있는 종류는 계정 서비스가 역할로 가른다). */
+export const DESKTOP_SCOPES: readonly Scope[] = ['gateway', 'relay', 'wake', 'slots', 'devlist', 'acct_op', 'share'];
 /**
  * devices(ADR-048 결정 6): 폰의 기기 관리. 계정 서비스가 기기 목록 보기·스스로 나가기·다른 기기 정지만 연다.
  * 폰은 AIK가 없어 목록을 바꾸지 못한다(devlist는 데스크톱만).
  */
-export const MOBILE_SCOPES_P1: readonly Scope[] = ['relay', 'push', 'chat', 'devices'];
+export const MOBILE_SCOPES_P1: readonly Scope[] = ['relay', 'push', 'chat', 'devices', 'share'];
 /** 모든 범위 이름(요청 스키마의 열거, ADR-040 결정 1) */
-export const ALL_SCOPES: readonly Scope[] = ['gateway', 'relay', 'wake', 'push', 'slots', 'devlist', 'acct_op', 'chat', 'devices'];
+export const ALL_SCOPES: readonly Scope[] = ['gateway', 'relay', 'wake', 'push', 'slots', 'devlist', 'acct_op', 'chat', 'devices', 'share'];
 /** 유료 기능 범위(모델 비용이 드는 것): 체험 중이거나 낸 기간 안일 때만 주고, 줄 때 등급(tier)을 싣는다. */
 export const PAID_SCOPES: readonly Scope[] = ['gateway', 'chat'];
 

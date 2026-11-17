@@ -129,6 +129,8 @@
 | `account` | `last_desktop`(409) | 계정에 남은 마지막 활성 데스크톱은 스스로 나가거나 폰이 정지할 수 없음(ADR-048 결정 6) | 안내만 |
 | `account` | `link_not_found`(404) / `link_state`(409) | 새 PC 연결 우편함(ADR-048 결정 3, D08 §4.3): 신청이 없거나 지워짐 / 지금 단계에서 받을 수 없는 메시지(순서 밖·이미 있음·승인 창 지남) | 새 PC가 다시 신청 |
 | `account` | `issue_locked`(409) / `issue_lock_lost`(409) | 다른 데스크톱이 발급 잠금을 잡고 있음 / 내 잠금이 만료됐거나 넘어감(ADR-048 결정 7). PC는 각각 `issue.locked_elsewhere`·`issue.lock_lost`로 옮긴다 | 기다렸다 다시 잡기 / 커밋하지 않고 게이트 앞부터 |
+| `account` | `share_row_conflict`(409) / `share_epoch_stale`(409) / `share_single_device`(409) / `share_full`(409) | 계정 공유 기록(ADR-048 결정 5, D09 §2.3): 같은 줄 id에 다른 내용 / 옛 세대 키로 쓴 줄 / 활성 기기가 하나뿐인 계정 / 계정당 줄 수 상한 | 새 줄 id로 다시 / 기기 목록을 새로 받고 새 세대로 다시 / 올리지 않음 / 안내만 |
+| `account` | `task_not_found`(404) / `task_claimed`(409) / `task_closed`(409) / `task_not_claimed`(409) | 맡긴 일: 없음 / 다른 PC가 맡아 돌리는 중 / 끝났거나 취소됐거나 72시간이 지남 / 내가 맡은 일이 아님(결과를 올릴 수 없다) | 목록을 다시 받음 |
 | `account` | `billing_signature_invalid`(400) | PG 웹훅 서명 불일치(**보안 이벤트**) | 무시·기록 |
 | `gateway` | `run_token_invalid`(401) / `run_budget_exceeded`(429) / `device_suspended`(403) | `runToken`(`SAX-run-token-v1`) 오류 / 실행당 예산 초과 / 정지된 기기 | 해당 호출 `unknown`, 예산 초과는 핸드오프 |
 | `relay` | `room_used`(409) | 같은 룸의 두 번째 enroll(키와 무관). 룸 하나에 enroll 성공은 한 번이다(팀장 결정 2026-11-06, 클라우드 PR #122). 409는 그 룸을 만든 PC에만 보이고, 다른 PC·없음·만료·미페어링은 `404 relay.room_unavailable`이다(존재 오라클 없음) | 다시 보내지 않는다(첫 enroll이 이미 성공함). 새 폰은 새 룸으로 페어링 |

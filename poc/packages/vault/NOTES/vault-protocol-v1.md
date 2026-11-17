@@ -107,11 +107,15 @@ utilityProcess에는 powerMonitor가 없어서 main이 이벤트를 넘긴다.
 - `crypto.rkImport{enc(32B), ct(48B), info:'SAX-pclink-rk-v1', aad(32B), aikPub(32B)}` → `{aik}`. [새 PC] `linkKey`의 키로 연다(없으면 `no_link_key`, 위조는 `open_failed`).
   - 연 RK의 AIK 공개키가 `aikPub`와 다르면 `aik_mismatch`이고 아무것도 바꾸지 않는다. 같으면 쓰던 RK를 `account/rk-prev-<ms>`로 옮기고 `account/rk`를 바꾼다(`vault.rk_imported`). 넘겨받기 키는 지운다.
   - 그 뒤 `crypto.publicKeys`의 `aik`가 바뀐다. main은 키 객체를 새로 만든다.
+- `crypto.shareKey{epoch(0~64)}` → `{key(32B), signPub(32B)}`. 계정 공유 기록(D07 §10)의 줄 봉인 키 `K_share(e) = HKDF-SHA256(RK, "share/v1/" ‖ e)`와 서명 키 `Ws`의 공개키다.
+  - `key`는 금고 밖(main)으로 나간다. 공유 기록 줄만 열고 RK나 다른 키로 거슬러 가지 못한다. main은 쓰고 지우고, 폰에는 종단간 통로로만 준다.
+  - `rkImport` 뒤에는 값이 바뀐다(새 계정 열쇠에서 나온다).
+- `crypto.signShare{msg(1~16,384B)}` → `{sig}`(64B). `Ws = Ed25519(HKDF-SHA256(RK, "share/sig/v1"))`로 `utf8("SAX-share-v1")‖msg`를 서명한다. 컨텍스트는 금고가 붙인다.
 - 공통
   - 입력 msg·ct는 64KiB 이하다.
   - 허용 목록 밖 purpose는 `purpose_not_allowed`, 형식 오류는 `bad_params`다.
   - 키는 KeyStore 항목 `device/sd·vd·qd·kv`, `account/rk`에 32B 시드로 둔다. 없으면 만들고(`vault.key_created{name}`), 길이가 틀리면 덮지 않고 `vault.keystore_mismatch`다.
-- 감사: 호출마다 `vault.crypto_op{op, purpose?}`를 남긴다. 한 시간 기대치(noiseDH 240·signVd 3600·signAik 60·hpkeOpen 1200·linkKey 30·rkSeal 3·rkImport 10)를 넘으면 `vault.crypto_rate_anomaly{op, count}`를 시간당 1회 남긴다(막지 않음). 입력·출력 바이트는 남기지 않는다.
+- 감사: 호출마다 `vault.crypto_op{op, purpose?}`를 남긴다. 한 시간 기대치(noiseDH 240·signVd 3600·signAik 60·hpkeOpen 1200·linkKey 30·rkSeal 3·rkImport 10·shareKey 600·signShare 1200)를 넘으면 `vault.crypto_rate_anomaly{op, count}`를 시간당 1회 남긴다(막지 않음). 입력·출력 바이트는 남기지 않는다.
 
 ## 8. Windows 네이티브 헬퍼 — 결정 Q-3
 - 금고 트랙은 인터페이스·모의 구현·macOS 개발 구현까지 맡는다. 실제 Windows 구현은 2차 배분(Windows 호스트 세션)이 한다.
