@@ -340,7 +340,7 @@ describe('새 PC 연결(main): 쓰던 PC 쪽', () => {
     assert.equal(e.seals(), 2);
   });
 
-  it('금고가 봉인에 실패하면 로그에 멈춘 단계와 원인이 남는다. 목록은 이미 올라갔으니 새 PC가 다시 신청하면 열쇠만 다시 보낸다', async () => {
+  it('6자리가 맞은 뒤 봉인·보내기가 실패하면 로그에 멈춘 단계와 원인이 남고, 같은 6자리로 바로 다시 할 수 있다(목록은 다시 올리지 않는다)', async () => {
     const m = mailbox();
     const e = await oldPc(m, () => 1);
     const n = newPc(m, e.session.aikPub, () => 1);
@@ -353,28 +353,31 @@ describe('새 PC 연결(main): 쓰던 PC 쪽', () => {
     await assert.rejects(e.host.confirm(j.deviceId, j.code!), { code: 'account.failed' });
     assert.deepEqual(m.calls.filter((c) => c === 'putDeviceList' || c === 'pcLinkGrant'), ['putDeviceList'], '목록은 올라갔고 열쇠는 보내지 못했다');
     assert.deepEqual(e.records.at(-1), { result: 'account.failed', step: 'seal', cause: 'Unknown_cipher' });
-    // 보내는 단계에서 서버가 거절하면 step은 send, 원인은 서버 코드
+    // 신청은 사라지지 않고 6자리 칸으로 다시 보인다
+    assert.deepEqual((await e.host.list()).map((r) => [r.deviceId, r.stage, r.triesLeft]), [[j.deviceId, 'code', 3]]);
+    // 다시 할 때 틀린 숫자는 받지 않고 횟수를 센다
+    const wrong = j.code === '000000' ? '000001' : '000000';
+    const bad = await e.host.confirm(j.deviceId, wrong);
+    assert.equal(bad.ok, false);
+    assert.deepEqual(bad.requests.map((r) => [r.stage, r.triesLeft]), [['code', 2]]);
+    // 보내는 단계에서 서버가 거절하면 step은 send, 원인은 서버 코드. 목록은 다시 올리지 않는다
     e.failSeal(null);
-    await j.cancel();
-    const j2 = await n.start();
-    assert.equal(j2.deviceId, j.deviceId);
-    await e.host.begin(j2.deviceId);
-    await j2.poll();
     const grant = m.client.pcLinkGrant;
     m.client.pcLinkGrant = async () => fail('account.link_state');
-    await assert.rejects(e.host.confirm(j2.deviceId, j2.code!), { code: 'account.link_state' });
-    assert.deepEqual(e.records.at(-1), { result: 'account.link_state', step: 'send', cause: 'account.link_state' });
-    m.client.pcLinkGrant = grant;
-    // 다시 신청하면 목록은 그대로 두고 열쇠만 보낸다
-    await j2.cancel();
-    const j3 = await n.start();
-    await e.host.begin(j3.deviceId);
-    await j3.poll();
     m.calls.length = 0;
-    assert.equal((await e.host.confirm(j3.deviceId, j3.code!)).ok, true);
+    await assert.rejects(e.host.confirm(j.deviceId, j.code!), { code: 'account.link_state' });
+    assert.deepEqual(e.records.at(-1), { result: 'account.link_state', step: 'send', cause: 'account.link_state' });
+    assert.ok(!m.calls.includes('putDeviceList'));
+    m.client.pcLinkGrant = grant;
+    // 같은 6자리로 다시: 새 PC는 그대로 기다리고 있다가 열쇠를 받는다
+    m.calls.length = 0;
+    assert.equal((await e.host.confirm(j.deviceId, j.code!)).ok, true);
     assert.deepEqual(m.calls.filter((c) => c === 'putDeviceList' || c === 'pcLinkGrant'), ['pcLinkGrant']);
-    await j3.poll();
-    await j3.accept();
+    assert.equal(e.seals(), 2, '보내기에 실패한 봉인 한 번, 성공한 봉인 한 번');
+    await j.poll();
+    await j.accept();
     assert.deepEqual(n.rk(), e.rk);
+    // 끝난 신청에 다시 6자리를 넣을 수는 없다
+    await assert.rejects(e.host.confirm(j.deviceId, j.code!), { code: 'account.link_state' });
   });
 });

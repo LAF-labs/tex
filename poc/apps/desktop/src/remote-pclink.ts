@@ -32,6 +32,9 @@ const causeOf = (e: unknown): string => {
   return typeof m === 'string' && m ? m.slice(0, 40).replace(/[^A-Za-z0-9_.:-]/g, '_') : 'unknown';
 };
 
+/** 다시 해도 결과가 같은 승인 실패. 이때는 승인 상태를 버린다 */
+const NO_RETRY: ReadonlySet<string> = new Set(['account.device_limit', 'account.link_mismatch']);
+
 /** 새 PC가 6자리를 보인 뒤 이만큼 지나도 승인이 없으면 새로 신청한다(쓰던 PC의 승인 창 10분 + 여유). */
 export const PCLINK_RESTART_MS = PCLINK_STEP_MS + 30_000;
 /** 쓰던 PC가 "연결됐어요"를 보여 두는 시간. 새 PC의 사용자가 이 말을 보고 확인을 누른다. */
@@ -260,12 +263,14 @@ export class PcLinkHost {
   /**
    * 새 PC 화면의 6자리. 맞으면 새 목록을 올리고(이미 목록에 있는 PC면 건너뛴다) 계정 열쇠를 봉인해 보낸다.
    * 틀리면 ok: false(남은 횟수는 목록의 triesLeft). 3번 틀리면 신청을 버린다.
+   * 6자리가 맞은 뒤에 실패하면(연결 끊김, 봉인 실패 등) 승인을 남겨 둔다: 신청은 6자리 칸으로 다시 보이고, 같은 6자리로 다시 부르면 이어서 한다.
    */
   confirm(deviceId: string, code: string): Promise<{ ok: boolean; requests: PcLinkRequestView[] }> {
     return this.#o.exclusive(async (s, call, pull) => {
       await this.#sync(s, call);
       const p = this.#aps.get(deviceId);
-      if (!p || p.ap.state !== 'awaiting_sas') return fail('account.link_state');
+      // approved: 6자리는 맞았는데 그 뒤(봉인·보내기)가 실패해 남겨 둔 승인이다. 같은 6자리로 다시 한다
+      if (!p || (p.ap.state !== 'awaiting_sas' && p.ap.state !== 'approved')) return fail('account.link_state');
       if (!p.ap.confirm(code)) {
         // confirm()이 상태를 바꾼다(게터라 좁혀진 형식을 다시 읽는다)
         if (stateOf(p.ap) === 'failed') {
@@ -277,7 +282,6 @@ export class PcLinkHost {
         return { ok: false, requests: await this.#sync(s, call) };
       }
       const row = (await call((a) => this.#o.client.pcLinks(a))).find((x) => x.deviceId === deviceId);
-      this.#aps.delete(deviceId);
       // 어디서 멈췄는지 로그에 남긴다: list(목록 올리기) → seal(인증서·열쇠 봉인) → send(새 PC에 보내기)
       let step: 'list' | 'seal' | 'send' = 'list';
       try {
@@ -298,10 +302,14 @@ export class PcLinkHost {
         step = 'send';
         await call((a) => this.#o.client.pcLinkGrant(a, deviceId, grant));
       } catch (e) {
+        // 한도·불일치는 다시 해도 같다: 승인을 버리고 새 PC의 다시 신청을 기다린다.
+        // 그 밖의 실패(연결 끊김, 봉인 실패 등)는 승인을 남긴다. 사용자가 같은 6자리로 바로 다시 할 수 있다(이미 올라간 목록은 다시 올리지 않는다).
+        if (NO_RETRY.has(codeOf(e))) this.#aps.delete(deviceId);
         this.#log('main.pclink_host', { result: codeOf(e), step, cause: causeOf(e) });
         // 렌더러는 오류의 message만 받는다(ipc.ts dispatchShell): 코드를 message에 둔다
         throw Object.assign(new Error(codeOf(e)), { code: codeOf(e) });
       }
+      this.#aps.delete(deviceId);
       this.#done.set(deviceId, { view: { deviceId, name: row?.name ?? '', platform: row?.platform ?? 'windows', createdAt: row?.createdAt ?? this.#now(), stage: 'done', triesLeft: null }, at: this.#now() });
       this.#log('main.pclink_host', { result: 'ok' });
       return { ok: true, requests: await this.#sync(s, call) };
@@ -348,7 +356,9 @@ export class PcLinkHost {
         this.#log('main.pclink_host', { result: 'commit_mismatch' });
         continue;
       }
-      out.push({ ...base, stage: p.ap.state === 'awaiting_sas' ? 'code' : 'wait', triesLeft: p.ap.state === 'awaiting_sas' ? p.ap.triesLeft : null });
+      // approved가 남아 있으면 승인 뒤 단계가 실패한 것이다: 6자리 칸을 다시 보인다
+      const code = p.ap.state === 'awaiting_sas' || p.ap.state === 'approved';
+      out.push({ ...base, stage: code ? 'code' : 'wait', triesLeft: code ? p.ap.triesLeft : null });
     }
     for (const id of [...this.#aps.keys()]) if (!seen.has(id)) this.#aps.delete(id);
     for (const [id, d] of [...this.#done]) {
