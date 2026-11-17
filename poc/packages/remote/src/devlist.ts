@@ -13,7 +13,10 @@ import type { DeviceListEntryJson, DeviceListJson, RevokedJson, Role } from './e
 import { jcsBytes, parseJcs } from './jcs.ts';
 import type { AikSigner, VdSigner } from './keys.ts';
 
-export const MAX_DEVICES = 5;
+/** 계정당 PC 3대·폰 3대(ADR-048 결정 1). 계정 서비스 DEVICE.maxDesktops·maxMobiles와 같다(서버가 강제하고, 앱은 이 값으로 한도 안내를 만든다). */
+export const MAX_DESKTOPS = 3;
+export const MAX_MOBILES = 3;
+export const MAX_DEVICES = MAX_DESKTOPS + MAX_MOBILES;
 export const MAX_REVOKED = 64;
 export const CERT_DAYS = 90;
 /** 계정 서비스가 받는 인증서 수명 상한(services/account API.md: 91일 초과 거부). */
@@ -123,6 +126,8 @@ function toEntry(d: DeviceInfo, v: number): DeviceListEntryJson['entry'] {
 /** [PC] 기기 추가(페어링 7단계). list_version + 1, 모든 항목 재서명. */
 export async function addDevice(aik: AikSigner, prev: DeviceListJson, d: DeviceInfo): Promise<DeviceListJson> {
   if (prev.entries.length >= MAX_DEVICES) throw new Error('devlist: too many devices');
+  // 역할별 한도(PC 3·폰 3). 넘으면 끊을 기기를 사용자가 고른다. 여기서 다른 항목을 빼지 않는다(ADR-048 결정 2)
+  if (prev.entries.filter((x) => x.entry.role === d.role).length >= (d.role === 'desktop' ? MAX_DESKTOPS : MAX_MOBILES)) throw new Error('devlist: too many devices');
   if (prev.entries.some((x) => x.entry.device_id === d.deviceId) || prev.revoked.some((r) => r.device_id === d.deviceId)) {
     throw new Error('devlist: device id already used');
   }
