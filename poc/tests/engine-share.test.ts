@@ -16,9 +16,13 @@ import {
 import type { DeviceAuth, SharePage, ShareServerRow, ShareVault } from '../apps/desktop/src/remote-ports.ts';
 import { engineShareStore, ShareSync, type ShareDevice } from '../apps/desktop/src/share-sync.ts';
 
-const dirs: string[] = [];
+// DB를 닫고 나서 폴더를 지운다(Windows는 열린 DB 파일이 있는 폴더를 지우지 못한다: EPERM)
+const opened: Array<{ db: Db; dir: string }> = [];
 after(() => {
-  for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
+  for (const x of opened) {
+    x.db.close();
+    fs.rmSync(x.dir, { recursive: true, force: true });
+  }
 });
 
 const approval = (i: number) => `2026111741000000${String(i).padStart(8, '0')}`;
@@ -33,8 +37,8 @@ const NONE = { added: 0, updated: 0, removed: 0, kept: 0, skipped: 0 };
 /** PC 한 대의 장부: 사업자 프로필 하나, 거래처 둘(에이상사에는 저장 품목). */
 function pc(o: { name?: string } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sax-share-'));
-  dirs.push(dir);
   const db: Db = openDatabase(path.join(dir, 'db.sqlite'), new Uint8Array(randomBytes(32)));
+  opened.push({ db, dir });
   const cipher = new ColumnCipher(new Uint8Array(randomBytes(32)));
   let now = new Date('2026-11-17T03:00:00Z');
   const pid = new ProfileRepo(db).upsert({ kind: 'business', displayName: '하늘상회', bizNo: me, corpNo: null, repName: '김하늘', bizType: null, bizItem: null, address: null, email: null, signMethod: null }).id;
