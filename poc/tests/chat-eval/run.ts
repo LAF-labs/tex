@@ -99,7 +99,7 @@ function fakeUpstream(input: unknown[]): { status: string; output: Array<Record<
   const name = /\[NAME_\d+\]/.exec(text)?.[0];
   const amt = /\[AMT_\d+\]/.exec(text)?.[0];
   if (!name || !amt) return msg({ kind: 'smalltalk', text: '안녕하세요.', show: [], ask: null });
-  return { status: 'completed', output: [{ type: 'function_call', call_id: `call_${randomBytes(3).toString('hex')}`, name: 'invoice_draft', arguments: JSON.stringify({ counterparty: name, amount: amt, vat: null, item: null }) }] };
+  return { status: 'completed', output: [{ type: 'function_call', call_id: `call_${randomBytes(3).toString('hex')}`, name: 'invoice_draft', arguments: JSON.stringify({ counterparty: name, amount: amt, vat: null, item: null, date_month_offset: null, date_day: null, quantity: null, unit_price: null }) }] };
 }
 
 /** 사례마다 따로 띄운다: 도구 결과 흔적(trace)·상류 오류가 동시 실행(--jobs>1) 사례끼리 섞이지 않게. */
@@ -166,8 +166,8 @@ interface TurnLog {
   /** 사장님 문장 하나에 걸린 시간(모델 호출·도구 실행 전부)과 모델 호출 수 */
   ms: number;
   result: AgentTurnResult;
-  created: Array<DraftCard & { name: string; itemShown: string | null }>;
-  open: Array<DraftCard & { name: string; itemShown: string | null }>;
+  created: Array<EvalCard & { name: string; itemShown: string | null }>;
+  open: Array<EvalCard & { name: string; itemShown: string | null }>;
   checks: Array<{ name: string; ok: boolean; detail?: string }>;
 }
 
@@ -193,7 +193,7 @@ async function runTurns(c: Case, env: ReturnType<typeof seedDb>, origin: string,
   const nameOf = new Map([...env.cpIds].map(([n, id]) => [id, n]));
   const cps = SEED.cps.map((x) => ({ id: env.cpIds.get(x.name)!, name: x.name, item: x.item }));
   const row = (r: (typeof SEED.issued)[number]): IssuedRow => ({ counterpartyId: env.cpIds.get(r.cp)!, counterparty: r.cp, date: r.date, total: r.total, approvalNo: r.approvalNo ?? null });
-  const drafts: DraftCard[] = [];
+  const drafts: EvalCard[] = [];
   let seq = 0;
   let cur: { calls: TurnLog['calls']; model: TurnLog['model'] } = { calls: [], model: null };
   const chat = new AgentChat({
@@ -207,15 +207,19 @@ async function runTurns(c: Case, env: ReturnType<typeof seedDb>, origin: string,
     drafts: {
       list: () => drafts.map((d) => ({ ...d })),
       setupMissing: () => false,
-      create: (counterpartyId, amount, vat, item) => {
+      create: (counterpartyId, amount, vat, item, extra = {}) => {
         const runId = `run${++seq}`;
-        drafts.push({ runId, counterpartyId, amount, vat, item, status: 'draft' });
+        drafts.push({ runId, counterpartyId, amount, vat, item, status: 'draft', writeDate: extra.writeDate ?? null, quantity: extra.quantity ?? null, unitPrice: extra.unitPrice ?? null });
         return { runId };
       },
       update: (runId, patch) => {
         const d = drafts.find((x) => x.runId === runId)!;
         if (d.status !== 'draft') throw new Error('not_draft');
-        Object.assign(d, patch);
+        // shell-runs와 같은 규칙: 금액만 고치면 수량×단가가 빠지고, 오늘로 되돌리면 작성일 표시가 빠진다
+        const { writeDate, quantity, unitPrice, ...rest } = patch;
+        Object.assign(d, rest);
+        if (patch.amount !== undefined) Object.assign(d, quantity && unitPrice ? { quantity, unitPrice } : { quantity: null, unitPrice: null });
+        if (writeDate !== undefined) d.writeDate = writeDate === TODAY ? null : writeDate;
       },
       discard: (runId) => {
         drafts.find((x) => x.runId === runId)!.status = 'discarded';
@@ -251,7 +255,13 @@ async function runTurns(c: Case, env: ReturnType<typeof seedDb>, origin: string,
 }
 
 // ── 채점 ──
-function matchDraft(e: DraftExpect, d: { name: string; amount: number | null; vat: string | null; itemShown: string | null }): string | null {
+/** 평가용 카드: 카드 값 + 작성일자(정한 것만)·수량·단가(ADR-049) */
+type EvalCard = DraftCard & { writeDate: string | null; quantity: number | null; unitPrice: number | null };
+
+function matchDraft(e: DraftExpect, d: { name: string; amount: number | null; vat: string | null; itemShown: string | null; writeDate?: string | null; quantity?: number | null; unitPrice?: number | null }): string | null {
+  if (e.writeDate !== undefined && (d.writeDate ?? null) !== e.writeDate) return `작성일 ${d.writeDate ?? '오늘'}≠${e.writeDate ?? '오늘'}`;
+  if (e.quantity !== undefined && (d.quantity ?? null) !== e.quantity) return `수량 ${d.quantity}≠${e.quantity}`;
+  if (e.unitPrice !== undefined && (d.unitPrice ?? null) !== e.unitPrice) return `단가 ${d.unitPrice}≠${e.unitPrice}`;
   if (e.cp !== undefined && d.name !== e.cp) return `거래처 ${d.name}≠${e.cp}`;
   if (e.amount !== undefined && d.amount !== e.amount) return `금액 ${d.amount}≠${e.amount}`;
   if (e.total !== undefined) {

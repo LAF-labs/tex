@@ -128,7 +128,7 @@ function fakeUpstream(def: ToolsetDef, input: unknown[]): { status: string; outp
   const name = /\[NAME_\d+\]/.exec(said)?.[0];
   const amt = /\[AMT_\d+\]/.exec(said)?.[0];
   if (!name || !amt) return msg({ kind: 'smalltalk', text: '안녕하세요.', show: [], ask: null });
-  return { status: 'completed', output: [{ type: 'function_call', call_id: `call_${randomBytes(3).toString('hex')}`, name: 'invoice_draft', arguments: JSON.stringify({ counterparty: name, amount: amt, vat: null, item: null }) }] };
+  return { status: 'completed', output: [{ type: 'function_call', call_id: `call_${randomBytes(3).toString('hex')}`, name: 'invoice_draft', arguments: JSON.stringify({ counterparty: name, amount: amt, vat: null, item: null, date_month_offset: null, date_day: null, quantity: null, unit_price: null }) }] };
 }
 
 /** 모델 출력 요약: 항목 종류, 도구 이름·인자, 문장(토큰·슬롯 그대로, 400자까지) */

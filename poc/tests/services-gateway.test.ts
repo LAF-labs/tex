@@ -652,7 +652,7 @@ describe('게이트웨이: 폰 대화 직접 호출(ADR-047, chat 범위)', () =
 
   it('chat_phone: 머리말·도구·출력은 게이트웨이가 넣고, 도구 왕복을 replay로 잇고, toolsetDigest는 로컬 정의와 같다', async () => {
     const rt = await e.runToken(phone, chatId());
-    const call = { type: 'function_call', call_id: 'call_p1', name: 'invoice_draft', arguments: '{"counterparty":"[NAME_1]","amount":null,"vat":null,"item":null}' };
+    const call = { type: 'function_call', call_id: 'call_p1', name: 'invoice_draft', arguments: '{"counterparty":"[NAME_1]","amount":null,"vat":null,"item":null,"date_month_offset":null,"date_day":null,"quantity":null,"unit_price":null}' };
     e.provider.respondOutput = [call];
     const r = await e.call('/v1/respond', phoneBody(rt), phone);
     assert.equal(r.status, 200, r.text);

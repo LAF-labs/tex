@@ -102,7 +102,7 @@ describe('폰 대화 끝에서 끝: 폰 코어 → 게이트웨이(chat 범위) 
   afterEach(() => (e.server.close(), e.s.close()));
 
   it('카드 만들기 한 턴: 머리말은 게이트웨이가 넣고, 공급사에는 토큰만 가고, 도구 왕복은 태그 붙은 replay로 이어진다', async () => {
-    e.provider.queue = [fnCall('call_a', 'invoice_draft', { counterparty: '[NAME_1]', amount: '[AMT_1]', vat: 'separate', item: null }), message({ kind: 'did', text: '[NAME_1] 카드를 만들었어요. 맡기면 PC를 켰을 때 시작해요.', show: [], ask: null })];
+    e.provider.queue = [fnCall('call_a', 'invoice_draft', { counterparty: '[NAME_1]', amount: '[AMT_1]', vat: 'separate', item: null, date_month_offset: null, date_day: null, quantity: null, unit_price: null }), message({ kind: 'did', text: '[NAME_1] 카드를 만들었어요. 맡기면 PC를 켰을 때 시작해요.', show: [], ask: null })];
     const r = reply(await e.chat.send('한빛전자(220-81-62517)에 55만원 세금계산서 끊어줘'));
     assert.equal(r.text, '한빛전자 카드를 만들었어요. 맡기면 PC를 켰을 때 시작해요.');
     const card = r.show.find((x) => x.type === 'card');

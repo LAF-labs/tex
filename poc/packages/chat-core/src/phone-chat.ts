@@ -36,7 +36,7 @@ import { estimateTokens } from './tokens.ts';
 /** 한 번 부를 때의 입력 상한(추정 토큰, 머리말·도구 정의 포함). 하루 한도(체험 50원·구독 300원) 안에서 대화 횟수를 지키는 값이다. */
 export const PHONE_CONTEXT_MAX_TOKENS = 8000;
 /** chat_phone 머리말 + 도구 정의 + 출력 스키마의 추정 토큰(넉넉하게). 시험이 실제 머리말의 추정값이 이보다 작은지 본다. */
-export const PHONE_PREFIX_EST_TOKENS = 3800;
+export const PHONE_PREFIX_EST_TOKENS = 4000;
 /** [앞 대화]에 두는 사용자 턴 수 상한. 넘으면 오래된 절반을 한꺼번에 요약으로 접는다. */
 export const PHONE_TURNS_MAX = 20;
 /** [사실]에 미리 조회해 넣는 거래처 수 상한 */
@@ -72,6 +72,7 @@ export const PHONE_ASK_TEXT: Record<AgentAsk, string> = {
   counterparty: '어느 거래처인가요? 거래처 목록에서 골라 주세요.',
   vat: '부가세 별도인가요, 포함인가요?',
   which_card: '어느 카드를 말씀하시는지 골라 주세요.',
+  date: '작성일자를 정하는 카드는 PC에서 만들 수 있어요. PC가 켜지면 PC 대화에서 말씀해 주세요.',
 };
 export const PHONE_SLOT_MISSING_TEXT = '같이 보이는 표에서 값을 확인해 주세요.';
 export const PHONE_UNAVAILABLE_TEXT = '지금 답을 받지 못했어요. 잠시 뒤 다시 시도해 주세요.';
@@ -625,6 +626,7 @@ export class PhoneChat {
       return String(r.value).trim() || null;
     };
     const vat = (v: unknown): Vat | null => (v === 'separate' || v === 'included' ? v : null);
+    const pcOnly = () => ['date_month_offset', 'date_day', 'quantity', 'unit_price'].some((k) => a[k] !== null && a[k] !== undefined);
     const parse: { [K in ChatPhoneToolName]: () => DomainCall | ToolOutput } = {
       invoice_history: () => {
         const id = a.counterparty === null ? null : cp(a.counterparty);
@@ -635,10 +637,13 @@ export class PhoneChat {
         return a.counterparty !== null && !id ? unknown(a.counterparty) : { tool: 'receivables', counterpartyId: id };
       },
       invoice_draft: () => {
+        // 작성일자·수량·단가(ADR-049)는 1단계에서 PC만 계산한다. 폰은 카드를 만들지 않고 not_on_phone으로 답해 모델이 PC로 미룬다(defer).
+        if (pcOnly()) return out('not_on_phone');
         const id = cp(a.counterparty);
         return id ? { tool: 'invoice_draft', counterpartyId: id, amount: amount(a.amount), vat: vat(a.vat), item: item(a.item) } : unknown(a.counterparty);
       },
       draft_edit: () => {
+        if (pcOnly()) return out('not_on_phone');
         const d = draft(a.draft);
         return d ? { tool: 'draft_edit', draft: d, amount: amount(a.amount), vat: vat(a.vat), item: item(a.item) } : out('no_such_draft');
       },

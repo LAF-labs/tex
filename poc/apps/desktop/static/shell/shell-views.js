@@ -246,6 +246,17 @@ const line = (text, muted) => h('p', { class: `sx-body-sm${muted ? ' is-muted' :
 export const NO_CHROME_TEXT = 'Chrome이 설치돼 있어야 홈택스에서 준비할 수 있어요. Chrome을 설치한 뒤 [홈택스에서 준비]를 다시 눌러 주세요. 아직 아무것도 보내지 않았어요.';
 /** Chrome 설치 안내(U6, 판의 할 일·첫 발급 요청). 주소는 글자로만 둔다(앱이 외부 링크를 열지 않는다). */
 export const CHROME_GUIDE_TEXT = '홈택스 작업은 이 PC의 Chrome 창에서 해요. 다른 브라우저에서 google.com/chrome 을 열어 Chrome을 설치한 뒤 [다시 확인]을 눌러 주세요.';
+/** 정한 작성일자가 국세청 안내 발급기한을 지났다(ADR-049, 막지 않고 경고. 가산세율·금액은 보이지 않는다, R14 I-1). */
+export const ISSUE_DATE_LATE_TEXT = '국세청 안내 발급기한(공급한 달 다음 달 10일)이 지났어요. 가산세가 붙는지는 세무사에게 확인해 보세요.';
+/** 오늘이 아닌 작성일자 카드(ADR-049 결정 4): 홈택스 작성일자 칸을 채우는 업데이트 전까지 준비하지 않는다. */
+export const ISSUE_DATE_HELD_TEXT = '작성일자를 오늘이 아닌 날로 정한 카드는 곧 발급할 수 있어요. 지금 발급하려면 작성일자를 오늘로 바꿔 주세요.';
+/** 카드의 작성일자 "11월 17일"(올해가 아니면 연도까지) */
+export const writeDateText = (d) => {
+  const y = Number(String(d).slice(0, 4));
+  const md = `${Number(String(d).slice(5, 7))}월 ${Number(String(d).slice(8, 10))}일`;
+  // 올해는 한국 시간 기준(ADR-027 결정 1)
+  return y === Number(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul', year: 'numeric' }).format(new Date())) ? md : `${y}년 ${md}`;
+};
 export const DUP_TODAY_TEXT = '이미 오늘 같은 거래처·같은 금액으로 발급했어요. 한 번 더 발급하려는 게 맞는지 확인해 주세요.';
 
 /** 빈 화면: 무엇이 없는지 한 줄(ink-2) + 무엇을 하면 채워지는지 한 줄(ink-3) + 할 수 있는 일 하나. 상자·그림 없이 가운데. */
@@ -413,6 +424,8 @@ export function taskCard(run, act) {
         h('dd', {}, vatSeg, run.vatGuessed ? h('span', { class: 'sx-tag' }, '기본값') : null),
         h('dt', {}, '품목'),
         h('dd', { 'data-draft-item': run.item ?? '' }, valBtn('품목', `${noItem ? '비어 있음' : run.item}`, () => act.editFields(run.id, 'item'), { act: 'fields-edit', cls: noItem ? 'is-missing' : run.itemGuessed ? 'is-guessed' : '' }), !noItem && run.itemGuessed ? h('span', { class: 'sx-tag' }, '저장 품목') : null),
+        h('dt', {}, '작성일자'),
+        h('dd', { 'data-draft-date': run.writeDate ?? '' }, writeDateText(run.writeDate), run.writeDateSet ? h('span', { class: 'sx-tag' }, '오늘 아님') : null),
         h('dt', {}, '받는 이메일'),
         h('dd', { 'data-draft-email': run.email.value ?? '' }, valBtn('받는 이메일', run.email.value || '없음 · 메일은 보내지 않아요', () => act.editFields(run.id, 'email'), { act: 'email-edit', cls: run.email.value ? '' : 'is-none' })),
       ];
@@ -424,12 +437,16 @@ export function taskCard(run, act) {
         'div',
         { class: 'sx-amount', 'data-draft-amount': '' },
         valBtn('금액', `${num(run.total)}원`, () => act.editAmount(run.id), { act: 'amount-edit', cls: noAmount ? 'is-total is-missing' : 'is-total' }),
-        h('span', { class: 'sx-amount-split' }, `공급가 ${num(run.supply)} + 세액 ${num(run.tax)}`),
+        h('span', { class: 'sx-amount-split' }, `${run.quantity && run.unitPrice ? `${num(run.quantity)} × ${num(run.unitPrice)} = ` : ''}공급가 ${num(run.supply)} + 세액 ${num(run.tax)}`),
       ),
     );
     card.append(
       // Chrome 없음·오늘 같은 발급이 겹쳐도 주의 면은 하나
-      noteGroup([run.noChrome ? [NO_CHROME_TEXT, { 'data-no-chrome': '' }] : null, run.dupToday ? [DUP_TODAY_TEXT, { 'data-dup-today': '' }] : null]),
+      noteGroup([
+        run.noChrome ? [NO_CHROME_TEXT, { 'data-no-chrome': '' }] : null,
+        run.dupToday ? [DUP_TODAY_TEXT, { 'data-dup-today': '' }] : null,
+        run.issueDateHeld ? [ISSUE_DATE_HELD_TEXT, { 'data-issue-date-held': '' }] : run.issueDateLate ? [ISSUE_DATE_LATE_TEXT, { 'data-issue-date-late': '' }] : null,
+      ]),
       h('dl', { class: 'sx-kv sx-draft', 'data-draft-fields': '', 'data-draft-edit': act.editingFields === run.id ? '' : null }, ...rows),
       err,
       editing
@@ -437,7 +454,7 @@ export function taskCard(run, act) {
         : h(
             'div',
             { class: 'sx-actions' },
-            btn('홈택스에서 준비', () => act.prepare(run.id), 'sx-btn-primary', { 'data-act': 'prepare', disabled: noItem || noAmount }),
+            btn('홈택스에서 준비', () => act.prepare(run.id), 'sx-btn-primary', { 'data-act': 'prepare', disabled: noItem || noAmount || !!run.issueDateHeld }),
             btn('취소', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'cancel' }),
           ),
       editing ? null : h('div', { class: 'sx-meta' }, noAmount ? '합계가 0원이에요. 금액을 눌러 고치면 준비할 수 있어요.' : noItem ? '품목을 넣으면 준비할 수 있어요.' : '값을 누르면 고칠 수 있어요 · 아직 아무것도 보내지 않았어요'),

@@ -4,7 +4,7 @@
 // - 응답은 믿지 않는다: 도구 이름·인자 모양을 표(tables.ts)로 다시 검사한다. 답 문장 검사는 PhoneChat이 한다.
 // - 본문·토큰·헤더를 로그에 남기지 않는다. 오류는 코드만 옮긴다.
 import { wasMinted, type RedactedText } from '@sax/redaction';
-import { CHAT_PHONE_TOOLS, type ChatPhoneToolName } from './tables.ts';
+import { CHAT_PHONE_TOOLS, DATE_MONTH_MIN, type ChatPhoneToolName } from './tables.ts';
 
 export type PhoneChatErrorCode =
   | 'chat.unavailable'
@@ -114,12 +114,17 @@ const keysAre = (o: Record<string, unknown>, keys: readonly string[]) => Object.
 const ARG_MAX = 400;
 const short = (o: Record<string, unknown>) => Object.values(o).every((v) => typeof v !== 'string' || v.length <= ARG_MAX);
 
+/** 카드의 작성일자·수량·단가 칸(ADR-049, tables.ts DRAFT_EXTRA와 같은 모양) */
+const EXTRA_KEYS = ['date_month_offset', 'date_day', 'quantity', 'unit_price'] as const;
+const monthOffset = (v: unknown) => v === null || (typeof v === 'number' && Number.isInteger(v) && v >= DATE_MONTH_MIN && v <= 0);
+const extraOk = (a: Record<string, unknown>) => monthOffset(a.date_month_offset) && nullableString(a.date_day) && nullableString(a.quantity) && nullableString(a.unit_price);
+
 /** 도구 인자 모양 검사. 표(CHAT_PHONE_TOOLS)의 JSON 스키마와 같은 판정이어야 한다(시험이 Ajv와 대조한다). */
 export const PHONE_TOOL_ARGS: { [K in ChatPhoneToolName]: (a: Record<string, unknown>) => boolean } = {
   invoice_history: (a) => keysAre(a, ['counterparty']) && nullableString(a.counterparty),
   receivables: (a) => keysAre(a, ['counterparty']) && nullableString(a.counterparty),
-  invoice_draft: (a) => keysAre(a, ['counterparty', 'amount', 'vat', 'item']) && typeof a.counterparty === 'string' && nullableString(a.amount) && vat(a.vat) && nullableString(a.item),
-  draft_edit: (a) => keysAre(a, ['draft', 'amount', 'vat', 'item']) && typeof a.draft === 'string' && nullableString(a.amount) && vat(a.vat) && nullableString(a.item),
+  invoice_draft: (a) => keysAre(a, ['counterparty', 'amount', 'vat', 'item', ...EXTRA_KEYS]) && typeof a.counterparty === 'string' && nullableString(a.amount) && vat(a.vat) && nullableString(a.item) && extraOk(a),
+  draft_edit: (a) => keysAre(a, ['draft', 'amount', 'vat', 'item', ...EXTRA_KEYS]) && typeof a.draft === 'string' && nullableString(a.amount) && vat(a.vat) && nullableString(a.item) && extraOk(a),
   draft_discard: (a) => keysAre(a, ['draft']) && typeof a.draft === 'string',
 };
 const TOOL_NAMES: ReadonlySet<string> = new Set(CHAT_PHONE_TOOLS.map((t) => t.name));

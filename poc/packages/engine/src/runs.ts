@@ -12,6 +12,7 @@ import { H01Runner, type Readback, type RunInputs } from './h01/runner.ts';
 import { RunEnd, type RunStatus } from './run-end.ts';
 import type { IssueLockPort } from './issue-lock.ts';
 import { SIGNAL_DICT, type SignalDict } from './signals.ts';
+import { issueDateRule } from '@sax/chat-core';
 import { kstDay, policyFor, RateGuard, RunPolicy, runPortalConfig, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
 import { IrRun, type GateHistory, type IrPackage, type IrSourceResult, type StoppedAt } from './run/service-ir.ts';
 import { CERT_CARD, certBusinessKey, certInputs, type CertStartParams } from './cert.ts';
@@ -49,6 +50,11 @@ export interface StartParams {
    * 실행 이력(runHistory)에서는 뺀다. 렌더러가 켜도 발급 쪽으로는 아무것도 열리지 않는다.
    */
   rehearsal?: boolean;
+  /**
+   * 작성일자(KST YYYY-MM-DD, ADR-049). 없으면 실행 시작 시각의 KST 날짜. 미래·없는 날·지난 과세기간이면 bad_issue_date.
+   * H-01 패키지가 작성일자 칸을 채우기 전에는 홈택스가 오늘을 보이므로 s19e가 게이트 전에 멈춘다(main은 그 전에 막는다).
+   */
+  issueDate?: string;
 }
 
 /** 발급 사다리의 홈택스 밖 칸(API·직접 발급)이 쓰는 초안. start와 같은 검증을 지난다. */
@@ -419,10 +425,22 @@ export class RunService extends EventEmitter {
       amounts: { supply: String(supply), tax: String(tax), total: String(supply + tax) },
       items: [{ name: itemName }],
       // 작성일자는 KST 날짜다(OS 시간대와 무관, 요청률 정책의 유효 시각). s19e가 화면 값과 대조한다.
-      issueDate: kstDay(this.rate.clock().now),
+      issueDate: this.issueDate(p.issueDate),
       email,
     };
     return { profile, inputs };
+  }
+
+  /** 정한 작성일자(ADR-049)를 검사한다. 없으면 오늘(KST). */
+  private issueDate(v: unknown): string {
+    const today = kstDay(this.rate.clock().now);
+    if (v === undefined || v === null || v === today) return today;
+    const t = String(v);
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
+    const real = m && new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))).toISOString().slice(0, 10) === t;
+    const rule = real ? issueDateRule(t, today) : null;
+    if (rule !== 'ok' && rule !== 'late') throw new RunEnd('failed', 'bad_issue_date');
+    return t;
   }
 
   /** 같은 발급 키에 발급됨·미종결 행이 있으면 새 시도를 만들지 않는다(무장 트랜잭션이 다시 본다). */

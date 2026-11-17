@@ -1,4 +1,5 @@
 export * from './tables.ts';
+export * from './draft-extra.ts';
 export * from './rules.ts';
 export * from './reply-check.ts';
 export * from './fill.ts';
