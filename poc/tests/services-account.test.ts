@@ -21,6 +21,7 @@ import {
   type Sql,
 } from '../services/shared/src/index.ts';
 import { ACCOUNT_VISIBILITY, AccountService, MIGRATIONS_DIR, MockMailSender, MockPaymentGateway, accountRouter } from '../services/account/src/index.ts';
+import { DEVICE } from '../services/account/src/constants.ts';
 import { Clock, D, H, SoftPasskey, acctOp, cert, client, device, dpop, edKey, entry, internalAuth, internalHeaders, revokeRec, type Device, type EdKey } from './services-kit.ts';
 
 const ORIGIN = 'https://account.test.invalid';
@@ -355,13 +356,49 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
 
   it('pending 신청이 데스크톱 상한을 채웠으면 다른 기기로 첫 고정을 할 수 없다(상한 우회 없음)', async () => {
     const s = await login(e, 'cap@example.com');
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < DEVICE.maxDesktops; i++) {
       const d = device('desktop', 0);
       assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: d.id, role: 'desktop', platform: 'windows', name: 'PC', Sx: d.S.b64, Vx: d.V.b64 } })).status, 201);
     }
     const aik = edKey();
-    const third = device('desktop', 0);
-    assert.equal((await e.req('POST', '/v1/aik', { headers: bearer(s), body: { aikPub: aik.b64, deviceList: { listVersion: 1, entries: [entry(aik, third, 1)], revoked: [] }, platform: 'windows', name: 'PC' } })).json.error, 'account.device_limit');
+    const fourth = device('desktop', 0);
+    assert.equal((await e.req('POST', '/v1/aik', { headers: bearer(s), body: { aikPub: aik.b64, deviceList: { listVersion: 1, entries: [entry(aik, fourth, 1)], revoked: [] }, platform: 'windows', name: 'PC' } })).json.error, 'account.device_limit');
+  });
+
+  it('계정당 PC 3대·폰 3대(ADR-048): 네 번째는 account.device_limit(코드뿐), 서버는 있던 기기를 끊지 않고 하나가 폐기되면 다시 받는다', async () => {
+    assert.equal(DEVICE.maxDesktops, 3);
+    assert.equal(DEVICE.maxMobiles, 3);
+    const s = await login(e, 'three@example.com');
+    const enroll = (p: Device) => e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: p.id, role: p.role, platform: p.role === 'desktop' ? 'macos' : 'ios', name: p.role === 'desktop' ? 'PC' : '폰', Sx: p.S.b64, Vx: p.V.b64 } });
+    const pcs = [device('desktop', 0), device('desktop', 0), device('desktop', 0)];
+    const phones = [device('mobile', 0), device('mobile', 0), device('mobile', 0)];
+    for (const d of [...pcs, ...phones]) assert.equal((await enroll(d)).status, 201);
+    for (const role of ['desktop', 'mobile'] as const) {
+      const r = await enroll(device(role, 0));
+      assert.equal(r.status, 409);
+      assert.deepEqual(r.json, { error: 'account.device_limit' });
+    }
+    // 자동으로 끊긴 기기가 없다: 여섯 대가 그대로 있다
+    const list = (await e.req('GET', '/v1/devices', { headers: bearer(s) })).json.devices as Array<{ deviceId: string; state: string }>;
+    assert.deepEqual(list.map((d) => d.deviceId).sort(), [...pcs, ...phones].map((d) => d.id).sort());
+    assert.ok(list.every((d) => d.state === 'pending'));
+    // PC 하나가 폐기되면 PC 자리만 하나 빈다
+    await e.db.run("UPDATE devices SET state = 'revoked' WHERE device_id = $1", [pcs[0]!.id]);
+    assert.equal((await enroll(device('mobile', 0))).json.error, 'account.device_limit');
+    assert.equal((await enroll(device('desktop', 0))).status, 201);
+    assert.equal((await enroll(device('desktop', 0))).json.error, 'account.device_limit');
+  });
+
+  it('30일 추가 한도(ADR-048): PC는 5번째까지 받고 6번째는 account.device_churn_limit', async () => {
+    assert.equal(DEVICE.churnDesktop, 5);
+    const s = await login(e, 'churn@example.com');
+    const enroll = (p: Device) => e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: p.id, role: 'desktop', platform: 'windows', name: 'PC', Sx: p.S.b64, Vx: p.V.b64 } });
+    for (let i = 0; i < DEVICE.churnDesktop; i++) {
+      const d = device('desktop', 0);
+      assert.equal((await enroll(d)).status, 201);
+      await e.db.run("UPDATE devices SET state = 'revoked' WHERE device_id = $1", [d.id]);
+    }
+    assert.equal((await enroll(device('desktop', 0))).json.error, 'account.device_churn_limit');
   });
 
   it('기기별 발급 한도는 검증을 통과한 요청만 센다(device_id만 아는 남이 한도를 태우지 못한다)', async () => {
