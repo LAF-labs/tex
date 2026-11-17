@@ -182,6 +182,22 @@ describe('PhoneIssue', () => {
     for (const a of s.acks) assert.ok(encodeEnvelope(makeEnvelope('cmd.ack', a, { pairId: ulid(), from: 'desktop', seq: 1 })), '스키마 통과');
   });
 
+  it('겹쳐 온 명령: 같은 cmdId는 한 번만 시작하고, 동시에 적은 cmdId도 디스크에 모두 남는다', async () => {
+    const x = await issueWorld();
+    const s = new Sink();
+    const body = issueCmd(ulid(NOW), req);
+    const [a, b] = await Promise.all([x.p.handle('pair-1', s, body), x.p.handle('pair-2', s, body)]);
+    assert.deepEqual([a.state, b.state].sort(), ['pc_only', 'rejected']);
+    assert.equal((a.state === 'rejected' ? a : b).reason, 'duplicate');
+    assert.equal(x.drafts.length, 1);
+    // 처음 읽기 전에 겹친 put 두 개
+    const log = new CmdLog(path.join(x.dir, 'other.json'));
+    const c1 = ulid(), c2 = ulid();
+    await Promise.all([log.put(c1, ulid(), NOW), log.put(c2, ulid(), NOW)]);
+    const again = new CmdLog(path.join(x.dir, 'other.json'));
+    assert.ok((await again.get(c1)) && (await again.get(c2)));
+  });
+
   it('준비가 막혀도(상한) 초안은 PC에 남고, 폰에는 준비 단계로 보인다', async () => {
     const x = await issueWorld({ prepare: async () => Promise.reject(new Error('throttled.rate:3')) });
     const s = new Sink();

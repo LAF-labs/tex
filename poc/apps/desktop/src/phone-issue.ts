@@ -64,21 +64,22 @@ export function eventOf(r: RunView, runId: string, cmdId: string, at: number): R
 /** 처리한 cmdId(디스크 영속, 0600). 같은 명령을 두 번 시작하지 않는다. */
 export class CmdLog {
   #file: string;
-  #rows: Array<{ cmdId: string; runId: string; at: number }> | null = null;
+  #rows: Promise<Array<{ cmdId: string; runId: string; at: number }>> | null = null;
   #write: Promise<void> = Promise.resolve();
   constructor(file: string) {
     this.#file = file;
   }
-  async #load(): Promise<Array<{ cmdId: string; runId: string; at: number }>> {
-    if (this.#rows) return this.#rows;
-    try {
-      const j = JSON.parse(await fs.readFile(this.#file, 'utf8')) as { v?: number; cmds?: unknown };
-      this.#rows = Array.isArray(j.cmds)
-        ? (j.cmds as unknown[]).filter((x): x is { cmdId: string; runId: string; at: number } => isObj(x) && typeof x.cmdId === 'string' && ULID.test(x.cmdId) && typeof x.runId === 'string' && ULID.test(x.runId) && Number.isSafeInteger(x.at))
-        : [];
-    } catch {
-      this.#rows = [];
-    }
+  /** 파일은 한 번만 읽고, 그 뒤로는 같은 배열(put이 넣은 행 포함)을 돌려준다. 동시 호출도 같은 읽기를 기다린다. */
+  #load(): Promise<Array<{ cmdId: string; runId: string; at: number }>> {
+    this.#rows ??= fs.readFile(this.#file, 'utf8').then(
+      (t) => {
+        const j = JSON.parse(t) as { v?: number; cmds?: unknown };
+        return Array.isArray(j.cmds)
+          ? (j.cmds as unknown[]).filter((x): x is { cmdId: string; runId: string; at: number } => isObj(x) && typeof x.cmdId === 'string' && ULID.test(x.cmdId) && typeof x.runId === 'string' && ULID.test(x.runId) && Number.isSafeInteger(x.at))
+          : [];
+      },
+      () => [],
+    ).catch(() => []);
     return this.#rows;
   }
   async get(cmdId: string): Promise<string | null> {
@@ -134,6 +135,7 @@ export class PhoneIssue {
   #sinks = new Map<string, PhoneSink>();
   /** 셸 실행 id → 폰 쪽 정보 */
   #runs = new Map<string, Tracked>();
+  #queue: Promise<void> = Promise.resolve();
   constructor(o: PhoneIssuePorts) {
     this.#o = o;
   }
@@ -180,7 +182,13 @@ export class PhoneIssue {
 
   /** 폰 cmd.run 하나. 답(cmd.ack)을 sink로 보내고 그 답을 돌려준다. */
   async handle(pairId: string, sink: PhoneSink, body: CmdRunBody): Promise<CmdAckBody> {
-    const ack = await this.#decide(pairId, body);
+    // 한 번에 하나씩 정한다(같은 cmdId가 두 세션에서 겹쳐 와도, 다른 명령이 겹쳐 와도 둘 다 시작하지 않게)
+    const turn = this.#queue.then(() => this.#decide(pairId, body));
+    this.#queue = turn.then(
+      () => undefined,
+      () => undefined,
+    );
+    const ack = await turn;
     try {
       sink.send('cmd.ack', ack);
     } catch {
