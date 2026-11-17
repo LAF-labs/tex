@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { CounterpartyRepo, openDatabase, ProfileRepo, syntheticBizNo, type Db } from '@sax/db';
-import { CHAT_ADVICE_TEXT, CHAT_AGENT_FALLBACK_TEXT, CHAT_AGENT_INPUT_MAX_BYTES, CHAT_AGENT_NUMBER_TEXT, CHAT_AGENT_TRANSCRIPT_TURNS, ChatAgent, gatewayChatAgentModel, numberShaped, parseKrw, type DomainCall, type ScreenFrame, type StepResult, type ToolOutput } from '@sax/engine';
+import { CHAT_ADVICE_TEXT, CHAT_AGENT_APPROVAL_TEXT, CHAT_AGENT_ASK_TEXT, CHAT_AGENT_DONE_TEXT, CHAT_AGENT_FALLBACK_TEXT, CHAT_AGENT_INPUT_MAX_BYTES, CHAT_AGENT_LOOKUP_TEXT, CHAT_AGENT_NUMBER_TEXT, CHAT_AGENT_TRANSCRIPT_TURNS, ChatAgent, gatewayChatAgentModel, numberShaped, parseKrw, type DomainCall, type ScreenFrame, type StepResult, type ToolOutput } from '@sax/engine';
 import { CHAT_AGENT_COMMANDS, COMMANDS, MAIN_ONLY, READ_QUERIES } from '@sax/engine/protocol';
 import { BundleCatalog } from '@sax/model';
 import { Egress } from '@sax/net';
@@ -252,6 +252,14 @@ describe('chat.step 역치환', () => {
       await code(a.step({ start: { text: 'A상사에 끊어줘', frame: { cards: [] }, profileId } }), 'chat.bad_response');
     }
   });
+
+  it('사장님이 쓴 금액이 양수로 읽히지 않으면("0원") 오류가 아니라 금액 없는 호출로 main에 넘긴다', async () => {
+    const a = agent();
+    script((body) => fc('invoice_draft', { counterparty: toks(nowLine(body), 'NAME')[0], amount: toks(nowLine(body), 'AMT')[0], vat: null, item: null }));
+    const r = await a.step({ start: { text: 'A상사 0원 세금계산서', frame: { cards: [] }, profileId } });
+    assert.equal(r.kind, 'tools');
+    assert.deepEqual(r.kind === 'tools' && [r.calls[0]!.tool, (r.calls[0] as Extract<DomainCall, { tool: 'invoice_draft' }>).amount], ['invoice_draft', null]);
+  });
 });
 
 describe('chat.step 답 검사', () => {
@@ -270,12 +278,36 @@ describe('chat.step 답 검사', () => {
     }
   });
 
-  it('모르는 토큰·모르는 ref·틀린 슬롯·200자 초과는 chat.bad_response', async () => {
+  it('모르는 토큰·모르는 ref·200자 초과는 chat.bad_response', async () => {
     const a = agent();
-    for (const o of [{ text: '[NAME_77]에 만들었어요.' }, { text: '확인했어요.', show: ['r9'] }, { text: '{r1.first.amount}예요.' }, { text: '{r1.first.supply}예요.' }, { text: '{oops}' }, { text: '가'.repeat(201) }]) {
+    for (const o of [{ text: '[NAME_77]에 만들었어요.' }, { text: '확인했어요.', show: ['r9'] }, { text: '가'.repeat(201) }]) {
       script(() => reply(o));
       await code(a.step({ start: { text: '안녕', frame: { cards: [] }, profileId } }), 'chat.bad_response');
     }
+  });
+
+  it('틀린 슬롯·모르는 결과 슬롯은 끊지 않고 숫자 문장처럼 고정 문장으로 바꾼다(chat-eval multi-lookup-then-issue)', async () => {
+    const a = agent();
+    for (const text of ['{r1.first.amount}예요.', '{r1.first.supply}예요.', '{oops}', '{d2.first.total}으로 만들었어요.']) {
+      script(() => reply({ text }));
+      const r = await a.step({ start: { text: '안녕', frame: { cards: [] }, profileId } });
+      assert.deepEqual(r.kind === 'reply' && [r.reply.text, r.reply.filtered], [CHAT_AGENT_FALLBACK_TEXT, 'slot']);
+    }
+    // 되묻는 답이면 되묻기는 살린다
+    script(() => reply({ text: '{d1.first.total} 맞나요?', kind: 'ask', ask: 'amount' }));
+    const r = await a.step({ start: { text: '안녕', frame: { cards: [] }, profileId } });
+    assert.deepEqual(r.kind === 'reply' && [r.reply.text, r.reply.ask, r.reply.filtered], [CHAT_AGENT_ASK_TEXT.amount, 'amount', 'slot']);
+  });
+
+  it('방금 만든 카드 ref에 슬롯을 붙이면 카드 문장으로 말한다(부가세 되묻기는 화면이 하지 않는다, chat-eval multi-lookup-then-issue crusoe)', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    script(
+      (b) => fc('invoice_draft', { counterparty: toks(nowLine(b), 'NAME')[0], amount: toks(nowLine(b), 'AMT')[0], vat: null, item: '원두' }),
+      (b) => reply({ kind: 'did', text: `공급가 {${lastOutput(b)!.ref}.first.supply}로 카드를 만들었어요.`, show: [lastOutput(b)!.ref!], ask: 'vat' }),
+    );
+    const { reply: rep } = await say(a, pc, 'A상사 110만원 원두 세금계산서 끊어줘');
+    assert.deepEqual([rep.text, rep.ask, rep.filtered], [CHAT_AGENT_DONE_TEXT.card_shown, null, 'slot']);
   });
 
   it('합계·건수는 집계 슬롯, 슬롯·토큰 밖 숫자가 있으면 문장을 버리고 표는 둔다, 슬롯 안 공백은 붙인다, 금액 인자는 돈 칸 슬롯만', async () => {
@@ -318,20 +350,194 @@ describe('chat.step 답 검사', () => {
 });
 
 describe('chat.step 턴 상한·세션 폐기', () => {
-  it('턴 상한에서도 도구를 부르면 chat.turn_limit, 그 도구는 main에 가지 않는다', async () => {
+  it('턴 상한에서도 도구를 부르면 그 도구는 main에 가지 않는다. 없는 카드를 거듭 찾으면 어느 카드인지 엔진이 되묻는다', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const call = (n: number) => () => fc('draft_discard', { draft: `d${90 + n}` });
+    script(call(1), call(2), call(3), call(4));
+    const r = await a.step({ start: { text: '카드 계속 지워 줘', frame: { cards: [] }, profileId } });
+    assert.equal(responds().length, 4);
+    assert.equal(pc.calls.length, 0);
+    assert.deepEqual(r.kind === 'reply' && [r.reply.kind, r.reply.ask, r.reply.text], ['ask', 'which_card', CHAT_AGENT_ASK_TEXT.which_card]);
+  });
+
+  it('같은 호출을 되풀이했는데 보일 결과도 되물을 칸도 없으면 chat.turn_limit', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const call = () => fc('receivables', { counterparty: null });
+    script(call, call);
+    const r = await a.step({ start: { text: '못 받은 돈', frame: { cards: [] }, profileId } });
+    await code(a.step({ continue: { outputs: r.kind === 'tools' ? r.calls.map((c) => ({ callId: c.callId, output: pc.exec(c) })) : [] } }), 'chat.turn_limit');
+    assert.equal(pc.calls.length, 1);
+  });
+
+  it('같은 턴에 같은 도구를 같은 인자로 또 부르면 다시 실행하지 않고 그 결과로 턴을 닫는다(chat-eval)', async () => {
     const a = agent();
     const pc = new FakePc();
     const call = () => fc('sales_summary', { month_offset: 0 });
-    script(call, call, call, call);
-    let r = await a.step({ start: { text: '매출 계속 봐 줘', frame: { cards: [] }, profileId } });
-    for (let i = 0; i < 2; i++) {
-      assert.equal(r.kind, 'tools');
-      r = await a.step({ continue: { outputs: r.kind === 'tools' ? r.calls.map((c) => ({ callId: c.callId, output: pc.exec(c) })) : [] } });
-    }
+    script(call, call);
+    const r = await a.step({ start: { text: '이번 달 매출 얼마야', frame: { cards: [] }, profileId } });
     assert.equal(r.kind, 'tools');
-    await code(a.step({ continue: { outputs: r.kind === 'tools' ? r.calls.map((c) => ({ callId: c.callId, output: pc.exec(c) })) : [] } }), 'chat.turn_limit');
-    assert.equal(responds().length, 4);
-    assert.equal(pc.calls.length, 3);
+    const end = await a.step({ continue: { outputs: r.kind === 'tools' ? r.calls.map((c) => ({ callId: c.callId, output: pc.exec(c) })) : [] } });
+    assert.equal(pc.calls.length, 1);
+    assert.equal(responds().length, 2);
+    assert.deepEqual(end.kind === 'reply' && [end.reply.kind, end.reply.text, end.reply.show, end.reply.filtered], ['answer', CHAT_AGENT_LOOKUP_TEXT('r1'), ['r1'], 'repeat']);
+  });
+
+  it('같은 턴에 같은 거래처·금액으로 카드를 또 만들면 새 카드 대신 그 카드를 고친다(chat-eval issue-korean-amount)', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const draft = (vat: string | null) => (body: Item) => fc('invoice_draft', { counterparty: toks(nowLine(body), 'NAME')[0], amount: toks(nowLine(body), 'AMT')[0], vat, item: '디자인' });
+    script(draft(null), draft('separate'), () => reply({ text: '카드를 만들었어요.', kind: 'did' }));
+    const { reply: rep } = await say(a, pc, 'A상사 110만원 디자인 세금계산서 끊어줘');
+    assert.deepEqual(pc.calls.map((c) => c.tool), ['invoice_draft', 'draft_edit']);
+    const edit = pc.calls[1] as Extract<DomainCall, { tool: 'draft_edit' }>;
+    assert.equal(edit.vat, 'separate');
+    assert.equal(rep.filtered, null);
+  });
+
+  it('한 응답 안에 같은 거래처·금액 invoice_draft가 둘이면 카드는 한 장이고 뒤 호출의 부가세를 합친다(리뷰 지적)', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const args = (b: Item, vat: string | null) => ({ counterparty: toks(nowLine(b), 'NAME')[0], amount: toks(nowLine(b), 'AMT')[0], vat, item: '디자인' });
+    script((b) => [...fc('invoice_draft', args(b, null)), ...fc('invoice_draft', args(b, 'included'))], () => reply({ kind: 'did', text: '카드를 만들었어요.' }));
+    const { reply: rep } = await say(a, pc, 'A상사 110만원 디자인 끊어줘');
+    assert.deepEqual(pc.calls.map((c) => c.tool), ['invoice_draft']);
+    assert.equal((pc.calls[0] as Extract<DomainCall, { tool: 'invoice_draft' }>).vat, 'included');
+    assert.equal(pc.drafts.length, 1);
+    assert.equal(rep.filtered, null);
+  });
+
+  it('턴 상한에서는 마지막 결과(취소)의 문장 대신 일반 문장을 쓴다', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const look = (m: number) => () => fc('sales_summary', { month_offset: m });
+    script(look(0), look(-1), look(-2), look(-3), look(-4), look(-5), look(-6), look(-7), look(-8), look(-9));
+    const { reply: rep } = await say(a, pc, '매출 다 보여줘');
+    assert.equal(rep.filtered, 'repeat');
+    assert.equal(rep.text, CHAT_AGENT_NUMBER_TEXT);
+  });
+
+  it('금액이 빈 카드를 거듭 만들려 하면 엔진이 금액을 되묻는다', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    pc.exec = (c) => (pc.calls.push(c), { ref: null, status: 'needs_input', fields: null, needs: ['amount'] });
+    const draft = (body: Item) => fc('invoice_draft', { counterparty: toks(nowLine(body), 'NAME')[0], amount: null, vat: null, item: null });
+    script(draft, draft);
+    const { reply: rep } = await say(a, pc, 'A상사 세금계산서 끊어줘');
+    assert.equal(pc.calls.length, 1);
+    assert.deepEqual([rep.kind, rep.ask, rep.text], ['ask', 'amount', CHAT_AGENT_ASK_TEXT.amount]);
+  });
+
+  it('이번 턴 글에 없는 거래처 토큰은 풀지 않는다(장부 첫 거래처를 지어 넣어도 카드가 안 생긴다)', async () => {
+    const pc = new FakePc();
+    // 앞 턴에서 B상사가 토큰이 된다. 모델이 이번 글에 없는 거래처 토큰을 지어 넣는다
+    const b = agent();
+    script(() => reply({}));
+    await say(b, pc, 'B상사 안녕');
+    const bTok = toks(nowLine(responds().at(-1)!.body!), 'NAME')[0]!;
+    const other = ['[NAME_1]', '[NAME_2]', '[NAME_3]'].find((t) => t !== bTok)!;
+    script((body) => {
+      assert.ok(!userText(body).includes(other), '지어 넣는 토큰은 이번 글에 없다');
+      return fc('invoice_draft', { counterparty: other, amount: null, vat: null, item: null });
+    }, (body) => {
+      assert.equal(lastOutput(body)?.status, 'unknown_counterparty');
+      return reply({ kind: 'ask', text: '어느 거래처인가요?', ask: 'counterparty' });
+    });
+    await say(b, pc, '50만원짜리 하나 끊어줘');
+    assert.equal(pc.calls.filter((c) => c.tool === 'invoice_draft').length, 0);
+  });
+
+  it('카드가 안 생긴 턴에 앞에서 거래처를 못 찾았으면, 뒤에 조회를 되풀이해도 거래처를 되묻는다', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    script(
+      () => fc('invoice_draft', { counterparty: '없는상사', amount: null, vat: null, item: null }),
+      () => fc('invoice_history', { counterparty: null }),
+      () => fc('invoice_history', { counterparty: null }),
+    );
+    const { reply: rep } = await say(a, pc, '없는상사에 끊어줘');
+    assert.deepEqual([rep.kind, rep.ask, rep.filtered], ['ask', 'counterparty', 'repeat']);
+  });
+
+  it('되묻는 문장에 숫자가 섞이면 문장만 고정 문장으로 바꾸고 되묻기는 살린다. 문장 속 ref 표기는 지운다', async () => {
+    const a = agent();
+    script(() => reply({ kind: 'ask', text: '단가에 20개라고 하셨는데 공급가로 넣을 금액을 알려 주세요.', ask: 'amount' }));
+    // (사장님이 쓴 달 이름은 따라 써도 걸러지지 않는다: 아래 9월 사례)
+    let r = (await say(a, new FakePc(), 'A상사 원두 20개')).reply;
+    assert.deepEqual([r.kind, r.ask, r.text, r.filtered], ['ask', 'amount', CHAT_AGENT_ASK_TEXT.amount, 'number']);
+    const pc = new FakePc();
+    script(() => fc('sales_summary', { month_offset: 0 }), () => reply({ text: '이번 달 기록이에요 [ref:r1].', show: ['r1'] }));
+    r = (await say(a, pc, '이번 달 매출')).reply;
+    assert.deepEqual([r.text, r.filtered], ['이번 달 기록이에요.', null]);
+    script(() => fc('sales_summary', { month_offset: -2 }), () => reply({ text: '9월 매출은 {r2.sum.supply}예요.', show: ['r2'] }));
+    r = (await say(a, pc, '9월 매출 알려줘')).reply;
+    assert.equal(r.filtered, null);
+    script(() => fc('sales_summary', { month_offset: -2 }), () => reply({ text: '8월 매출은 {r3.sum.supply}예요.', show: ['r3'] }));
+    r = (await say(a, pc, '9월 매출 알려줘')).reply;
+    assert.equal(r.filtered, 'number', '사장님이 쓰지 않은 달 이름은 걸러진다');
+    // 사장님이 쓴 날짜도 따라 써도 된다(chat-eval issue-date). 쓰지 않은 날은 걸러진다
+    script(() => reply({ kind: 'did', text: '10월 31일자로 준비할게요.' }));
+    r = (await say(a, pc, 'A상사 10월 31일자로 끊어줘')).reply;
+    assert.equal(r.filtered, null);
+    script(() => reply({ kind: 'did', text: '10월 30일자로 준비할게요.' }));
+    r = (await say(a, pc, 'A상사 10월 31일자로 끊어줘')).reply;
+    assert.equal(r.filtered, 'number');
+  });
+
+  it('closeOnCards: 카드 결과만 나온 차례는 모델을 다시 부르지 않고 닫는다. 조회가 섞이면 모델이 이어 간다', async () => {
+    const egress = new Egress({ env: {}, testOrigins: { gateway: mock.origin }, gateway: { auth: { headers: async () => ({ authorization: 'DPoP device-token', dpop: 'proof' }) }, bundles: catalog.allowEntries() } });
+    const a = new ChatAgent(db, { model: gatewayChatAgentModel(egress), now: () => clock, closeOnCards: true });
+    const pc = new FakePc();
+    const draft = (item: string | null) => (b: Item) => fc('invoice_draft', { counterparty: toks(nowLine(b), 'NAME')[0], amount: toks(nowLine(b), 'AMT')[0], vat: null, item });
+    script(draft('원두'));
+    const r1 = (await say(a, pc, 'A상사 110만원 원두 세금계산서 끊어줘')).reply;
+    assert.equal(responds().length, 1);
+    // 무엇을 했는지 토큰으로 말하고 화면 값을 같이 준다
+    assert.deepEqual([r1.kind, r1.show, r1.filtered], ['did', ['d1'], 'closed']);
+    assert.match(r1.text, /^\[NAME_\d+\] 앞으로 \[AMT_\d+\] 확인 카드를 만들었어요\. 부가세는 별도로 두었어요\. 포함이면 말씀해 주세요\.$/);
+    assert.deepEqual(Object.values(r1.values).sort(), ['110만원', 'A상사'].sort());
+    script(draft(null));
+    const r2 = (await say(a, pc, 'A상사 50만원 세금계산서 끊어줘')).reply;
+    assert.deepEqual([r2.kind, r2.ask, r2.text, r2.filtered], ['ask', 'item', CHAT_AGENT_ASK_TEXT.item, 'closed']);
+    script(() => fc('sales_summary', { month_offset: 0 }), (b) => reply({ text: '이번 달 {X.count}건이에요.'.replace('X', lastOutput(b)!.ref!), show: [lastOutput(b)!.ref!] }));
+    const r3 = (await say(a, pc, '이번 달 매출')).reply;
+    assert.equal(r3.filtered, null);
+  });
+
+  it('중괄호 토큰("{AMT_1}")은 대괄호 토큰으로 받는다(인자·문장), 승인번호를 물은 조회 되풀이는 승인번호 슬롯으로 답한다', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    script((b) => fc('invoice_draft', { counterparty: toks(nowLine(b), 'NAME')[0], amount: toks(nowLine(b), 'AMT')[0]!.replace('[', '{').replace(']', '}'), vat: null, item: '원두' }), (b) => reply({ kind: 'did', text: `${toks(nowLine(b), 'NAME')[0]!.replace('[', '{').replace(']', '}')} 카드를 만들었어요.`, show: ['d1'] }));
+    const r = (await say(a, pc, 'A상사 110만원 원두 끊어줘')).reply;
+    assert.equal(pc.calls.length, 1);
+    assert.deepEqual((pc.calls[0] as Extract<DomainCall, { tool: 'invoice_draft' }>).amount, { value: 1_100_000 });
+    assert.equal(r.filtered, null);
+    assert.match(r.text, /^\[NAME_\d+\] 카드를 만들었어요\.$/);
+    const look = () => fc('invoice_history', { counterparty: null });
+    script(look, look);
+    const r2 = (await say(a, pc, '최근 승인번호 알려줘')).reply;
+    assert.deepEqual([r2.text, r2.filtered], [CHAT_AGENT_APPROVAL_TEXT('r2'), 'repeat']);
+  });
+
+  it('빈 조회를 되풀이하면 없다고 말한다(chat-eval look-empty)', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    pc.exec = (c) => (pc.calls.push(c), { ref: null, status: 'empty', fields: null, needs: null });
+    const look = () => fc('invoice_history', { counterparty: null });
+    script(look, look);
+    const { reply: rep } = await say(a, pc, '발급 기록 있어?');
+    assert.deepEqual([rep.text, rep.filtered, pc.calls.length], [CHAT_AGENT_DONE_TEXT.empty, 'repeat', 1]);
+  });
+
+  it('카드를 만든 뒤 같은 카드를 또 만들라고 해도 카드는 한 장이다', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const draft = (body: Item) => fc('invoice_draft', { counterparty: toks(nowLine(body), 'NAME')[0], amount: toks(nowLine(body), 'AMT')[0], vat: null, item: '컨설팅' });
+    script(draft, draft, () => reply({ kind: 'did', text: '카드를 만들었어요.', show: ['d1'] }));
+    const { reply: rep } = await say(a, pc, 'A상사 110만원 세금계산서');
+    assert.equal(pc.drafts.length, 1);
+    assert.deepEqual(rep.show, ['d1']);
   });
 
   it('15분 쉬거나 프로필을 바꾸면 대화록·토큰을 버린다(다음 요청에 앞 대화가 없다)', async () => {
@@ -393,7 +599,7 @@ describe('protocol·entry 배선', () => {
     const others = new Set<string>([...READ_QUERIES, ...COMMANDS, ...MAIN_ONLY]);
     assert.ok(!others.has('chat.step'));
     const entry = fs.readFileSync(path.join(root, 'packages/engine/src/entry.ts'), 'utf8');
-    assert.match(entry, /chatAgent = new ChatAgent\(db, \{ model: gatewayChatAgentModel\(egress\) \}\);/);
+    assert.match(entry, /chatAgent = new ChatAgent\(db, \{ model: gatewayChatAgentModel\(egress\), closeOnCards: true \}\);/);
     assert.match(entry, /if \(CHAT_AGENT\.has\(method\)\) \{\n\s+if \(!chatAgent\) throw new Error\('db_not_ready'\);\n\s+return chatAgent\.handle\(method, params\);/);
   });
 
