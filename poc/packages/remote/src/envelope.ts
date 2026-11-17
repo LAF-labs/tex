@@ -9,7 +9,7 @@ import { ulid } from './ulid.ts';
 
 export type Role = 'desktop' | 'mobile';
 /** 스키마 type enum과 같아야 한다(tests/remote-envelope.test.ts가 대조). */
-export type MessageType = 'hello' | 'pair.ok' | 'kek.grant' | 'devlist.push' | 'mbx.reissue' | 'close' | 'ping' | 'pong' | 'receipt.offer' | 'receipt.chunk' | 'receipt.ack' | 'cash.entry' | 'cash.ack' | 'cmd.run' | 'cmd.abort' | 'cmd.resume' | 'run.event' | 'gate.request' | 'gate.response' | 'consent.request' | 'consent.response' | 'human.request' | 'human.response' | 'file.offer' | 'query.documents' | 'query.result' | 'rotate.static';
+export type MessageType = 'hello' | 'pair.ok' | 'kek.grant' | 'devlist.push' | 'mbx.reissue' | 'close' | 'ping' | 'pong' | 'receipt.offer' | 'receipt.chunk' | 'receipt.ack' | 'cash.entry' | 'cash.ack' | 'cmd.run' | 'cmd.abort' | 'cmd.resume' | 'run.event' | 'gate.request' | 'gate.response' | 'consent.request' | 'consent.response' | 'human.request' | 'human.response' | 'file.offer' | 'query.documents' | 'query.result' | 'rotate.static' | 'cmd.ack' | 'phone.copy';
 
 export const ALL_MESSAGE_TYPES: readonly string[] = MESSAGE_TYPES as readonly string[];
 const BIN = new Set<string>(BINARY_KEYS as readonly string[]);
@@ -146,6 +146,106 @@ export interface CashAckBody {
   msgId: string;
   state: 'stored';
 }
+
+// v1.8(ADR-046 결정 2·5): 폰 발급 명령·진행·폰 사본.
+export interface CmdRunBody {
+  cmdId: string;
+  playbookId: string;
+  inputs: Record<string, unknown>;
+}
+export type CmdAckState = 'accepted' | 'start_gate' | 'pc_only' | 'rejected';
+export type CmdRejectReason = 'playbook_unavailable' | 'input_invalid' | 'counterparty_unknown' | 'duplicate' | 'pc_busy' | 'hometax_paused';
+export interface CmdAckBody {
+  cmdId: string;
+  state: CmdAckState;
+  runId?: string;
+  reason?: CmdRejectReason;
+}
+export type RunPhase = 'prepare' | 'login' | 'readback' | 'approve' | 'issue' | 'verify' | 'done' | 'stopped';
+export interface RunResult {
+  approvalNo: string;
+  total: number;
+  emailSent?: boolean;
+  docId?: string;
+}
+export interface RunEventBody {
+  runId: string;
+  event: string;
+  at: number;
+  stepId?: string;
+  code?: string;
+  status?: string;
+  cmdId?: string;
+  phase?: RunPhase;
+  attempt?: number;
+  deadline?: number;
+  result?: RunResult;
+}
+export interface GateField {
+  key: string;
+  value: string;
+}
+export interface GateRequestBody {
+  runId: string;
+  stepId: string;
+  reqId: string;
+  cardId: string;
+  gateKind: 'start' | 'commit';
+  queuedAt?: number;
+  effects: string[];
+  fields: GateField[];
+  cardHashInputs: { readbackHash: string; packageDigest: string; authorizes: string[]; intentId: string };
+  actionHash: string;
+  requiredSigAlg: 'ed25519' | 'p256';
+  challenge: string;
+  exp: number;
+}
+export interface GateResponseBody {
+  runId: string;
+  stepId: string;
+  reqId: string;
+  decision: 'approve' | 'deny';
+  actionHash: string;
+  sigAlg: 'ed25519' | 'p256';
+  sig: string;
+}
+export interface MoneySide {
+  unpaidCount: number;
+  unpaidTotal: number;
+  overdueCount: number;
+  overdueTotal: number;
+  dueSoonCount: number;
+  dueSoonTotal: number;
+  reviewCount: number;
+}
+export interface CopyCashflow {
+  month: string;
+  complete: boolean;
+  missing?: string[];
+  inTotal?: number | null;
+  outTotal?: number | null;
+  net?: number | null;
+  in30?: number | null;
+  out30?: number | null;
+  noDueOutCount?: number;
+  alerts?: { id: string; kind: 'low_balance' | 'slow_collection' | 'concentration' | 'unknown_inflow'; text: string }[];
+}
+export interface CopyCounterparty {
+  ref: string;
+  name: string;
+  aliases?: string[];
+  bizNo?: string;
+  emailHint?: string;
+  phoneApprovable?: boolean;
+  last?: { supply: number; vatMode: 'excl' | 'incl'; item: string; day: string };
+}
+export interface PhoneCopyBody {
+  asOf: number;
+  counterparties: CopyCounterparty[];
+  toIssue?: { ref: string; supply: number; item: string; due?: string }[];
+  money?: { asOf: number; accounts?: number; receivable: MoneySide; payable: MoneySide; cashflow?: CopyCashflow };
+  todayApprovalsLeft?: number;
+}
 type Empty = Record<string, never>;
 
 export interface Bodies {
@@ -162,6 +262,12 @@ export interface Bodies {
   'receipt.ack': ReceiptAckBody;
   'cash.entry': CashEntryBody;
   'cash.ack': CashAckBody;
+  'cmd.run': CmdRunBody;
+  'cmd.ack': CmdAckBody;
+  'run.event': RunEventBody;
+  'gate.request': GateRequestBody;
+  'gate.response': GateResponseBody;
+  'phone.copy': PhoneCopyBody;
 }
 export type KnownType = keyof Bodies;
 export type BodyOf<T extends string> = T extends KnownType ? Bodies[T] : object;
@@ -283,7 +389,7 @@ export function encodeEnvelope(e: Envelope): Uint8Array {
 /** 실패는 null(조용히 버림). */
 export function decodeEnvelope(b: Uint8Array): Envelope | null {
   try {
-    const m = fromCborModel(decodeCbor(b, { maxBytes: MAX_INNER, maxItems: 2048 }));
+    const m = fromCborModel(decodeCbor(b, { maxBytes: MAX_INNER, maxItems: 8192 }));
     return validateEnvelope(m) ? m : null;
   } catch {
     return null;
