@@ -84,7 +84,7 @@
     },
     "deviceList": {"type": "object", "required": ["listVersion", "entries", "revoked"], "additionalProperties": false, "properties": {
       "listVersion": {"type": "integer", "minimum": 1},
-      "entries": {"type": "array", "maxItems": 5, "items": {"$ref": "#/$defs/deviceListEntry"}},
+      "entries": {"type": "array", "maxItems": 6, "$comment": "desktops <= 3, mobiles <= 3 (ADR-048)", "items": {"$ref": "#/$defs/deviceListEntry"}},
       "revoked": {"type": "array", "maxItems": 64, "items": {"type": "object", "required": ["device_id", "revoked_at", "aikSig"], "additionalProperties": false, "properties": {"device_id": {"$ref": "#/$defs/uuid4"}, "revoked_at": {"type": "integer"}, "aikSig": {"$ref": "#/$defs/b64", "maxLength": 88}}}}}}
   },
   "allOf": [
