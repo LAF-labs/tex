@@ -21,7 +21,7 @@ import {
   type Sql,
 } from '../services/shared/src/index.ts';
 import { ACCOUNT_VISIBILITY, AccountService, MIGRATIONS_DIR, MockMailSender, MockPaymentGateway, accountRouter } from '../services/account/src/index.ts';
-import { DEVICE, ISSUE_LOCK } from '../services/account/src/constants.ts';
+import { DEVICE, ISSUE_LOCK, PC_LINK } from '../services/account/src/constants.ts';
 import { Clock, D, H, SoftPasskey, acctOp, cert, client, device, dpop, edKey, entry, internalAuth, internalHeaders, revokeRec, type Device, type EdKey } from './services-kit.ts';
 
 const ORIGIN = 'https://account.test.invalid';
@@ -698,6 +698,85 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     // 폰 토큰은 범위 밖
     assert.equal((await phone('POST', '/v1/issue-lock/acquire')).json.error, 'account.scope_denied');
     assert.equal((await phone('GET', '/v1/issue-lock')).json.error, 'account.scope_denied');
+  });
+
+  it('새 PC 연결 우편함(ADR-048 결정 3): hello → challenge → reveal → grant 순서만 받는다, 새 PC는 세션·기존 PC는 기기 토큰, 7일 뒤 지운다', async () => {
+    const { s, pc, d2, ps } = await fleet(e, 'link@example.com', 1);
+    const pc2 = caller(e, pc.aik, d2);
+    const phone = caller(e, pc.aik, ps[0]!);
+    const k = () => randomBytes(32).toString('base64');
+    // 새 PC(d3)가 로그인하고 신청한다(pending)
+    const d3 = device('desktop', e.clock.now());
+    const base = `/v1/pc-links/${d3.id}`;
+    const hello = { v: 1, device_id: d3.id, Sx: d3.S.b64, Vx: d3.V.b64, Kx: k(), commit: k() };
+    // 신청(enroll) 전에는 우편함을 열 수 없다
+    assert.deepEqual([(await e.req('PUT', base, { headers: bearer(s), body: { hello } })).status], [404]);
+    assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: d3.id, role: 'desktop', platform: 'windows', name: '새 노트북', Sx: d3.S.b64, Vx: d3.V.b64 } })).status, 201);
+    // 세션 없이, 신청한 키와 다른 키로, 모양이 틀리면 거부
+    assert.equal((await e.req('PUT', base, { body: { hello } })).status, 401);
+    assert.equal((await e.req('PUT', base, { headers: bearer(s), body: { hello: { ...hello, Sx: k() } } })).json.error, 'request.param_rejected');
+    assert.equal((await e.req('PUT', base, { headers: bearer(s), body: { hello: { ...hello, extra: 1 } } })).json.error, 'request.param_rejected');
+    assert.equal((await e.req('PUT', '/v1/pc-links/not-a-uuid', { headers: bearer(s), body: { hello } })).json.error, 'request.param_rejected');
+    // 이미 활성인 기기 이름으로는 못 연다
+    assert.equal((await e.req('PUT', `/v1/pc-links/${d2.id}`, { headers: bearer(s), body: { hello: { ...hello, device_id: d2.id, Sx: d2.S.b64, Vx: d2.V.b64 } } })).status, 404);
+    assert.equal((await e.req('PUT', base, { headers: bearer(s), body: { hello } })).status, 204);
+    // 다른 계정은 보지 못한다
+    const other = await login(e, 'link-other@example.com');
+    assert.deepEqual([(await e.req('GET', base, { headers: bearer(other) })).status, (await e.req('GET', base, { headers: bearer(other) })).json], [404, { error: 'account.link_not_found' }]);
+    // 기존 PC가 신청을 본다. 폰은 못 본다(범위)
+    assert.equal((await phone('GET', '/v1/pc-links')).status, 403);
+    const seen = await pc.call('GET', '/v1/pc-links');
+    assert.deepEqual(seen.json, { links: [{ deviceId: d3.id, name: '새 노트북', platform: 'windows', createdAt: e.clock.now(), hello, challengedBy: null, reveal: null }] });
+    assert.deepEqual((await e.req('GET', base, { headers: bearer(s) })).json, { challenge: null, grant: null });
+    // 순서: challenge 전에 reveal·grant는 안 된다
+    const reveal = { v: 1, nonce: k() };
+    assert.equal((await e.req('POST', `${base}/reveal`, { headers: bearer(s), body: { reveal } })).json.error, 'account.link_state');
+    const challenge = { v: 1, device_id: pc.d.id, aik_pub: pc.aik.b64, nonce: k() };
+    // challenge의 기기 ID는 부르는 기기여야 한다
+    assert.equal((await pc2('POST', `${base}/challenge`, { challenge })).json.error, 'request.param_rejected');
+    assert.equal((await pc.call('POST', `${base}/challenge`, { challenge })).status, 204);
+    // 먼저 답한 PC가 승인한다. 두 번째 답은 거부
+    assert.equal((await pc2('POST', `${base}/challenge`, { challenge: { ...challenge, device_id: d2.id } })).json.error, 'account.link_state');
+    assert.deepEqual((await e.req('GET', base, { headers: bearer(s) })).json, { challenge, grant: null });
+    assert.equal((await e.req('POST', `${base}/reveal`, { headers: bearer(s), body: { reveal } })).status, 204);
+    assert.equal((await e.req('POST', `${base}/reveal`, { headers: bearer(s), body: { reveal } })).json.error, 'account.link_state');
+    const l = ((await pc2('GET', '/v1/pc-links')).json.links as Array<Record<string, unknown>>)[0]!;
+    assert.deepEqual([l.challengedBy, l.reveal], [pc.d.id, reveal]);
+    // grant: 새 PC가 목록으로 활성화되기 전에는 안 된다, 답한 PC만 된다
+    const list = { listVersion: 3, entries: [entry(pc.aik, pc.d, 1), entry(pc.aik, d2, 2), entry(pc.aik, ps[0]!, 2), entry(pc.aik, d3, 3)], revoked: [] };
+    const grant = { v: 1, cert: cert(pc.aik, d3, e.clock.now() + 90 * D), deviceList: list, enc: k(), ct: randomBytes(48).toString('base64') };
+    assert.equal((await pc.call('POST', `${base}/grant`, { grant })).json.error, 'account.link_state');
+    assert.equal((await pc.call('PUT', '/v1/device-list', { deviceList: list })).status, 200);
+    assert.equal((await pc2('POST', `${base}/grant`, { grant })).json.error, 'account.link_state');
+    assert.equal((await pc.call('POST', `${base}/grant`, { grant: { ...grant, ct: 'AAAA' } })).json.error, 'request.param_rejected');
+    assert.equal((await pc.call('POST', `${base}/grant`, { grant })).status, 204);
+    assert.equal((await pc.call('POST', `${base}/grant`, { grant })).json.error, 'account.link_state');
+    // 끝난 신청은 기존 PC 목록에서 빠지고, 새 PC가 받아 간 뒤 지운다
+    assert.deepEqual((await pc.call('GET', '/v1/pc-links')).json, { links: [] });
+    assert.deepEqual((await e.req('GET', base, { headers: bearer(s) })).json, { challenge, grant });
+    assert.equal((await e.req('DELETE', base, { headers: bearer(s) })).status, 204);
+    assert.equal((await e.req('GET', base, { headers: bearer(s) })).status, 404);
+    assert.equal((await e.req('DELETE', base, { headers: bearer(s) })).status, 204);
+
+    // 기존 PC가 거절하면(6자리가 틀림) 지워진다. 7일이 지난 신청은 정리가 지운다
+    const s2 = await login(e, 'link2@example.com');
+    const pcB = await desktop(e, s2);
+    e.clock.advance(60_000);
+    const d4 = device('desktop', e.clock.now());
+    const h4 = { v: 1, device_id: d4.id, Sx: d4.S.b64, Vx: d4.V.b64, Kx: k(), commit: k() };
+    assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s2), body: { deviceId: d4.id, role: 'desktop', platform: 'macos', name: '또 다른 PC', Sx: d4.S.b64, Vx: d4.V.b64 } })).status, 201);
+    assert.equal((await e.req('PUT', `/v1/pc-links/${d4.id}`, { headers: bearer(s2), body: { hello: h4 } })).status, 204);
+    assert.equal((await pcB.call('DELETE', `/v1/pc-links/${d4.id}`)).status, 204);
+    assert.equal((await e.req('GET', `/v1/pc-links/${d4.id}`, { headers: bearer(s2) })).status, 404);
+    // 다시 올리면 앞 단계가 지워지고 새로 시작한다
+    assert.equal((await e.req('PUT', `/v1/pc-links/${d4.id}`, { headers: bearer(s2), body: { hello: h4 } })).status, 204);
+    assert.equal((await pcB.call('POST', `/v1/pc-links/${d4.id}/challenge`, { challenge: { ...challenge, device_id: pcB.d.id, aik_pub: pcB.aik.b64 } })).status, 204);
+    assert.equal((await e.req('PUT', `/v1/pc-links/${d4.id}`, { headers: bearer(s2), body: { hello: { ...h4, commit: k() } } })).status, 204);
+    assert.deepEqual((await e.req('GET', `/v1/pc-links/${d4.id}`, { headers: bearer(s2) })).json, { challenge: null, grant: null });
+    e.clock.advance(PC_LINK.ttlDays * D + 1);
+    assert.equal(Number((await e.db.one<{ n: number }>('SELECT COUNT(*) AS n FROM pc_links'))!.n), 1);
+    await e.svc.sweep();
+    assert.equal(Number((await e.db.one<{ n: number }>('SELECT COUNT(*) AS n FROM pc_links'))!.n), 0);
   });
 
   it('발급 잠금: 잡고 있던 PC가 끊기거나 정지되면 잠금도 바로 풀린다', async () => {

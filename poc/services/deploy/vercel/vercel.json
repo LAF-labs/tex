@@ -69,6 +69,10 @@
       "destination": "/api/sax?__p=/v1/issue-lock"
     },
     {
+      "source": "/v1/pc-links",
+      "destination": "/api/sax?__p=/v1/pc-links"
+    },
+    {
       "source": "/v1/auth/:path*",
       "destination": "/api/sax?__p=/v1/auth/:path*"
     },
@@ -99,6 +103,10 @@
     {
       "source": "/v1/issue-lock/:path*",
       "destination": "/api/sax?__p=/v1/issue-lock/:path*"
+    },
+    {
+      "source": "/v1/pc-links/:path*",
+      "destination": "/api/sax?__p=/v1/pc-links/:path*"
     },
     {
       "source": "/v1/run-tokens",

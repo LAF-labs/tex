@@ -28,7 +28,7 @@ import {
 import { TERMS_VERSION, resultPageHtml } from './pg-toss.ts';
 import { PLAN, type DeviceStopHook, type MailSender, type PairingRooms, type NoticeKind, type PaymentEvent, type PaymentGateway } from './adapters.ts';
 import { certSigOk, entrySigOk, opSigOk, revokeSigOk, type AcctOp, type DeviceList, type SignedCert } from './aik.ts';
-import { ACCOUNT, BILLING, DEVICE, ISSUE_LOCK, MS, NOTICE, PASSWORD, PROFILE } from './constants.ts';
+import { ACCOUNT, BILLING, DEVICE, ISSUE_LOCK, MS, NOTICE, PASSWORD, PC_LINK, PROFILE } from './constants.ts';
 import { checkPasswordPolicy, withFloor, type CommonPasswords, type PasswordHasher } from './password.ts';
 import { verifyAssertion, verifyRegistration, WebAuthnError, type AssertionInput, type RegistrationInput, type RpConfig } from './webauthn.ts';
 
@@ -1423,6 +1423,85 @@ export class AccountService {
     return { deleteAfter: after };
   }
 
+  // ---- 새 PC 연결 우편함(ADR-048 결정 3, D08 §4.3) ----
+  // 서버는 순서만 지킨다(hello → challenge → reveal → grant). 내용의 진위(약속·6자리·AIK 서명·봉인문)는 두 PC가 본다.
+
+  /** [새 PC, 세션] m1. 내 계정의 신청 중인(pending) 데스크톱이고 hello의 키가 신청한 키와 같아야 한다. 다시 올리면 앞 단계를 지우고 새로 시작한다. */
+  async putPcLinkHello(s: Session, deviceId: string, hello: { device_id: string; Sx: string; Vx: string }): Promise<void> {
+    await this.db.tx(async (q) => {
+      const d = await q.one<DeviceRow>('SELECT * FROM devices WHERE device_id = $1 AND account_id = $2', [deviceId, s.accountId]);
+      if (!d || d.role !== 'desktop' || d.state !== 'pending') return fail('account.device_not_found');
+      if (hello.device_id !== deviceId || hello.Sx !== d.sx || hello.Vx !== d.vx) fail('request.param_rejected');
+      const now = this.now();
+      await q.run('DELETE FROM pc_links WHERE device_id = $1', [deviceId]);
+      await q.run('INSERT INTO pc_links (device_id, account_id, hello, created_at, expires_at) VALUES ($1, $2, $3, $4, $5)', [deviceId, s.accountId, jcs(hello), now, now + PC_LINK.ttlDays * MS.D]);
+    });
+  }
+
+  /** [새 PC, 세션] 답을 본다. */
+  async pcLinkForNew(s: Session, deviceId: string): Promise<{ challenge: unknown; grant: unknown }> {
+    const l = await this.pcLink(s.accountId, deviceId);
+    return { challenge: l.challenge ? JSON.parse(l.challenge) : null, grant: l.grant_msg ? JSON.parse(l.grant_msg) : null };
+  }
+
+  /** [새 PC, 세션] m3. challenge가 온 뒤 한 번만. */
+  async putPcLinkReveal(s: Session, deviceId: string, reveal: unknown): Promise<void> {
+    const n = await this.db.run('UPDATE pc_links SET reveal = $1 WHERE device_id = $2 AND account_id = $3 AND challenge IS NOT NULL AND reveal IS NULL AND expires_at > $4', [jcs(reveal), deviceId, s.accountId, this.now()]);
+    if (!n) {
+      await this.pcLink(s.accountId, deviceId);
+      fail('account.link_state');
+    }
+  }
+
+  /** [기존 PC, 기기 토큰] 기다리는 신청들. 이름·플랫폼은 서버 값(신청 때 새 PC가 적은 것)이다. */
+  async pcLinks(accountId: string): Promise<Array<{ deviceId: string; name: string; platform: string; createdAt: number; hello: unknown; challengedBy: string | null; reveal: unknown }>> {
+    const rows = await this.db.all<{ device_id: string; hello: string; challenge: string | null; reveal: string | null; created_at: number; name: string; platform: string }>(
+      "SELECT l.device_id, l.hello, l.challenge, l.reveal, l.created_at, d.name, d.platform FROM pc_links l JOIN devices d ON d.device_id = l.device_id WHERE l.account_id = $1 AND l.expires_at > $2 AND l.grant_msg IS NULL AND d.state = 'pending' ORDER BY l.created_at",
+      [accountId, this.now()],
+    );
+    return rows.map((r) => ({
+      deviceId: r.device_id,
+      name: r.name,
+      platform: r.platform,
+      createdAt: Number(r.created_at),
+      hello: JSON.parse(r.hello),
+      challengedBy: r.challenge ? ((JSON.parse(r.challenge) as { device_id?: string }).device_id ?? null) : null,
+      reveal: r.reveal ? JSON.parse(r.reveal) : null,
+    }));
+  }
+
+  /** [기존 PC] m2. 신청 하나에 한 번만(먼저 답한 PC가 승인한다). challenge의 device_id는 요청한 기기여야 한다. */
+  async putPcLinkChallenge(requester: { accountId: string; deviceId: string }, deviceId: string, challenge: { device_id: string }): Promise<void> {
+    if (challenge.device_id !== requester.deviceId || deviceId === requester.deviceId) fail('request.param_rejected');
+    const n = await this.db.run('UPDATE pc_links SET challenge = $1 WHERE device_id = $2 AND account_id = $3 AND challenge IS NULL AND expires_at > $4', [jcs(challenge), deviceId, requester.accountId, this.now()]);
+    if (!n) {
+      await this.pcLink(requester.accountId, deviceId);
+      fail('account.link_state');
+    }
+  }
+
+  /** [기존 PC] m4. 답했던 PC만, reveal이 온 뒤, 새 PC가 목록으로 활성화된 뒤에만(목록을 먼저 올린다). */
+  async putPcLinkGrant(requester: { accountId: string; deviceId: string }, deviceId: string, grant: unknown): Promise<void> {
+    await this.db.tx(async (q) => {
+      const l = await q.one<{ challenge: string | null; reveal: string | null; grant_msg: string | null; expires_at: number }>(`SELECT challenge, reveal, grant_msg, expires_at FROM pc_links WHERE device_id = $1 AND account_id = $2${q.forUpdate}`, [deviceId, requester.accountId]);
+      if (!l || Number(l.expires_at) <= this.now()) return fail('account.link_not_found');
+      const by = l.challenge ? (JSON.parse(l.challenge) as { device_id?: string }).device_id : null;
+      const d = await q.one<DeviceRow>('SELECT * FROM devices WHERE device_id = $1 AND account_id = $2', [deviceId, requester.accountId]);
+      if (by !== requester.deviceId || !l.reveal || l.grant_msg || !d || d.state !== 'active') fail('account.link_state');
+      await q.run('UPDATE pc_links SET grant_msg = $1 WHERE device_id = $2', [jcs(grant), deviceId]);
+    });
+  }
+
+  /** 신청 지우기: 새 PC(세션, 끝났거나 그만둠) 또는 기존 PC(기기 토큰, 6자리가 틀렸거나 거절). 없어도 오류가 아니다. */
+  async deletePcLink(accountId: string, deviceId: string): Promise<void> {
+    await this.db.run('DELETE FROM pc_links WHERE device_id = $1 AND account_id = $2', [deviceId, accountId]);
+  }
+
+  private async pcLink(accountId: string, deviceId: string): Promise<{ challenge: string | null; reveal: string | null; grant_msg: string | null }> {
+    const l = await this.db.one<{ challenge: string | null; reveal: string | null; grant_msg: string | null }>('SELECT challenge, reveal, grant_msg FROM pc_links WHERE device_id = $1 AND account_id = $2 AND expires_at > $3', [deviceId, accountId, this.now()]);
+    return l ?? fail('account.link_not_found');
+  }
+
   // ---- 발급 잠금(ADR-048 결정 7) ----
   // 계정당 하나. 잡은 PC만 홈택스 발급에 들어간다. 서버는 무엇을 발급하는지 모르고(기기·만료뿐), 놓으면 줄을 지워 횟수도 남기지 않는다.
 
@@ -1470,6 +1549,7 @@ export class AccountService {
   private async stopped(deviceId: string): Promise<void> {
     // 정지·폐기된 PC가 잡고 있던 발급 잠금은 바로 놓는다(그 PC는 갱신도 못 한다)
     await this.db.run('DELETE FROM issue_locks WHERE device_id = $1', [deviceId]).catch(() => undefined);
+    await this.db.run('DELETE FROM pc_links WHERE device_id = $1', [deviceId]).catch(() => undefined);
     for (const h of this.d.stopHooks ?? []) await h.stopped(deviceId).catch(() => undefined);
   }
 
@@ -1634,6 +1714,7 @@ export class AccountService {
     const now = this.now();
     await this.db.run('DELETE FROM login_codes WHERE expires_at <= $1', [now]);
     await this.db.run('DELETE FROM issue_locks WHERE expires_at <= $1', [now]);
+    await this.db.run('DELETE FROM pc_links WHERE expires_at <= $1', [now]);
     await this.db.run('DELETE FROM oauth_codes WHERE expires_at <= $1', [now]);
     await this.db.run('DELETE FROM webauthn_challenges WHERE expires_at <= $1', [now]);
     await this.db.run('DELETE FROM sessions WHERE expires_at <= $1', [now]);

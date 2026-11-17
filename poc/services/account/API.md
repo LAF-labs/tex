@@ -154,6 +154,22 @@ PC가 2대 이상인 계정에서 홈택스 발급은 잠금을 잡은 PC 하나
 
 잡고 있던 데스크톱이 정지·폐기되면 잠금도 바로 지운다. 만료된 줄은 주기 작업이 지운다.
 
+## 새 PC 연결 우편함(ADR-048 결정 3, D08 §4.3)
+
+새 PC가 계정 루트키(RK)를 쓰던 PC에서 넘겨받을 때 두 PC가 주고받는 메시지 넷을 맡아 둔다. 서버는 순서와 모양·크기만 본다(hello → challenge → reveal → grant). 약속 해시·6자리·AIK 서명·RK 봉인문이 맞는지는 두 PC가 본다. 서버에 남는 것은 공개키·난수·AIK 서명 목록·인증서와 RK 봉인문(HPKE, 새 PC의 연결 전용 키로만 열린다)이고, 새 PC가 받아 가면 지우며 7일이 지나면 주기 작업이 지운다. 새 PC는 아직 기기 토큰이 없어 계정 세션으로 부르고, 쓰던 PC는 데스크톱 기기 토큰으로 부른다. `:id`는 새 PC의 기기 ID다. 계정당 신청 10회/시, 계정·기기당 합계 1,200회/시.
+
+| 메서드·경로 | 인증 | 요청 | 응답 | 오류 |
+|---|---|---|---|---|
+| `PUT /v1/pc-links/:id` | 세션 | `{hello:{v:1, device_id, Sx, Vx, Kx, commit}}` | `204` | `404 account.device_not_found`(내 계정의 신청 중인 데스크톱이 아니다), `request.param_rejected`(신청한 키와 다르다). 다시 올리면 앞 단계를 지우고 새로 시작한다 |
+| `GET /v1/pc-links/:id` | 세션 | — | `200 {challenge, grant}`(없으면 null) | `404 account.link_not_found` |
+| `POST /v1/pc-links/:id/reveal` | 세션 | `{reveal:{v:1, nonce}}` | `204` | `409 account.link_state`(challenge가 아직 없거나 이미 올렸다) |
+| `GET /v1/pc-links` | 기기:devlist | — | `200 {links:[{deviceId, name, platform, createdAt, hello, challengedBy, reveal}]}` | 끝났거나(grant) 만료된 신청은 빠진다. 이름·플랫폼은 새 PC가 신청 때 적은 값이다 |
+| `POST /v1/pc-links/:id/challenge` | 기기:devlist | `{challenge:{v:1, device_id, aik_pub, nonce}}` | `204` | `request.param_rejected`(`device_id`가 부르는 기기가 아니다), `409 account.link_state`(다른 PC가 먼저 답했다) |
+| `POST /v1/pc-links/:id/grant` | 기기:devlist | `{grant:{v:1, cert, deviceList, enc, ct}}` | `204` | `409 account.link_state`(답한 PC가 아니다, reveal이 없다, 새 PC가 아직 활성이 아니다, 이미 올렸다). 쓰던 PC는 새 목록(`PUT /v1/device-list`)을 먼저 올린 뒤 부른다 |
+| `DELETE /v1/pc-links/:id` | 세션 또는 기기:devlist | — | `204` | 없어도 204. 새 PC는 받아 간 뒤나 그만둘 때, 쓰던 PC는 6자리가 다르거나 거절할 때 부른다 |
+
+새 PC가 정지·폐기되면 그 신청도 바로 지운다. 답한 PC가 사라져 멈춘 신청은 새 PC가 hello를 다시 올려 새로 시작한다.
+
 ## 프로필 슬롯·사업자 HMAC(B-28, C-09)
 
 | 메서드·경로 | 인증 | 요청 | 응답 | 오류 |
