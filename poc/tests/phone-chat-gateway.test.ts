@@ -139,7 +139,7 @@ describe('폰 대화 끝에서 끝: 폰 코어 → 게이트웨이(chat 범위) 
     const digest = e.provider.specs.filter((x) => x.prefix === toolsetPrefix(CHAT_DIGEST));
     assert.equal(digest.length, 1);
     assert.equal(digest[0]!.tools.length, 0);
-    assert.match(JSON.stringify(e.provider.specs.at(-1)!.input), /\[요약\]\\n\(그 뒤 폰에서\) \[NAME_1\] 이야기를 나눴다\./);
+    assert.match(JSON.stringify(e.provider.specs.at(-1)!.input), /\[요약\]\\n\[NAME_1\] 이야기를 나눴다\./);
     assert.ok(!JSON.stringify(e.provider.responds).includes('한빛전자'));
   });
 

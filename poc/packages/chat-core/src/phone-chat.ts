@@ -1,11 +1,11 @@
-// 폰 대화(ADR-047 결정 5·6): PC가 꺼져 있을 때 폰이 게이트웨이의 chat_phone을 직접 부르는 한 사용자 턴의 전부.
+// 폰 대화(ADR-047 결정 5·6): 폰이 게이트웨이의 chat_phone을 직접 부르는 한 사용자 턴의 전부. 대화는 이 폰의 것이다(기기마다 따로, ADR-046 결정 7).
 // PC에서는 엔진(토큰 공간)과 main(값 공간)이 나눠 하던 일을 폰에서는 이 클래스 하나가 한다. 규칙은 PC와 같은 코드(rules·reply-check·tables)다.
 // - 모델에 가는 것: 가린 글(토큰·슬롯)과 도구 결과의 ref·status·fields·needs뿐이다. 값·행·개수·이름은 가지 않는다(C-10).
 // - 컨텍스트: [요약] → [앞 대화] → [사실] → [지금]. 덜 바뀌는 것이 앞이다(공급사 접두 캐시). 상한을 넘으면 사실 → 오래된 턴 순으로 줄인다.
 // - 발급·전송은 없다. 카드를 만들고 고치고 취소하고, 사장님이 카드에서 맡기면 PC가 켜진 뒤에 시작한다.
 // - 저장은 포트(store)로만 한다. 폰 앱이 기기 키로 봉인한다. 문장·토큰·값을 로그에 남기지 않는다.
 import { CHAT_MAP_IDLE_MS, Redactor, TOKEN_RE, detokenize, type RedactedText } from '@sax/redaction';
-import { SEGMENT_MAX, capture, cleanContext, rebind, type ChatMessage, type MaskedText, type PcContext, type PhoneSegment } from './chat-log.ts';
+import { capture, rebind, type ChatMessage, type MaskedText } from './chat-log.ts';
 import { cleanItem, fillWithJosa, finalOf, fixJosa, koDate, kstDate, splitVat, validAmount, won } from './fill.ts';
 import { PhoneChatError, type PhoneChatErrorCode, type PhoneModel, type PhoneRespondResult, type PhoneToolCall, type ReplayItem } from './phone-gateway.ts';
 import { ReplyShapeError, chatSecretShaped, checkAgentReply, unsafeText, type CheckedReply, type ReplyFilter } from './reply-check.ts';
@@ -180,9 +180,7 @@ interface State {
   v: 1;
   /** ref 번호(r#·d#). 세션이 바뀌어도 이어 간다: 옛 ref가 새 결과를 가리키지 않게. */
   seq: number;
-  /** PC가 넘긴 컨텍스트(chat.context) */
-  pc: PcContext | null;
-  /** 폰 구간. PC가 받았다고 답하고 새 컨텍스트가 올 때까지 둔다. */
+  /** 이 폰에서 나눈 대화(오래된 것부터, PHONE_LOG_MAX개까지) */
   phone: ChatMessage[];
   /** 접은 구간의 요약과 접힌 마지막 메시지 id */
   fold: { summary: MaskedText | null; upto: string } | null;
@@ -246,7 +244,14 @@ function tally(rows: ReadonlyArray<{ total: number | null }>): string {
   return `${rows.length}건 · 공급가 ${won(sumOf(known, 'supply')!)} · 합계 ${won(sumOf(known, 'total')!)}${gap ? `(금액 모르는 ${gap}건 빼고)` : ''}`;
 }
 const newestFirst = <T extends { date: string }>(rows: readonly T[]) => [...rows].sort((a, b) => b.date.localeCompare(a.date));
-const emptyState = (): State => ({ v: 1, seq: 0, pc: null, phone: [], fold: null, drafts: [] });
+/** 저장해 둔 메시지 하나(이 기기가 쓴 것). 아는 칸만 옮긴다: 옛 판이 넣던 칸(origin·base·synced)은 버린다. */
+function messageOf(v: unknown): ChatMessage | null {
+  const m = v as Partial<ChatMessage> | null;
+  if (!m || typeof m !== 'object' || typeof m.id !== 'string' || typeof m.at !== 'number' || (m.from !== 'user' && m.from !== 'app') || typeof m.text !== 'string') return null;
+  return { id: m.id, at: m.at, from: m.from, text: m.text, ...(m.ctx ? { ctx: m.ctx } : {}), ...(m.kind ? { kind: m.kind } : {}) };
+}
+
+const emptyState = (): State => ({ v: 1, seq: 0, phone: [], fold: null, drafts: [] });
 
 /** 사본 → 가림 사전 레코드(PC 엔진 register와 같은 범위: 거래처 상호·대표자·이메일·사업자번호, 내 사업장 상호·대표자·사업자번호) */
 export function copyRecords(copy: PhoneCopy | null): ChatRecord[] {
@@ -271,7 +276,7 @@ export class PhoneChat {
 
   // ── 바깥 접점 ──
 
-  /** PC가 꺼져 있을 때 한 문장을 보낸다. 던지지 않는다. 호출은 차례로 처리된다. */
+  /** 한 문장을 보낸다. 던지지 않는다. 호출은 차례로 처리된다. */
   send(text: string): Promise<PhoneTurnResult> {
     return this.queue(async () => {
       const r = await this.turn(text).catch(async (e: unknown) => {
@@ -285,13 +290,9 @@ export class PhoneChat {
     });
   }
 
-  /** 대화 목록(오래된 것부터): PC에서 받은 최근 메시지 + 폰 구간 */
+  /** 이 폰의 대화 목록(오래된 것부터) */
   messages(): Promise<ChatMessage[]> {
-    return this.queue(async () => {
-      const st = await this.load();
-      const seen = new Set<string>();
-      return [...(st.pc?.messages ?? []), ...st.phone].filter((m) => !seen.has(m.id) && !!seen.add(m.id)).map((m) => ({ ...m }));
-    });
+    return this.queue(async () => (await this.load()).phone.map((m) => ({ ...m })));
   }
 
   /** 목록·카드가 바뀌면 부른다 */
@@ -333,47 +334,6 @@ export class PhoneChat {
     });
   }
 
-  /** PC가 보낸 chat.context를 받는다. 모양이 틀리면 false(아무것도 바꾸지 않는다). */
-  applyContext(raw: unknown): Promise<boolean> {
-    return this.queue(async () => {
-      const c = cleanContext(raw);
-      if (!c) return false;
-      const st = await this.load();
-      st.pc = c;
-      // PC가 받았다고 답한 폰 메시지는 PC 기록에 있다(최근 것은 c.messages로 돌아오고 오래된 것은 PC 요약에 들었다)
-      st.phone = st.phone.filter((m) => !m.synced);
-      // 접어 둔 폰 구간이 다 PC로 넘어갔으면 폰 요약은 버린다(PC 요약과 최근 메시지가 대신한다). 아직 못 넘긴 메시지가 있으면 그대로 둔다.
-      if (st.fold && !st.phone.some((m) => m.id === st.fold!.upto)) st.fold = null;
-      await this.save(st);
-      return true;
-    });
-  }
-
-  /** PC에 보낼 폰 구간(아직 받았다는 답이 없는 것, 오래된 것부터 SEGMENT_MAX개). 없으면 null. */
-  pendingSync(): Promise<PhoneSegment | null> {
-    return this.queue(async () => {
-      const st = await this.load();
-      const messages = st.phone.filter((m) => !m.synced).slice(0, SEGMENT_MAX);
-      if (!messages.length) return null;
-      return { base: messages[0]!.base ?? null, messages: messages.map(({ synced: _s, ...m }) => ({ ...m })) };
-    });
-  }
-
-  /** PC의 chat.sync.ack(받은 메시지 id). 받았다고 표시만 한다. 지우는 것은 다음 chat.context 때다. */
-  acked(ids: readonly string[]): Promise<number> {
-    return this.queue(async () => {
-      const st = await this.load();
-      const set = new Set(ids);
-      let n = 0;
-      for (const m of st.phone) if (!m.synced && set.has(m.id)) {
-        m.synced = true;
-        n++;
-      }
-      if (n) await this.save(st);
-      return n;
-    });
-  }
-
   // ── 상태 ──
 
   private queue<T>(f: () => Promise<T>): Promise<T> {
@@ -388,7 +348,7 @@ export class PhoneChat {
     try {
       const raw = await this.ports.store.load();
       const v = raw ? (JSON.parse(raw) as Partial<State>) : null;
-      if (v && v.v === 1 && Number.isSafeInteger(v.seq) && Array.isArray(v.phone) && Array.isArray(v.drafts)) st = { v: 1, seq: v.seq!, pc: v.pc ? cleanContext(v.pc) : null, phone: v.phone, fold: v.fold ?? null, drafts: v.drafts };
+      if (v && v.v === 1 && Number.isSafeInteger(v.seq) && Array.isArray(v.phone) && Array.isArray(v.drafts)) st = { v: 1, seq: v.seq!, phone: v.phone.map(messageOf).filter((m): m is ChatMessage => m !== null), fold: v.fold ?? null, drafts: v.drafts };
     } catch {
       // 읽지 못하면 빈 상태로 시작한다(봉인이 풀리지 않는 기기 등)
     }
@@ -410,7 +370,7 @@ export class PhoneChat {
   }
 
   private push(st: State, m: Pick<ChatMessage, 'from' | 'text'> & Partial<Pick<ChatMessage, 'ctx' | 'kind'>>): ChatMessage {
-    const msg: ChatMessage = { id: this.ports.newId(), at: this.ports.now(), origin: 'phone', base: st.pc?.cursor ?? null, ...m };
+    const msg: ChatMessage = { id: this.ports.newId(), at: this.ports.now(), ...m };
     st.phone.push(msg);
     return msg;
   }
@@ -519,12 +479,10 @@ export class PhoneChat {
     return s.red.apply(said, { frame: 'none' }).redacted;
   }
 
-  /** [앞 대화]에 들어갈 메시지(접힌 것 뒤부터): PC에서 받은 최근 메시지 + 폰 구간 */
+  /** [앞 대화]에 들어갈 메시지(접힌 것 뒤부터) */
   private window(st: State): ChatMessage[] {
-    const seen = new Set<string>();
-    const all = [...(st.pc?.messages ?? []), ...st.phone].filter((m) => !seen.has(m.id) && !!seen.add(m.id));
-    const at = st.fold ? all.findIndex((m) => m.id === st.fold!.upto) : -1;
-    return all.slice(at + 1);
+    const at = st.fold ? st.phone.findIndex((m) => m.id === st.fold!.upto) : -1;
+    return st.phone.slice(at + 1);
   }
 
   /**
@@ -535,11 +493,9 @@ export class PhoneChat {
     const recs = copyRecords(copy);
     const mask = (v: string) => s.red.apply(v, { frame: 'none' }).redacted;
     try {
-      const summary = [st.pc?.summary ? rebind(s.red, st.pc.summary) : '', st.fold?.summary ? `(그 뒤 폰에서) ${rebind(s.red, st.fold.summary)}` : ''].filter(Boolean).join('\n');
+      const summary = st.fold?.summary ? rebind(s.red, st.fold.summary) : '';
       const past = this.window(st).map((m) => {
-        const body = this.line(s, recs, m);
-        const tag = m.origin === 'pc' ? '(PC에서) ' : '';
-        return { user: m.from === 'user', text: `${tag}${m.from === 'user' ? '사용자' : '앱'}: ${body}` };
+        return { user: m.from === 'user', text: `${m.from === 'user' ? '사용자' : '앱'}: ${this.line(s, recs, m)}` };
       });
       const cpName = new Map((copy?.counterparties ?? []).map((c) => [c.id, c.name]));
       const factBlocks = facts.map((f) => f.lines.map((l) => `${l.tool}(${mask(cpName.get(f.cpId)!)}) = ${JSON.stringify(l.output)}`).join('\n'));
@@ -916,7 +872,7 @@ export class PhoneChat {
     const s = this.open(now);
     const recs = copyRecords(this.ports.copy());
     const today = kstDate(now);
-    const lines = old.map((m) => `(${koDate(kstDate(m.at), today)}) ${m.origin === 'pc' ? '(PC에서)' : '(폰에서)'} ${m.from === 'user' ? '사용자' : '앱'}: ${this.line(s, recs, m)}`);
+    const lines = old.map((m) => `(${koDate(kstDate(m.at), today)}) ${m.from === 'user' ? '사용자' : '앱'}: ${this.line(s, recs, m)}`);
     const text = s.red.apply(`${st.fold?.summary ? `[앞 요약]\n${rebind(s.red, st.fold.summary)}\n` : ''}[대화]\n${lines.join('\n')}`, { frame: 'none' }).redacted;
     s.token ??= await this.ports.model.runToken(s.id);
     const r = await this.ports.model.respond({ toolset: 'chat_digest', text, replay: [], runToken: s.token });
