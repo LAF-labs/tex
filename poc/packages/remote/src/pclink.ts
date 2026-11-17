@@ -2,7 +2,7 @@
 // [검토] 암호 리뷰(SP-5) 대상이다.
 //
 // 통로는 계정 서비스의 연결 우편함이다(서버가 메시지를 본다·바꿀 수 있다고 가정한다). 메시지 넷:
-//   m1 hello     새 PC → 기존 PC   {device_id, Sx, Vx, Kx, commit}   commit = SHA-256(ctx ‖ nonce_n ‖ JCS(키들))
+//   m1 hello     새 PC → 기존 PC   {device_id, Sx, Vx, Hx, commit}   commit = SHA-256(ctx ‖ nonce_n ‖ JCS(키들))
 //   m2 challenge 기존 PC → 새 PC   {device_id, aik_pub, nonce}        commit을 본 뒤에 뽑은 난수
 //   m3 reveal    새 PC → 기존 PC   {nonce}                            nonce_n 공개
 //   m4 grant     기존 PC → 새 PC   {cert, deviceList, enc, ct}        6자리가 맞은 뒤에만
@@ -12,7 +12,7 @@
 //   고를 수 없다(맞을 확률 10^-6, 3번 틀리면 신청을 버린다).
 // - 새 PC는 기존 PC를 따로 확인하지 못한다(6자리를 넣는 쪽은 기존 PC뿐). 그래서 새 PC는 받은 RK를 사용자가 "기존 PC에 '연결됐어요'가
 //   떴어요"를 누른 뒤에만 금고에 넣는다(화면 규칙). 서버가 기존 PC인 척하면 진짜 기존 PC에는 그 말이 뜨지 않는다.
-// - RK는 새 PC가 이 연결에만 쓰는 키 Kx로 HPKE 봉인한다. aad는 위 해시라서 다른 신청의 봉인문을 끼워 넣을 수 없다.
+// - RK는 새 PC가 이 연결에만 쓰는 키 Hx로 HPKE 봉인한다. aad는 위 해시라서 다른 신청의 봉인문을 끼워 넣을 수 없다.
 //   새 PC 금고는 연 RK에서 나온 AIK 공개키가 challenge.aik_pub와 같을 때만 받는다(금고 쪽 규칙, 이 모듈 밖).
 import { b64, concat, equal, fromB64, readU64be, utf8 } from './bytes.ts';
 import { CTX } from './contexts.ts';
@@ -33,7 +33,7 @@ export interface PcLinkHello {
   Sx: string;
   Vx: string;
   /** 이 연결에만 쓰는 HPKE 수신 공개키(X25519). 개인키는 새 PC 금고 메모리에만 있다 */
-  Kx: string;
+  Hx: string;
   commit: string;
 }
 export interface PcLinkChallenge {
@@ -69,15 +69,15 @@ const key32 = (s: unknown): Uint8Array | null => {
 const onlyKeys = (v: unknown, keys: readonly string[]): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v) && Object.keys(v).length === keys.length && keys.every((k) => k in v);
 
-const helloKeys = (h: Pick<PcLinkHello, 'device_id' | 'Sx' | 'Vx' | 'Kx'>) => jcsBytes({ device_id: h.device_id, Sx: h.Sx, Vx: h.Vx, Kx: h.Kx });
-const commitOf = (nonce: Uint8Array, h: Pick<PcLinkHello, 'device_id' | 'Sx' | 'Vx' | 'Kx'>) => sha256Hash(concat(utf8(CTX.pclinkCommit), nonce, helloKeys(h)));
+const helloKeys = (h: Pick<PcLinkHello, 'device_id' | 'Sx' | 'Vx' | 'Hx'>) => jcsBytes({ device_id: h.device_id, Sx: h.Sx, Vx: h.Vx, Hx: h.Hx });
+const commitOf = (nonce: Uint8Array, h: Pick<PcLinkHello, 'device_id' | 'Sx' | 'Vx' | 'Hx'>) => sha256Hash(concat(utf8(CTX.pclinkCommit), nonce, helloKeys(h)));
 
 /** 서버에서 온 hello의 모양(믿을 수 없는 입력). 맞지 않으면 null. */
 export function parsePcLinkHello(v: unknown): PcLinkHello | null {
-  if (!onlyKeys(v, ['v', 'device_id', 'Sx', 'Vx', 'Kx', 'commit']) || v.v !== 1) return null;
+  if (!onlyKeys(v, ['v', 'device_id', 'Sx', 'Vx', 'Hx', 'commit']) || v.v !== 1) return null;
   if (typeof v.device_id !== 'string' || !UUID4.test(v.device_id)) return null;
-  if (!key32(v.Sx) || !key32(v.Vx) || !key32(v.Kx) || !key32(v.commit)) return null;
-  return { v: 1, device_id: v.device_id, Sx: v.Sx as string, Vx: v.Vx as string, Kx: v.Kx as string, commit: v.commit as string };
+  if (!key32(v.Sx) || !key32(v.Vx) || !key32(v.Hx) || !key32(v.commit)) return null;
+  return { v: 1, device_id: v.device_id, Sx: v.Sx as string, Vx: v.Vx as string, Hx: v.Hx as string, commit: v.commit as string };
 }
 export function parsePcLinkChallenge(v: unknown): PcLinkChallenge | null {
   if (!onlyKeys(v, ['v', 'device_id', 'aik_pub', 'nonce']) || v.v !== 1) return null;
@@ -93,7 +93,7 @@ export function parsePcLinkReveal(v: unknown): PcLinkReveal | null {
 export function pcLinkHello(self: { deviceId: string; noisePub: Uint8Array; signPub: Uint8Array; linkPub: Uint8Array }): { hello: PcLinkHello; nonce: Uint8Array } {
   if (!UUID4.test(self.deviceId) || self.noisePub.length !== 32 || self.signPub.length !== 32 || self.linkPub.length !== 32) throw new Error('pclink: bad self');
   const nonce = randomBytes(32);
-  const keys = { device_id: self.deviceId, Sx: b64(self.noisePub), Vx: b64(self.signPub), Kx: b64(self.linkPub) };
+  const keys = { device_id: self.deviceId, Sx: b64(self.noisePub), Vx: b64(self.signPub), Hx: b64(self.linkPub) };
   return { hello: { v: 1, ...keys, commit: b64(commitOf(nonce, keys)) }, nonce };
 }
 
@@ -195,7 +195,7 @@ export class PcLinkApprover {
     const signPub = fromB64(this.hello.Vx);
     const deviceList = await addDevice(o.aik, o.deviceList, { deviceId: this.hello.device_id, role: 'desktop', noisePub, signPub, registeredAt: now });
     const cert = await issueCert(o.aik, { device_id: this.hello.device_id, role: 'desktop', Sx: noisePub, Vx: signPub, not_after: certNotAfter(now) });
-    const sealed = await o.sealRk(fromB64(this.hello.Kx), utf8(CTX.pclinkRk), this.#transcript);
+    const sealed = await o.sealRk(fromB64(this.hello.Hx), utf8(CTX.pclinkRk), this.#transcript);
     return { grant: { v: 1, cert, deviceList, enc: b64(sealed.enc), ct: b64(sealed.ct) }, deviceList };
   }
 }

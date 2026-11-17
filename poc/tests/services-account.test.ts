@@ -708,7 +708,7 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     // 새 PC(d3)가 로그인하고 신청한다(pending)
     const d3 = device('desktop', e.clock.now());
     const base = `/v1/pc-links/${d3.id}`;
-    const hello = { v: 1, device_id: d3.id, Sx: d3.S.b64, Vx: d3.V.b64, Kx: k(), commit: k() };
+    const hello = { v: 1, device_id: d3.id, Sx: d3.S.b64, Vx: d3.V.b64, Hx: k(), commit: k() };
     // 신청(enroll) 전에는 우편함을 열 수 없다
     assert.deepEqual([(await e.req('PUT', base, { headers: bearer(s), body: { hello } })).status], [404]);
     assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: d3.id, role: 'desktop', platform: 'windows', name: '새 노트북', Sx: d3.S.b64, Vx: d3.V.b64 } })).status, 201);
@@ -763,7 +763,7 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     const pcB = await desktop(e, s2);
     e.clock.advance(60_000);
     const d4 = device('desktop', e.clock.now());
-    const h4 = { v: 1, device_id: d4.id, Sx: d4.S.b64, Vx: d4.V.b64, Kx: k(), commit: k() };
+    const h4 = { v: 1, device_id: d4.id, Sx: d4.S.b64, Vx: d4.V.b64, Hx: k(), commit: k() };
     assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s2), body: { deviceId: d4.id, role: 'desktop', platform: 'macos', name: '또 다른 PC', Sx: d4.S.b64, Vx: d4.V.b64 } })).status, 201);
     assert.equal((await e.req('PUT', `/v1/pc-links/${d4.id}`, { headers: bearer(s2), body: { hello: h4 } })).status, 204);
     assert.equal((await pcB.call('DELETE', `/v1/pc-links/${d4.id}`)).status, 204);

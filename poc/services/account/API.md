@@ -160,7 +160,7 @@ PC가 2대 이상인 계정에서 홈택스 발급은 잠금을 잡은 PC 하나
 
 | 메서드·경로 | 인증 | 요청 | 응답 | 오류 |
 |---|---|---|---|---|
-| `PUT /v1/pc-links/:id` | 세션 | `{hello:{v:1, device_id, Sx, Vx, Kx, commit}}` | `204` | `404 account.device_not_found`(내 계정의 신청 중인 데스크톱이 아니다), `request.param_rejected`(신청한 키와 다르다). 다시 올리면 앞 단계를 지우고 새로 시작한다 |
+| `PUT /v1/pc-links/:id` | 세션 | `{hello:{v:1, device_id, Sx, Vx, Hx, commit}}` | `204` | `404 account.device_not_found`(내 계정의 신청 중인 데스크톱이 아니다), `request.param_rejected`(신청한 키와 다르다). 다시 올리면 앞 단계를 지우고 새로 시작한다 |
 | `GET /v1/pc-links/:id` | 세션 | — | `200 {challenge, grant}`(없으면 null) | `404 account.link_not_found` |
 | `POST /v1/pc-links/:id/reveal` | 세션 | `{reveal:{v:1, nonce}}` | `204` | `409 account.link_state`(challenge가 아직 없거나 이미 올렸다) |
 | `GET /v1/pc-links` | 기기:devlist | — | `200 {links:[{deviceId, name, platform, createdAt, hello, challengedBy, reveal}]}` | 끝났거나(grant) 만료된 신청은 빠진다. 이름·플랫폼은 새 PC가 신청 때 적은 값이다 |

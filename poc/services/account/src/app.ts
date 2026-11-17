@@ -76,8 +76,8 @@ const V = {
   deviceToken: validator<{ cert: SignedCert; scopes?: Scope[] }>(obj({ cert: signedCertSchema, scopes: { type: 'array', minItems: 1, maxItems: ALL_SCOPES.length, uniqueItems: true, items: { enum: [...ALL_SCOPES] } } }, ['cert'])),
   linkId: validator<{ id: string }>(obj({ id: S.uuid4 })),
   // 새 PC 연결 우편함(D08 §4.3). 모양과 크기만 본다. 약속·6자리·서명·봉인문의 진위는 두 PC가 본다
-  pcLinkHello: validator<{ hello: { v: 1; device_id: string; Sx: string; Vx: string; Kx: string; commit: string } }>(
-    obj({ hello: obj({ v: { const: 1 }, device_id: S.uuid4, Sx: S.b64key32, Vx: S.b64key32, Kx: S.b64key32, commit: S.b64key32 }) }),
+  pcLinkHello: validator<{ hello: { v: 1; device_id: string; Sx: string; Vx: string; Hx: string; commit: string } }>(
+    obj({ hello: obj({ v: { const: 1 }, device_id: S.uuid4, Sx: S.b64key32, Vx: S.b64key32, Hx: S.b64key32, commit: S.b64key32 }) }),
   ),
   pcLinkChallenge: validator<{ challenge: { v: 1; device_id: string; aik_pub: string; nonce: string } }>(obj({ challenge: obj({ v: { const: 1 }, device_id: S.uuid4, aik_pub: S.b64key32, nonce: S.b64key32 }) })),
   pcLinkReveal: validator<{ reveal: { v: 1; nonce: string } }>(obj({ reveal: obj({ v: { const: 1 }, nonce: S.b64key32 }) })),

@@ -71,7 +71,7 @@ describe('새 PC 연결: 정상 흐름', () => {
       pcLinkTranscript(n.hello, { ...c, aik_pub: b64(ed25519Keygen().publicKey) }, n.nonce),
       pcLinkTranscript(n.hello, { ...c, device_id: randomUUID() }, n.nonce),
       pcLinkTranscript(n.hello, c, randomBytes(32)),
-      pcLinkTranscript({ ...n.hello, Kx: b64(x25519Keygen().publicKey) }, c, n.nonce),
+      pcLinkTranscript({ ...n.hello, Hx: b64(x25519Keygen().publicKey) }, c, n.nonce),
       pcLinkTranscript({ ...n.hello, Sx: b64(x25519Keygen().publicKey) }, c, n.nonce),
       pcLinkTranscript({ ...n.hello, Vx: b64(ed25519Keygen().publicKey) }, c, n.nonce),
     ];
@@ -88,7 +88,7 @@ describe('새 PC 연결: 가운데에서 바꾸는 경우', () => {
     const n = newPc();
     const evil = x25519Keygen();
     // (1) 키만 바꾸고 약속은 그대로: reveal에서 걸린다
-    const swapped: PcLinkHello = { ...n.hello, Kx: b64(evil.publicKey) };
+    const swapped: PcLinkHello = { ...n.hello, Hx: b64(evil.publicKey) };
     const ap1 = new PcLinkApprover(swapped, { deviceId: e.deviceId, aikPub: e.aik.publicKey });
     const r1 = pcLinkReveal(n.hello, ap1.challenge, n.nonce);
     assert.equal(ap1.reveal(r1.reveal), false);
@@ -170,7 +170,7 @@ describe('새 PC 연결: 가운데에서 바꾸는 경우', () => {
 
   it('입력 모양: 키 길이·UUID·남는 필드·자기 자신의 challenge를 거부한다. PC 한도(3대)를 넘으면 승인 뒤에도 목록을 만들지 않는다', async () => {
     const n = newPc();
-    assert.equal(parsePcLinkHello({ ...n.hello, Kx: b64(randomBytes(31)) }), null);
+    assert.equal(parsePcLinkHello({ ...n.hello, Hx: b64(randomBytes(31)) }), null);
     assert.equal(parsePcLinkHello({ ...n.hello, device_id: 'x' }), null);
     assert.equal(parsePcLinkHello({ ...n.hello, more: 1 }), null);
     assert.equal(parsePcLinkHello({ ...n.hello, v: 2 }), null);
