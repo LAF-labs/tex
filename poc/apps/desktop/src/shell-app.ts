@@ -1251,6 +1251,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       onCreated: (run) => agentCreated.push(run),
       // 받을 돈(#284): 계좌가 하나도 없으면 null(not_set_up). 계좌·거래내역이 있으면 못 받은 건을 준다.
       receivables: () => bank.receivables(),
+      // 낼 돈·돈 흐름(11 §2·§3): 계좌가 없으면 null(not_set_up)
+      payables: () => bank.payables(),
+      cashFlow: (month) => bank.cashFlowValues(month),
       // 시연: 씨앗 이력(승인번호 있는 것)도 지난 발급이다. 제품은 원장만.
       pastIssued: () => (seed?.past ?? []).flatMap((x) => (x.kind === 'issued' && x.approvalNo && x.who && x.day ? [{ counterpartyId: cps.find((c) => c.name === x.who)?.id ?? null, counterparty: x.who, date: x.day, total: x.total, approvalNo: x.approvalNo, documentId: x.documentId, mail: null }] : [])),
       onProgress: (phase: AgentPhase) => send({ type: 'chat-progress', phase }),

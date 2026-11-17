@@ -41,7 +41,7 @@ export const CHAT_AGENT_INPUT_MAX_BYTES = 8192;
 /** 대화록에 붙이는 최근 턴 수 */
 export const CHAT_AGENT_TRANSCRIPT_TURNS = 12;
 /** 답 문장을 쓸 수 없을 때(식별자·링크·비밀 유도 말, 모델 거절)의 고정 안내 */
-export const CHAT_AGENT_FALLBACK_TEXT = '세금계산서 카드 만들기와 발급 기록·매출·받을 돈 확인을 도와드려요. 어떤 일을 할까요?';
+export const CHAT_AGENT_FALLBACK_TEXT = '세금계산서 카드 만들기와 발급 기록·매출·받을 돈·낼 돈·돈 흐름 확인을 도와드려요. 어떤 일을 할까요?';
 /**
  * 답 문장에 슬롯·토큰 밖의 숫자가 있을 때(모델이 셈하거나 지어낸 값일 수 있다). 문장은 버리고 같이 보일 표·카드는 그대로 둔다.
  * 다시 묻지 않는 이유: 한 번 더 부르면 3~4초가 늘고 또 틀릴 수 있다. 표·카드의 값은 PC가 낸 것이라 언제나 맞다.
@@ -65,9 +65,13 @@ export const CHAT_AGENT_DONE_TEXT: Partial<Record<ToolStatus, string>> = {
   discarded: '카드를 취소했어요. 아무것도 발급되지 않았어요.',
   ok: '찾은 기록을 표로 보여 드렸어요.',
   empty: '찾는 기록이 없어요.',
+  not_set_up: '계좌 연결이 아직이라 확인할 수 없어요. 은행 화면에서 계좌를 먼저 연결해 주세요.',
 };
 /** 엔진이 조회 되풀이로 턴을 닫을 때의 문장. 슬롯은 main이 결과 값으로 채운다. */
 export const CHAT_AGENT_LOOKUP_TEXT = (ref: string): string => `{${ref}.count}건이고 합계는 {${ref}.sum.total}이에요. 가장 최근은 {${ref}.first.date} {${ref}.first.counterparty} 건이에요.`;
+/** 돈 흐름 조회 되풀이(값은 main이 채운다). partial이면 확인 못 한 계좌가 있다고 같이 말한다(11 §3.4: 모르는 것을 0으로 세지 않는다). */
+export const CHAT_AGENT_CASH_TEXT = (ref: string, partial: boolean): string =>
+  `${partial ? '일부 계좌 거래내역이 모자라 확인 못 한 부분이 있어요. 확인된 것만 보면 ' : ''}들어온 돈 {${ref}.cash.in}, 나간 돈 {${ref}.cash.out}이에요.`;
 /** 승인번호를 물은 조회 되풀이(chat-eval look-approval: 건수·합계만 말하고 물은 승인번호가 빠짐) */
 export const CHAT_AGENT_APPROVAL_TEXT = (ref: string): string => `가장 최근 건({${ref}.first.date})의 승인번호는 {${ref}.first.approvalNo}예요.`;
 /** 이번 턴 같은 카드 판정 키: 거래처와 금액 */
@@ -79,7 +83,7 @@ const RETRY_CODES: readonly ChatErrorCode[] = ['chat.unavailable', 'chat.budget_
 /** 게이트웨이 respond 스키마의 replay maxItems */
 const REPLAY_MAX = 12;
 
-export const TOOL_STATUSES = ['ok', 'empty', 'unknown_counterparty', 'not_set_up', 'card_shown', 'needs_input', 'setup_missing', 'card_updated', 'no_such_draft', 'not_editable', 'discarded'] as const;
+export const TOOL_STATUSES = ['ok', 'partial', 'empty', 'unknown_counterparty', 'not_set_up', 'card_shown', 'needs_input', 'setup_missing', 'card_updated', 'no_such_draft', 'not_editable', 'discarded'] as const;
 export type ToolStatus = (typeof TOOL_STATUSES)[number];
 // 대화 경로 가림 규칙·금액 읽기는 @sax/chat-core로 옮겼다(폰과 같은 코드, ADR-047 결정 4). 이름은 여기서 그대로 다시 내보낸다.
 export { TOOL_NEEDS, chatInput, chatMaskSpans, emailFragmentRes, gluedName, numberShaped, parseKrw, typoAliases, type ToolNeed } from '@sax/chat-core';
@@ -109,6 +113,8 @@ export type DomainCall =
   | { tool: 'sales_summary'; monthOffset: number }
   | { tool: 'invoice_history'; counterpartyId: string | null }
   | { tool: 'receivables'; counterpartyId: string | null }
+  | { tool: 'payables'; counterpartyId: string | null }
+  | { tool: 'cash_flow'; monthOffset: number }
   | { tool: 'invoice_draft'; counterpartyId: string; amount: DraftAmount; vat: Vat | null; item: string | null }
   | { tool: 'draft_edit'; draft: string; amount: DraftAmount; vat: Vat | null; item: string | null }
   | { tool: 'draft_discard'; draft: string };
@@ -206,7 +212,7 @@ const validFrame: ValidateFunction = ajv.compile({
 });
 
 /** 도구마다 결과 ref의 종류(조회 결과 r#, 카드 d#) */
-const REF_KIND: Record<ChatAgentToolName, 'r' | 'd'> = { sales_summary: 'r', invoice_history: 'r', receivables: 'r', invoice_draft: 'd', draft_edit: 'd', draft_discard: 'd' };
+const REF_KIND: Record<ChatAgentToolName, 'r' | 'd'> = { sales_summary: 'r', invoice_history: 'r', receivables: 'r', payables: 'r', cash_flow: 'r', invoice_draft: 'd', draft_edit: 'd', draft_discard: 'd' };
 const engineAnswer = (status: 'unknown_counterparty' | 'no_such_draft'): ToolOutput => ({ ref: null, status, fields: null, needs: null });
 /**
  * 풀리지 않은 거래처 인자가 사장님 이번 문장의 낱말인가: 이번 문장에 있는 토큰이면 그 원값, 토큰 없는 말이면 문장에 글자 그대로 있을 때만.
@@ -234,6 +240,8 @@ interface Session {
   transcript: AgentTurnRecord[];
   /** 이 대화 세션에서 도구 결과로 나온 ref(r#·d#) */
   refs: Set<string>;
+  /** 그중 돈 흐름(cash_flow) 결과 ref: 행 슬롯이 아니라 cash 슬롯을 쓴다 */
+  cashRefs: Set<string>;
   token: RunToken | null;
   lastAt: number;
   turn: Turn | null;
@@ -391,10 +399,10 @@ export class ChatAgent {
       // 같은 턴에 같은 도구를 같은 인자로 또 부르면 모델이 결과를 답으로 옮기지 못하는 것이다(chat-eval 2026-11-16: 공급사에 따라
       // "이번 달 매출"에 sales_summary를 네 번 부름, 같은 카드를 두 장 만듦). 다시 실행하지 않고 엔진이 그 결과로 턴을 닫는다.
       const repeat = tc.find((c) => turn.done.has(key(c)));
-      if (repeat) return this.finish(s, this.settle(turn, turn.done.get(key(repeat))!, false));
+      if (repeat) return this.finish(s, this.settle(s, turn, turn.done.get(key(repeat))!, false));
       if (turns >= CHAT_AGENT.maxTurns || turn.replay.length + tc.length > REPLAY_MAX) {
         const last = [...turn.done.values()].at(-1);
-        if (last) return this.finish(s, this.settle(turn, last, true));
+        if (last) return this.finish(s, this.settle(s, turn, last, true));
         throw new ChatError('chat.turn_limit');
       }
       const parsed = tc.map((c) => ({ c, p: this.parseCall(s, turn, c) }));
@@ -426,7 +434,7 @@ export class ChatAgent {
    * 조회 되풀이면 건수·합계를 슬롯 문장으로 말한다(값은 main이 채운다, chat-eval look-last-month: "표로 보여 드렸어요"만으로는 답이 아니다).
    * 턴 상한이면 마지막 결과가 이번 턴 전체를 말하지 않으므로(취소 뒤 새 카드가 열려 있을 수 있다) 일반 문장을 쓴다.
    */
-  private settle(turn: Turn, last: ToolOutput, limit: boolean): AgentReply {
+  private settle(s: Session, turn: Turn, last: ToolOutput, limit: boolean): AgentReply {
     const askOf = (o: ToolOutput): AgentAsk | null =>
       o.status === 'needs_input' && o.needs?.length ? o.needs[0]! : o.status === 'unknown_counterparty' ? 'counterparty' : o.status === 'no_such_draft' ? 'which_card' : null;
     // 마지막 결과가 아니어도, 이번 턴에 카드가 안 생겼고 앞에서 빈 칸이 나왔으면 그것을 묻는다
@@ -438,10 +446,13 @@ export class ChatAgent {
     if (ask) return { kind: 'ask', text: CHAT_AGENT_ASK_TEXT[ask], show, ask, filtered: 'repeat' };
     // 이번 턴에 카드를 만들었으면 조회 요약이 아니라 카드를 말한다(chat-eval issue-two: 두 장을 만들고 기록 조회를 되풀이 → 조회 요약 문장)
     if (!limit && outs.some((o) => o.status === 'card_shown')) return { kind: 'did', text: CHAT_AGENT_DONE_TEXT.card_shown!, show, ask: null, filtered: 'repeat' };
+    if (!limit && (last.status === 'ok' || last.status === 'partial') && last.ref && s.cashRefs.has(last.ref) && show.includes(last.ref))
+      return { kind: 'answer', text: CHAT_AGENT_CASH_TEXT(last.ref, last.status === 'partial'), show, ask: null, filtered: 'repeat' };
     if (!limit && last.status === 'ok' && last.ref?.startsWith('r') && show.includes(last.ref))
       return { kind: 'answer', text: /승인\s*번호/.test(turn.user) ? CHAT_AGENT_APPROVAL_TEXT(last.ref) : CHAT_AGENT_LOOKUP_TEXT(last.ref), show, ask: null, filtered: 'repeat' };
     if (show.length) return { kind: 'did', text: (limit ? null : CHAT_AGENT_DONE_TEXT[last.status]) ?? CHAT_AGENT_NUMBER_TEXT, show, ask: null, filtered: 'repeat' };
     // 빈 조회를 되풀이했으면 없다고 말한다(chat-eval look-empty: "한빛식품 발급 기록 있어?"에 invoice_history 두 번 → turn_limit)
+    if (!limit && last.status === 'not_set_up') return { kind: 'answer', text: CHAT_AGENT_DONE_TEXT.not_set_up!, show, ask: null, filtered: 'repeat' };
     if (!limit && last.status === 'empty') return { kind: 'answer', text: CHAT_AGENT_DONE_TEXT.empty!, show, ask: null, filtered: 'repeat' };
     throw new ChatError('chat.turn_limit');
   }
@@ -495,6 +506,7 @@ export class ChatAgent {
       const o = c.answer!;
       if (o.ref) {
         s.refs.add(o.ref);
+        if (c.tool === 'cash_flow') s.cashRefs.add(o.ref);
         turn.made.push(o.ref);
       }
       // 같은 인자로 다시 부르면 같은 결과다. 고치기·취소는 두 번째가 다른 뜻일 수 있어(이미 취소한 카드) 첫 결과를 그대로 준다.
@@ -557,6 +569,11 @@ export class ChatAgent {
         const id = a.counterparty === null ? null : cp(a.counterparty);
         return a.counterparty !== null && !id ? unknown(a.counterparty) : { tool: 'receivables', counterpartyId: id };
       },
+      payables: () => {
+        const id = a.counterparty === null ? null : cp(a.counterparty);
+        return a.counterparty !== null && !id ? unknown(a.counterparty) : { tool: 'payables', counterpartyId: id };
+      },
+      cash_flow: () => ({ tool: 'cash_flow', monthOffset: Number(a.month_offset) }),
       invoice_draft: () => {
         const id = cp(a.counterparty);
         return id ? { tool: 'invoice_draft', counterpartyId: id, amount: amount(a.amount), vat: vat(a.vat), item: item(a.item) } : unknown(a.counterparty);
@@ -664,7 +681,7 @@ export class ChatAgent {
     }
     if (!s) {
       const id = `chat_${randomUUID()}`;
-      s = { id, profileId, red: this.maps.get(id, profileId), transcript: [], refs: new Set(), token: null, lastAt: t, turn: null };
+      s = { id, profileId, red: this.maps.get(id, profileId), transcript: [], refs: new Set(), cashRefs: new Set(), token: null, lastAt: t, turn: null };
       this.current = s;
     }
     s.lastAt = t;

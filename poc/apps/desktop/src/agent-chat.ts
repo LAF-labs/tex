@@ -17,8 +17,16 @@ export type AgentPhase = 'thinking' | 'reading' | 'drafting';
 export const SLOT_FIELDS = ['date', 'supply', 'total', 'counterparty', 'approvalNo'] as const satisfies readonly SlotField[];
 export const SLOT_POSITIONS = ['first', 'last'] as const;
 export const SLOT_SUM_FIELDS = ['supply', 'total'] as const;
-/** 슬롯 경로: 행 값(first·last × 칸), 집계(sum.supply·sum.total·count). @sax/model SLOT_PATHS와 같다(시험이 대조). */
-export const SLOT_PATHS: readonly string[] = [...SLOT_POSITIONS.flatMap((p) => SLOT_FIELDS.map((f) => `${p}.${f}`)), ...SLOT_SUM_FIELDS.map((f) => `sum.${f}`), 'count'];
+/** 돈 흐름 결과의 칸({r#.cash.*}). @sax/model CASH_FIELDS와 같다(시험이 대조). */
+export const CASH_FIELDS = ['in', 'out', 'net', 'balance', 'next_in', 'next_out'] as const;
+export type CashField = (typeof CASH_FIELDS)[number];
+/** 슬롯 경로: 행 값(first·last × 칸), 집계(sum.supply·sum.total·count), 돈 흐름(cash.*). @sax/model SLOT_PATHS와 같다(시험이 대조). */
+export const SLOT_PATHS: readonly string[] = [
+  ...SLOT_POSITIONS.flatMap((p) => SLOT_FIELDS.map((f) => `${p}.${f}`)),
+  ...SLOT_SUM_FIELDS.map((f) => `sum.${f}`),
+  'count',
+  ...CASH_FIELDS.map((f) => `cash.${f}`),
+];
 export const CHAT_MAP_IDLE_MS = 15 * 60 * 1000;
 /** 엔진 토큰([NAME_1] 등). @sax/redaction TOKEN_RE와 같은 꼴이다. */
 const TOKEN_RE = /\[[A-Z]+_\d+\]/;
@@ -31,6 +39,8 @@ const AMOUNT_MAX = 1e12;
 const CHIP_CP_MAX = 8;
 
 export const AGENT_SETUP_TEXT = '대화를 쓰려면 먼저 내 사업장(사업자 정보)을 등록해 주세요.';
+/** 돈 흐름 칸 중 확인 못 한 값(잔액을 모르는 계좌 등)을 물었을 때. 모르는 것을 0으로 말하지 않는다(11 §3.4). */
+export const AGENT_CASH_MISSING_TEXT = '그 값은 거래내역이 모자라 확인하지 못했어요. 은행 화면에서 계좌 거래내역을 더 들여 주시면 알려 드릴게요.';
 /** 채울 값이 없는 슬롯이 있으면 문장 전체를 이것으로 바꾼다(값을 지어내지 않는다). */
 export const AGENT_SLOT_MISSING_TEXT = '같이 보이는 표에서 값을 확인해 주세요.';
 
@@ -90,6 +100,21 @@ export interface IssuedRow {
  */
 export type ReceivableRow = IssuedRow;
 
+/**
+ * 돈 흐름 한 달의 값(BankHost.cashFlowBrief를 줄인 것, 11 §3). 화면·슬롯에만 쓰고 모델에는 ref·status만 간다.
+ * complete false: 그달을 다 덮지 못한 계좌가 있다(값은 확인된 것만). null: 모르는 값(0으로 세지 않는다).
+ */
+export interface CashFlowValues {
+  complete: boolean;
+  /** 그달 값이 덮는 마지막 날(KST YYYY-MM-DD) */
+  through: string;
+  in: number;
+  out: number;
+  net: number;
+  balance: number | null;
+  nextIn: number;
+  nextOut: number;
+}
 export interface AgentCounterparty {
   id: string;
   name: string;
@@ -106,6 +131,10 @@ export interface AgentChatPorts {
   issued(): IssuedRow[] | Promise<IssuedRow[]>;
   /** null이면 계좌 연결 전(not_set_up) */
   receivables(): Promise<ReceivableRow[] | null>;
+  /** 낼 돈(받은 매입 세금계산서 중 아직 내지 않은 것, 11 §2). null이면 계좌 연결 전. 없으면 not_set_up. */
+  payables?(): Promise<ReceivableRow[] | null>;
+  /** 돈 흐름(month YYYY-MM). null이면 계좌 연결 전. 없으면 not_set_up. */
+  cashFlow?(month: string): Promise<CashFlowValues | null>;
   counterparties(): AgentCounterparty[];
   /** KST YYYY-MM-DD */
   today(): string;
@@ -113,7 +142,7 @@ export interface AgentChatPorts {
   now?: () => number;
 }
 
-export type ResultKind = 'sales' | 'history' | 'receivables';
+export type ResultKind = 'sales' | 'history' | 'receivables' | 'payables' | 'cash_flow';
 export interface TableRow {
   date: string;
   counterparty: string;
@@ -133,7 +162,10 @@ interface Result {
   kind: ResultKind;
   title: string;
   rows: IssuedRow[];
+  /** 돈 흐름 결과(kind 'cash_flow')만 */
+  cash?: CashFlowValues;
 }
+const CASH_KEY: Record<CashField, Exclude<keyof CashFlowValues, 'complete'>> = { in: 'in', out: 'out', net: 'net', balance: 'balance', next_in: 'nextIn', next_out: 'nextOut' };
 
 /** 대화 세션(엔진 세션과 같은 기준으로 끝난다). ref 번호는 세션이 바뀌어도 이어 간다: 엔진 대화록에 남은 옛 ref가 새 결과를 가리키지 않게. */
 interface Session {
@@ -148,6 +180,8 @@ const TOOL_PHASE: Record<DomainCall['tool'], Exclude<AgentPhase, 'thinking'>> = 
   sales_summary: 'reading',
   invoice_history: 'reading',
   receivables: 'reading',
+  payables: 'reading',
+  cash_flow: 'reading',
   invoice_draft: 'drafting',
   draft_edit: 'drafting',
   draft_discard: 'drafting',
@@ -290,16 +324,37 @@ export class AgentChat {
         return this.remember(s, { kind: 'sales', title: `${Number(month.slice(5))}월 발급 ${tally(rows)}`, rows });
       }
       case 'invoice_history':
-      case 'receivables': {
+      case 'receivables':
+      case 'payables': {
         const cp = cpOf(call.counterpartyId);
         if (cp === undefined) return out('unknown_counterparty');
-        const all = call.tool === 'receivables' ? await this.ports.receivables() : await this.ports.issued();
+        const all = call.tool === 'receivables' ? await this.ports.receivables() : call.tool === 'payables' ? await (this.ports.payables?.() ?? null) : await this.ports.issued();
         if (!all) return out('not_set_up');
         // 이름만 아는 옛 행(counterpartyId null)은 지금 장부 이름으로 맞춘다.
         const rows = newestFirst(cp ? all.filter((x) => x.counterpartyId === cp.id || (x.counterpartyId === null && x.counterparty === cp.name)) : all);
         const name = cp ? `${cp.name} ` : '';
-        const title = call.tool === 'receivables' ? `${name}입금 확인 전 ${tally(rows)}` : `${name}발급 기록 ${tally(rows)}`;
-        return this.remember(s, { kind: call.tool === 'receivables' ? 'receivables' : 'history', title, rows });
+        const title = call.tool === 'receivables' ? `${name}입금 확인 전 ${tally(rows)}` : call.tool === 'payables' ? `${name}안 낸 돈 ${tally(rows)}` : `${name}발급 기록 ${tally(rows)}`;
+        return this.remember(s, { kind: call.tool === 'invoice_history' ? 'history' : call.tool, title, rows });
+      }
+      case 'cash_flow': {
+        const month = monthOf(this.ports.today(), call.monthOffset);
+        const cash = await (this.ports.cashFlow?.(month) ?? null);
+        if (!cash) return out('not_set_up');
+        const ref = this.ref('r');
+        // 화면 표는 칸 하나가 한 줄이다(답 문장의 값이 늘 같이 보이는 표에 있게). 행 슬롯은 쓰지 않는다(slotValue).
+        const today = this.ports.today();
+        const line = (counterparty: string, total: number | null, date: string): IssuedRow => ({ counterpartyId: null, counterparty, date, total });
+        const rows = [
+          line('들어온 돈', cash.in, cash.through),
+          line('나간 돈', cash.out, cash.through),
+          line('차이', cash.net, cash.through),
+          line('지금 잔액', cash.balance, today),
+          line('앞으로 30일 받을 돈', cash.nextIn, today),
+          line('앞으로 30일 낼 돈', cash.nextOut, today),
+        ];
+        s.results.set(ref, { kind: 'cash_flow', title: `${Number(month.slice(5))}월 돈 흐름${cash.complete ? '' : '(일부 계좌 거래내역이 모자라 확인된 것만)'}`, rows, cash });
+        // 그달을 다 덮지 못한 계좌가 있으면 partial: 모델은 "일부 계좌 거래내역이 모자라 확인 못 함"을 같이 말한다(11 §3.4)
+        return { ref, status: cash.complete ? 'ok' : 'partial', fields: null, needs: null };
       }
       case 'invoice_draft': {
         const cp = cpOf(call.counterpartyId);
@@ -370,7 +425,10 @@ export class AgentChat {
 
   /** 슬롯 경로의 값. 집계(sum)는 금액 모르는 행이 하나라도 있으면 null이다(일부만 더한 값을 합계라고 말하지 않는다). */
   private slotValue(s: Session, ref: string, path: string): number | string | null {
-    const rows = s.results.get(ref)?.rows;
+    const res = s.results.get(ref);
+    if (path.startsWith('cash.')) return res?.cash ? res.cash[CASH_KEY[path.slice(5) as CashField]] : null;
+    // 돈 흐름 결과에는 행이 없다(행 슬롯은 채우지 않는다)
+    const rows = res && !res.cash ? res.rows : undefined;
     if (!rows) return null;
     if (path === 'count') return rows.length;
     const [pos, field] = path.split('.') as [string, string];
@@ -389,16 +447,18 @@ export class AgentChat {
   private fill(s: Session, reply: ShownReply): string {
     const today = this.ports.today();
     let missing = false;
+    let cashMissing = false;
     const filled = fillWithJosa(reply.text, new RegExp(`${TOKEN_RE.source}|${SLOT_RE.source}`, 'g'), (m) => {
       if (m[1] === undefined) return reply.values[m[0]] ?? null;
       const v = this.slotValue(s, m[1], m[2]!);
       if (v === null) {
-        missing = true;
+        if (m[2]!.startsWith('cash.') && s.results.get(m[1])?.cash) cashMissing = true;
+        else missing = true;
         return '';
       }
       return m[2] === 'count' ? String(v) : typeof v === 'number' ? won(v) : m[2]!.endsWith('.date') ? koDate(v, today) : v;
     });
-    return missing ? AGENT_SLOT_MISSING_TEXT : filled;
+    return missing ? AGENT_SLOT_MISSING_TEXT : cashMissing ? AGENT_CASH_MISSING_TEXT : filled;
   }
 
   private shown(s: Session, reply: ShownReply, created: string[]): AgentTurnResult {

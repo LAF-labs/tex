@@ -9,6 +9,7 @@ export {
   AGENT_ASKS,
   AGENT_REPLY_KINDS,
   AGENT_SHOW_MAX,
+  CASH_FIELDS,
   CHAT_AGENT_TOOLS,
   SLOT_FIELDS,
   SLOT_MONEY_PATHS,
@@ -18,6 +19,7 @@ export {
   slotPattern,
   type AgentAsk,
   type AgentReplyKind,
+  type CashField,
   type ChatAgentToolName,
   type SlotField,
 } from '@sax/chat-core';
