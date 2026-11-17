@@ -109,7 +109,7 @@
 | 복호된 PDF | 앱 뷰어 메모리에서만. 디스크 캐시 금지 |
 | 재설치 | 첫 실행 표식이 없는데 Keychain 항목이 남아 있으면 모두 삭제하고 재페어링을 요구한다 |
 | 기기 증명 | 등록 시 App Attest(iOS)·Play Integrity(Android)를 서버가 확인한다. 변조 앱·에뮬레이터를 줄이는 **신호**이며 경계가 아니다. `Px`의 하드웨어 생성 증명은 §6.1 |
-| 앱 잠금 | 앱 진입 시 생체 인증, 백그라운드 30초 후 재잠금(C-06) |
+| 앱 잠금 | 앱 진입 시 생체 인증, 백그라운드 30초 후 재잠금(C-06). **생체가 안 되면 폰 기기 암호로도 연다**(2026-11-17 yulmu "비밀번호 허용"). 그래서 앱 진입에 쓰는 키·토큰(`Sm`·`Vm`·`Km`·`Qm`·`Lm`·`KEK_N`·`K_audit`·우편함 토큰)의 사용자 인증은 "생체 또는 기기 암호"다(iOS `.userPresence`, Android `BIOMETRIC_STRONG \| DEVICE_CREDENTIAL`). 폰 암호가 없는 기기는 여전히 저장을 거부한다(`WHEN_PASSCODE_SET_THIS_DEVICE_ONLY`). 잠금 끄기는 없다. **`Px` 승인 서명(§6.1)과 시작 게이트(§7)는 생체만**이다(iOS `.biometryCurrentSet`, Android `BIOMETRIC_STRONG`, 생체 등록이 바뀌면 `Px` 무효 → 재등록). 잔여 위험: 폰과 기기 암호를 함께 손에 넣은 사람은 앱을 열어 대화·돈·서류를 보고 사진·현금매출을 보낼 수 있지만, 발급·승인은 못 한다 |
 
 통과 기준(SP-1): iCloud 암호화 백업을 다른 iPhone에 복원했을 때 키·키 링 0개, Android 백업·기기 이전 후 키 0개. Expo SecureStore 기본 접근성은 `WHEN_UNLOCKED`로 알려져 있어(확인 필요, SP-1) 명시 설정이 필수다.
 
