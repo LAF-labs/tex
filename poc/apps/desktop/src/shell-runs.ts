@@ -70,7 +70,15 @@ const HANDOFF_BY_CODE: Record<string, { text: string; note: string }> = {
   'portal.mfa_pending': { text: '홈택스 창에서 추가 인증을 마치고 로그인해 주세요', note: '마치면 [이어서]를 눌러 주세요. 30분 안에 마치지 않으면 멈춰요.' },
   'portal.unexpected_page': { text: '홈택스 창의 화면을 확인해 주세요', note: '앱이 이 화면을 알아보지 못했어요. 홈택스 창에서 이 단계를 마친 뒤 [다 했어요], 직접 발급하셨다면 [직접 발급함]을 눌러 주세요.' },
   'step.assert_failed': { text: '홈택스 창의 화면을 확인해 주세요', note: '앱이 이 화면을 알아보지 못했어요. 홈택스 창에서 이 단계를 마친 뒤 [다 했어요], 직접 발급하셨다면 [직접 발급함]을 눌러 주세요.' },
+  // 발급 잠금(ADR-048 결정 7): 계정의 다른 PC가 발급 중이거나 겹치는지 확인하지 못했다. 승인 카드를 열지 않았거나 발급 버튼을 누르지 않았다.
+  // 사람이 홈택스에서 할 일이 없어 [이어서]만 둔다(RESUME_ONLY). 누르면 엔진이 다시 잠금을 잡고 발급목록을 본 뒤 승인을 받는다.
+  'issue.locked_elsewhere': { text: '다른 PC에서 발급 중이에요', note: '그 발급이 끝난 뒤 [이어서]를 눌러 주세요. 이 PC에서는 아무것도 발급하지 않았어요.' },
+  'issue.lock_unavailable': { text: '다른 PC와 겹치는지 확인하지 못했어요', note: '인터넷 연결을 확인한 뒤 [이어서]를 눌러 주세요. 아무것도 발급하지 않았어요.' },
+  'issue.lock_lost': { text: '다른 PC와 겹치는지 다시 확인해야 해요', note: '발급 버튼을 누르지 않았어요. [이어서]를 누르면 다시 확인한 뒤 승인을 받아요.' },
+  'commit.precheck_failed': { text: '다른 PC와 겹치는지 다시 확인해야 해요', note: '발급 버튼을 누르지 않았어요. [이어서]를 누르면 다시 확인한 뒤 승인을 받아요.' },
 };
+/** [이어서]만 있는 차례로 보이는 코드(카드 종류 login과 같은 단추: [직접 발급함]·[다 했어요]를 두지 않는다). */
+const RESUME_ONLY: ReadonlySet<string> = new Set(['issue.locked_elsewhere', 'issue.lock_unavailable', 'issue.lock_lost', 'commit.precheck_failed']);
 /** 사람 차례의 종류와 한 줄(phase·code). 로그인 차례는 로그인 단계에서 온 것(시간 초과 포함), 서명 차례는 sign 단계(sign.waiting·비밀 창 TTL). */
 /** 보안카드 서명 차례의 까닭(엔진 sign.card_*). 홈택스가 틀렸다고 했거나 금고에 그 사실을 남기지 못했으면 다시 등록하게 한다. */
 const SIGN_CARD: Readonly<Record<string, { text: string; note: string }>> = {
@@ -83,7 +91,7 @@ export function handoffTurn(phase: Phase, code: string | undefined, auth?: strin
   if (phase === 'sign' && code && Object.hasOwn(SIGN_CARD, code)) return { kind: 'sign', ...SIGN_CARD[code]! };
   if (phase === 'sign') return { kind: 'sign', ...(code === 'human.ttl_expired' ? HANDOFF_SIGN_TTL : HANDOFF_SIGN), ...(signFor(auth) ? { text: signFor(auth)!.text } : {}) };
   const byCode = code ? HANDOFF_BY_CODE[code] : undefined;
-  if (byCode) return { kind: phase === 'login' ? 'login' : 'other', ...byCode };
+  if (byCode) return { kind: phase === 'login' || RESUME_ONLY.has(code!) ? 'login' : 'other', ...byCode };
   if (phase === 'login') return { kind: 'login', ...HANDOFF_LOGIN };
   return { kind: 'other', text: `${HANDOFF_TEXT} · 이 단계는 직접 해 주세요: ${labels[PHASES.indexOf(phase)] ?? ''}`, note: code && NOTE[code] && !/아무것도 발급하지 않았어요/.test(NOTE[code]!) ? NOTE[code]! : HANDOFF_HINT };
 }
@@ -157,6 +165,11 @@ export const NOTE: Record<string, string> = {
   'vault.leak_suspected': '보안 점검에서 이상이 보여 멈췄어요. 아무것도 발급하지 않았어요. 앱을 다시 시작해 주세요.',
   'step.readback_mismatch': '홈택스 화면 값을 확실히 읽지 못해 멈췄어요. 아무것도 발급하지 않았어요.',
   'verify.baseline_missing': '홈택스 발급목록을 미리 확인하지 못해 승인을 열지 않았어요.',
+  // 발급 잠금(ADR-048 결정 7). 첫 줄은 기다리는 동안 승인 단계에 보이는 말이다(엔진이 10분까지 스스로 다시 잡아 본다).
+  'issue.locked_elsewhere': '다른 PC에서 발급 중이에요. 끝나면 이어서 할게요.',
+  'issue.lock_unavailable': '다른 PC와 겹치는지 확인하지 못해 승인을 열지 않았어요. 아무것도 발급하지 않았어요.',
+  'issue.lock_lost': '다른 PC와 겹치는지 다시 확인하지 못해 발급 버튼을 누르지 않았어요. 아무것도 발급하지 않았어요.',
+  'commit.precheck_failed': '다른 PC와 겹치는지 다시 확인하지 못해 발급 버튼을 누르지 않았어요. 아무것도 발급하지 않았어요.',
   'verify.not_committed': "직전 시도는 '발급 안 됨'으로 판정되었어요. 홈택스 발급목록을 직접 확인한 뒤 다시 준비해 주세요.",
   'verify.unknown': '발급 요청은 보냈지만 발급목록에서 확인하지 못했어요. 홈택스 발급목록을 직접 확인해 주세요. 다시 실행하면 중복 발급될 수 있어요.',
   in_doubt: '발급 단계에서 멈춰 발급됐는지 확인하지 못했어요. 홈택스 발급목록을 직접 확인해 주세요. 다시 실행하면 중복 발급될 수 있어요.',

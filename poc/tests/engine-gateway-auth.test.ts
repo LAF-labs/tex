@@ -203,7 +203,9 @@ describe('entry 배선', () => {
   const entry = readFileSync(path.join(import.meta.dirname, '../packages/engine/src/entry.ts'), 'utf8');
   it('init 셋째 포트(auth)가 있으면 portGatewayAuth로 Egress 게이트웨이를 구성하고, 없으면 게이트웨이 없이 둔다', () => {
     assert.match(entry, /init\(msg as unknown as EngineInit, e\.ports\[0\], e\.ports\[1\], e\.ports\[2\]\)/);
-    assert.match(entry, /new Egress\(authPort \? \{ gateway: \{ auth: portGatewayAuth\(wrapPort\(authPort, 'electron'\)\), bundles: BundleCatalog\.load\(\)\.allowEntries\(\) \} \} : \{\}\)/);
+    // auth 포트는 한 번만 감싸서 게이트웨이 인증과 발급 잠금(ADR-048 결정 7)이 같이 쓴다.
+    assert.match(entry, /const auth = authPort \? wrapPort\(authPort, 'electron'\) : null;/);
+    assert.match(entry, /new Egress\(auth \? \{ gateway: \{ auth: portGatewayAuth\(auth\), bundles: BundleCatalog\.load\(\)\.allowEntries\(\) \} \} : \{\}\)/);
   });
   it('엔진 소스는 기기 토큰·키를 만들거나 금고 crypto.*를 부르지 않는다', () => {
     const dir = path.join(import.meta.dirname, '../packages/engine/src');

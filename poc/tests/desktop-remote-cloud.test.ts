@@ -5,6 +5,9 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import http from 'node:http';
 import { connect, type AddressInfo } from 'node:net';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { CLOUD_ORIGIN, CLOUD_WS_HOST, Egress, cloudHeaders, cloudRequestCheck, cloudSocketCheck } from '@sax/net';
 import {
@@ -29,8 +32,13 @@ import {
   x25519Keygen,
   type DesktopKeys,
 } from '../packages/remote/src/index.ts';
+import { DesktopAccount, RemoteIdentityFile } from '../apps/desktop/src/remote-account.ts';
 import { cloudPorts, type CloudPorts, type DeviceAuth } from '../apps/desktop/src/remote-cloud.ts';
 import { DeviceManager, type DeviceManagerSession } from '../apps/desktop/src/remote-devices.ts';
+import { vaultDesktopKeys, type VaultDesktopKeys } from '../apps/desktop/src/remote-keys.ts';
+import { PcLinkHost, PcLinkJoin } from '../apps/desktop/src/remote-pclink.ts';
+import { FileEventLog } from '../packages/platform/src/index.ts';
+import { CRYPTO_KEY_ITEMS, MemoryKeyStore, VaultCrypto } from '../packages/vault/src/index.ts';
 import { CLOUD_ROUTES } from '../packages/net/src/cloud.ts';
 import { argon2Available } from '../services/account/src/index.ts';
 import { MockMailSender, startAccount } from '../services/account/src/index.ts';
@@ -272,6 +280,21 @@ describe('계정 화면 경로(#224 비밀번호 로그인이 실제 앱에서 n
       putDeviceList: [auth, list],
       devices: [auth],
       leaveDevice: [auth],
+      devicesBySession: ['sxs1.s'],
+      deviceListByDevice: [auth],
+      enrollDesktop: ['sxs1.s', { deviceId: uuid4(), platform: 'macos', name: '새 PC', Sx: 'x', Vx: 'y' }],
+      pcLinkHello: ['sxs1.s', uuid4(), { v: 1 }],
+      pcLinkAnswer: ['sxs1.s', uuid4()],
+      pcLinkReveal: ['sxs1.s', uuid4(), { v: 1, nonce: 'n' }],
+      pcLinkCancel: ['sxs1.s', uuid4()],
+      pcLinks: [auth],
+      pcLinkChallenge: [auth, uuid4(), { v: 1 }],
+      pcLinkGrant: [auth, uuid4(), { v: 1 }],
+      pcLinkDrop: [auth, uuid4()],
+      issueLock: [auth],
+      acquireIssueLock: [auth],
+      renewIssueLock: [auth, 'L'.repeat(43)],
+      releaseIssueLock: [auth, 'L'.repeat(43)],
       billing: [auth],
       billingCheckout: [auth],
       billingCancel: [auth],
@@ -473,6 +496,157 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
     // 계정에 남은 마지막 PC는 나갈 수 없다(로그아웃만)
     await assert.rejects(mgr.leave(), { code: 'account.last_desktop' });
     assert.equal((await mgr.list()).find((d) => d.self)?.state, 'active');
+  });
+
+  it('새 PC 연결(ADR-048 결정 3): 로그인한 새 PC가 신청하고, 쓰던 PC가 6자리로 승인하면 금고가 계정 열쇠를 넘겨받아 같은 AIK로 붙는다', async () => {
+    const { account } = ports;
+    const email = 'pclink@example.com';
+    const dirs: string[] = [];
+    // PC 한 대: 금고(장기 키 연산) + 계정 로그인 + 기기 관리 + 새 PC 승인. 금고는 control 포트 대신 VaultCrypto를 바로 부른다
+    const pc = async (name: string) => {
+      const ks = new MemoryKeyStore();
+      const vlog = new FileEventLog(null, 'vault');
+      const c = new VaultCrypto({ keyStore: ks, log: vlog });
+      const control = async (m: string, p?: Record<string, unknown>): Promise<unknown> => {
+        if (m === 'crypto.publicKeys') return c.publicKeys();
+        if (m === 'crypto.noiseDH') return { shared: await c.noiseDH(p) };
+        if (m === 'crypto.signVd') return { sig: await c.signVd(p) };
+        if (m === 'crypto.signAik') return { sig: await c.signAik(p) };
+        if (m === 'crypto.hpkeOpen') return { pt: await c.hpkeOpen(p) };
+        if (m === 'crypto.linkKey') return { pub: await c.linkKey() };
+        if (m === 'crypto.rkSeal') return c.rkSeal(p);
+        if (m === 'crypto.rkImport') return { aik: await c.rkImport(p) };
+        throw new Error(`vault: ${m}`);
+      };
+      let kp: Promise<VaultDesktopKeys> | null = null;
+      const keys = () => (kp ??= vaultDesktopKeys(control));
+      const dir = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-pclink-'));
+      dirs.push(dir);
+      const events: string[] = [];
+      const acct = new DesktopAccount({
+        client: account,
+        keys,
+        identity: new RemoteIdentityFile(dir),
+        platform: 'macos',
+        deviceName: name,
+        linkVault: async () => (await keys()).link,
+        resetKeys: () => void (kp = null),
+        log: (n, d) => void events.push(`${n}:${String(d.result ?? '')}`),
+      });
+      await acct.init();
+      const login = async () => {
+        await acct.sendCode(email);
+        return acct.verify(s.mail.lastCode(email)!);
+      };
+      const mgr = () => new DeviceManager({ client: account, session: () => acct.device(), aik: async () => (await keys()).aik, dropPhone: async () => {} });
+      return { acct, keys, ks, vlog, events, login, mgr, dir };
+    };
+    try {
+      const a = await pc('사무실 PC');
+      assert.equal((await a.login()).step, 'signed_in');
+      const aMgr = a.mgr();
+      const host = new PcLinkHost({ client: account, exclusive: (f) => aMgr.exclusive(f), aik: async () => (await a.keys()).aik, vault: async () => (await a.keys()).link });
+      assert.deepEqual(await host.list(), []);
+
+      // 새 PC가 같은 계정으로 로그인하면 연결을 기다린다(전에는 account.aik_already_pinned로 끝났다)
+      const b = await pc('집 PC');
+      const bAikBefore = b64((await b.keys()).aik.publicKey);
+      const v1 = await b.login();
+      assert.deepEqual([v1.step, v1.email, v1.linkCode], ['link_wait', email, undefined]);
+      assert.equal(await b.acct.linkPoll(), false, '쓰던 PC가 답하기 전');
+      await assert.rejects(b.acct.sendCode(email), /account_linking/);
+
+      // 쓰던 PC: 신청이 보이고, [연결]을 누르면 새 PC에 6자리가 뜬다
+      const [req] = await host.list();
+      assert.deepEqual([req!.name, req!.platform, req!.stage, req!.triesLeft], ['집 PC', 'macos', 'new', null]);
+      assert.ok(!JSON.stringify(req).includes('commit'), '키·약속은 렌더러로 가지 않는다');
+      assert.equal((await host.begin(req!.deviceId))[0]!.stage, 'wait');
+      await assert.rejects(host.begin(req!.deviceId), { code: 'account.link_state' });
+      assert.equal(await b.acct.linkPoll(), true);
+      const v2 = b.acct.view();
+      assert.equal(v2.step, 'link_code');
+      assert.match(v2.linkCode!, /^\d{6}$/);
+      await assert.rejects(b.acct.linkAccept(), /account_no_link/, '열쇠가 오기 전에는 받지 못한다');
+      assert.equal(b.acct.view().step, 'link_code');
+      const code = v2.linkCode!;
+      assert.deepEqual((await host.list()).map((x) => [x.stage, x.triesLeft]), [['code', 3]]);
+
+      // 틀린 6자리는 횟수만 줄고, 맞으면 목록에 새 PC가 올라가고 쓰던 PC에 "연결됐어요"가 남는다
+      const wrong = code === '000000' ? '000001' : '000000';
+      const bad = await host.confirm(req!.deviceId, wrong);
+      assert.deepEqual([bad.ok, bad.requests[0]!.triesLeft], [false, 2]);
+      assert.equal(await b.acct.linkPoll(), false);
+      const good = await host.confirm(req!.deviceId, code);
+      assert.deepEqual([good.ok, good.requests.map((x) => x.stage)], [true, ['done']]);
+      assert.ok(a.vlog.lines.some((l) => l.includes('vault.rk_sealed')));
+      assert.equal(a.acct.identity!.deviceList.entries.filter((e) => e.entry.role === 'desktop').length, 2);
+
+      // 새 PC: 열쇠가 왔다. 사용자가 확인한 뒤에만 금고에 넣는다
+      assert.equal(await b.acct.linkPoll(), true);
+      assert.equal(b.acct.view().step, 'link_confirm');
+      assert.equal(b64((await b.keys()).aik.publicKey), bAikBefore, '확인 전에는 금고가 그대로다');
+      const done = await b.acct.linkAccept();
+      assert.deepEqual([done.step, done.email, done.linkCode], ['signed_in', email, undefined]);
+      assert.equal(b.acct.identity!.aikPub, a.acct.identity!.aikPub);
+      assert.equal(b64((await b.keys()).aik.publicKey), a.acct.identity!.aikPub, '새 PC 금고의 AIK = 계정 AIK');
+      assert.ok(b.vlog.lines.some((l) => l.includes('vault.rk_imported')));
+      assert.ok(b.events.includes('main.account_link:ok'));
+      // 계정 열쇠는 로그·신원 파일에 없다
+      const rk = Buffer.from((await b.ks.get(CRYPTO_KEY_ITEMS.rk, 32))!);
+      const idFile = await fs.readFile(path.join(b.dir, 'remote-identity.json'), 'utf8');
+      for (const text of [idFile, ...a.vlog.lines, ...b.vlog.lines, ...a.events, ...b.events]) assert.ok(!text.includes(rk.toString('base64')) && !text.includes(rk.toString('hex')) && !text.includes(code));
+      // 우편함은 비었고, 앱을 다시 켜도 신원이 맞다
+      assert.deepEqual((await host.list()).map((x) => x.stage), ['done']);
+      const again = new DesktopAccount({ client: account, keys: b.keys, identity: new RemoteIdentityFile(b.dir), platform: 'macos', deviceName: '집 PC' });
+      assert.equal((await again.init()).step, 'signed_in');
+
+      // 두 PC 모두 기기 토큰으로 같은 목록을 보고, 한 PC가 바꾼 목록을 다른 PC가 받아들인다
+      const bMgr = b.mgr();
+      assert.deepEqual((await bMgr.list()).map((d) => [d.name, d.state, d.self, d.listed]), [['사무실 PC', 'active', false, true], ['집 PC', 'active', true, true]]);
+      const start = await account.startEmailCode(email);
+      const { session } = await account.verifyEmailCode(start.loginId, s.mail.lastCode(email)!);
+      const ph = { id: uuid4(), noise: x25519Keygen(), vd: softSigner(ed25519Keygen().secretKey, VD_PURPOSES) };
+      const r = await fetch(`${s.origin}/v1/devices/enroll`, { method: 'POST', headers: { authorization: `Bearer ${session}`, 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: ph.id, role: 'mobile', platform: 'ios', name: '폰', Sx: b64(ph.noise.publicKey), Vx: b64(ph.vd.publicKey) }) });
+      assert.equal(r.status, 201);
+      const bDev = b.acct.device()!;
+      const withPhone = await addDevice((await b.keys()).aik, bDev.deviceList, { deviceId: ph.id, role: 'mobile', noisePub: ph.noise.publicKey, signPub: ph.vd.publicKey, registeredAt: Date.now() });
+      await account.putDeviceList(bDev.auth, withPhone);
+      await bDev.setDeviceList(withPhone);
+      const before = a.acct.identity!.deviceList.listVersion;
+      assert.deepEqual((await aMgr.list()).map((d) => [d.name, d.listed]), [['사무실 PC', true], ['집 PC', true], ['폰', true]]);
+      assert.equal(a.acct.identity!.deviceList.listVersion, before + 1, '쓰던 PC가 새 PC가 올린 목록을 받아들였다');
+      // 쓰던 PC가 폰을 끊으면(최신 목록 위에서) 새 PC도 다음에 그 목록을 받는다
+      await aMgr.unlink(ph.id);
+      assert.deepEqual((await bMgr.list()).map((d) => d.name), ['사무실 PC', '집 PC']);
+      assert.deepEqual(b.acct.identity!.deviceList.revoked.map((x) => x.device_id), [ph.id]);
+
+      // 세 번째 PC: 쓰던 PC가 거절하면 로그인 화면으로 돌아가고 자리가 빈다. 새 PC가 승인해도 된다(모든 PC가 같은 열쇠)
+      const c3 = await pc('매장 PC');
+      assert.equal((await c3.login()).step, 'link_wait');
+      const cReq = (await host.list()).find((x) => x.stage === 'new')!;
+      assert.equal(cReq.name, '매장 PC');
+      await host.reject(cReq.deviceId);
+      assert.equal(await c3.acct.linkPoll(), true);
+      assert.deepEqual([c3.acct.view().step, c3.acct.view().error], ['signed_out', 'account.link_rejected']);
+      assert.equal((await aMgr.list()).length, 2);
+      assert.equal((await c3.login()).step, 'link_wait');
+      const host2 = new PcLinkHost({ client: account, exclusive: (f) => bMgr.exclusive(f), aik: async () => (await b.keys()).aik, vault: async () => (await b.keys()).link });
+      const c2 = (await host2.list())[0]!;
+      await host2.begin(c2.deviceId);
+      assert.deepEqual((await host.list()).filter((x) => x.deviceId === c2.deviceId).map((x) => x.stage), ['other'], '다른 PC가 먼저 답한 신청');
+      await c3.acct.linkPoll();
+      assert.equal((await host2.confirm(c2.deviceId, c3.acct.view().linkCode!)).ok, true);
+      await c3.acct.linkPoll();
+      assert.equal((await c3.acct.linkAccept()).step, 'signed_in');
+      assert.equal(c3.acct.identity!.aikPub, a.acct.identity!.aikPub);
+      assert.deepEqual((await aMgr.list()).map((d) => d.name), ['사무실 PC', '집 PC', '매장 PC']);
+
+      // 네 번째 PC는 한도에 걸린다(PC 3대). 로그인 코드 한도(이메일당 5회/시) 때문에 앞에서 받은 세션으로 신청만 해 본다
+      const d4 = await pc('네 번째');
+      await assert.rejects(PcLinkJoin.start({ client: account, session, aikPub: a.acct.identity!.aikPub, keys: await d4.keys(), vault: (await d4.keys()).link, platform: 'windows', name: '네 번째' }), { code: 'account.device_limit' });
+    } finally {
+      for (const d of dirs) await fs.rm(d, { recursive: true, force: true });
+    }
   });
 
   it('계정 화면 경로 전부를 제품 Egress로(실제 계정 서비스): 만들기·로그인·갱신 회전·재인증·바꾸기·지우기·재설정·모든 기기 로그아웃', { skip: !argon2Available() && 'argon2id 없음' }, async () => {

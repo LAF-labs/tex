@@ -13,6 +13,7 @@ import type { EngineInit, EnginePortal } from '@sax/engine/protocol';
 import { wrapPort, type EventLog, type PortLike } from '@sax/platform';
 import { childEnv } from './child-env.ts';
 import { authPortResponder, type GwAuthResult } from './gateway-auth.ts';
+import { isIssueLockMessage, issueLockResponder, type IssueLockResult } from './issue-lock-host.ts';
 import type { SecretInputBind as OneShotInputBind } from './secret-labels.ts';
 import type { CodefNeeded } from './bank-auto.ts';
 /** 1회용 결속 또는 계좌 자동조회 비밀번호 창 결속(금고 protocol SecretInputBind의 main 쪽 부분) */
@@ -74,6 +75,7 @@ export class EngineHost extends EventEmitter {
   private readonly authPort: MessagePortMain;
   private readonly browserPort: MessagePortMain | null;
   private gatewayAuth: ((m: unknown) => Promise<GwAuthResult | null>) | null = null;
+  private issueLock: ((m: unknown) => Promise<IssueLockResult | null>) | null = null;
   private readonly pending = new Map<number, Pending>();
   private readonly answers = new Map<string, (r: GateAnswerResult) => void>();
   private readonly attestAnswers = new Map<string, (r: AttestAnswerResult) => void>();
@@ -109,7 +111,14 @@ export class EngineHost extends EventEmitter {
         if (!this.dead) this.authPort.postMessage(r);
       },
     );
-    this.authPort.on('message', (e) => void onAuth(e.data));
+    // 발급 잠금(lock.*, ADR-048 결정 7)은 같은 포트로 오지만 gw.auth 줄과 따로 답한다(잠금 호출이 게이트웨이 인증을 막지 않게).
+    const onLock = issueLockResponder(
+      () => this.issueLock,
+      (r) => {
+        if (!this.dead) this.authPort.postMessage(r);
+      },
+    );
+    this.authPort.on('message', (e) => (isIssueLockMessage(e.data) ? onLock(e.data) : void onAuth(e.data)));
     this.authPort.start();
     const br = opts.embeddedBrowser ? new MessageChannelMain() : null;
     this.browserPort = br?.port2 ?? null;
@@ -164,6 +173,11 @@ export class EngineHost extends EventEmitter {
   /** auth 포트에 답하는 쪽(shell-app이 계정을 만든 뒤 GatewayAuthHost.handle을 붙인다). */
   setGatewayAuth(handler: (m: unknown) => Promise<GwAuthResult | null>): void {
     this.gatewayAuth = handler;
+  }
+
+  /** auth 포트의 lock.*에 답하는 쪽(shell-app이 IssueLockHost.handle을 붙인다). 붙기 전의 요청은 issue.lock_unavailable로 답한다(엔진은 승인을 열지 않는다). */
+  setIssueLock(handler: (m: unknown) => Promise<IssueLockResult | null>): void {
+    this.issueLock = handler;
   }
 
   private onReply(msg: { t?: string; id?: number; result?: unknown; error?: string }): void {

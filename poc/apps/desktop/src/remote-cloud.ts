@@ -3,7 +3,7 @@
 // 이 모듈은 아무것도 저장하지 않는다: 계정 세션·기기 토큰은 호출자(main 메모리)가 넘기고, 응답의 토큰은 그대로 돌려줄 뿐 파일·로그에 두지 않는다.
 // 오류는 Error.code에 서버 코드(`<영역>.<코드>`) 또는 `net.<egress 코드>`만 담는다. 메시지에 본문·URL·토큰·이메일을 넣지 않는다.
 import { CLOUD_ORIGIN, CLOUD_WS_HOST, EgressError, type CloudMethod, type Egress } from '@sax/net';
-import type { AccountClient, AccountLogin, CloudPorts, DeviceAuth, RelayHttpClient, ServerDevice } from './remote-ports.ts';
+import type { AccountClient, AccountLogin, CloudPorts, DeviceAuth, PcLinkRequest, RelayHttpClient, ServerDevice } from './remote-ports.ts';
 import {
   b64url,
   relayOrigin,
@@ -48,6 +48,7 @@ const shape = (): never => {
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown, max = 4096): v is string => typeof v === 'string' && v.length > 0 && v.length <= max;
 const int = (v: unknown): v is number => Number.isSafeInteger(v);
+const UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 /** 갱신 토큰 모양(금고 account.refresh와 같다). 다른 모양은 받지도 보내지도 않는다. */
 export const REFRESH_TOKEN = /^sxa1\.[A-Za-z0-9_-]{43}$/;
@@ -64,6 +65,8 @@ function login(b: unknown): AccountLogin {
 /** remember는 참일 때만 본문에 싣는다. */
 const rem = (remember?: boolean) => (remember ? { remember: true } : {});
 
+/** 발급 잠금 값(서버 randomToken, base64url). 모양만 본다 */
+const ISSUE_LOCK_ID = /^[A-Za-z0-9_-]{22,64}$/;
 const DEV_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1):[0-9]{1,5}$/;
 const DEV_HOST = /^(localhost|127\.0\.0\.1):[0-9]{1,5}$/;
 
@@ -106,6 +109,28 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
     } catch (e) {
       throw new CloudPortError(e instanceof EgressError ? `net.${e.code}` : 'net.network');
     }
+  };
+
+  const pinnedList = (b: unknown): { aikPub: string | null; deviceList: DeviceListJson | null } => {
+    if (!isObj(b) || !(b.aikPub === null || str(b.aikPub, 64)) || !(b.deviceList === null || isObj(b.deviceList))) shape();
+    const r = b as { aikPub: string | null; deviceList: DeviceListJson | null };
+    return { aikPub: r.aikPub, deviceList: r.deviceList };
+  };
+  const serverDevices = (b: unknown): ServerDevice[] => {
+    if (!isObj(b) || !Array.isArray(b.devices) || b.devices.length > 64) shape();
+    return ((b as { devices: unknown[] }).devices).map((d): ServerDevice => {
+      if (!isObj(d) || !str(d.deviceId, 36) || !str(d.name, 40) || !str(d.Sx, 64) || !str(d.Vx, 64) || !int(d.registeredAt)) shape();
+      const x = d as Record<string, unknown>;
+      if (x.role !== 'desktop' && x.role !== 'mobile') shape();
+      if (!['windows', 'macos', 'ios', 'android'].includes(x.platform as string) || !['pending', 'active', 'suspended', 'revoked'].includes(x.state as string)) shape();
+      if (!(x.deleteAfter === null || x.deleteAfter === undefined || int(x.deleteAfter))) shape();
+      return { deviceId: x.deviceId as string, role: x.role as ServerDevice['role'], platform: x.platform as ServerDevice['platform'], name: x.name as string, state: x.state as ServerDevice['state'], registeredAt: x.registeredAt as number, Sx: x.Sx as string, Vx: x.Vx as string, deleteAfter: (x.deleteAfter as number | null | undefined) ?? null };
+    });
+  };
+  /** 새 PC 연결 우편함 경로. 기기 ID는 UUIDv4만(egress 허용 경로와 같은 모양) */
+  const linkUrl = (deviceId: string) => {
+    if (typeof deviceId !== 'string' || !UUID4.test(deviceId)) throw new CloudPortError('request.param_rejected');
+    return `${accountOrigin}/v1/pc-links/${deviceId}`;
   };
 
   const account: AccountClient = {
@@ -175,10 +200,11 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
       await call('POST', `${accountOrigin}/v1/auth/logout`, [200, 204], { headers: bearer(session), body: {} });
     },
     async deviceList(session) {
-      const b = await call('GET', `${accountOrigin}/v1/device-list`, [200], { headers: bearer(session) });
-      if (!isObj(b) || !(b.aikPub === null || str(b.aikPub, 64)) || !(b.deviceList === null || isObj(b.deviceList))) shape();
-      const r = b as { aikPub: string | null; deviceList: DeviceListJson | null };
-      return { aikPub: r.aikPub, deviceList: r.deviceList };
+      return pinnedList(await call('GET', `${accountOrigin}/v1/device-list`, [200], { headers: bearer(session) }));
+    },
+    async deviceListByDevice(auth) {
+      const url = `${accountOrigin}/v1/device-list`;
+      return pinnedList(await call('GET', url, [200], { headers: await authed(auth, 'GET', url) }));
     },
     async pinFirstDesktop(session, x) {
       const b = await call('POST', `${accountOrigin}/v1/aik`, [201], { headers: bearer(session), body: { aikPub: x.aikPub, deviceList: x.deviceList, platform: x.platform, name: x.name } });
@@ -246,16 +272,76 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
     },
     async devices(auth) {
       const url = `${accountOrigin}/v1/devices`;
+      return serverDevices(await call('GET', url, [200], { headers: await authed(auth, 'GET', url) }));
+    },
+    async devicesBySession(session) {
+      return serverDevices(await call('GET', `${accountOrigin}/v1/devices`, [200], { headers: bearer(session) }));
+    },
+    async enrollDesktop(session, x) {
+      await call('POST', `${accountOrigin}/v1/devices/enroll`, [201], { headers: bearer(session), body: { deviceId: x.deviceId, role: 'desktop', platform: x.platform, name: x.name, Sx: x.Sx, Vx: x.Vx } });
+    },
+    async pcLinkHello(session, deviceId, hello) {
+      await call('PUT', linkUrl(deviceId), [204], { headers: bearer(session), body: { hello } });
+    },
+    async pcLinkAnswer(session, deviceId) {
+      const b = await call('GET', linkUrl(deviceId), [200], { headers: bearer(session) });
+      if (!isObj(b) || !('challenge' in b) || !('grant' in b)) shape();
+      const r = b as { challenge: unknown; grant: unknown };
+      return { challenge: r.challenge ?? null, grant: r.grant ?? null };
+    },
+    async pcLinkReveal(session, deviceId, reveal) {
+      await call('POST', `${linkUrl(deviceId)}/reveal`, [204], { headers: bearer(session), body: { reveal } });
+    },
+    async pcLinkCancel(session, deviceId) {
+      await call('DELETE', linkUrl(deviceId), [204], { headers: bearer(session) });
+    },
+    async pcLinks(auth) {
+      const url = `${accountOrigin}/v1/pc-links`;
       const b = await call('GET', url, [200], { headers: await authed(auth, 'GET', url) });
-      if (!isObj(b) || !Array.isArray(b.devices) || b.devices.length > 64) shape();
-      return ((b as { devices: unknown[] }).devices).map((d): ServerDevice => {
-        if (!isObj(d) || !str(d.deviceId, 36) || !str(d.name, 40) || !str(d.Sx, 64) || !str(d.Vx, 64) || !int(d.registeredAt)) shape();
-        const x = d as Record<string, unknown>;
-        if (x.role !== 'desktop' && x.role !== 'mobile') shape();
-        if (!['windows', 'macos', 'ios', 'android'].includes(x.platform as string) || !['pending', 'active', 'suspended', 'revoked'].includes(x.state as string)) shape();
-        if (!(x.deleteAfter === null || x.deleteAfter === undefined || int(x.deleteAfter))) shape();
-        return { deviceId: x.deviceId as string, role: x.role as ServerDevice['role'], platform: x.platform as ServerDevice['platform'], name: x.name as string, state: x.state as ServerDevice['state'], registeredAt: x.registeredAt as number, Sx: x.Sx as string, Vx: x.Vx as string, deleteAfter: (x.deleteAfter as number | null | undefined) ?? null };
+      if (!isObj(b) || !Array.isArray(b.links) || b.links.length > 16) shape();
+      return ((b as { links: unknown[] }).links).map((l): PcLinkRequest => {
+        if (!isObj(l) || !str(l.deviceId, 36) || !UUID4.test(l.deviceId) || !str(l.name, 40) || !int(l.createdAt) || !isObj(l.hello)) shape();
+        const x = l as Record<string, unknown>;
+        if (x.platform !== 'windows' && x.platform !== 'macos') shape();
+        if (!(x.challengedBy === null || (str(x.challengedBy, 36) && UUID4.test(x.challengedBy)))) shape();
+        return { deviceId: x.deviceId as string, name: x.name as string, platform: x.platform as PcLinkRequest['platform'], createdAt: x.createdAt as number, hello: x.hello, challengedBy: x.challengedBy as string | null, reveal: x.reveal ?? null };
       });
+    },
+    async pcLinkChallenge(auth, deviceId, challenge) {
+      const url = `${linkUrl(deviceId)}/challenge`;
+      await call('POST', url, [204], { headers: await authed(auth, 'POST', url), body: { challenge } });
+    },
+    async pcLinkGrant(auth, deviceId, grant) {
+      const url = `${linkUrl(deviceId)}/grant`;
+      await call('POST', url, [204], { headers: await authed(auth, 'POST', url), body: { grant } });
+    },
+    async pcLinkDrop(auth, deviceId) {
+      const url = linkUrl(deviceId);
+      await call('DELETE', url, [204], { headers: await authed(auth, 'DELETE', url) });
+    },
+    async issueLock(auth) {
+      const url = `${accountOrigin}/v1/issue-lock`;
+      const b = await call('GET', url, [200], { headers: await authed(auth, 'GET', url) });
+      if (!isObj(b) || typeof b.held !== 'boolean' || typeof b.mine !== 'boolean' || !(b.deviceId === null || typeof b.deviceId === 'string') || !(b.expiresAt === null || int(b.expiresAt))) shape();
+      const r = b as { held: boolean; deviceId: string | null; expiresAt: number | null; mine: boolean };
+      return { held: r.held, deviceId: r.deviceId, expiresAt: r.expiresAt, mine: r.mine };
+    },
+    async acquireIssueLock(auth) {
+      const url = `${accountOrigin}/v1/issue-lock/acquire`;
+      const b = await call('POST', url, [200], { headers: await authed(auth, 'POST', url), body: {} });
+      if (!isObj(b) || typeof b.lockId !== 'string' || !ISSUE_LOCK_ID.test(b.lockId) || !int(b.expiresAt)) shape();
+      const r = b as { lockId: string; expiresAt: number };
+      return { lockId: r.lockId, expiresAt: r.expiresAt };
+    },
+    async renewIssueLock(auth, lockId) {
+      const url = `${accountOrigin}/v1/issue-lock/renew`;
+      const b = await call('POST', url, [200], { headers: await authed(auth, 'POST', url), body: { lockId } });
+      if (!isObj(b) || !int(b.expiresAt)) shape();
+      return { expiresAt: (b as { expiresAt: number }).expiresAt };
+    },
+    async releaseIssueLock(auth, lockId) {
+      const url = `${accountOrigin}/v1/issue-lock/release`;
+      await call('POST', url, [204], { headers: await authed(auth, 'POST', url), body: { lockId } });
     },
     async leaveDevice(auth) {
       const url = `${accountOrigin}/v1/devices/self/leave`;

@@ -7,7 +7,7 @@
 //   응답 본문·URL·토큰·이메일은 오류·로그에 넣지 않는다. 네트워크 실패는 code 'net.<이유>'(egress 코드 그대로).
 // - 계정 세션 문자열과 기기 토큰은 main 메모리에만 있다. 렌더러·로그·파일로 나가지 않는다. 기기 토큰은 DeviceTokenCache(15분, 영속 없음).
 // - 기기 범위 호출의 인증 헤더는 데스크톱이 만들어 넘긴다(DeviceAuth). 클라이언트는 그 헤더를 그대로 붙인다.
-import type { DeviceListJson, DesktopKeys, DeviceToken, DpopSigner, MailboxTokens, RelayQueue, SignedAcctClaim, SignedCert, WebSocketLike } from '@sax/remote';
+import type { DeviceListJson, DesktopKeys, DeviceToken, DpopSigner, MailboxTokens, PcLinkChallenge, PcLinkGrant, PcLinkHello, PcLinkReveal, RelayQueue, SignedAcctClaim, SignedCert, WebSocketLike } from '@sax/remote';
 
 /** 기기 범위 토큰 헤더(Authorization: DPoP <token> + DPoP 증명). htu는 요청 URL 전체(쿼리 없음). 데스크톱이 deviceAuthHeaders로 만든다. */
 export type DeviceAuth = (htm: 'GET' | 'POST' | 'PUT' | 'DELETE', htu: string) => Promise<Record<string, string>>;
@@ -97,10 +97,48 @@ export interface AccountClient {
   enrollPhone(auth: DeviceAuth, b: { deviceId: string; role: 'mobile'; platform: 'ios' | 'android'; name: string; Sx: string; Vx: string; roomId: string }): Promise<void>;
   /** PUT /v1/device-list(기기 토큰): AIK 서명 새 목록. */
   putDeviceList(auth: DeviceAuth, list: DeviceListJson): Promise<void>;
+  /**
+   * GET /v1/device-list(기기 토큰): 계정의 최신 AIK 서명 목록. PC가 여러 대면 다른 PC가 목록을 바꾼다(폰 연결·끊기·새 PC 승인).
+   * 받은 목록은 호출자가 자기 AIK로 검증하고 list_version이 더 높을 때만 받아들인다.
+   */
+  deviceListByDevice(auth: DeviceAuth): Promise<{ aikPub: string | null; deviceList: DeviceListJson | null }>;
   /** GET /v1/devices(기기 토큰): 서버가 아는 기기 상태(ADR-048 결정 6). 역할·키는 호출자가 AIK 서명 목록과 맞춰 본다. */
   devices(auth: DeviceAuth): Promise<ServerDevice[]>;
   /** POST /v1/devices/self/leave(기기 토큰): 이 PC가 계정에서 나간다(바로 폐기). 마지막 활성 PC면 account.last_desktop. */
   leaveDevice(auth: DeviceAuth): Promise<void>;
+  // ---- 새 PC 연결(ADR-048 결정 3, D08 §4.3, services/account/API.md 새 PC 연결 우편함) ----
+  // 새 PC는 아직 기기 토큰이 없어 계정 세션으로, 쓰던 PC는 기기 토큰으로 부른다. 받은 메시지는 믿지 않는다(호출자가 @sax/remote로 본다).
+  /** GET /v1/devices(세션): 새 PC가 자기 신청 기록(같은 Sx·Vx)을 찾는다. */
+  devicesBySession(session: string): Promise<ServerDevice[]>;
+  /** POST /v1/devices/enroll(세션): 두 번째·세 번째 PC 신청(pending). PC 3대를 넘으면 account.device_limit. */
+  enrollDesktop(session: string, b: { deviceId: string; platform: 'windows' | 'macos'; name: string; Sx: string; Vx: string }): Promise<void>;
+  /** PUT /v1/pc-links/:id(세션): m1. 다시 올리면 앞 단계를 지우고 새로 시작한다. */
+  pcLinkHello(session: string, deviceId: string, hello: PcLinkHello): Promise<void>;
+  /** GET /v1/pc-links/:id(세션): 쓰던 PC의 답(m2·m4). 없으면 null. 신청이 사라졌으면 account.link_not_found. */
+  pcLinkAnswer(session: string, deviceId: string): Promise<{ challenge: unknown; grant: unknown }>;
+  /** POST /v1/pc-links/:id/reveal(세션): m3. */
+  pcLinkReveal(session: string, deviceId: string, reveal: PcLinkReveal): Promise<void>;
+  /** DELETE /v1/pc-links/:id(세션): 받아 갔거나 그만둔다(우편함만 비운다). */
+  pcLinkCancel(session: string, deviceId: string): Promise<void>;
+  /** GET /v1/pc-links(기기 토큰): 기다리는 신청들. hello·reveal은 서버가 준 그대로다. */
+  pcLinks(auth: DeviceAuth): Promise<PcLinkRequest[]>;
+  /** POST /v1/pc-links/:id/challenge(기기 토큰): m2. 다른 PC가 먼저 답했으면 account.link_state. */
+  pcLinkChallenge(auth: DeviceAuth, deviceId: string, challenge: PcLinkChallenge): Promise<void>;
+  /** POST /v1/pc-links/:id/grant(기기 토큰): m4. 새 목록을 올린 뒤에 부른다. */
+  pcLinkGrant(auth: DeviceAuth, deviceId: string, grant: PcLinkGrant): Promise<void>;
+  /** DELETE /v1/pc-links/:id(기기 토큰): 거절. 아직 활성화되지 않은 그 PC의 신청 기록도 지워진다. */
+  pcLinkDrop(auth: DeviceAuth, deviceId: string): Promise<void>;
+  /**
+   * 발급 잠금(기기 토큰, 데스크톱만. ADR-048 결정 7, API.md 발급 잠금). 계정에 하나이고 잡은 PC만 홈택스 발급에 들어간다.
+   * - issueLock: 지금 누가 잡고 있나(잠금 값은 오지 않는다).
+   * - acquireIssueLock: 다른 PC가 잡고 있으면 account.issue_locked. 다시 잡으면 새 값이다(앞 값은 죽는다). 만료 90초.
+   * - renewIssueLock: 만료됐거나 넘어갔으면 account.issue_lock_lost.
+   * - releaseIssueLock: 내 값이 아니어도 조용히 끝난다.
+   */
+  issueLock(auth: DeviceAuth): Promise<{ held: boolean; deviceId: string | null; expiresAt: number | null; mine: boolean }>;
+  acquireIssueLock(auth: DeviceAuth): Promise<{ lockId: string; expiresAt: number }>;
+  renewIssueLock(auth: DeviceAuth, lockId: string): Promise<{ expiresAt: number }>;
+  releaseIssueLock(auth: DeviceAuth, lockId: string): Promise<void>;
   /** 탈퇴(기기 토큰, 데스크톱만): GET /v1/account/deletion, POST delete-request(7일 유예·구독 해지), POST delete-cancel. */
   accountDeletion(auth: DeviceAuth): Promise<{ deleteAfter: number | null }>;
   requestAccountDelete(auth: DeviceAuth): Promise<{ deleteAfter: number }>;
@@ -119,6 +157,31 @@ export interface ServerDevice {
   Vx: string;
   /** 삭제 유예 끝(ms). 없으면 null */
   deleteAfter: number | null;
+}
+
+/** 쓰던 PC가 보는 새 PC 신청 한 건(GET /v1/pc-links). 이름·플랫폼은 새 PC가 신청 때 적은 값이다(서버 값, 믿지 않는다). */
+export interface PcLinkRequest {
+  deviceId: string;
+  name: string;
+  platform: 'windows' | 'macos';
+  createdAt: number;
+  hello: unknown;
+  /** 먼저 답한 PC의 기기 ID. 없으면 null */
+  challengedBy: string | null;
+  reveal: unknown;
+}
+
+/**
+ * 금고의 계정 열쇠 넘기기(crypto.linkKey·rkSeal·rkImport, D05 §5.1). RK 평문은 어느 쪽에서도 금고 밖으로 나오지 않는다.
+ * importRk 뒤에는 AIK가 바뀌므로 호출자가 키 객체(DesktopKeys)를 새로 만든다.
+ */
+export interface PcLinkVault {
+  /** [새 PC] 넘겨받기 키(Hx) 공개키. 부를 때마다 새 키다 */
+  key(): Promise<Uint8Array>;
+  /** [쓰던 PC] RK를 recipient로 봉인한다. 24시간에 3번까지 */
+  sealRk(recipient: Uint8Array, info: Uint8Array, aad: Uint8Array): Promise<{ enc: Uint8Array; ct: Uint8Array }>;
+  /** [새 PC] 연 RK의 AIK가 aikPub와 같을 때만 받는다. 새 AIK 공개키를 돌려준다 */
+  importRk(g: { enc: Uint8Array; ct: Uint8Array; info: Uint8Array; aad: Uint8Array; aikPub: Uint8Array }): Promise<Uint8Array>;
 }
 
 /** 릴레이(services/relay) HTTP 클라이언트. 클라우드 세션 구현. 바이트 값은 base64url로 보낸다(서버 API.md). */

@@ -7,7 +7,8 @@
 //   (서버가 다른 세션·갱신 토큰을 모두 폐기) → 첫 PC 등록 → 로그아웃. resetId는 이 객체 안 메모리에만 있다.
 // - 계정 세션·기기 토큰·loginId는 이 객체 안 메모리에만 있다. 렌더러에는 단계·이메일·만료 시각·오류 코드만 간다.
 // - 신원 파일(remote-identity.json)에는 비밀이 없다(deviceId·공개키·AIK 서명 인증서·목록·계정 이메일). 키 연산은 금고(DesktopKeys)가 한다.
-// - 두 번째 PC(A-03, 계정에 다른 AIK가 이미 있음)는 이 범위 밖이다: account.aik_already_pinned로 끝낸다.
+// - 두 번째·세 번째 PC(A-03, 계정에 다른 AIK가 이미 있음)는 쓰던 PC의 6자리 승인으로 붙는다(ADR-048 결정 3, remote-pclink.ts PcLinkJoin).
+//   그동안 세션은 이 객체 안 메모리에 있고(link_* 단계), 끝나거나 그만두면 로그아웃하고 버린다. 금고 연결 연산이 없는 빌드는 account.aik_already_pinned로 끝낸다.
 //   같은 금고(AIK·Sd·Vd가 같음)를 다시 설치한 경우는 서버 목록에서 이 PC 항목을 찾아 신원을 되살린다.
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -29,7 +30,8 @@ import {
   type DeviceListJson,
   type SignedCert,
 } from '@sax/remote';
-import type { AccountClient, DeviceAuth } from './remote-ports.ts';
+import { PcLinkJoin } from './remote-pclink.ts';
+import type { AccountClient, DeviceAuth, PcLinkVault } from './remote-ports.ts';
 
 /** 엔진에 가는 기기 토큰의 범위(gateway-auth.ts). 게이트웨이는 이 범위만 본다. */
 export const GATEWAY_SCOPES: readonly string[] = Object.freeze(['gateway']);
@@ -158,7 +160,11 @@ export class PendingCodeFile {
 
 /** 렌더러가 보는 것(값은 이메일·만료 시각·오류 코드뿐). */
 export interface AccountView {
-  step: 'unavailable' | 'signed_out' | 'code_sent' | 'reset_code' | 'working' | 'set_password' | 'signed_in';
+  /**
+   * link_*는 새 PC 연결(ADR-048 결정 3): link_wait 쓰던 PC에서 [연결]을 누르기를 기다림 · link_code 6자리를 보이는 중(쓰던 PC에 넣는다) ·
+   * link_confirm 열쇠가 왔고 "쓰던 PC에 '연결됐어요'가 떴나요?" 확인을 기다림.
+   */
+  step: 'unavailable' | 'signed_out' | 'code_sent' | 'reset_code' | 'working' | 'set_password' | 'signed_in' | 'link_wait' | 'link_code' | 'link_confirm';
   email: string | null;
   codeExpiresAt: number | null;
   error: string | null;
@@ -166,6 +172,8 @@ export interface AccountView {
   phones: number;
   /** false면 이 빌드에서는 [폰 연결]을 보이지 않는다(로그인 상태에서만 붙는다). 없으면 연결할 수 있다. */
   pairable?: false;
+  /** link_code·link_confirm 단계에서 이 PC 화면에 보일 6자리(사용자가 쓰던 PC에 넣는다). 그 밖에는 없다. */
+  linkCode?: string;
 }
 
 export interface DesktopAccountOptions {
@@ -180,6 +188,10 @@ export interface DesktopAccountOptions {
   deviceName: string;
   /** false면 폰 연결을 닫는다(운영 룸 호스트·폰 앱 출시 전, remote-wiring.ts PROD_PHONE_PAIRING). 기본 true. */
   pairing?: boolean;
+  /** 새 PC 연결의 금고 연산(ADR-048 결정 3). 없으면 다른 PC가 이미 있는 계정에는 붙지 못한다(account.aik_already_pinned). */
+  linkVault?: () => Promise<PcLinkVault>;
+  /** 계정 열쇠를 넘겨받은 뒤 부른다: 다음 keys()가 금고 공개키를 다시 읽는다(AIK가 바뀌었다). */
+  resetKeys?: () => void;
   now?: () => number;
   log?: (name: string, data: Record<string, string | number>) => void;
 }
@@ -214,6 +226,8 @@ export class DesktopAccount {
   #working = false;
   #error: string | null = null;
   #device: DeviceSession | null = null;
+  /** 새 PC 연결 중(ADR-048 결정 3). 세션은 이 동안만 메모리에 있다. */
+  #link: { join: PcLinkJoin; session: string; email: string } | null = null;
 
   constructor(o: DesktopAccountOptions) {
     this.#o = o;
@@ -248,6 +262,10 @@ export class DesktopAccount {
   view(): AccountView {
     if (!this.#o.client) return { step: 'unavailable', email: null, codeExpiresAt: null, error: null, phones: 0 };
     if (this.#offer) return { step: 'set_password', email: this.#offer.email, codeExpiresAt: null, error: this.#error, phones: 0 };
+    if (this.#link) {
+      const code = this.#link.join.code;
+      return { step: `link_${this.#link.join.stage}`, email: this.#link.email, codeExpiresAt: null, error: null, phones: 0, ...(code ? { linkCode: code } : {}) };
+    }
     // 로그인 상태의 오류는 비밀번호 단계를 끝낸 이유(account.password_later)뿐이다
     if (this.#id) return { step: 'signed_in', email: this.#id.accountEmail, codeExpiresAt: null, error: this.#error === 'account.password_later' ? this.#error : null, phones: this.#id.deviceList.entries.filter((e) => e.entry.role === 'mobile').length, ...(this.#o.pairing === false ? { pairable: false as const } : {}) };
     if (this.#working) return { step: 'working', email: this.#pending?.email ?? null, codeExpiresAt: null, error: null, phones: 0 };
@@ -303,13 +321,17 @@ export class DesktopAccount {
       this.#lastEmail = p.email;
       let keep = false;
       try {
-        this.#id = await this.#enroll(client, session, p.email);
-        this.#log('main.account_enroll', { result: 'ok' });
-        // 이미 비밀번호가 있으면 건너뛴다(인계 명세 §3). /v1/me가 실패하면 묻지 않는다(설정 > 계정에서 만든다).
-        if (p.signup) keep = (await client.me(session).then((m) => m.hasPassword === false).catch(() => false));
-        if (keep) this.#offer = { session, email: p.email };
+        const id = await this.#enroll(client, session, p.email);
+        if (id) {
+          this.#id = id;
+          this.#log('main.account_enroll', { result: 'ok' });
+          // 이미 비밀번호가 있으면 건너뛴다(인계 명세 §3). /v1/me가 실패하면 묻지 않는다(설정 > 계정에서 만든다).
+          if (p.signup) keep = (await client.me(session).then((m) => m.hasPassword === false).catch(() => false));
+          if (keep) this.#offer = { session, email: p.email };
+        }
       } finally {
-        if (!keep) await client.logout(session).catch(() => {});
+        // 새 PC 연결이 시작됐으면 세션을 연결이 끝날 때까지 둔다
+        if (!keep && this.#link?.session !== session) await client.logout(session).catch(() => {});
       }
     }, 'main.account_enroll');
     return this.view();
@@ -337,10 +359,13 @@ export class DesktopAccount {
     await this.#run(async () => {
       const { session } = await client.passwordLogin(email, password);
       try {
-        this.#id = await this.#enroll(client, session, email);
-        this.#log('main.account_enroll', { result: 'ok' });
+        const id = await this.#enroll(client, session, email);
+        if (id) {
+          this.#id = id;
+          this.#log('main.account_enroll', { result: 'ok' });
+        }
       } finally {
-        await client.logout(session).catch(() => {});
+        if (this.#link?.session !== session) await client.logout(session).catch(() => {});
       }
     }, 'main.account_password');
     return this.view();
@@ -444,10 +469,13 @@ export class DesktopAccount {
       this.#reset = null;
       this.#log('main.account_reset', { result: 'ok' });
       try {
-        this.#id = await this.#enroll(client, session, r.email);
-        this.#log('main.account_enroll', { result: 'ok' });
+        const id = await this.#enroll(client, session, r.email);
+        if (id) {
+          this.#id = id;
+          this.#log('main.account_enroll', { result: 'ok' });
+        }
       } finally {
-        await client.logout(session).catch(() => {});
+        if (this.#link?.session !== session) await client.logout(session).catch(() => {});
       }
     }, 'main.account_reset');
     return this.view();
@@ -470,6 +498,7 @@ export class DesktopAccount {
     if (this.#working) throw new Error('busy');
     const email = this.#id?.accountEmail ?? this.#offer?.email ?? null;
     const offer = this.#offer;
+    if (this.#link) await this.#endLink(null, true);
     this.#device?.clearToken();
     this.#device?.clearGatewayToken();
     this.#device = null;
@@ -486,6 +515,76 @@ export class DesktopAccount {
     return this.view();
   }
 
+  // ---- 새 PC 연결(ADR-048 결정 3, D08 §4.3) ----
+
+  /**
+   * 쓰던 PC의 답을 본다(main이 link_* 단계 동안 몇 초마다 부른다). 화면이 바뀌었으면 true.
+   * 쓰던 PC가 거절했거나 신청이 사라지면 account.link_rejected, 답이 맞지 않으면 account.link_mismatch, 세션이 끝났으면 account.link_expired로
+   * 로그인 화면에 돌아간다. 잠깐의 네트워크 실패·요청 많음은 다음 차례에 다시 본다.
+   */
+  async linkPoll(): Promise<boolean> {
+    const l = this.#link;
+    if (!l || this.#working) return false;
+    try {
+      return await l.join.poll();
+    } catch (e) {
+      const code = codeOf(e);
+      if (code.startsWith('net.') || code === 'policy.rate_limited' || this.#link !== l) return false;
+      const shown = code === 'account.link_not_found' ? 'account.link_rejected' : code === 'account.unauthorized' ? 'account.link_expired' : code;
+      await this.#endLink(shown, code === 'account.link_mismatch');
+      return true;
+    }
+  }
+
+  /**
+   * link_confirm 단계에서 사용자가 "쓰던 PC에 '연결됐어요'가 떴어요"를 눌렀다. 금고가 계정 열쇠를 받아들이면 이 PC가 로그인된다.
+   * 금고가 받지 않으면(다른 계정의 열쇠) account.link_mismatch로 끝낸다.
+   */
+  async linkAccept(): Promise<AccountView> {
+    const l = this.#link;
+    if (!l || l.join.stage !== 'confirm') throw new Error('account_no_link');
+    if (this.#working) throw new Error('busy');
+    this.#working = true;
+    this.#error = null;
+    try {
+      const j = await l.join.accept();
+      this.#o.resetKeys?.();
+      const k = await this.#o.keys();
+      const id: RemoteIdentity = { v: 1, accountEmail: l.email, deviceId: j.deviceId, aikPub: b64(j.aikPub), Sd: b64(k.noise.publicKey), Vd: b64(k.vd.publicKey), cert: j.cert, deviceList: j.deviceList, enrolledAt: this.#now() };
+      // 금고의 AIK가 넘겨받은 계정 AIK이고, 받은 인증서·목록이 그 AIK로 이 PC의 키를 담고 있어야 한다
+      if (b64(k.aik.publicKey) !== id.aikPub || !checkIdentity(id, this.#now())) throw Object.assign(new Error('link'), { code: 'account.link_mismatch' });
+      await this.#o.identity.save(id);
+      this.#link = null;
+      this.#id = id;
+      this.#lastEmail = l.email;
+      await this.#o.client?.logout(l.session).catch(() => {});
+      this.#log('main.account_link', { result: 'ok' });
+    } catch (e) {
+      if (this.#link === l) await this.#endLink(codeOf(e), true);
+    } finally {
+      this.#working = false;
+    }
+    return this.view();
+  }
+
+  /** 연결을 그만둔다(우편함을 비우고 로그아웃). 신청 기록은 서버에 남아 다시 로그인하면 이어 쓴다. */
+  async linkCancel(): Promise<AccountView> {
+    if (this.#working) throw new Error('busy');
+    if (this.#link) await this.#endLink(null, true);
+    return this.view();
+  }
+
+  async #endLink(error: string | null, cancel: boolean): Promise<void> {
+    const l = this.#link;
+    this.#link = null;
+    this.#error = error;
+    if (!l) return;
+    this.#lastEmail = l.email;
+    if (cancel) await l.join.cancel();
+    await this.#o.client?.logout(l.session).catch(() => {});
+    this.#log('main.account_link', { result: error ?? 'cancelled' });
+  }
+
   /** 기기 범위 호출(토큰·DPoP). 등록 전이면 null. */
   device(): DeviceSession | null {
     if (!this.#id || !this.#o.client) return null;
@@ -496,6 +595,7 @@ export class DesktopAccount {
   #need(): AccountClient {
     if (!this.#o.client) throw new Error('account_unavailable');
     if (this.#id) throw new Error('account_signed_in');
+    if (this.#link) throw new Error('account_linking');
     if (this.#working) throw new Error('busy');
     return this.#o.client;
   }
@@ -512,7 +612,8 @@ export class DesktopAccount {
     }
   }
 
-  async #enroll(client: AccountClient, session: string, email: string): Promise<RemoteIdentity> {
+  /** 첫 PC면 등록하고 신원을 돌려준다. 다른 PC가 이미 있는 계정이면 새 PC 연결을 시작하고 null(세션은 #link가 쥔다). */
+  async #enroll(client: AccountClient, session: string, email: string): Promise<RemoteIdentity | null> {
     const k = await this.#o.keys();
     const now = this.#now();
     const aikPub = b64(k.aik.publicKey);
@@ -522,9 +623,16 @@ export class DesktopAccount {
     let deviceId: string;
     let list: DeviceListJson;
     if (cur.aikPub) {
-      // 이미 고정된 계정: 같은 금고로 다시 설치한 이 PC만 되살린다.
-      const mine = cur.aikPub === aikPub && cur.deviceList ? cur.deviceList.entries.find((e) => e.entry.role === 'desktop' && e.entry.Sx === Sd && e.entry.Vx === Vd) : undefined;
-      if (!mine || !cur.deviceList || !verifyDeviceList(cur.deviceList, k.aik.publicKey).ok) throw Object.assign(new Error('pinned'), { code: 'account.aik_already_pinned' });
+      // 이미 고정된 계정: 같은 금고로 다시 설치한 이 PC는 되살리고, 다른 PC는 쓰던 PC의 승인을 받아 붙는다(ADR-048 결정 3).
+      // 같은 계정 열쇠를 가졌어도 목록에 없으면(다른 기기에서 끊긴 PC) 다시 승인을 받는다.
+      const mine = cur.aikPub === aikPub && cur.deviceList && verifyDeviceList(cur.deviceList, k.aik.publicKey).ok ? cur.deviceList.entries.find((e) => e.entry.role === 'desktop' && e.entry.Sx === Sd && e.entry.Vx === Vd) : undefined;
+      if (!mine || !cur.deviceList) {
+        if (!this.#o.linkVault) throw Object.assign(new Error('pinned'), { code: 'account.aik_already_pinned' });
+        const join = await PcLinkJoin.start({ client, session, aikPub: cur.aikPub, keys: k, vault: await this.#o.linkVault(), platform: this.#o.platform, name: this.#o.deviceName, now: this.#now });
+        this.#link = { join, session, email };
+        this.#log('main.account_link', { result: 'started' });
+        return null;
+      }
       deviceId = mine.entry.device_id;
       list = cur.deviceList;
     } else {
@@ -576,6 +684,11 @@ export class DeviceSession {
     return this.#id.deviceList;
   }
   /** 이 PC의 기기 ID(기기 화면에서 "이 PC" 표시, 스스로 끊기 구분) */
+  /** 계정 AIK 공개키(base64). 서버가 준 기기 목록을 이 키로 검증한다 */
+  get aikPub(): string {
+    return this.#id.aikPub;
+  }
+
   get deviceId(): string {
     return this.#id.deviceId;
   }

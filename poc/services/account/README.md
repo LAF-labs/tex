@@ -25,6 +25,8 @@
 | webauthn_challenges | challenge_hash, account_id, kind, expires_at | 패스키 챌린지(해시, 5분) |
 | devices | device_id, account_id, role, platform, name, sx, vx, registered_at, attest_signal, state, email_hold_until, delete_after, revoke_record | 기기 목록, 상태, 72시간 대기, 7일 삭제 유예 |
 | device_events | account_id, role, kind, day | 기기 교체 이력(KST 일 단위, 30일) |
+| issue_locks | account_id, device_id, hold_id, expires_at | 발급 잠금(ADR-048 결정 7). 잡고 있는 동안만 한 줄, 놓으면 삭제. 무엇을 몇 번 발급했는지는 없음 |
+| pc_links | device_id, account_id, hello, challenge, reveal, grant_msg, created_at, expires_at | 새 PC 연결 우편함(ADR-048 결정 3). 공개키·난수·AIK 서명 목록·인증서와 RK 봉인문(서버는 열 수 없다). 끝나면 삭제, 7일 뒤 정리 |
 | profile_slots | slot_token, account_id, biz_hmac | 프로필 슬롯 수, 사업자 프로필 HMAC 존재 |
 | profile_slots | biz_bound_at | **D09 추가 필요**: 바인딩 시각(D09 §2 B-28에는 있음) |
 | subscriptions | account_id, plan, status, period, renew_at, pg_customer_ref, pg_event_at | 구독 플랜·상태·갱신일·결제 참조 ID, **추가 필요**: 마지막 반영 PG 이벤트 시각(PG 쪽 시각, 웹훅 순서 판정) |
