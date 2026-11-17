@@ -284,7 +284,8 @@ export class PcLinkHost {
         await call((a) => this.#o.client.pcLinkGrant(a, deviceId, grant));
       } catch (e) {
         this.#log('main.pclink_host', { result: codeOf(e) });
-        throw Object.assign(new Error('pclink'), { code: codeOf(e) });
+        // 렌더러는 오류의 message만 받는다(ipc.ts dispatchShell): 코드를 message에 둔다
+        throw Object.assign(new Error(codeOf(e)), { code: codeOf(e) });
       }
       this.#done.set(deviceId, { view: { deviceId, name: row?.name ?? '', platform: row?.platform ?? 'windows', createdAt: row?.createdAt ?? this.#now(), stage: 'done', triesLeft: null }, at: this.#now() });
       this.#log('main.pclink_host', { result: 'ok' });
