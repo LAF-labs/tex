@@ -18,7 +18,7 @@ import {
   type Limits,
 } from '@sax/svc-shared';
 import { deviceListSchema, signedCertSchema, signedOpSchema, type AcctOp, type DeviceList, type SignedCert } from './aik.ts';
-import { ACCOUNT, DEVICE, MS, PASSWORD } from './constants.ts';
+import { ACCOUNT, DEVICE, ISSUE_LOCK, MS, PASSWORD } from './constants.ts';
 import { pageHeaders } from './pg-toss.ts';
 import { withFloor } from './password.ts';
 import type { AccountService, AuthMethod, BillingCaller, Session } from './service.ts';
@@ -74,6 +74,7 @@ const V = {
   op: validator<{ op: AcctOp; aikSig: string }>(signedOpSchema),
   /** scopes(선택): 범위 축소(ADR-040 결정 1). 비어 있지 않고 중복 없는 알려진 범위 이름 */
   deviceToken: validator<{ cert: SignedCert; scopes?: Scope[] }>(obj({ cert: signedCertSchema, scopes: { type: 'array', minItems: 1, maxItems: ALL_SCOPES.length, uniqueItems: true, items: { enum: [...ALL_SCOPES] } } }, ['cert'])),
+  issueLockId: validator<{ lockId: string }>(obj({ lockId: S.token })),
   bindBiz: validator<{ bizHmac: string; rkOp?: { op: AcctOp; aikSig: string } }>(obj({ bizHmac: S.hex32, rkOp: signedOpSchema }, ['bizHmac'])),
 } as const;
 
@@ -428,6 +429,28 @@ export function accountRouter(o: AccountAppOpts): Router {
   });
   r.add('DELETE', '/v1/slots/:slot', async (ctx) => {
     await svc.deleteSlot((await device(ctx, 'slots')).acc, ctx.params.slot!);
+    return json(204, undefined);
+  });
+
+  // 발급 잠금(ADR-048 결정 7, 데스크톱 기기 토큰). PC가 2대 이상인 계정의 PC만 부른다(PC가 자기 기기 목록으로 판단)
+  const issueLock = async (ctx: Ctx) => {
+    const c = await device(ctx, 'devlist');
+    await limit(`issuelock:${await devSalt.hash(c.dev)}`, ISSUE_LOCK.callsPerDeviceHour, MS.H);
+    return { accountId: c.acc, deviceId: c.dev };
+  };
+  r.add('GET', '/v1/issue-lock', async (ctx) => {
+    const c = await issueLock(ctx);
+    const l = await svc.issueLock(c.accountId);
+    return json(200, { ...l, mine: l.deviceId === c.deviceId });
+  });
+  r.add('POST', '/v1/issue-lock/acquire', async (ctx) => json(200, await svc.acquireIssueLock(await issueLock(ctx))));
+  r.add('POST', '/v1/issue-lock/renew', async (ctx) => {
+    const c = await issueLock(ctx);
+    return json(200, await svc.renewIssueLock(c, V.issueLockId(ctx.body).lockId));
+  });
+  r.add('POST', '/v1/issue-lock/release', async (ctx) => {
+    const c = await issueLock(ctx);
+    await svc.releaseIssueLock(c, V.issueLockId(ctx.body).lockId);
     return json(204, undefined);
   });
 

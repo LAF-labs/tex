@@ -79,6 +79,14 @@ export const DEVICE = {
   acctClaimsPerHour: 30,
 } as const;
 
+/** 발급 잠금(ADR-048 결정 7) */
+export const ISSUE_LOCK = {
+  /** 잡거나 갱신한 뒤 이만큼 지나면 풀린다(PC가 죽어도 90초 뒤 다른 PC가 잡는다). PC는 30초마다 갱신한다 */
+  ttlMs: 90_000,
+  /** 잡기·갱신·놓기·보기 합계, 기기당 시간(다른 PC를 기다리며 5초마다 다시 잡아 보는 10분 + 갱신) */
+  callsPerDeviceHour: 1200,
+} as const;
+
 export const PROFILE = {
   slotMax: 2,
   rebindMinDays: 90,

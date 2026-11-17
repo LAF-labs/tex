@@ -28,7 +28,7 @@ import {
 import { TERMS_VERSION, resultPageHtml } from './pg-toss.ts';
 import { PLAN, type DeviceStopHook, type MailSender, type PairingRooms, type NoticeKind, type PaymentEvent, type PaymentGateway } from './adapters.ts';
 import { certSigOk, entrySigOk, opSigOk, revokeSigOk, type AcctOp, type DeviceList, type SignedCert } from './aik.ts';
-import { ACCOUNT, BILLING, DEVICE, MS, NOTICE, PASSWORD, PROFILE } from './constants.ts';
+import { ACCOUNT, BILLING, DEVICE, ISSUE_LOCK, MS, NOTICE, PASSWORD, PROFILE } from './constants.ts';
 import { checkPasswordPolicy, withFloor, type CommonPasswords, type PasswordHasher } from './password.ts';
 import { verifyAssertion, verifyRegistration, WebAuthnError, type AssertionInput, type RegistrationInput, type RpConfig } from './webauthn.ts';
 
@@ -1423,12 +1423,53 @@ export class AccountService {
     return { deleteAfter: after };
   }
 
+  // ---- 발급 잠금(ADR-048 결정 7) ----
+  // 계정당 하나. 잡은 PC만 홈택스 발급에 들어간다. 서버는 무엇을 발급하는지 모르고(기기·만료뿐), 놓으면 줄을 지워 횟수도 남기지 않는다.
+
+  /** 잡기. 다른 데스크톱이 잡고 있으면 account.issue_locked. 같은 데스크톱이 다시 잡으면 새 값으로 바꾼다(앞 실행이 죽은 경우, 앞 값은 죽는다). */
+  async acquireIssueLock(requester: { accountId: string; deviceId: string }): Promise<{ lockId: string; expiresAt: number }> {
+    return this.db.tx(async (q) => {
+      await q.one(`SELECT id FROM accounts WHERE id = $1${q.forUpdate}`, [requester.accountId]);
+      const now = this.now();
+      const cur = await q.one<{ device_id: string; expires_at: number }>('SELECT device_id, expires_at FROM issue_locks WHERE account_id = $1', [requester.accountId]);
+      if (cur && Number(cur.expires_at) > now && cur.device_id !== requester.deviceId) fail('account.issue_locked');
+      const lockId = randomToken();
+      const expiresAt = now + ISSUE_LOCK.ttlMs;
+      if (cur) await q.run('UPDATE issue_locks SET device_id = $1, hold_id = $2, expires_at = $3 WHERE account_id = $4', [requester.deviceId, lockId, expiresAt, requester.accountId]);
+      else await q.run('INSERT INTO issue_locks (account_id, device_id, hold_id, expires_at) VALUES ($1, $2, $3, $4)', [requester.accountId, requester.deviceId, lockId, expiresAt]);
+      return { lockId, expiresAt };
+    });
+  }
+
+  /** 갱신. 내가 잡은 값이 아직 살아 있을 때만 늘린다. 만료됐거나 넘어갔으면 account.issue_lock_lost(커밋하지 않는다). */
+  async renewIssueLock(requester: { accountId: string; deviceId: string }, lockId: string): Promise<{ expiresAt: number }> {
+    const now = this.now();
+    const expiresAt = now + ISSUE_LOCK.ttlMs;
+    const n = await this.db.run('UPDATE issue_locks SET expires_at = $1 WHERE account_id = $2 AND device_id = $3 AND hold_id = $4 AND expires_at > $5', [expiresAt, requester.accountId, requester.deviceId, lockId, now]);
+    if (!n) fail('account.issue_lock_lost');
+    return { expiresAt };
+  }
+
+  /** 놓기. 내가 잡은 값일 때만 줄을 지운다. 이미 넘어갔거나 만료됐어도 오류가 아니다. */
+  async releaseIssueLock(requester: { accountId: string; deviceId: string }, lockId: string): Promise<void> {
+    await this.db.run('DELETE FROM issue_locks WHERE account_id = $1 AND device_id = $2 AND hold_id = $3', [requester.accountId, requester.deviceId, lockId]);
+  }
+
+  /** 누가 잡고 있는지(기다리는 PC가 "다른 PC(이름)에서 발급 중"을 보이는 데 쓴다. 이름은 PC가 자기 기기 목록에서 찾는다). */
+  async issueLock(accountId: string): Promise<{ held: boolean; deviceId: string | null; expiresAt: number | null }> {
+    const cur = await this.db.one<{ device_id: string; expires_at: number }>('SELECT device_id, expires_at FROM issue_locks WHERE account_id = $1', [accountId]);
+    if (!cur || Number(cur.expires_at) <= this.now()) return { held: false, deviceId: null, expiresAt: null };
+    return { held: true, deviceId: cur.device_id, expiresAt: Number(cur.expires_at) };
+  }
+
   private async otherActiveDesktop(q: Sql, accountId: string, except: string): Promise<boolean> {
     const r = await q.one<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE account_id = $1 AND role = 'desktop' AND state = 'active' AND device_id <> $2", [accountId, except]);
     return Number(r?.n ?? 0) > 0;
   }
 
   private async stopped(deviceId: string): Promise<void> {
+    // 정지·폐기된 PC가 잡고 있던 발급 잠금은 바로 놓는다(그 PC는 갱신도 못 한다)
+    await this.db.run('DELETE FROM issue_locks WHERE device_id = $1', [deviceId]).catch(() => undefined);
     for (const h of this.d.stopHooks ?? []) await h.stopped(deviceId).catch(() => undefined);
   }
 
@@ -1592,6 +1633,7 @@ export class AccountService {
   async sweep(): Promise<{ revoked: string[] }> {
     const now = this.now();
     await this.db.run('DELETE FROM login_codes WHERE expires_at <= $1', [now]);
+    await this.db.run('DELETE FROM issue_locks WHERE expires_at <= $1', [now]);
     await this.db.run('DELETE FROM oauth_codes WHERE expires_at <= $1', [now]);
     await this.db.run('DELETE FROM webauthn_challenges WHERE expires_at <= $1', [now]);
     await this.db.run('DELETE FROM sessions WHERE expires_at <= $1', [now]);

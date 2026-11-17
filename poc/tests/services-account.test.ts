@@ -21,7 +21,7 @@ import {
   type Sql,
 } from '../services/shared/src/index.ts';
 import { ACCOUNT_VISIBILITY, AccountService, MIGRATIONS_DIR, MockMailSender, MockPaymentGateway, accountRouter } from '../services/account/src/index.ts';
-import { DEVICE } from '../services/account/src/constants.ts';
+import { DEVICE, ISSUE_LOCK } from '../services/account/src/constants.ts';
 import { Clock, D, H, SoftPasskey, acctOp, cert, client, device, dpop, edKey, entry, internalAuth, internalHeaders, revokeRec, type Device, type EdKey } from './services-kit.ts';
 
 const ORIGIN = 'https://account.test.invalid';
@@ -649,6 +649,68 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     const phone = caller(e, pc.aik, ps[0]!);
     for (let i = 0; i < DEVICE.stopsPerDeviceDay; i++) assert.equal((await phone('POST', `/v1/devices/${ps[1]!.id}/stop`)).status, 202);
     assert.equal((await phone('POST', `/v1/devices/${ps[1]!.id}/stop`)).status, 429);
+  });
+
+  it('발급 잠금(ADR-048 결정 7): 계정당 한 PC만 잡는다, 90초 뒤 풀린다, 갱신·놓기는 내가 잡은 값으로만, 폰은 못 잡는다', async () => {
+    const { pc, d2, ps } = await fleet(e, 'lock@example.com', 1);
+    const pc2 = caller(e, pc.aik, d2);
+    const phone = caller(e, pc.aik, ps[0]!);
+    const rows = async () => Number((await e.db.one<{ n: number }>('SELECT COUNT(*) AS n FROM issue_locks'))!.n);
+    assert.deepEqual((await pc.call('GET', '/v1/issue-lock')).json, { held: false, deviceId: null, expiresAt: null, mine: false });
+    const a = await pc.call('POST', '/v1/issue-lock/acquire');
+    assert.equal(a.status, 200, a.text);
+    assert.match(a.json.lockId, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(a.json.expiresAt, e.clock.now() + ISSUE_LOCK.ttlMs);
+    const id1 = a.json.lockId as string;
+    // 다른 PC는 못 잡고, 누가 잡았는지는 본다(잠금 값은 보이지 않는다)
+    const b = await pc2('POST', '/v1/issue-lock/acquire');
+    assert.deepEqual([b.status, b.json], [409, { error: 'account.issue_locked' }]);
+    assert.deepEqual((await pc2('GET', '/v1/issue-lock')).json, { held: true, deviceId: pc.d.id, expiresAt: a.json.expiresAt, mine: false });
+    assert.equal((await pc.call('GET', '/v1/issue-lock')).json.mine, true);
+    // 다른 PC·다른 값으로는 갱신·놓기가 안 된다(놓기는 조용히 아무 일도 없다)
+    assert.equal((await pc2('POST', '/v1/issue-lock/renew', { lockId: id1 })).json.error, 'account.issue_lock_lost');
+    assert.equal((await pc2('POST', '/v1/issue-lock/release', { lockId: id1 })).status, 204);
+    assert.equal((await pc.call('GET', '/v1/issue-lock')).json.held, true);
+    assert.equal((await pc.call('POST', '/v1/issue-lock/renew', { lockId: 'x'.repeat(43) })).json.error, 'account.issue_lock_lost');
+    assert.equal((await pc.call('POST', '/v1/issue-lock/renew', {})).json.error, 'request.param_rejected');
+    // 갱신하면 그때부터 90초
+    e.clock.advance(30_000);
+    assert.deepEqual((await pc.call('POST', '/v1/issue-lock/renew', { lockId: id1 })).json, { expiresAt: e.clock.now() + ISSUE_LOCK.ttlMs });
+    // 갱신이 끊기면(PC가 죽음) 90초 뒤 다른 PC가 잡고, 앞 PC의 갱신은 거부된다(커밋 직전 갱신 실패 = 커밋하지 않음)
+    e.clock.advance(ISSUE_LOCK.ttlMs);
+    assert.equal((await pc.call('POST', '/v1/issue-lock/renew', { lockId: id1 })).json.error, 'account.issue_lock_lost');
+    const c = await pc2('POST', '/v1/issue-lock/acquire');
+    assert.equal(c.status, 200);
+    assert.notEqual(c.json.lockId, id1);
+    assert.equal((await pc.call('POST', '/v1/issue-lock/acquire')).json.error, 'account.issue_locked');
+    // 놓으면 줄이 지워지고(횟수가 남지 않는다) 바로 다른 PC가 잡는다
+    assert.equal((await pc2('POST', '/v1/issue-lock/release', { lockId: c.json.lockId })).status, 204);
+    assert.equal(await rows(), 0);
+    const d = await pc.call('POST', '/v1/issue-lock/acquire');
+    // 같은 PC가 다시 잡으면 새 값이고 앞 값은 죽는다
+    const f = await pc.call('POST', '/v1/issue-lock/acquire');
+    assert.notEqual(f.json.lockId, d.json.lockId);
+    assert.equal((await pc.call('POST', '/v1/issue-lock/renew', { lockId: d.json.lockId })).json.error, 'account.issue_lock_lost');
+    // 만료된 줄은 정리가 지운다
+    e.clock.advance(ISSUE_LOCK.ttlMs + 1);
+    await e.svc.sweep();
+    assert.equal(await rows(), 0);
+    // 폰 토큰은 범위 밖
+    assert.equal((await phone('POST', '/v1/issue-lock/acquire')).json.error, 'account.scope_denied');
+    assert.equal((await phone('GET', '/v1/issue-lock')).json.error, 'account.scope_denied');
+  });
+
+  it('발급 잠금: 잡고 있던 PC가 끊기거나 정지되면 잠금도 바로 풀린다', async () => {
+    const { s, pc, d2, ps } = await fleet(e, 'lock2@example.com', 1);
+    const pc2 = caller(e, pc.aik, d2);
+    assert.equal((await pc2('POST', '/v1/issue-lock/acquire')).status, 200);
+    assert.equal((await e.req('POST', `/v1/devices/${d2.id}/suspend`, { headers: bearer(s) })).status, 204);
+    assert.equal((await pc.call('GET', '/v1/issue-lock')).json.held, false);
+    assert.equal((await pc.call('POST', '/v1/issue-lock/acquire')).status, 200);
+    // 다른 계정의 잠금과는 무관하다
+    const other = await desktop(e, await login(e, 'lock3@example.com'));
+    assert.equal((await other.call('POST', '/v1/issue-lock/acquire')).status, 200);
+    assert.ok(ps.length === 1);
   });
 
   it('데스크톱이 정지되면 그 데스크톱의 기존 토큰도 즉시 거부된다', async () => {
