@@ -145,6 +145,9 @@ class FileKeyStore implements KeyStore {
     writeFileSync(this.file, JSON.stringify({ ...this.load(), [name]: k.toString('hex') }), { mode: 0o600 });
     return new Uint8Array(k);
   }
+  async put(name: string, value: Uint8Array): Promise<void> {
+    writeFileSync(this.file, JSON.stringify({ ...this.load(), [name]: Buffer.from(value).toString('hex') }), { mode: 0o600 });
+  }
 }
 
 let fx: Awaited<ReturnType<typeof startH01Fixture>> | undefined;

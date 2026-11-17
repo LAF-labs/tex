@@ -189,6 +189,8 @@ export type VaultEvent =
   | 'vault.commit_armed' | 'vault.commit_arm_refused' | 'vault.commit_compared' | 'vault.commit_block_failed'
   // 장기 키 연산(D05 §5.1): 연산·용도·건수만(키·입력·출력 없음)
   | 'vault.key_created' | 'vault.crypto_op' | 'vault.crypto_rate_anomaly' | 'vault.crypto_purpose_denied' | 'vault.hpke_open_failed'
+  // 새 PC 연결(ADR-048 결정 3): 계정 루트 키 봉인·넘겨받기. 결과·사유만(키·봉인문·상대 키 없음)
+  | 'vault.rk_sealed' | 'vault.rk_seal_denied' | 'vault.rk_imported' | 'vault.rk_import_failed'
   | 'vault.npki_listed'
   // 계좌 자동조회(CODEF) 로그인 봉인: 결과·사유만(인증서 id·경로·비밀번호·길이 없음)
   | 'vault.codef_sealed' | 'vault.codef_seal_refused' | 'vault.codef_password_stored' | 'vault.codef_password_forgotten'

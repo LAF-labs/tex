@@ -3,21 +3,24 @@
 // - 서명 입력은 utf8(purpose) ‖ msg(구분 바이트 없음, schemas/SIGNING.md §8). purpose는 허용 목록과 고정 비교한다.
 // - 호출 감사: 연산·용도를 로그에 남기고, 한 시간 기대치를 넘으면 vault.crypto_rate_anomaly(막지는 않는다, D05 §5.1).
 // - 오라클 한계(D05 §1): 침해된 엔진은 허용 용도 안의 서명·개봉을 요청할 수 있다. 키 자체는 나가지 않는다.
-import { createDecipheriv, createHmac, createPrivateKey, createPublicKey, diffieHellman, hkdfSync, sign as edSign, type KeyObject } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHmac, createPrivateKey, createPublicKey, diffieHellman, hkdfSync, randomBytes, sign as edSign, timingSafeEqual, type KeyObject } from 'node:crypto';
 import type { EventLog } from '@sax/platform';
 import type { KeyStore } from '../keystore.ts';
 import {
-  AIK_PURPOSES, CRYPTO_MSG_MAX, NOISE_CONTEXTS, VD_PURPOSES,
-  type HpkeOpenParams, type NoiseDhParams, type SignAikParams, type SignVdParams, type VaultPublicKeys,
+  AIK_PURPOSES, CRYPTO_MSG_MAX, NOISE_CONTEXTS, RK_LINK_INFO, RK_SEALS_PER_DAY, VD_PURPOSES,
+  type HpkeOpenParams, type NoiseDhParams, type RkImportParams, type RkSealParams, type SignAikParams, type SignVdParams, type VaultPublicKeys,
 } from '../protocol.ts';
 
 /** KeyStore 항목 이름(32바이트 시드). RK는 계정 루트 키이고 AIK는 그 파생이다(D08 §3). */
 export const CRYPTO_KEY_ITEMS = { sd: 'device/sd', vd: 'device/vd', qd: 'device/qd', kv: 'device/kv', rk: 'account/rk' } as const;
 
 /** 한 시간 기대치(넘으면 vault.crypto_rate_anomaly). DPoP는 요청마다 하나라 Vd가 가장 많다. */
-export const CRYPTO_RATE_PER_HOUR: Record<CryptoOp, number> = { noiseDH: 240, signVd: 3_600, signAik: 60, hpkeOpen: 1_200 };
+export const CRYPTO_RATE_PER_HOUR: Record<CryptoOp, number> = { noiseDH: 240, signVd: 3_600, signAik: 60, hpkeOpen: 1_200, linkKey: 30, rkSeal: 3, rkImport: 10 };
 
-export type CryptoOp = 'noiseDH' | 'signVd' | 'signAik' | 'hpkeOpen';
+export type CryptoOp = 'noiseDH' | 'signVd' | 'signAik' | 'hpkeOpen' | 'linkKey' | 'rkSeal' | 'rkImport';
+
+/** 쓰던 RK를 옮겨 두는 보관 항목 이름(뒤에 넘겨받은 시각 ms가 붙는다). 읽는 코드는 없다(사람이 되돌릴 때 쓴다). */
+export const RK_PREV_ITEM = 'account/rk-prev-';
 
 const X25519_PKCS8 = Buffer.from('302e020100300506032b656e04220420', 'hex');
 const X25519_SPKI = Buffer.from('302a300506032b656e032100', 'hex');
@@ -99,12 +102,8 @@ const labeledExtract = (suite: Uint8Array, salt: Uint8Array, label: string, ikm:
 const labeledExpand = (suite: Uint8Array, prk: Uint8Array, label: string, info: Uint8Array, len: number) =>
   expand(prk, cat(i2osp(len, 2), enc.encode('HPKE-v1'), suite, enc.encode(label), info), len);
 
-/**
- * RFC 9180 Base 모드 단발 개봉(DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305, seq 0).
- * 실패(인증 태그 불일치 등)는 Error('open_failed').
- */
-export function hpkeOpenBase(skR: KeyObject, pkR: Uint8Array, encap: Uint8Array, info: Uint8Array, aad: Uint8Array, ct: Uint8Array): Uint8Array {
-  const dh = x25519(skR, encap);
+/** RFC 9180 §5.1 KeySchedule(Base)에서 seq 0의 키·논스. dh와 중간값은 지운다. */
+function hpkeKeys(dh: Uint8Array, encap: Uint8Array, pkR: Uint8Array, info: Uint8Array): { key: Uint8Array; nonce: Uint8Array } {
   const kemContext = cat(encap, pkR);
   const eaePrk = labeledExtract(KEM_SUITE, new Uint8Array(0), 'eae_prk', dh);
   const shared = labeledExpand(KEM_SUITE, eaePrk, 'shared_secret', kemContext, 32);
@@ -112,8 +111,19 @@ export function hpkeOpenBase(skR: KeyObject, pkR: Uint8Array, encap: Uint8Array,
   const infoHash = labeledExtract(HPKE_SUITE, new Uint8Array(0), 'info_hash', info);
   const ksContext = cat(new Uint8Array([0]), pskIdHash, infoHash);
   const secret = labeledExtract(HPKE_SUITE, shared, 'secret', new Uint8Array(0));
-  const key = labeledExpand(HPKE_SUITE, secret, 'key', ksContext, 32);
-  const nonce = labeledExpand(HPKE_SUITE, secret, 'base_nonce', ksContext, 12);
+  try {
+    return { key: labeledExpand(HPKE_SUITE, secret, 'key', ksContext, 32), nonce: labeledExpand(HPKE_SUITE, secret, 'base_nonce', ksContext, 12) };
+  } finally {
+    for (const b of [dh, eaePrk, shared, secret]) b.fill(0);
+  }
+}
+
+/**
+ * RFC 9180 Base 모드 단발 개봉(DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305, seq 0).
+ * 실패(인증 태그 불일치 등)는 Error('open_failed').
+ */
+export function hpkeOpenBase(skR: KeyObject, pkR: Uint8Array, encap: Uint8Array, info: Uint8Array, aad: Uint8Array, ct: Uint8Array): Uint8Array {
+  const { key, nonce } = hpkeKeys(x25519(skR, encap), encap, pkR, info);
   try {
     if (ct.length < 16) throw new Error('short');
     const d = createDecipheriv('chacha20-poly1305', key, nonce, { authTagLength: 16 });
@@ -123,7 +133,28 @@ export function hpkeOpenBase(skR: KeyObject, pkR: Uint8Array, encap: Uint8Array,
   } catch {
     throw new Error('open_failed');
   } finally {
-    for (const b of [dh, eaePrk, shared, secret, key]) b.fill(0);
+    key.fill(0);
+  }
+}
+
+/**
+ * RFC 9180 Base 모드 단발 봉인(위와 같은 스위트, seq 0). 임시 키는 부를 때마다 새로 뽑는다(skE는 시험 벡터용).
+ * 받는 키가 낮은 차수 점이면 Error('bad_point').
+ */
+export function hpkeSealBase(pkR: Uint8Array, info: Uint8Array, aad: Uint8Array, pt: Uint8Array, skE?: Uint8Array): { enc: Uint8Array; ct: Uint8Array } {
+  const seed = skE ? Uint8Array.from(skE) : new Uint8Array(randomBytes(32));
+  try {
+    const e = x25519FromSeed(seed);
+    const { key, nonce } = hpkeKeys(x25519(e.priv, pkR), e.pub, pkR, info);
+    try {
+      const c = createCipheriv('chacha20-poly1305', key, nonce, { authTagLength: 16 });
+      c.setAAD(aad, { plaintextLength: pt.length });
+      return { enc: e.pub, ct: new Uint8Array(Buffer.concat([c.update(pt), c.final(), c.getAuthTag()])) };
+    } finally {
+      key.fill(0);
+    }
+  } finally {
+    seed.fill(0);
   }
 }
 
@@ -140,6 +171,9 @@ export class VaultCrypto {
   private keysP: Promise<Keys> | null = null;
   private readonly calls = new Map<CryptoOp, number[]>();
   private readonly anomalyAt = new Map<CryptoOp, number>();
+  /** 새 PC 연결의 넘겨받기 키(Hx). 메모리에만 있고, 다시 만들거나 한 번 쓰면 사라진다 */
+  private link: Pair | null = null;
+  private readonly rkSeals: number[] = [];
 
   constructor(opts: VaultCryptoOptions) {
     this.o = opts;
@@ -253,6 +287,92 @@ export class VaultCrypto {
     } catch (e) {
       this.o.log.event('vault.hpke_open_failed');
       throw e;
+    }
+  }
+
+  // ───────── 새 PC 연결(ADR-048 결정 3, D08 §4.3). control 포트(main)만 부른다 ─────────
+
+  /** [새 PC] 넘겨받기 키를 새로 만든다(앞 키는 버린다). 공개키만 돌려준다. */
+  async linkKey(): Promise<Uint8Array> {
+    const seed = new Uint8Array(randomBytes(32));
+    try {
+      this.link = x25519FromSeed(seed);
+    } finally {
+      seed.fill(0);
+    }
+    this.audit('linkKey');
+    return this.link.pub.slice();
+  }
+
+  /**
+   * [쓰던 PC] RK를 새 PC의 넘겨받기 키로 봉인한다. RK 평문은 여기 밖으로 나가지 않는다.
+   * 24시간에 RK_SEALS_PER_DAY번까지(이 프로세스가 떠 있는 동안의 셈). 넘으면 Error('rate_limited').
+   */
+  async rkSeal(x: unknown): Promise<{ enc: Uint8Array; ct: Uint8Array }> {
+    const p = x as Partial<RkSealParams> | undefined;
+    if (!isBytes(p?.recipient, 32, 32) || p?.info !== RK_LINK_INFO || !isBytes(p?.aad, 32, 32)) throw new Error('bad_params');
+    const now = this.now();
+    const recent = this.rkSeals.filter((t) => now - t < 86_400_000);
+    if (recent.length >= RK_SEALS_PER_DAY) {
+      this.o.log.event('vault.rk_seal_denied', { reason: 'rate' });
+      throw new Error('rate_limited');
+    }
+    await this.keys(); // RK가 없으면 여기서 만들어진다(첫 PC가 아직 계정 키를 고정하기 전이어도 같은 값)
+    const rk = await this.o.keyStore.get(CRYPTO_KEY_ITEMS.rk, 32);
+    if (!rk) throw new Error('vault.keystore_mismatch');
+    try {
+      const out = hpkeSealBase(p.recipient!, enc.encode(RK_LINK_INFO), p.aad!, rk);
+      this.rkSeals.length = 0;
+      this.rkSeals.push(...recent, now);
+      this.audit('rkSeal');
+      this.o.log.event('vault.rk_sealed');
+      return out;
+    } finally {
+      rk.fill(0);
+    }
+  }
+
+  /**
+   * [새 PC] 봉인문을 넘겨받기 키로 열고, 연 RK의 AIK 공개키가 aikPub와 같을 때만 계정 루트 키를 바꾼다.
+   * 쓰던 RK는 보관 항목으로 먼저 옮긴다. 성공하면 넘겨받기 키를 지우고 키를 다시 읽는다(AIK가 바뀐다). 새 AIK 공개키를 돌려준다.
+   */
+  async rkImport(x: unknown): Promise<Uint8Array> {
+    const p = x as Partial<RkImportParams> | undefined;
+    if (!isBytes(p?.enc, 32, 32) || !isBytes(p?.ct, 48, 48) || p?.info !== RK_LINK_INFO || !isBytes(p?.aad, 32, 32) || !isBytes(p?.aikPub, 32, 32)) throw new Error('bad_params');
+    const link = this.link;
+    if (!link) throw new Error('no_link_key');
+    this.audit('rkImport');
+    let rk: Uint8Array;
+    try {
+      rk = hpkeOpenBase(link.priv, link.pub, p.enc!, enc.encode(RK_LINK_INFO), p.aad!, p.ct!);
+    } catch (e) {
+      this.o.log.event('vault.rk_import_failed', { reason: 'open' });
+      throw e;
+    }
+    const aikSeed = aikSeedFromRk(rk);
+    try {
+      const aik = ed25519FromSeed(aikSeed).pub;
+      if (rk.length !== 32 || !timingSafeEqual(aik, p.aikPub!)) {
+        this.o.log.event('vault.rk_import_failed', { reason: 'aik' });
+        throw new Error('aik_mismatch');
+      }
+      const old = await this.o.keyStore.get(CRYPTO_KEY_ITEMS.rk, 32);
+      if (old) {
+        try {
+          // 이미 같은 RK면(다시 받은 경우) 옮기지 않는다
+          if (!timingSafeEqual(old, rk)) await this.o.keyStore.put(`${RK_PREV_ITEM}${this.now()}`, old);
+        } finally {
+          old.fill(0);
+        }
+      }
+      await this.o.keyStore.put(CRYPTO_KEY_ITEMS.rk, rk);
+      this.keysP = null;
+      this.link = null;
+      this.o.log.event('vault.rk_imported');
+      return aik;
+    } finally {
+      rk.fill(0);
+      aikSeed.fill(0);
     }
   }
 }

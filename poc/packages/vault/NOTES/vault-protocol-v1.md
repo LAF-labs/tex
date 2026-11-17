@@ -101,11 +101,17 @@ utilityProcess에는 powerMonitor가 없어서 main이 이벤트를 넘긴다.
 - `crypto.hpkeOpen{enc(32B), ct, info:'SAX-env-v1', aad}` → `{pt}`.
   - RFC 9180 Base(DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305), seq 0 단발 개봉이고 키는 Qd다.
   - aad는 `utf8("SAX-env-v1")‖mbx_epoch`(뒤 64B 이하)여야 한다. 위조는 `open_failed`다.
+- `crypto.linkKey{}` → `{pub}`(32B). [새 PC] 새 PC 연결(D08 §4.3)의 넘겨받기 키 Hx를 새로 만든다. 개인키는 금고 메모리에만 있고, 다시 부르면 앞 키를 버린다.
+- `crypto.rkSeal{recipient(32B), info:'SAX-pclink-rk-v1', aad(32B)}` → `{enc(32B), ct(48B)}`. [쓰던 PC] RK를 `recipient`로 HPKE 봉인한다(hpkeOpen과 같은 스위트, 임시 키는 매번 새로).
+  - 24시간에 3번까지다(금고 프로세스가 떠 있는 동안의 셈). 넘으면 `rate_limited`와 `vault.rk_seal_denied{reason:'rate'}`. 성공하면 `vault.rk_sealed`.
+- `crypto.rkImport{enc(32B), ct(48B), info:'SAX-pclink-rk-v1', aad(32B), aikPub(32B)}` → `{aik}`. [새 PC] `linkKey`의 키로 연다(없으면 `no_link_key`, 위조는 `open_failed`).
+  - 연 RK의 AIK 공개키가 `aikPub`와 다르면 `aik_mismatch`이고 아무것도 바꾸지 않는다. 같으면 쓰던 RK를 `account/rk-prev-<ms>`로 옮기고 `account/rk`를 바꾼다(`vault.rk_imported`). 넘겨받기 키는 지운다.
+  - 그 뒤 `crypto.publicKeys`의 `aik`가 바뀐다. main은 키 객체를 새로 만든다.
 - 공통
   - 입력 msg·ct는 64KiB 이하다.
   - 허용 목록 밖 purpose는 `purpose_not_allowed`, 형식 오류는 `bad_params`다.
   - 키는 KeyStore 항목 `device/sd·vd·qd·kv`, `account/rk`에 32B 시드로 둔다. 없으면 만들고(`vault.key_created{name}`), 길이가 틀리면 덮지 않고 `vault.keystore_mismatch`다.
-- 감사: 호출마다 `vault.crypto_op{op, purpose?}`를 남긴다. 한 시간 기대치(noiseDH 240·signVd 3600·signAik 60·hpkeOpen 1200)를 넘으면 `vault.crypto_rate_anomaly{op, count}`를 시간당 1회 남긴다(막지 않음). 입력·출력 바이트는 남기지 않는다.
+- 감사: 호출마다 `vault.crypto_op{op, purpose?}`를 남긴다. 한 시간 기대치(noiseDH 240·signVd 3600·signAik 60·hpkeOpen 1200·linkKey 30·rkSeal 3·rkImport 10)를 넘으면 `vault.crypto_rate_anomaly{op, count}`를 시간당 1회 남긴다(막지 않음). 입력·출력 바이트는 남기지 않는다.
 
 ## 8. Windows 네이티브 헬퍼 — 결정 Q-3
 - 금고 트랙은 인터페이스·모의 구현·macOS 개발 구현까지 맡는다. 실제 Windows 구현은 2차 배분(Windows 호스트 세션)이 한다.

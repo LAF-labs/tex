@@ -59,6 +59,9 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     'account.refresh.read', 'account.refresh.write', 'account.refresh.forget',
     // 장기 키 연산: main의 계정·기기·페어링(D08 §4.2, remote-ports.ts VaultKeysFactory, 팀장 결정 2026-11-06 (가))만 부른다. 개인키는 그대로 금고 안이다.
     'crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen',
+    // 새 PC 연결(ADR-048 결정 3, D08 §4.3): 계정 루트 키(RK)를 쓰던 PC에서 새 PC로 넘긴다. main의 연결 흐름만 부른다.
+    // RK 평문은 어느 쪽에서도 금고 밖으로 나오지 않는다. rkSeal은 금고 프로세스가 떠 있는 동안 하루 3번까지다.
+    'crypto.linkKey', 'crypto.rkSeal', 'crypto.rkImport',
   ],
   secretInput: ['secret.provide', 'secret.store'],
   // browser(main의 앱 안 브라우저): RPC 없이 CDP 프레임({t:'cdp'})과 닫힘({t:'cdp_closed'})만 오간다. 금고가 브라우저 수준 CDP의 유일한 사용자다.
@@ -534,6 +537,31 @@ export interface HpkeOpenParams {
   ct: Uint8Array;
   info: 'SAX-env-v1';
   aad: Uint8Array;
+}
+
+/** RK 봉인 HPKE info(D08 §2.1). @sax/remote CTX.pclinkRk와 같은 글자다. */
+export const RK_LINK_INFO = 'SAX-pclink-rk-v1';
+/** crypto.rkSeal 상한: 금고 프로세스가 떠 있는 동안 24시간에 3번(새 PC는 계정당 2대까지 더 붙는다). */
+export const RK_SEALS_PER_DAY = 3;
+/**
+ * crypto.rkSeal [쓰던 PC]: RK를 새 PC의 넘겨받기 키(Hx)로 HPKE 봉인한다(hpkeOpen과 같은 스위트). 결과 {enc 32B, ct 48B}.
+ * aad는 두 PC가 같은 값을 봤다는 대조 해시(32B)라서 다른 신청에 끼워 넣을 수 없다. 6자리 확인은 main이 한다(금고는 모른다).
+ */
+export interface RkSealParams {
+  recipient: Uint8Array;
+  info: typeof RK_LINK_INFO;
+  aad: Uint8Array;
+}
+/**
+ * crypto.rkImport [새 PC]: crypto.linkKey로 만든 넘겨받기 키로 봉인문을 열고, 연 RK에서 나온 AIK 공개키가 aikPub와 같을 때만
+ * 계정 루트 키를 바꾼다. 쓰던 RK는 보관 항목(account/rk-prev-<시각>)으로 옮긴다. 결과 {aik 32B}. 넘겨받기 키는 한 번 쓰면 지운다.
+ */
+export interface RkImportParams {
+  enc: Uint8Array;
+  ct: Uint8Array;
+  info: typeof RK_LINK_INFO;
+  aad: Uint8Array;
+  aikPub: Uint8Array;
 }
 
 // ───────────────────────── 공동인증서 탐지(control) ─────────────────────────

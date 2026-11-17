@@ -546,6 +546,12 @@ export class Vault {
         return { sig: await this.crypto.signAik(p) };
       case 'crypto.hpkeOpen':
         return { pt: await this.crypto.hpkeOpen(p) };
+      case 'crypto.linkKey':
+        return { pub: await this.crypto.linkKey() };
+      case 'crypto.rkSeal':
+        return this.crypto.rkSeal(p);
+      case 'crypto.rkImport':
+        return { aik: await this.crypto.rkImport(p) };
       case 'commitGuard.arm':
         return this.requireGuard().arm(p);
       case 'commitGuard.disarm':
