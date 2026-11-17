@@ -179,6 +179,7 @@ pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
 - **Phase 1은 HTTPS 큐 폴링만 쓴다**(팀장 결정 2026-11-05). 라이브 세션(HS·DATA over WSS)과 페어링 룸은 상시 호스트가 생기면 켜는 선택 기능이다. 그 전에는 폰↔PC 데이터가 §7 큐 봉투로만 간다. 앱은 라이브를 먼저 시도하고 없으면 큐로 넘어간다(폰 PR #84).
 - **사진(DATA) 예외**(폰 PR #60·#84, 팀장 결정 2026-11-05): 폰이 찍은 영수증 사진은 아래 블롭 규칙을 쓰지 않고 `receipt.offer`·`receipt.chunk`로 직접 보낸다. WSS 라이브가 켜진 뒤의 기본 경로는 라이브 세션이다(청크 49,152B). 라이브가 없으면(Phase 1은 늘 그렇다) intent-envelope `xfer` 봉투로 HTTPS 우편함 큐에 넣는다(청크 32 KiB = 32,768B, §7). 어느 쪽이든 E2EE 암호문이고 큐 TTL은 24시간, 받는 쪽이 ack하면 지운다.
 - **종이 세금계산서**(remote-envelope v1.7, 2026-11-16): 폰이 종이(손글씨·인쇄) 세금계산서·계산서를 찍으면 `receipt.offer`에 사장님이 확인한 값 `paperInvoice`(종류·작성일·공급자/공급받는자·공급가액·세액·합계·품목 ≤ 20·영수/청구·칸별 신뢰도 0~100 정수)를 싣는다. PC는 hello `capabilities`에 `receipt.v2`를 알린다. 폰 값은 후보다: PC가 자기 사업자번호로 매출·매입을 정하고, 합계·품목 합·사업자번호 체크섬을 `checkPaperInvoice`로 다시 본 뒤 원본 사진과 함께 보관하고 세무사 꾸러미에 원본 사진 + `종이 세금계산서 YYYY-MM.csv`로 넣는다. 틀린 칸은 '확인 필요'로 표시한다(받기는 거부하지 않는다).
+- **폰 발급 명령**(remote-envelope v1.8, 2026-11-17, ADR-046 결정 2): 폰은 `cmd.run{playbookId: "hometax.invoice.issue"}`(라이브) 또는 의도 봉투(큐)로 세금계산서 발급을 시작한다. `inputs`는 `counterpart{counterpartyRef}`·`amounts{supply, tax}`·`items[1]`·`issueDay`뿐이고 사업자번호·이메일 원문은 넣지 않는다(§7, C-34). 받는 이메일은 PC가 그 거래처에 저장된 값을 쓴다. PC는 `cmd.ack`로 바로 답하고, 진행은 `run.event.phase`로, 비가역 승인은 §6.1 `gate.request`로 보낸다. 처음 거래처·하루 한도를 넘긴 건은 `cmd.ack.state = pc_only`로 PC 화면 승인으로 돌린다. 폰 쪽 입력 확인·조립은 `@sax/remote`의 `checkIssueRequest`·`issueCmd`다.
 - 수신 측은 `ctr` 슬라이딩 윈도(1024)로 중복·역전을 거른다. Noise 전송 한도 65,535B. **PDF·이미지는 릴레이로 보내지 않고** 블롭 저장소에 올린 뒤 `blob_id`와 래핑 DEK만 보낸다(캡차 크롭 ≤ 200KB는 예외적으로 인라인 허용, 버킷 패딩).
 - 서명·MAC 입력에는 항상 §2.1의 컨텍스트 문자열, `pair_id`, 방향(`from/to`)을 포함한다(반사 공격 무효).
 - `inner.ttl`(≤ 86,400초)은 **라이브 메시지 전용**이다. 오프라인 의도의 만료는 의도 봉투 안쪽 `exp`(≤ 72시간)가 정하며 별도 스키마를 쓴다(C/X-14 해소, §7).
@@ -195,7 +196,8 @@ pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
 | `devlist.push` | 양방향 | `{deviceList}`(`listVersion`은 `deviceList` 안) | AIK 서명 목록 동기화(C-20) |
 | `mbx.reissue` | PC→폰 | `{mbxId, tokRead, tokWrite, mbxEpoch}` | 우편함 토큰 재발급. CSPRNG 난수, 라이브 세션 안에서만(C-16) |
 | `cmd.run` / `cmd.abort` / `cmd.resume` | 폰→PC | `{cmdId(ULID = intentId), playbookId, inputs}` / `{runId}` | 엔진 화이트리스트·입력 스키마 검증. **라이브 `cmd.run`도 처리된 `cmdId` 집합(디스크 영속)과 대조**해 이미 본 값이면 버린다(B-10). 큐에서 온 명령은 실행이 아니라 시작 게이트(§7) |
-| `run.event` | PC→폰 | D03 §9 이벤트 사용자용 서브셋 | 값 없음 |
+| `cmd.ack` | PC→폰 | `{cmdId, state(accepted\|start_gate\|pc_only\|rejected), runId?, reason?}` | v1.8. 폰 `cmd.run`을 받았다는 답. `accepted`·`pc_only`(PC 화면에서 승인할 거래처)는 `runId` 필수, `rejected`는 `reason`(`playbook_unavailable`·`input_invalid`·`counterparty_unknown`·`duplicate`·`pc_busy`·`hometax_paused`) 필수. 폰은 답이 없으면 같은 `cmdId`로 다시 보낸다(중복은 PC가 `duplicate`로 답한다) |
+| `run.event` | PC→폰 | D03 §9 이벤트 사용자용 서브셋. v1.8에서 `cmdId?`·`phase?`(prepare·login·readback·approve·issue·verify·done·stopped)·`attempt?`·`deadline?`·`result?{approvalNo, total, emailSent, docId}`를 더한다 | 값 없음. `result`는 발급이 끝난 뒤 한 번만 싣고 승인번호·합계·메일 발송 여부·보관 문서 ID뿐이다 |
 | `gate.request` | PC→폰 | `{runId, stepId, reqId, cardId, gateKind, effects[](필수, 시작 게이트는 빈 배열 가능), fields[{key: fieldKey, value}], cardHashInputs, actionHash, requiredSigAlg, challenge(32B), exp(120s), queuedAt?}` | 카드 필드는 **readback 값**이고 라벨은 `fieldKey`로 앱이 내장 사전에서 렌더링한다(B-24·B-29). 폰은 표시한 `fields`로 `cardHash`를 직접 계산하고 `cardHashInputs`와 함께 `actionHash`(D03 §3)를 다시 계산해 **일치할 때만** 승인 버튼을 활성화한다 |
 | `gate.response` | 폰→PC | `{runId, stepId, reqId, decision, actionHash, sigAlg, sig = Sign("SAX-approve-v1"‖pair_id‖reqId‖challenge‖actionHash‖decision)}` | 생체 인증 후 서명. 비가역 카드(`requiredSigAlg = p256`)는 `sigAlg = p256`(`Px`)만 받는다. PC가 챌린지·exp·서명·actionHash·`gate_requests` 단일 사용을 검증 → gateToken 발급 |
 | `consent.request` | PC→폰 | `{reqId, scheduleId, playbookId, major, effects[], docType, profileRef, mode, challenge, exp}` | 데몬 스케줄 동의(B-27) |
@@ -205,6 +207,7 @@ pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
 | `receipt.offer` / `receipt.chunk` / `cash.entry` | 폰→PC | 영수증 사진 알림(`chunkSize` 49,152 라이브 / 32,768 큐, `chunkCount` ≤ 128)·사진 청크(`index` ≤ 127)·현금매출 1건(remote-envelope v1.5, 폰 PR #60·#84) | 라이브 또는 큐 `xfer`(§7). 큐로 온 것에는 응답하지 않는다 |
 | `file.offer` | PC→폰 | `{docId(UUIDv4), docType, bytes, blobId, wDEK, kekVer}` | 본문은 블롭 경유. 문서 단위 wDEK 1개만 |
 | `query.documents` / `query.result` | 폰→PC / PC→폰 | 보관함 조회 | |
+| `phone.copy` | PC→폰 | `{asOf, counterparties[≤100]{ref, name, aliases?, bizNo?, emailHint?, phoneApprovable?, last?}, toIssue?[≤20], money?{asOf, accounts, receivable, payable, cashflow}, todayApprovalsLeft?}` | v1.8(ADR-046 결정 2·5). 라이브 세션을 열 때마다 PC가 보내는 화면용 사본이다. 폰은 마지막 사본을 기기 안 암호화 저장소에 두고 PC가 꺼져 있을 때 "기준 시각"과 함께 보여 준다. 대화 원문·홈택스 비밀·계좌번호 전체는 넣지 않는다(스키마가 모르는 칸을 막는다). 한 프레임에 안 들어가면 오래 안 쓴 거래처부터 뺀다(`fitPhoneCopy`). PC는 hello `capabilities`에 `copy.v1`, 폰 발급 명령을 받으면 `issue.v1`을 알린다 |
 | `rotate.static` / `close` / `ping` / `pong` | | `rotate.static{oldStatic, newStatic, ts, sig}` | §5 |
 
 ### 6.1 원격 비가역 승인 규칙 (C-06, ADR-016, 스파이크 SP-2)
