@@ -47,6 +47,7 @@ export const SUPABASE_PHASES: readonly ExportPhase[] = [
   { prefix: '2026111600', rolesFile: null, limits: false, services: [svc('account', 4, 4)] },
   { prefix: '2026111601', rolesFile: null, limits: false, services: [svc('account', 5, 6), svc('gateway', 3, 3)] },
   { prefix: '2026111700', rolesFile: null, limits: false, services: [svc('account', 7, 8)] },
+  { prefix: '2026111701', rolesFile: null, limits: false, services: [svc('account', 9, 9)] },
 ];
 
 /** 함수·룸 호스트로 올리는 서비스 전부(이름마다 하나, 처음 나온 단계 순서) */

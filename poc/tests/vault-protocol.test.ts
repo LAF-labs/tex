@@ -27,7 +27,7 @@ describe('금고 IPC 계약: 포트별 RPC', () => {
     }
     // 장기 키 연산: main(계정·기기·페어링, remote-ports.ts)만. 엔진 포트에는 없다: 엔진이 뚫려도 기기 키로 DPoP·계정 작업에 서명하지 못한다
     // (게이트웨이 헤더는 main이 만들어 준다, 팀장 결정 2026-11-06). 비밀 입력 포트에도 없다.
-    for (const m of ['crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen', 'crypto.linkKey', 'crypto.rkSeal', 'crypto.rkImport']) {
+    for (const m of ['crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen', 'crypto.linkKey', 'crypto.rkSeal', 'crypto.rkImport', 'crypto.shareKey', 'crypto.signShare']) {
       assert.ok(RPC_BY_PORT.control.includes(m), m);
       assert.ok(!RPC_BY_PORT.engine.includes(m), `${m}는 엔진이 부를 수 없다`);
       assert.ok(!RPC_BY_PORT.secretInput.includes(m), m);

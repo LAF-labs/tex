@@ -9,7 +9,7 @@ import type { Counterparty as DbCounterparty, PortalProfileKey, Profile as DbPro
 import type { EnginePortal } from '@sax/engine/protocol';
 import type { Channel, Revocation, TrustRoot } from '@sax/updater';
 import type { Egress } from '@sax/net';
-import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type PaperInvoice, type RelayClient } from '@sax/remote';
+import { makeShareKeyBody, shareEpoch, wsRelayClient, type DesktopKeys, type DesktopPairResult, type PaperInvoice, type RelayClient } from '@sax/remote';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { findInstalledChrome, pageAddress, SESSION_IDLE_REPORT_MS } from '@sax/vault';
 import { execFile } from 'node:child_process';
@@ -66,6 +66,7 @@ import { CmdLog, PhoneIssue } from './phone-issue.ts';
 import { DESKTOP_CAPS, PhoneLink, PhoneStore, type TokenSeal } from './phone-link.ts';
 import { phoneSession, SESSION_CAPS } from './phone-session.ts';
 import { DeviceManager } from './remote-devices.ts';
+import { engineShareStore, ShareSync } from './share-sync.ts';
 import { PcLinkHost } from './remote-pclink.ts';
 import { phoneReceiver } from './phone-receive.ts';
 import { closeAction, shouldStayAwake, StayAwake } from './phone-presence.ts';
@@ -1502,6 +1503,25 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
           log: (n, d) => log.event(n, d),
         }),
       deviceListVersion: () => account.device()?.deviceList.listVersion ?? 0,
+      // 계정 공유 기록 열쇠(share.key, ADR-048 결정 5): 이 PC의 기기 목록(AIK 검증)에 지금 있는 폰에만, 세대 0부터 지금 세대까지 준다.
+      // 열쇠는 금고가 RK에서 만든다. main은 보낼 동안만 들고 있다가 지운다(RK는 금고 밖으로 나오지 않는다).
+      shareKeys: async (deviceId) => {
+        const d = account.device();
+        const vault = ((await keysOf()) as Partial<VaultDesktopKeys>).share;
+        if (!d || !vault || !d.deviceList.entries.some((e) => e.entry.device_id === deviceId && e.entry.role === 'mobile')) return null;
+        const keys: Uint8Array[] = [];
+        try {
+          let signPub: Uint8Array = new Uint8Array(0);
+          for (let e = 0; e <= shareEpoch(d.deviceList); e++) {
+            const r = await vault.key(e);
+            keys.push(r.key);
+            signPub = r.signPub;
+          }
+          return makeShareKeyBody({ signPub, keys });
+        } finally {
+          for (const k of keys) k.fill(0);
+        }
+      },
       appVersion: app.getVersion(),
       capabilities: () => [...DESKTOP_CAPS, ...SESSION_CAPS],
       session: phoneSession({
@@ -1546,11 +1566,50 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   const reconcileDevices = async (): Promise<void> => {
     try {
-      if ((await devicesOf().reconcile()) > 0) send({ type: 'account', account: account.view() });
+      if ((await devicesOf().reconcile()) > 0) {
+        send({ type: 'account', account: account.view() });
+        // 다른 기기가 끊은 기기가 있었다: 세대가 올랐으니 연결된 폰에 새 열쇠를 준다
+        void phoneLink?.pushShareKeys();
+      }
     } catch (e) {
       log.event('main.device_sync', { result: typeof (e as { code?: unknown }).code === 'string' ? ((e as { code: string }).code) : 'skipped' });
     }
   };
+  // 계정 공유 기록(share-sync.ts, ADR-048 결정 5): 이 PC의 기기 목록에 기기가 2대 이상이면 다른 기기의 줄을 받고, 장부의 발급 기록·거래처·내 사업자를 봉인해 올린다.
+  // 기기가 하나뿐인 계정·계정 연결 없는 실행은 서버도 금고도 부르지 않는다. 켤 때, 발급이 끝난 뒤, 그리고 10분마다 한다.
+  const shareSync = new ShareSync({
+    client: opts.remote?.keys ? (opts.remote.cloud?.account ?? null) : null,
+    device: async () => {
+      await accountInit();
+      return account.device();
+    },
+    vault: async () => {
+      const v = ((await keysOf()) as Partial<VaultDesktopKeys>).share;
+      if (!v) throw Object.assign(new Error('keys'), { code: 'account.keys_unavailable' });
+      return v;
+    },
+    store: engineShareStore((m, p) => host.rpc(m, p)),
+    collect: () => host.rpc('share.collect'),
+    // 세대가 뒤처졌거나 모르는 폰의 줄이 오면 서버와 기기 목록을 맞춘다(다른 PC가 끊은 기기를 폐기 레코드로 옮기는 것까지)
+    refreshDeviceList: async () => {
+      if ((await devicesOf().reconcile()) > 0) {
+        send({ type: 'account', account: account.view() });
+        void phoneLink?.pushShareKeys();
+      }
+    },
+    log: (n, d) => log.event(n, d),
+  });
+  /** 받고 올린다. 다른 PC가 더하거나 고친 거래처가 이 PC 목록에 들어왔으면 목록을 다시 읽는다(대화·발급이 새 값을 쓴다). */
+  const syncShare = async (): Promise<void> => {
+    const r = await shareSync.sync();
+    if (r.parties > 0) {
+      await refresh();
+      pushBoard();
+    }
+  };
+  const SHARE_EVERY_MS = 10 * 60_000;
+  const shareTimer = setInterval(() => void syncShare().catch(() => undefined), SHARE_EVERY_MS);
+  shareTimer.unref?.();
   // 폰이 연결돼 있으면 집에 둔 PC가 밖의 폰에 바로 응한다(phone-presence.ts): 창을 닫아도 남고, 전원 연결 중에는 잠들지 않는다.
   const stayAwake = new StayAwake(powerSaveBlocker, (on) => log.event('main.phone_stay_awake', { on }));
   const pairedPhones = () => phoneLink?.list().length ?? 0;
@@ -1594,6 +1653,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     .then(() => syncAwake())
     // 꺼져 있던 동안 폰이 스스로 나갔거나 다른 기기가 끊은 것을 목록에 맞춘다(실패해도 다음에 기기 화면·폰 연결을 열 때 다시 한다)
     .then(() => reconcileDevices())
+    .then(() => syncShare())
     .catch(() => undefined);
   const onbView = async () => (onb && onbShow ? await onb.view() : null);
   /** 온보딩이 끝나기 전에는 약관(④) 동의 전 요청을 받지 않는다. 모델 해석은 ②에 동의했을 때만(기존 사용자는 지금처럼). */
@@ -1696,6 +1756,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   host.on('run', (e: { type?: string; runId?: string }) => {
     if (e.type === 'end') setTimeout(() => reverify(typeof e.runId === 'string' ? e.runId : null), 3_000);
+    // 발급이 끝났으면 원장 확인(위 3초 뒤) 다음에 계정 공유 기록을 올린다. 승인번호를 아직 못 받았으면 다음 차례에 올라간다
+    if (e.type === 'end') setTimeout(() => void syncShare().catch(() => undefined), 15_000).unref?.();
   });
 
   /** 진행 화면을 받는 실행(하나). */
@@ -2298,6 +2360,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const devices = await devicesOf().unlink(String(p.deviceId));
       send({ type: 'account', account: account.view() });
       syncAwake();
+      // 기기를 끊어 세대가 올랐다: 남은 폰 가운데 지금 연결된 폰에 새 열쇠를 준다(꺼져 있는 폰은 다음 세션에서 받는다)
+      void phoneLink?.pushShareKeys();
       return { devices };
     },
     // 이 PC가 계정에서 나간다: 서버가 바로 폐기한 뒤 로그아웃과 같은 정리를 한다. 발급 실행 중이면 거부, 마지막 PC면 account.last_desktop
@@ -2678,6 +2742,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const close = async () => {
     clearInterval(boardDayTimer);
     clearInterval(registryTimer);
+    clearInterval(shareTimer);
     clearInterval(keepTimer);
     if (linkTimer) clearInterval(linkTimer);
     daemon?.stop();

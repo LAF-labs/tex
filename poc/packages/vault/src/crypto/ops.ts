@@ -7,17 +7,17 @@ import { createCipheriv, createDecipheriv, createHmac, createPrivateKey, createP
 import type { EventLog } from '@sax/platform';
 import type { KeyStore } from '../keystore.ts';
 import {
-  AIK_PURPOSES, CRYPTO_MSG_MAX, NOISE_CONTEXTS, RK_LINK_INFO, RK_SEALS_PER_DAY, VD_PURPOSES,
-  type HpkeOpenParams, type NoiseDhParams, type RkImportParams, type RkSealParams, type SignAikParams, type SignVdParams, type VaultPublicKeys,
+  AIK_PURPOSES, CRYPTO_MSG_MAX, NOISE_CONTEXTS, RK_LINK_INFO, RK_SEALS_PER_DAY, SHARE_EPOCH_MAX, SHARE_KEY_INFO_PREFIX, SHARE_SIGN_CONTEXT, SHARE_SIGN_INFO, SHARE_SIGN_MSG_MAX, VD_PURPOSES,
+  type HpkeOpenParams, type NoiseDhParams, type RkImportParams, type RkSealParams, type ShareKeyParams, type SignAikParams, type SignShareParams, type SignVdParams, type VaultPublicKeys,
 } from '../protocol.ts';
 
 /** KeyStore 항목 이름(32바이트 시드). RK는 계정 루트 키이고 AIK는 그 파생이다(D08 §3). */
 export const CRYPTO_KEY_ITEMS = { sd: 'device/sd', vd: 'device/vd', qd: 'device/qd', kv: 'device/kv', rk: 'account/rk' } as const;
 
 /** 한 시간 기대치(넘으면 vault.crypto_rate_anomaly). DPoP는 요청마다 하나라 Vd가 가장 많다. */
-export const CRYPTO_RATE_PER_HOUR: Record<CryptoOp, number> = { noiseDH: 240, signVd: 3_600, signAik: 60, hpkeOpen: 1_200, linkKey: 30, rkSeal: 3, rkImport: 10 };
+export const CRYPTO_RATE_PER_HOUR: Record<CryptoOp, number> = { noiseDH: 240, signVd: 3_600, signAik: 60, hpkeOpen: 1_200, linkKey: 30, rkSeal: 3, rkImport: 10, shareKey: 600, signShare: 1_200 };
 
-export type CryptoOp = 'noiseDH' | 'signVd' | 'signAik' | 'hpkeOpen' | 'linkKey' | 'rkSeal' | 'rkImport';
+export type CryptoOp = 'noiseDH' | 'signVd' | 'signAik' | 'hpkeOpen' | 'linkKey' | 'rkSeal' | 'rkImport' | 'shareKey' | 'signShare';
 
 /** 쓰던 RK를 옮겨 두는 보관 항목 이름(뒤에 넘겨받은 시각 ms가 붙는다). 읽는 코드는 없다(사람이 되돌릴 때 쓴다). */
 export const RK_PREV_ITEM = 'account/rk-prev-';
@@ -40,6 +40,8 @@ interface Keys {
   qd: Pair;
   kv: Pair;
   aik: Pair;
+  /** 계정 공유 기록 서명 키 Ws(RK 파생, D07 §10) */
+  ws: Pair;
 }
 
 export function x25519FromSeed(seed: Uint8Array): Pair {
@@ -55,6 +57,16 @@ export function ed25519FromSeed(seed: Uint8Array): Pair {
 function rawPublic(priv: KeyObject): Uint8Array {
   const der = createPublicKey(priv).export({ format: 'der', type: 'spki' });
   return new Uint8Array(der.subarray(der.length - 32));
+}
+
+/** RK → 계정 공유 기록 서명 키(Ws) 시드: HKDF-SHA256(RK, salt=없음, info="share/sig/v1", 32)(D07 §10). */
+export function shareSignSeedFromRk(rk: Uint8Array): Uint8Array {
+  return new Uint8Array(hkdfSync('sha256', rk, new Uint8Array(0), SHARE_SIGN_INFO, 32));
+}
+
+/** RK → 계정 공유 기록 봉인 키 K_share(e): HKDF-SHA256(RK, salt=없음, info="share/v1/" ‖ e, 32)(D07 §10). */
+export function shareKeyFromRk(rk: Uint8Array, epoch: number): Uint8Array {
+  return new Uint8Array(hkdfSync('sha256', rk, new Uint8Array(0), `${SHARE_KEY_INFO_PREFIX}${epoch}`, 32));
 }
 
 /** RK → AIK 시드: HKDF-SHA256(ikm=RK, salt=없음, info="aik", 32)(D08 §3 "RK ─ HKDF("aik")"). */
@@ -215,9 +227,11 @@ export class VaultCrypto {
       const vd = ed25519FromSeed(await take(CRYPTO_KEY_ITEMS.vd));
       const qd = x25519FromSeed(await take(CRYPTO_KEY_ITEMS.qd));
       const kv = x25519FromSeed(await take(CRYPTO_KEY_ITEMS.kv));
-      const aikSeed = aikSeedFromRk(await take(CRYPTO_KEY_ITEMS.rk));
-      seeds.push(aikSeed);
-      return { sd, vd, qd, kv, aik: ed25519FromSeed(aikSeed) };
+      const rk = await take(CRYPTO_KEY_ITEMS.rk);
+      const aikSeed = aikSeedFromRk(rk);
+      const wsSeed = shareSignSeedFromRk(rk);
+      seeds.push(aikSeed, wsSeed);
+      return { sd, vd, qd, kv, aik: ed25519FromSeed(aikSeed), ws: ed25519FromSeed(wsSeed) };
     } finally {
       for (const s of seeds) s.fill(0);
     }
@@ -288,6 +302,35 @@ export class VaultCrypto {
       this.o.log.event('vault.hpke_open_failed');
       throw e;
     }
+  }
+
+  // ───────── 계정 공유 기록(ADR-048 결정 5, D07 §10). control 포트(main)만 부른다 ─────────
+
+  /**
+   * 세대 e의 줄 봉인 키와 Ws 공개키. RK는 나가지 않는다. 계정 열쇠를 넘겨받으면(rkImport) 값이 바뀐다.
+   * 키는 계정 공유 기록 줄만 연다. 부른 쪽(main)이 쓰고 지운다.
+   */
+  async shareKey(x: unknown): Promise<{ key: Uint8Array; signPub: Uint8Array }> {
+    const p = x as Partial<ShareKeyParams> | undefined;
+    if (!Number.isSafeInteger(p?.epoch) || p!.epoch! < 0 || p!.epoch! > SHARE_EPOCH_MAX) throw new Error('bad_params');
+    const k = await this.keys();
+    const rk = await this.o.keyStore.get(CRYPTO_KEY_ITEMS.rk, 32);
+    if (!rk) throw new Error('vault.keystore_mismatch');
+    try {
+      this.audit('shareKey');
+      return { key: shareKeyFromRk(rk, p!.epoch!), signPub: k.ws.pub.slice() };
+    } finally {
+      rk.fill(0);
+    }
+  }
+
+  /** PC가 쓴 줄의 서명: Ed25519(Ws, utf8("SAX-share-v1") ‖ msg). 컨텍스트는 여기서 붙인다(다른 용도의 서명으로 쓸 수 없다). */
+  async signShare(x: unknown): Promise<Uint8Array> {
+    const p = x as Partial<SignShareParams> | undefined;
+    if (!isBytes(p?.msg, 1, SHARE_SIGN_MSG_MAX)) throw new Error('bad_params');
+    const k = await this.keys();
+    this.audit('signShare');
+    return new Uint8Array(edSign(null, cat(enc.encode(SHARE_SIGN_CONTEXT), p!.msg!), k.ws.priv));
   }
 
   // ───────── 새 PC 연결(ADR-048 결정 3, D08 §4.3). control 포트(main)만 부른다 ─────────

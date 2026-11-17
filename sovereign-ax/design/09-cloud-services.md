@@ -136,7 +136,26 @@ account(id, email, status, plan, created_at, aik_pub, aik_pinned_at, pass_verifi
 - **기기에서 끊기**(ADR-048 결정 6): 기기 토큰으로 스스로 나가기(`self/leave`, 바로 폐기)와 다른 기기 정지(`stop`, 바로 정지 + 7일 뒤 폐기 예약)를 한다. 폰은 `devices` 범위로 한다(AIK가 없어 목록은 바꾸지 못한다). 계정에 남은 마지막 활성 데스크톱은 나가거나 정지되지 않는다. 폐기 유예(등록 7일 미만 데스크톱)에서 계정의 첫 PC는 빼고, 유예 중에도 폰은 바로 정지한다.
 - **발급 잠금**(ADR-048 결정 7): PC가 2대 이상인 계정에서 홈택스 발급은 계정당 하나인 잠금(`issue_locks`)을 잡은 PC만 들어간다. 서버에는 잡고 있는 동안만 잡은 기기·무작위 값·만료(90초)가 있고, 놓으면 지운다. 무엇을 몇 번 발급하는지는 서버에 없다.
 - **새 PC 연결 우편함**(ADR-048 결정 3, D08 §4.3): 새 PC가 쓰던 PC에서 계정 루트키를 넘겨받을 때 주고받는 메시지 넷을 `pc_links`에 맡아 둔다. 서버가 보는 것은 공개키·난수·AIK 서명 목록·인증서와 RK 봉인문(새 PC의 연결 전용 키로만 열린다)이다. 순서만 지키고 진위는 두 PC가 본다. 새 PC가 받아 가면 지우고 7일이 지나면 정리한다.
+- **계정 공유 기록**(ADR-048 결정 5, D07 §10, §2.3): 계정의 PC와 폰이 발급 기록·거래처·내 사업자·받을 돈과 낼 돈 요약·맡긴 일을 같이 쓴다. 서버는 암호문 줄(`share_rows`)과 맡긴 일의 상태(`share_tasks`)를 보관한다. 줄의 내용과 서명은 암호문 안에 있어 서버가 읽거나 지어내지 못한다.
 - 상수 `account.*`·`device.*`는 서버가 강제하고 투명성 페이지에 게시한다.
+
+### 2.3 계정 공유 기록 API (ADR-048 결정 5, D07 §10)
+
+- 인증: 기기 범위 토큰의 `share` 범위(데스크톱·폰 모두 받는다). 계정은 토큰에서만 정한다.
+- `PUT /v1/share/rows/{rowId}` `{kind, epoch, body, taskId?}` → `{seq}`. 서버는 모양(b64url)과 크기(21,899자)만 본다.
+  - 같은 `rowId`를 같은 내용으로 다시 올리면 처음 순번을 준다. 다른 내용이면 `account.share_row_conflict`.
+  - 폰은 `task`만 올린다(`account.scope_denied`). `task_result`는 그 일을 맡은 데스크톱만 올리고(`account.task_not_claimed`), 올리면 일이 끝난다.
+  - 활성 기기가 하나뿐인 계정은 `account.share_single_device`. 지금까지 본 가장 높은 세대보다 낮은 `epoch`는 `account.share_epoch_stale`(끊긴 폰이 아는 키로 더 쓰지 않게 한다. 보안은 클라이언트의 세대 계산이 지키고 이 검사는 늦은 기기를 깨우는 용도다).
+  - 계정당 50,000줄까지(`account.share_full`).
+  - 종류는 `issue`·`party`·`self`·`money`·`task`·`task_result`. `money`(받을 돈·낼 돈 요약)는 새 줄을 받으면 그 계정의 앞 `money` 줄을 지운다(마지막 한 장만 둔다).
+- `GET /v1/share/rows`(처음부터), `GET /v1/share/rows/after/{seq}`(이어 받기. 쿼리는 쓰지 않는다) → `{rows:[{seq, rowId, kind, epoch, deviceId, at, body}], head, epoch, more}`. 한 번에 200줄·본문 합계 1,000,000자까지.
+- `GET /v1/share/tasks` → `{tasks:[{taskId, state, createdBy, claimedBy, claimExpiresAt, createdAt, updatedAt}]}`. `state`는 `open`·`claimed`·`done`·`cancelled`·`expired`(맡긴 지 72시간이 지난 열린 일).
+- `POST /v1/share/tasks/{taskId}/claim`(데스크톱) → `{claimExpiresAt}`. 한 번에 한 PC만 성공하고 15분 뒤 만료된다. 맡은 PC가 다시 부르면 늘어난다. 다른 PC가 맡고 있으면 `account.task_claimed`, 끝났거나 취소됐거나 72시간이 지났으면 `account.task_closed`.
+- `POST /v1/share/tasks/{taskId}/release`(맡은 데스크톱), `POST /v1/share/tasks/{taskId}/cancel`(계정의 어느 기기든. 다른 기기가 돌리는 중이면 `account.task_claimed`).
+- 맡은 PC가 정지·폐기되면 그 PC가 맡은 일은 바로 다시 열린다.
+- 보관: 발급 기록·거래처 줄은 계정이 있는 동안. 끝난·취소된 일과 유효 시간이 지난 일은 30일 뒤 줄과 함께 지운다(§10).
+- 한도: 올리기·맡기 기기당 600회/시, 받기·일 목록 기기당 1,200회/시.
+- 새 줄을 다른 기기에 바로 알리는 깨우기는 아직 없다. 기기가 주기적으로 받는다(다음 PR에서 정한다).
 
 ## 3. 모델 게이트웨이 통제 명세
 
@@ -325,6 +344,8 @@ account(id, email, status, plan, created_at, aik_pub, aik_pinned_at, pass_verifi
 | 게이트웨이 접근 로그(계정 식별자는 일 회전 HMAC) | 30일 | 자동 |
 | 기기 목록·기기 레코드 | 계정 존속. 폐기 항목은 AIK 서명 폐기 레코드만 유지 | 계정 삭제 |
 | 푸시 토큰(`device_id → 암호화된 토큰`) | 기기 존속 | 기기 폐기·긴급 정지 **즉시** |
+| 계정 공유 기록(`share_rows`: 암호문·종류·순번·받은 시각·올린 기기, 활성 기기 2대 이상 계정만, ADR-048 결정 5) | 계정 존속. 맡긴 일과 그 결과 줄은 일이 끝나거나 취소되거나 유효 시간이 지난 뒤 **30일**. 돈 요약 줄은 새 요약이 오면 앞 줄을 바로 지운다 | 자동·계정 삭제 |
+| 맡긴 일의 상태(`share_tasks`: 상태·맡긴 기기·맡은 기기·시각) | 일이 끝나거나 취소되거나 유효 시간이 지난 뒤 **30일** | 자동·계정 삭제 |
 | 프로필 사업자 HMAC(`biz_hmac`) | 프로필 존속 | 재바인딩·프로필 삭제 |
 | 발급 활동 표시(`biz_key_marks`: HMAC·상태·일, Phase 2, 데스크톱 2대 이상·백업을 켠 계정만) | **90일**(`armed` 행은 10분) | 자동. 폐기되지 않은 데스크톱이 2대 미만이 되거나 백업 스위치를 끄면 그 계정 행 전부 즉시 |
 | 블롭 업로드·다운로드 시각(접근 로그) | **7일** | 자동 |

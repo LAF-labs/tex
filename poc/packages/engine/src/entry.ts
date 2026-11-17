@@ -40,6 +40,8 @@ import { DAEMON_READ_QUERIES } from './protocol.ts';
 import { CHAT_AGENT_COMMANDS, INTENT_COMMANDS } from './protocol.ts';
 import { BANK_COMMANDS, BANK_READ_QUERIES } from './protocol.ts';
 import { BankService } from './bank/service.ts';
+import { SHARE_COMMANDS, SHARE_READ_QUERIES } from './protocol.ts';
+import { ShareService } from './share/service.ts';
 import { gatewayIntentModel, gatewayRunJudge, IntentResolver } from './intent.ts';
 import { ChatAgent, gatewayChatAgentModel } from './chat-agent.ts';
 import { BUNDLE_REQUEST_COMMANDS } from './protocol.ts';
@@ -68,6 +70,7 @@ let phone: PhoneIntake | null = null;
 let pcFiles: PcFileIntake | null = null;
 /** 돈 맞추기(09): 내 계좌·거래내역·받을 돈·맞춤. 컬럼 키·계좌 HMAC 키는 init이 넘긴다. */
 let bank: BankService | null = null;
+let share: ShareService | null = null;
 /** 대화 의도 판정(intent.resolve). 모델 경로는 엔진 Egress 게이트웨이뿐이고, 없으면 decide.unavailable(main은 연결 안 됨). */
 let intent: IntentResolver | null = null;
 /** 대화 에이전트 모델 경계(chat.step). 모델 경로는 intent와 같은 엔진 Egress 게이트웨이뿐이다. */
@@ -123,6 +126,9 @@ for (const m of [...BUNDLE_PC_READ_QUERIES, ...BUNDLE_PC_COMMANDS]) {
 
 const BANK = new Set<string>([...BANK_READ_QUERIES, ...BANK_COMMANDS]);
 for (const m of BANK) ALLOWED.add(m);
+/** 계정 공유 기록의 장부 쪽(share/service.ts). main의 share-sync만 부른다 */
+const SHARE = new Set<string>([...SHARE_READ_QUERIES, ...SHARE_COMMANDS]);
+for (const m of SHARE) ALLOWED.add(m);
 
 const INTENT = new Set<string>(INTENT_COMMANDS);
 for (const m of INTENT) ALLOWED.add(m);
@@ -169,6 +175,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   phone = new PhoneIntake(db, { vaultDir: paths.vault });
   pcFiles = new PcFileIntake(db, { vaultDir: paths.vault });
   bank = new BankService(db, cipher, bankKey, { vaultDir: paths.vault });
+  share = new ShareService(db, cipher);
   bankKey.fill(0);
   intent = new IntentResolver(db, { model: gatewayIntentModel(egress) });
   chatAgent = new ChatAgent(db, { model: gatewayChatAgentModel(egress), closeOnCards: true });
@@ -355,6 +362,10 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
   if (BANK.has(method)) {
     if (!bank) throw new Error('db_not_ready');
     return bank.handle(method, params);
+  }
+  if (SHARE.has(method)) {
+    if (!share) throw new Error('db_not_ready');
+    return share.handle(method, params as Record<string, unknown> | undefined);
   }
   if (INTENT.has(method)) {
     if (!intent) throw new Error('db_not_ready');

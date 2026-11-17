@@ -18,10 +18,10 @@ import {
   type Limits,
 } from '@sax/svc-shared';
 import { deviceListSchema, signedCertSchema, signedOpSchema, type AcctOp, type DeviceList, type SignedCert } from './aik.ts';
-import { ACCOUNT, DEVICE, ISSUE_LOCK, MS, PASSWORD, PC_LINK } from './constants.ts';
+import { ACCOUNT, DEVICE, ISSUE_LOCK, MS, PASSWORD, PC_LINK, SHARE } from './constants.ts';
 import { pageHeaders } from './pg-toss.ts';
 import { withFloor } from './password.ts';
-import type { AccountService, AuthMethod, BillingCaller, Session } from './service.ts';
+import type { AccountService, AuthMethod, BillingCaller, Session, ShareKind } from './service.ts';
 
 const obj = (properties: Record<string, unknown>, required: string[] = Object.keys(properties)) => ({ type: 'object', additionalProperties: false, required, properties });
 const b64u = (min: number, max: number) => ({ type: 'string', pattern: `^[A-Za-z0-9_-]{${min},${max}}$` });
@@ -30,6 +30,8 @@ const EMAIL = { type: 'string', minLength: 3, maxLength: 254 } as const;
 /** 요청 상한만(정규화 전). 길이 정책 10~128자(NFKC 코드 포인트)는 서버 정책 검사가 판정한다 */
 const PASSWORD_IN = { type: 'string', minLength: 1, maxLength: 1024 } as const;
 const REMEMBER = { type: 'boolean' } as const;
+/** 계정 공유 기록의 줄 id: 무작위 16B의 base64url */
+const SHARE_ROW_ID = { type: 'string', pattern: '^[A-Za-z0-9_-]{22}$' } as const;
 const REFRESH_TOKEN = { type: 'string', pattern: '^sxa1\\.[A-Za-z0-9_-]{43}$' } as const;
 
 const V = {
@@ -85,6 +87,14 @@ const V = {
     obj({ grant: obj({ v: { const: 1 }, cert: signedCertSchema, deviceList: deviceListSchema, enc: S.b64key32, ct: { type: 'string', pattern: '^[A-Za-z0-9+/]{64}$' } }) }),
   ),
   issueLockId: validator<{ lockId: string }>(obj({ lockId: S.token })),
+  // 계정 공유 기록(D07 §10). 본문은 암호문이라 모양(b64url)과 크기만 본다
+  shareRowId: validator<{ id: string }>(obj({ id: SHARE_ROW_ID })),
+  shareRow: validator<{ kind: ShareKind; epoch: number; body: string; taskId?: string }>(
+    obj(
+      { kind: { enum: [...SHARE.kinds] }, epoch: { type: 'integer', minimum: 0, maximum: SHARE.maxEpoch }, body: { type: 'string', pattern: '^[A-Za-z0-9_-]+$', minLength: 64, maxLength: SHARE.maxBodyChars }, taskId: SHARE_ROW_ID },
+      ['kind', 'epoch', 'body'],
+    ),
+  ),
   bindBiz: validator<{ bizHmac: string; rkOp?: { op: AcctOp; aikSig: string } }>(obj({ bizHmac: S.hex32, rkOp: signedOpSchema }, ['bizHmac'])),
 } as const;
 
@@ -502,6 +512,42 @@ export function accountRouter(o: AccountAppOpts): Router {
   r.add('POST', '/v1/issue-lock/release', async (ctx) => {
     const c = await issueLock(ctx);
     await svc.releaseIssueLock(c, V.issueLockId(ctx.body).lockId);
+    return json(204, undefined);
+  });
+
+  // 계정 공유 기록(ADR-048 결정 5, D07 §10, 기기 토큰 share 범위). 줄은 암호문이고, 쓸 수 있는 종류는 역할로 가른다(폰은 맡긴 일만)
+  const share = async (ctx: Ctx, kind: 'r' | 'w') => {
+    const c = await deviceAuth.check(ctx, 'share', 'account.unauthorized', 'account.device_suspended');
+    ctx.logAid = idSalt.hash(c.acc);
+    await limit(`share:${kind}:${await devSalt.hash(c.dev)}`, kind === 'w' ? SHARE.writesPerDeviceHour : SHARE.readsPerDeviceHour, MS.H);
+    return { accountId: c.acc, deviceId: c.dev, role: c.role };
+  };
+  const shareDesktop = async (ctx: Ctx) => {
+    const c = await share(ctx, 'w');
+    if (c.role !== 'desktop') fail('account.scope_denied');
+    return c;
+  };
+  const shareId = (ctx: Ctx) => V.shareRowId({ id: ctx.params.id }).id;
+  r.add('PUT', '/v1/share/rows/:id', async (ctx) => {
+    const c = await share(ctx, 'w');
+    return json(200, await svc.putShareRow(c, { rowId: shareId(ctx), ...V.shareRow(ctx.body) }));
+  });
+  // 이어 받기는 쿼리가 아니라 경로로 한다(PC의 클라우드 출구는 쿼리를 받지 않는다, @sax/net cloud.ts)
+  const shareRowsFrom = async (ctx: Ctx, raw: string) => {
+    const c = await share(ctx, 'r');
+    if ([...ctx.query.keys()].length || !/^(0|[1-9][0-9]{0,15})$/.test(raw)) fail('request.param_rejected');
+    return json(200, await svc.shareRows(c.accountId, Number(raw)));
+  };
+  r.add('GET', '/v1/share/rows', (ctx) => shareRowsFrom(ctx, '0'));
+  r.add('GET', '/v1/share/rows/after/:seq', (ctx) => shareRowsFrom(ctx, ctx.params.seq ?? ''));
+  r.add('GET', '/v1/share/tasks', async (ctx) => json(200, { tasks: await svc.shareTasks((await share(ctx, 'r')).accountId) }));
+  r.add('POST', '/v1/share/tasks/:id/claim', async (ctx) => json(200, await svc.claimShareTask(await shareDesktop(ctx), shareId(ctx))));
+  r.add('POST', '/v1/share/tasks/:id/release', async (ctx) => {
+    await svc.releaseShareTask(await shareDesktop(ctx), shareId(ctx));
+    return json(204, undefined);
+  });
+  r.add('POST', '/v1/share/tasks/:id/cancel', async (ctx) => {
+    await svc.cancelShareTask(await share(ctx, 'w'), shareId(ctx));
     return json(204, undefined);
   });
 

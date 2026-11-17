@@ -450,3 +450,105 @@ CREATE INDEX ON doc_index(account_id, slot_token, doc_type, expires_on);
 - 임시 데이터: 마스킹 미리보기는 디스크 대신 **DB 암호화 컬럼**(`temp_previews`, 24시간 TTL)에 둔다. 캡차 크롭은 **메모리에만** 두고 응답 즉시 버린다(디스크·DB 모두 쓰지 않는다).
 - 다운로드 스테이징: 보관함으로 옮긴 즉시 삭제, 기동 시 잔존 파일 정리.
 - 클립보드(후처리 복사 버튼): 30초 뒤 값이 그대로면 비운다.
+
+## 10. 계정 공유 기록 (ADR-048 결정 5, `[검토]` SP-5)
+
+계정의 PC(3대까지)와 폰(3대까지)이 **발급 기록·거래처·내 사업자·받을 돈과 낼 돈 요약·맡긴 일**을 같이 쓴다. 대화, 문서함 파일, 계좌 거래내역, 금고는 싣지 않는다. 구현은 `poc/packages/remote/src/share.ts`(줄 봉인·서명·검증·합치기)와 계정 서비스(`share_rows`·`share_tasks`, D09 §2.3)다. PC 쪽은 금고 키 연산(D05 §5.1 `crypto.shareKey`·`crypto.signShare`), main의 동기화(`poc/apps/desktop/src/share-sync.ts`), 엔진 장부(`poc/packages/engine/src/share/service.ts`, 아래 "PC 장부")다. 폰에는 PC가 라이브 세션의 `share.key`(D08 §6, remote-envelope v1.9)로 열쇠를 준다. 받은 거래처는 그 PC의 거래처 목록에 반영한다(아래 "받은 거래처"). 맡긴 일의 실행, 돈 요약 올리기, 폰 앱이 줄을 읽는 일은 다음 PR이다.
+
+**키**
+
+```text
+K_share(e) = HKDF-SHA256(RK, "share/v1/" ‖ e)          줄을 봉인하는 키. e = 세대
+Ws         = Ed25519(HKDF-SHA256(RK, "share/sig/v1"))   계정 공유 기록 서명 키. PC 금고만 서명한다
+세대 e     = AIK로 검증한 기기 목록의 폐기 레코드 수(revoked.length)
+```
+
+- PC는 금고가 RK에서 `K_share(e)`를 만든다(새 PC는 D08 §4.3으로 RK를 받는다). 폰은 RK를 갖지 않고, PC가 종단간 통로(라이브 세션 `share.key`)로 세대 0부터 지금 세대까지의 `K_share`와 `Ws` 공개키를 준다. 옛 세대 열쇠까지 주는 이유는 나중에 붙은 폰도 앞서 쌓인 발급 기록을 읽어야 해서다. 폰이 꺼져 있는 동안 세대가 오르면 그 폰은 다음에 PC와 세션을 열 때 새 열쇠를 받고, 그때까지 새 세대의 줄은 열지 못한다.
+- 기기를 끊으면 AIK 서명 폐기 레코드가 하나 늘어서 세대가 오른다. 세대는 따로 저장하는 값이 아니라 기기 목록에서 나오므로, 서버가 세대를 낮춰 말해도 목록 버전 검사(D08 §4.1)에 걸린다. 끊긴 폰은 새 세대 키를 받지 못한다.
+- **끊긴 PC는 RK를 갖고 있어서 세대로는 막지 못한다.** 서버가 그 PC의 호출을 거부하는 것에 기댄다(ADR-048 결정 6 남는 위험, RK 교체는 D08 §9.4).
+
+**줄**
+
+```text
+core  = {v:1, row_id, kind, epoch, at, dev, by, body}           row_id = 무작위 16B(b64url), at = 쓴 기기의 시계(ms), by = desktop | mobile
+sig   = Ed25519("SAX-share-v1" ‖ JCS(core))                     PC가 쓴 줄은 Ws, 폰이 쓴 줄은 그 폰의 Vm
+sealed = XChaCha20-Poly1305(K_share(e), pad(JCS({core, sig})), aad = "SAX-share-v1" ‖ JCS({epoch, kind, row_id}))
+올리는 모양 = {rowId, kind, epoch, body: b64url(nonce ‖ sealed)}   평문은 512·1,024·4,096·16,384바이트 버킷으로 패딩
+```
+
+- PC 줄을 기기 키(`Vd`)가 아니라 `Ws`로 서명하는 이유: 끊긴 기기의 공개키는 기기 목록에서 빠지므로, 나중에 붙은 기기가 옛 줄을 확인할 길이 없어진다. `Ws`는 RK에서 나오므로 계정의 PC면 누구나 서명하고, 폰은 공개키로 검증만 한다. 폰은 `K_share`를 알아도 PC 줄(발급 기록·거래처·내 사업자·돈 요약·결과)을 지어낼 수 없다.
+- 폰이 쓰는 줄은 맡긴 일(`task`)뿐이고 그 폰의 `Vm`으로 서명한다. 일을 맡는 PC는 그 폰이 지금 기기 목록에 있을 때만 받는다.
+- aad의 `row_id`·`kind`·`epoch`로 서버가 줄을 맞바꾸거나 종류·세대를 바꾸는 것을 막는다. 여는 쪽은 바깥과 속이 같은지도 본다.
+- 서버는 줄을 숨기거나 순서를 바꿀 수 있다. 그래서 줄은 순서에 기대지 않는다(아래 "합치기"). **같은 건을 두 번 내지 않는 판단은 공유 기록이 아니라 포털 기준선(D03 §4)과 발급 잠금(D03 §2)이 한다.** 공유 기록의 발급 줄은 승인 카드의 경고와 화면 표시에 쓴다.
+
+**종류와 본문** (모르는 필드는 거부, 문자열은 NFC)
+
+| `kind` | 쓰는 기기 | 본문 | 합치기 |
+|---|---|---|---|
+| `issue` | PC | `{doc:"tax_invoice", approvalNo(숫자 24자리), writtenOn(YYYY-MM-DD), buyerBizNo(10자리), buyerName, supply, tax, item?, taskRow?, how:"app"\|"manual"}` | 승인번호가 같으면 한 건(먼저 받은 줄) |
+| `party` | PC | `{bizNo, name, rep?, address?, email?, items?, removed?}`. `items`는 저장 품목 `{name, unitPrice\|null, unit\|null}` 20개까지(고르는 후보일 뿐 발급 값이 아니다). 없으면 "모른다", 빈 배열이면 "없다" | 사업자번호마다 `(at, dev)`가 가장 큰 줄. `removed`면 목록에서 뺀다 |
+| `self` | PC | `{bizNo, name, rep?}`. 내 사업자(공급자). 폰이 말로 받은 사업자번호가 내 것인지 거래처 것인지 가리는 데 쓴다 | 계정에서 `(at, dev)`가 가장 큰 줄 |
+| `money` | 은행 자료가 있는 PC | 아래 "돈 요약" | 계정에서 `(at, dev)`가 가장 큰 줄. 서버는 새 요약을 받으면 앞 요약 줄을 지운다 |
+| `task` | PC·폰 | `{do:"tax_invoice.issue", buyerBizNo, supply, tax, item, email?, note?}`. `supply`는 0보다 크고 `tax`는 0 이상(수정 발급은 맡기지 못한다). 비밀을 넣지 않는다. 맡는 PC는 `buyerBizNo`가 자기 장부의 거래처일 때만 받고 값을 승인 카드에 그대로 보인다 | 줄마다 한 일. 상태는 서버의 `share_tasks` |
+| `task_result` | 일을 맡은 PC | `{taskRow, outcome:"issued"\|"failed"\|"cancelled", approvalNo?, code?}`. `code`는 D16 코드이고 값은 넣지 않는다 | 일마다 하나 |
+
+- **수정세금계산서**는 새 승인번호의 새 `issue` 줄이고 `supply`·`tax`가 음수일 수 있다. 원래 줄은 고치지 않는다.
+- **돈 요약**(`money`, 본문 v1). 은행 자료가 있는 PC가 한 장으로 올린다. 모르는 값은 0이 아니라 `null`이다. 거래 내역, 계좌번호, 은행 메모, 개인 입금자 이름은 싣지 않고 `cp`는 장부의 상호만 쓴다.
+
+  ```text
+  {asOf(ISO UTC), latestDay(YYYY-MM-DD|null), stale,
+   recv: {count, total, overdueCount, overdueTotal, oldest: {cp, writtenOn, daysOver}|null, top: [{cp, total, count}] 5개까지, open?: 승인번호 300개까지},
+   pay:  {count, total, overdueCount, overdueTotal, top: 5개까지},
+   cash: {month(YYYY-MM), through(YYYY-MM-DD), complete, in, out, net, balance, nextIn, nextOut} | null}
+  ```
+
+  - `recv.open`은 입금 확인이 안 된 발급의 승인번호다. 읽는 쪽은 `issue` 줄과 맞춰 "어느 건이 아직 안 들어왔나"를 답한다. 300개를 넘으면 오래된 것부터 싣고 전체 수는 `count`가 알린다. 없으면 "모른다"다.
+  - `latestDay`·`stale`은 은행 자료가 얼마나 새로운지다. 읽는 쪽은 `stale`이면 숫자를 단정해 말하지 않는다. `cash`가 `null`이면 은행 자료가 없는 것이다.
+  - 서버는 앞 요약을 지우므로 늦게 다시 올린 옛 요약이 새 요약을 밀어낼 수 있다. 다음 올리기에서 바로잡힌다(PC는 올린 뒤 받은 요약이 자기 것보다 옛것이면 다시 올린다).
+- 거래처를 로컬 ID가 아니라 사업자번호로 가리킨다. PC마다 로컬 거래처 ID가 달라서다. 사업자번호는 암호문 안에만 있다(D08 §7의 `counterpartyRef` 규칙은 우편함 봉투에 그대로 남는다).
+- **맡긴 일의 실행**: 켜져 있는 PC 가운데 하나만 서버에서 맡고(`claim`, 15분마다 다시 맡아 늘린다), 시작 게이트와 커밋 게이트(D08 §7·§6.1)를 그대로 지난 뒤 발급 잠금을 잡고 돌린다. 맡은 PC가 죽으면 15분 뒤 다른 PC가 맡는다. 다시 맡은 PC는 공유 기록에서 그 일의 발급 줄(`taskRow`)이 이미 있는지 먼저 본다. 맡긴 지 72시간이 지난 일은 새로 맡지 않는다.
+- **올리는 계정**: 활성 기기가 2대 이상인 계정만. PC 한 대뿐인 계정은 올리지 않고 서버도 받지 않는다(서버가 발급 시각을 알 이유가 없다, E-07).
+
+**PC 장부** (스키마 v14 `share_log`, 엔진 `ShareService`, main 전용 메서드 `share.*`·`db.query.share.*`)
+
+```sql
+CREATE TABLE share_out (            -- 이 PC가 올릴 줄. 본문은 평문 JSON(DB 전체 암호화 안, 거래처·받을 돈과 같은 등급). 봉인은 main이 올릴 때 한다
+  row_id TEXT PRIMARY KEY, kind TEXT NOT NULL, ref TEXT NOT NULL DEFAULT '',   -- ref: issue = 승인번호, party = 사업자번호, self·money = ''
+  at INTEGER NOT NULL, body_json TEXT NOT NULL, task_id TEXT,
+  state TEXT CHECK(state IN ('pending','sent','dropped')) NOT NULL DEFAULT 'pending', seq INTEGER, reason TEXT,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE share_in (             -- 다른 기기에서 받은 줄(main이 열어 서명까지 확인한 것만)
+  row_id TEXT PRIMARY KEY, seq INTEGER NOT NULL, kind TEXT NOT NULL, ref TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, dev TEXT NOT NULL,
+  by_role TEXT CHECK(by_role IN ('desktop','mobile')) NOT NULL, epoch INTEGER NOT NULL, body_json TEXT NOT NULL, received_at TEXT NOT NULL
+);
+CREATE TABLE share_state (id INTEGER PRIMARY KEY CHECK(id = 1), cursor INTEGER NOT NULL DEFAULT 0);   -- 받은 마지막 순번. 내려가지 않는다
+CREATE TABLE share_party (ref TEXT PRIMARY KEY, body_json TEXT NOT NULL, updated_at TEXT NOT NULL);     -- 거래처(사업자번호)마다 이 PC가 계정과 마지막으로 맞춘 값
+```
+
+- **모으기**(`share.collect`, 여러 번 불러도 같은 줄을 두 번 만들지 않는다):
+  - 발급 기록: 원장이 발급을 확인한 실행(`committed`는 `how:"app"`, `observed_manual`은 `how:"manual"`)과 받을 돈 장부의 매출 건(홈택스 발급 목록에서 들인 건, `how:"manual"`). 승인번호(24자리)마다 한 줄이고, 다른 기기가 이미 올린 승인번호는 다시 올리지 않는다. 승인번호를 아직 모르는 건은 올리지 않고, 다시 확인해 번호가 생기면 그때 올라간다. 앱 발급 건의 `writtenOn`은 발급한 날(KST)이고 `item`은 싣지 않는다(실행 입력 요약에 없다).
+  - 거래처·내 사업자: 지금 값이 **내가 마지막으로 만든 줄과도, 계정의 가장 늦은 줄과도 다를 때만** 새 줄을 만든다. 앞의 조건은 두 PC의 값이 다를 때 서로 번갈아 올리지 않게 하고, 뒤의 조건은 받은 값을 그대로 다시 올리지 않게 한다. 지운 거래처는 계정과 맞춘 적이 있을 때만(내가 올렸거나 받아서 넣었거나) `removed` 줄을 한 번 낸다. 새 줄의 `at`은 지금 시각이되 내가 아는 그 대상의 가장 늦은 줄보다는 뒤로 잡는다(그 줄을 본 뒤에 고친 값이라, 시계가 느린 PC의 수정이 묻히지 않는다).
+  - Phase 1은 사업자 프로필이 하나라 줄에 공급자를 싣지 않는다(`self` 줄이 따로 간다).
+- **올리기**: main이 `pending` 줄을 만든 순서대로 받아 봉인해 올리고 `sent`(순번) 또는 `dropped`(이유)로 닫는다. 내가 올린 줄이 받는 쪽에 섞여 오면 넣지 않고 순번만 채운다.
+- **받기**: `share.apply`가 줄을 넣고 받은 자리를 한 트랜잭션으로 옮긴다. 같은 줄은 한 번만 넣고, 돈 요약은 가장 늦은 한 장만 남긴다.
+- **언제**: 앱을 켤 때, 실행이 끝난 뒤, 그리고 10분마다(`shell-app.ts`). 이 PC의 기기 목록에 기기가 2대 이상일 때만 서버·금고·모으기를 부른다.
+- **받은 거래처**(`share.apply` 안의 `mergeParties`, 받기와 같은 트랜잭션): 거래처마다 계정의 가장 늦은 줄이 다른 PC의 줄일 때 이 PC의 `counterparties`에 반영한다. 기준은 `share_party`의 "계정과 마지막으로 맞춘 값"이다(내가 줄을 만들 때와 받은 줄을 반영할 때 적는다).
+  - 이 PC 값이 맞춘 값 그대로면(고친 적 없음) 받은 값으로 바꾼다. `removed`면 지운다. 없던 거래처는 더한다.
+  - 이 PC에서 고쳤거나 지웠고 아직 올리지 않았으면 이 PC 값을 둔다. 바로 뒤의 모으기가 그 값을 지금 시각의 줄로 올려서 다른 기기가 따라온다. 앱을 오래 꺼 둔 PC의 올리지 않은 수정이 그 사이 다른 PC의 수정을 이길 수 있다(거래처에 고친 시각이 없다). 모으기가 켤 때와 10분마다 돌아서 그 틈은 좁다.
+  - 처음 만나는 거래처(맞춘 적 없음)가 이 PC에도 있으면 받은 값으로 바꾸되, 받은 줄에 없는 대표·주소·메일·품목은 이 PC 값을 남기고 합친 값을 올린다. 처음 만났는데 `removed`면 이 PC 것을 지우지 않는다(따로 넣은 거래처다).
+  - 새로 들어온 거래처는 이 PC에서 진위확인을 한 적이 없는 상태다. 상호·대표가 바뀌면 진위확인 결과를 비운다(이 PC에서 고칠 때와 같다). 값이 이 PC 규칙 밖이면(사업자번호 검증, 메일 모양, 품목 모양) 넣지 않는다. 폰이 쓴 거래처 줄은 보지 않는다.
+  - main은 바뀐 곳 수를 받아 거래처 목록을 다시 읽는다. 로그에는 개수만 남긴다.
+- 받은 발급 기록은 화면과 경고에만 쓴다. 받은 거래처로 발급할 때도 발급 값은 승인 카드에서 사람이 본다.
+
+**서버가 아는 것과 모르는 것**
+
+- 아는 것: 줄의 종류, 순번, 받은 시각, 크기 버킷, 올린 기기, 세대, 맡긴 일의 상태(열림·맡음·끝남·취소)와 맡은 기기·시각. 종류에서 "이 계정이 돈 요약을 올린다(은행 자료를 쓴다)"와 그 시각도 드러난다.
+- 모르는 것: 거래처, 사업자번호, 금액, 품목, 승인번호, 맡긴 일의 내용, 실패 코드, 받을 돈·낼 돈·잔액.
+- 그래서 서버는 PC·폰이 2대 이상인 계정의 발급 건수와 시각을 안다(`issue` 줄의 수와 시각). D07 §5 "없는 것" 원칙의 예외이고 ADR-048 결정 5가 받아들인 값이다. ADR-024의 업무 키 표시(`biz_key_marks`, Phase 2)는 이 기록이 대신한다.
+
+**남는 위험**
+
+- 폰 한 대가 침해되면 그 폰이 가진 세대의 줄을 모두 읽는다(발급 기록·거래처·돈 요약). 끊으면 다음 세대부터 막힌다.
+- 침해된 PC는 RK를 가지므로 모든 세대를 읽고 PC 줄을 지어낼 수 있다(지금도 그 PC의 장부를 읽는 것과 같은 범위).
+- 서버가 줄을 숨기면 다른 기기의 기록이 늦게 보인다. 클라이언트는 받은 마지막 순번보다 낮은 `head`를 주는 서버를 믿지 않는다.

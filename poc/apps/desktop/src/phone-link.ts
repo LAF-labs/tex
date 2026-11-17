@@ -23,6 +23,7 @@ import {
   type PairRecord,
   type RelayLink,
   type RelayQueue,
+  type ShareKeyBody,
   type Signer,
   type CTX,
   type Channel,
@@ -173,6 +174,11 @@ export interface PhoneLinkOptions {
   appVersion: string;
   capabilities?: () => readonly string[];
   /**
+   * 계정 공유 기록 열쇠(remote-envelope v1.9 share.key, ADR-048 결정 5). 있으면 hello에 share.v1을 알리고,
+   * 폰이 share.v1을 알린 세션을 열 때와 pushShareKeys() 때 이 폰에 줄 열쇠 묶음을 묻는다. null이면 보내지 않는다(이 폰이 지금 기기 목록에 없다 등).
+   */
+  shareKeys?: (deviceId: string) => Promise<ShareKeyBody | null>;
+  /**
    * 라이브 세션 위의 PC 쪽 기능(v1.8 폰 발급 명령·폰 사본, phone-session.ts). 세션이 열리면 open, 봉투마다 handle(받았으면 true,
    * 아니면 사진·현금 수신기로 넘긴다), 닫히면 close. 없으면 사진·현금만 받는다.
    */
@@ -202,6 +208,8 @@ interface Runner {
   kick: () => void;
   /** 라이브 재시도 대기를 끊고 바로 다시 붙는다(백오프 초기화) */
   retry: (() => void) | null;
+  /** 지금 열려 있고 폰이 share.v1을 알린 세션의 보내는 쪽. 없으면 null */
+  shareSend: ((body: ShareKeyBody) => void) | null;
 }
 
 /** 라이브 재연결 백오프: 1초부터 두 배씩, 30초 상한(집에 둔 PC가 밖의 폰에 늦어도 30초 안에 다시 붙는다). */
@@ -355,7 +363,7 @@ export class PhoneLink {
     if (this.#runs.has(rec.pairId)) return;
     const abort = new AbortController();
     let wake: (() => void) | null = null;
-    const run: Runner = { rec, abort, link: null, online: false, kick: () => wake?.(), retry: null };
+    const run: Runner = { rec, abort, link: null, online: false, kick: () => wake?.(), retry: null, shareSend: null };
     this.#runs.set(rec.pairId, run);
     // 큐: 번들 갱신 + 폴링
     this.#track((async () => {
@@ -440,7 +448,7 @@ export class PhoneLink {
           sess = await acceptDesktopSession(link, {
           noise: keys.noise,
           pair,
-          hello: { appVersion: this.#o.appVersion, deviceListVersion: this.#o.deviceListVersion(), asyncSeqMax: rec.asyncSeqMax, capabilities: [...(this.#o.capabilities?.() ?? DESKTOP_CAPS)] },
+          hello: { appVersion: this.#o.appVersion, deviceListVersion: this.#o.deviceListVersion(), asyncSeqMax: rec.asyncSeqMax, capabilities: [...(this.#o.capabilities?.() ?? DESKTOP_CAPS), ...(this.#o.shareKeys ? [CAP.share] : [])] },
           persistTs: (_id, ts) => this.#persist(rec, { ikTsMax: ts }),
           });
         } catch (e) {
@@ -456,6 +464,12 @@ export class PhoneLink {
         this.#log('main.phone_live', { step: 'session', listMismatch: sess.deviceListMismatch });
         // 폰이 세션을 열 때 큐에 남긴 것도 비운다(라이브로 다시 보내기 전에 중복을 줄인다)
         run.kick();
+        // 계정 공유 기록 열쇠: 폰이 받겠다고 알렸을 때만 준다(세션을 열 때마다. 폰은 가진 것과 견줘 같은 것만 받는다)
+        if (this.#o.shareKeys && sess.peerHello.capabilities.includes(CAP.share)) {
+          const ch = sess.channel;
+          run.shareSend = (body) => ch.send('share.key', body);
+          await this.#giveShareKeys(run);
+        }
         const hook = this.#o.session;
         try {
           await hook?.open(rec.pairId, sess.channel, sess.peerHello.capabilities);
@@ -475,11 +489,37 @@ export class PhoneLink {
           hook?.close(rec.pairId, sess.channel);
         }
         run.online = false;
+        run.shareSend = null;
         this.#o.onChange?.();
       }
       run.link = null;
       if (!abort.signal.aborted) await this.#retryWait(run, backoff);
     }
+  }
+
+  /** 열려 있는 세션으로 이 폰에 열쇠 묶음을 보낸다. 실패해도 세션은 그대로 둔다(다음 세션에서 다시 준다). 보냈으면 true */
+  async #giveShareKeys(run: Runner): Promise<boolean> {
+    try {
+      const body = await this.#o.shareKeys?.(run.rec.deviceId);
+      const send = run.shareSend;
+      if (!body || !send) {
+        this.#log('main.phone_live', { step: 'share_key', result: body ? 'closed' : 'none' });
+        return false;
+      }
+      send(body);
+      this.#log('main.phone_live', { step: 'share_key', result: 'sent', epochs: body.shareKeys.length });
+      return true;
+    } catch (e) {
+      this.#log('main.phone_live', { step: 'share_key', result: codeOf(e) });
+      return false;
+    }
+  }
+
+  /** 세대가 올랐을 때(기기를 끊었다) 지금 연결된 폰들에 새 열쇠 묶음을 다시 준다. 꺼져 있는 폰은 다음 세션에서 받는다. 보낸 폰 수를 돌려준다. */
+  async pushShareKeys(): Promise<number> {
+    let n = 0;
+    for (const run of this.#runs.values()) if (run.shareSend && (await this.#giveShareKeys(run))) n++;
+    return n;
   }
 
   async #ensureBundle(rec: PhoneRecord): Promise<void> {

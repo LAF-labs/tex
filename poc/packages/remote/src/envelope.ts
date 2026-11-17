@@ -9,7 +9,7 @@ import { ulid } from './ulid.ts';
 
 export type Role = 'desktop' | 'mobile';
 /** 스키마 type enum과 같아야 한다(tests/remote-envelope.test.ts가 대조). */
-export type MessageType = 'hello' | 'pair.ok' | 'kek.grant' | 'devlist.push' | 'mbx.reissue' | 'close' | 'ping' | 'pong' | 'receipt.offer' | 'receipt.chunk' | 'receipt.ack' | 'cash.entry' | 'cash.ack' | 'cmd.run' | 'cmd.abort' | 'cmd.resume' | 'run.event' | 'gate.request' | 'gate.response' | 'consent.request' | 'consent.response' | 'human.request' | 'human.response' | 'file.offer' | 'query.documents' | 'query.result' | 'rotate.static' | 'cmd.ack' | 'phone.copy';
+export type MessageType = 'hello' | 'pair.ok' | 'kek.grant' | 'devlist.push' | 'mbx.reissue' | 'close' | 'ping' | 'pong' | 'receipt.offer' | 'receipt.chunk' | 'receipt.ack' | 'cash.entry' | 'cash.ack' | 'cmd.run' | 'cmd.abort' | 'cmd.resume' | 'run.event' | 'gate.request' | 'gate.response' | 'consent.request' | 'consent.response' | 'human.request' | 'human.response' | 'file.offer' | 'query.documents' | 'query.result' | 'rotate.static' | 'cmd.ack' | 'phone.copy' | 'share.key';
 
 export const ALL_MESSAGE_TYPES: readonly string[] = MESSAGE_TYPES as readonly string[];
 const BIN = new Set<string>(BINARY_KEYS as readonly string[]);
@@ -239,6 +239,15 @@ export interface CopyCounterparty {
   phoneApprovable?: boolean;
   last?: { supply: number; vatMode: 'excl' | 'incl'; item: string; day: string };
 }
+/**
+ * 계정 공유 기록 열쇠(v1.9, ADR-048 결정 5, D07 §10). PC→폰, 라이브 세션 전용. 폰이 hello에서 share.v1을 알렸을 때만 보낸다.
+ * shareKeys는 세대 0부터 지금 세대까지 빠짐없이 오름차순이다. 폰은 RK를 받지 않는다.
+ */
+export interface ShareKeyBody {
+  /** Ws(Ed25519) 공개키. PC가 쓴 줄의 서명을 확인한다 */
+  shareSignPub: string;
+  shareKeys: { epoch: number; shareKey: string }[];
+}
 export interface PhoneCopyBody {
   asOf: number;
   counterparties: CopyCounterparty[];
@@ -268,6 +277,7 @@ export interface Bodies {
   'gate.request': GateRequestBody;
   'gate.response': GateResponseBody;
   'phone.copy': PhoneCopyBody;
+  'share.key': ShareKeyBody;
 }
 export type KnownType = keyof Bodies;
 export type BodyOf<T extends string> = T extends KnownType ? Bodies[T] : object;

@@ -79,6 +79,11 @@ const SAMPLES: Record<string, { from: 'desktop' | 'mobile'; body: object; bad: o
     },
     bad: { asOf: 1, counterparties: [{ ref: 'cp 1', name: '' }], chat: 'x' },
   },
+  'share.key': {
+    from: 'desktop',
+    body: { shareSignPub: b64(new Uint8Array(32).fill(7)), shareKeys: [{ epoch: 0, shareKey: b64(new Uint8Array(32).fill(1)) }, { epoch: 1, shareKey: b64(new Uint8Array(32).fill(2)) }] },
+    bad: { shareSignPub: b64(new Uint8Array(32)), shareKeys: [{ epoch: 0, shareKey: b64(new Uint8Array(32)), rk: b64(new Uint8Array(32)) }] },
+  },
 };
 
 function env(type: string, from: 'desktop' | 'mobile', body: object): Envelope {
@@ -115,7 +120,7 @@ describe('메시지 종류마다 왕복·거부', () => {
       assert.equal(validateEnvelope(env(t, s.from, s.bad)), false, `${t} bad should fail`);
       assert.throws(() => encodeEnvelope(env(t, s.from, s.bad)));
       // 방향이 정해진 종류는 반대 방향을 거부한다(Phase 1 새 종류)
-      if (t.startsWith('receipt.') || t.startsWith('cash.')) assert.equal(validateEnvelope(env(t, s.from === 'mobile' ? 'desktop' : 'mobile', s.body)), false);
+      if (t.startsWith('receipt.') || t.startsWith('cash.') || t === 'share.key') assert.equal(validateEnvelope(env(t, s.from === 'mobile' ? 'desktop' : 'mobile', s.body)), false);
     });
   }
 });
