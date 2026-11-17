@@ -1,7 +1,7 @@
 // 온보딩(08 §4 O-01~O-06, D14 M4-2)과 동의 화면 4종(D15 F-06, 팀장 승인 2026-11-05). Electron 없이 도는 상태 기계다.
 // - 온보딩은 메인 대화의 첫 부분이다. 한 번에 하나씩 묻고, 사용자는 카드의 칩·버튼을 누른다(08 §4 공통 규칙).
 // - 첫 실행은 짧게(B4, 대표 지시 2026-11-13 "승인·동의 단계를 늘리지 않는다"): 약관과 모델 처리 고지를 한 화면 한 클릭으로 받고(동의 레코드는 둘 다 남긴다),
-//   사용 기록(기본 꺼짐)·맡길 업무(지금 되는 일은 세금계산서뿐)·거래처·요약 확인 화면은 묻지 않는다. 인증 단계는 "홈택스 인증서"(이 PC 인증서 고르기)다.
+//   사용 기록(기본 꺼짐)·맡길 업무(지금 되는 일 전부)·거래처·요약 확인 화면은 묻지 않는다. 인증 단계는 "홈택스 인증서"(이 PC 인증서 고르기)다.
 //   옛 이어 하기 저장이 없어진 화면(telemetry·tasks·counterparties)에 멈춰 있으면 요약으로 옮긴다.
 // - 문구는 전부 "F-06 초안 전" 자리표시이고 키에 판을 붙인다(F-06이 오면 문구만 바꾼다).
 // - 비밀(홈택스 비밀번호·보안카드)은 여기를 지나지 않는다. ①은 금고 등록 창(T-06)을 여는 결속값(notice 판)만 만들고, 값은 금고 창에서 금고로 직접 간다(ADR-025·026).
@@ -10,6 +10,7 @@
 
 import type { ConsentRecord, SecretStoreResult, StoreBind } from '@sax/vault';
 import { isValidBizNo } from '@sax/db';
+import { certDocByCode } from './cert-docs.ts';
 
 export const ONB_STEPS = ['terms', 'welcome', 'biz-number', 'biz-confirm', 'auth', 'delegation', 'model', 'telemetry', 'tasks', 'counterparties', 'summary', 'first', 'done'] as const;
 export type OnbStep = (typeof ONB_STEPS)[number];
@@ -20,7 +21,7 @@ export const ONB_CHOICES = {
   welcome: ['upload', 'number', 'later'],
   'biz-number': ['submit', 'back'],
   'biz-confirm': ['confirm', 'confirm_unverified', 'edit', 'recheck', 'later'],
-  auth: ['card', 'simple', 'cert', 'fincert', 'unsure', 'later'],
+  auth: ['card', 'simple', 'cert', 'fincert', 'unsure', 'later', 'rescan'],
   delegation: ['agree', 'switch'],
   // ② 모델 처리 동의는 필수다(약관과 같은 취급, 사용자 결정 2026-11-10 "오프라인 해석은 없다"). 거절 선택지는 없다.
   model: ['agree'],
@@ -215,15 +216,16 @@ export const AUTH_SIGN_METHOD: Record<AuthKind, 'security_card' | 'simple_auth' 
 export const defaultCertId = (certs: ReadonlyArray<{ id: string; usable?: boolean }>): string | null => certs.find((c) => c.usable !== false)?.id ?? null;
 export const AUTH_LABEL: Record<AuthKind, string> = { card: '보안카드', simple: '사업자 간편인증', cert: '공동인증서', fincert: '금융인증서' };
 
-/** O-04 맡길 업무. now: 이 빌드에서 켠 일(08 §4). H-03·H-04는 민원증명 실행이 들어오면 켠다. 꺼진 일은 회색 칩(누르면 "지원되면 알림"). O-06 "지금 되는 일"도 이 표에서 만든다. */
+/** O-04 맡길 업무. now: 이 빌드에서 켠 일(08 §4). 꺼진 일은 회색 칩(누르면 "지원되면 알림"). O-06 "지금 되는 일"도 이 표에서 만든다. 민원증명 이름은 cert-docs 표에서. */
 export const ONB_TASKS: ReadonlyArray<{ id: string; label: string; now: boolean }> = [
   { id: 'H-01', label: '세금계산서 발급·메일 전송', now: true },
-  { id: 'H-03', label: '사업자등록증명', now: false },
-  { id: 'H-04', label: '납세증명서', now: false },
+  { id: 'H-03', label: certDocByCode('H-03')!.label, now: true },
+  { id: 'H-04', label: certDocByCode('H-04')!.label, now: true },
   { id: 'H-02', label: '발급한 세금계산서 조회·PDF 보관', now: false },
   { id: 'H-10', label: '사실증명', now: false },
   { id: 'G-01', label: '주민등록 등·초본(직접 발급 안내)', now: false },
-];
+  // 출시판에서 숨긴 민원증명(cert-docs hidden)은 맡길 업무에 보이지 않는다
+].filter((t) => !certDocByCode(t.id)?.hidden);
 const NOW_TASKS = new Set(ONB_TASKS.filter((t) => t.now).map((t) => t.id));
 
 /** 건너뛴 항목(판의 "할 일", 08 §4). */
@@ -505,7 +507,7 @@ export class OnboardingFlow {
     }
     await this.finish();
   }
-  /** 마치기(요약 확인 화면 없이): 사업자 프로필을 저장하고 첫 발급 제안으로(다시 연 것이면 끝). 맡길 업무는 지금 되는 일(세금계산서)이다. */
+  /** 마치기(요약 확인 화면 없이): 사업자 프로필을 저장하고 첫 발급 제안으로(다시 연 것이면 끝). 맡길 업무는 지금 되는 일 전부(ONB_TASKS now)다. */
   private async finish() {
     const s = this.s;
     if (!s.tasks.length && !s.skipped.includes('tasks')) s.tasks = ONB_TASKS.filter((t) => t.now).map((t) => t.id);
@@ -642,6 +644,11 @@ export class OnboardingFlow {
         await this.afterBiz(false);
         return;
       case 'auth':
+        // 인증서를 이 PC로 옮긴 뒤 [다시 찾기]: 목록만 다시 읽는다(대화에 답을 남기지 않는다, 단계도 그대로)
+        if (a.choice === 'rescan') {
+          s.certs = await this.ports.findCerts().catch(() => s.certs);
+          return;
+        }
         if (a.choice === 'unsure') {
           // 모르면 공동인증서(대표 지시 2026-11-14): 이 PC 인증서가 있으면 첫 사용 가능 인증서로 정하고 넘어간다
           this.say('잘 모르겠어요');
@@ -761,7 +768,7 @@ export class OnboardingFlow {
       case 'first':
         this.say(a.choice === 'try' ? '지금 해 볼게요' : '나중에 할게요');
         s.step = 'done';
-        // [지금 해 보기]는 지금 되는 일(세금계산서)로 채운다(F-13: 민원증명 실행이 들어오기 전에는 "증명서 발급은 곧…"이라 첫 시도가 안 됐다)
+        // [지금 해 보기]는 지금 되는 일(세금계산서)로 채운다(F-13)
         return a.choice === 'try' ? TRY_FIRST_FILL : undefined;
     }
     return;

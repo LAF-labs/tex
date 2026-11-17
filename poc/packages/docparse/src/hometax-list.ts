@@ -1,4 +1,4 @@
-// 홈택스 전자세금계산서 "발급 목록조회" [내려받기] 엑셀(09 §5.1 매출 원천 보강). 앱 밖에서 직접 발급한 매출도 받을 돈 건으로 들인다.
+// 홈택스 전자세금계산서 "발급 목록조회"·"수취 목록조회" [내려받기] 엑셀(09 §5.1 매출 원천 보강, 11 §2.1 매입 원천). 앱 밖에서 직접 발급한 매출은 받을 돈, 받은 매입은 낼 돈 건으로 들인다.
 // 열 근거: 2026-11-11 실화면 기록(목록 그리드 data-col_id: 작성일자·발급일자·전송일자·공급받는자 등록번호·상호·대표자·품목명·합계·공급가액·세액·승인번호).
 // 내려받은 파일의 머리글 글자는 아직 실물로 확인하지 않았다("추정"). 공급자·공급받는자 칸이 같은 이름(상호·대표자명·등록번호)으로 두 번 나오는
 // 한 줄 머리글과, 위 줄에 "공급자"/"공급받는자"가 있는 두 줄 머리글을 모두 받는다. 판정 없음: 줄을 다듬어 돌려줄 뿐이다.
@@ -12,6 +12,9 @@ export interface HometaxInvoiceRow {
   writtenOn: string;
   issuedOn: string | null;
   supplierBizNo: string | null;
+  /** 공급자 상호·대표자(수취 목록에서 낼 돈의 거래처가 된다) */
+  supplierName: string | null;
+  supplierRep: string | null;
   buyerBizNo: string | null;
   buyerName: string | null;
   buyerRep: string | null;
@@ -30,7 +33,7 @@ export interface HometaxListParse {
   warnings: string[];
 }
 
-type Role = 'written' | 'issued' | 'approval' | 'supplier_biz' | 'buyer_biz' | 'buyer_name' | 'buyer_rep' | 'item' | 'total' | 'supply' | 'tax';
+type Role = 'written' | 'issued' | 'approval' | 'supplier_biz' | 'supplier_name' | 'supplier_rep' | 'buyer_biz' | 'buyer_name' | 'buyer_rep' | 'item' | 'total' | 'supply' | 'tax';
 
 const digits = (v: Cell | undefined) => cellText(v ?? null).replace(/\D/g, '');
 const dayOf = (v: Cell | undefined): string | null => {
@@ -59,8 +62,8 @@ function roleOfHeader(h: string, group: 'supplier' | 'buyer' | null, nth: number
   if (c === '세액' || c.endsWith('세액')) return 'tax';
   if (c.includes('품목')) return 'item';
   if (c.includes('등록번호') || c.includes('사업자번호')) return buyer && !supplier ? 'buyer_biz' : 'supplier_biz';
-  if (c.includes('상호') || c.includes('법인명')) return buyer && !supplier ? 'buyer_name' : null;
-  if (c.includes('대표자') || c === '성명') return buyer && !supplier ? 'buyer_rep' : null;
+  if (c.includes('상호') || c.includes('법인명')) return buyer && !supplier ? 'buyer_name' : 'supplier_name';
+  if (c.includes('대표자') || c === '성명') return buyer && !supplier ? 'buyer_rep' : 'supplier_rep';
   return null;
 }
 
@@ -136,6 +139,8 @@ export function parseHometaxIssueList(out: SheetOutput): HometaxListParse {
       writtenOn,
       issuedOn: dayOf(at(row, 'issued')),
       supplierBizNo: biz('supplier_biz'),
+      supplierName: textOf(at(row, 'supplier_name')),
+      supplierRep: textOf(at(row, 'supplier_rep')),
       buyerBizNo: biz('buyer_biz'),
       buyerName: textOf(at(row, 'buyer_name')),
       buyerRep: textOf(at(row, 'buyer_rep')),

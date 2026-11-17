@@ -92,7 +92,7 @@ export const CHAT_CAPABILITIES = [
 ] as const;
 export type ChatCapabilityId = (typeof CHAT_CAPABILITIES)[number]['id'];
 /** 답 문장 상한(글자). 공급사 strict 스키마가 maxLength를 받지 않을 수 있어 스키마에는 넣지 않고 엔진이 검사한다. */
-export const CHAT_REPLY_MAX_CHARS = 200;
+export { CHAT_REPLY_MAX_CHARS } from '@sax/chat-core';
 /** 제안 작업 상한 */
 export const CHAT_SUGGEST_MAX = 3;
 /** 답 종류. tax_advice면 엔진이 답 문장을 버리고 고정 문구로 바꾼다(D04 §3). */

@@ -106,7 +106,7 @@ async function flow() {
   await send('오늘 날씨 어때');
   const lastReply = () => js<{ text: string; html: boolean; chips: string[]; filtered: string | null } | null>(`(() => { const b = [...document.querySelectorAll('[data-chat-reply]')].pop(); return b ? { text: b.querySelector('p').textContent, html: !!b.querySelector('p b'), chips: [...b.querySelectorAll('[data-chat-suggest]')].map((c) => c.dataset.chatSuggest + ':' + c.textContent), filtered: b.dataset.chatReply } : null; })()`);
   check('모름 → chat.respond에 문장 그대로, 답은 텍스트 노드(태그 해석 없음)', (await until('chat reply', async () => !!(await lastReply()))) && chatSeen.at(-1) === '오늘 날씨 어때' && (await lastReply())!.text.startsWith('<b>날씨</b>') && !(await lastReply())!.html);
-  // 증명서는 지금 못 하는 일이라 제안 칩이 없다(#291과 같은 원칙)
+  // 제안 칩은 대화 모델 도구 목록(packages/model chat_reply)에서 온다. 민원증명은 해석 전에 이 PC 규칙으로 바로 시작하므로 칩에 없다
   check('제안 칩 1개(세금계산서 발급), 카드는 생기지 않는다', JSON.stringify((await lastReply())!.chips) === JSON.stringify(['hometax.invoice.issue:세금계산서 발급']) && (await runs()) === n0);
   check('고정 문구(빈 요청 안내)가 기본 답이 아니다', !(await lastApp()).includes('세금계산서 발급이나 지난 발급·매출을 말해 주세요'));
   await js(`[...document.querySelectorAll('[data-chat-suggest="hometax.invoice.issue"]')].pop().click()`);

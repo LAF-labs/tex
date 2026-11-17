@@ -8,9 +8,13 @@
  ],
  "effects": [],
  "inputs": {
-  "key": {
+  "certDoc": {
    "type": "string",
    "required": true
+  },
+  "window": {
+   "type": "string",
+   "required": false
   }
  },
  "steps": [
@@ -29,7 +33,7 @@
    "id": "s2",
    "type": "fill",
    "target": "hometax.certlookup.searchKey",
-   "value": "$inputs.key"
+   "value": "$inputs.certDoc"
   },
   {
    "id": "s3",
@@ -42,12 +46,29 @@
    "target": "hometax.certlookup.searchButton"
   },
   {
+   "id": "s4b",
+   "type": "wait",
+   "for": "idle",
+   "timeoutMs": 15000
+  },
+  {
    "id": "s5",
    "type": "extract",
    "name": "rows",
    "from": {
     "a11y": {
      "target": "hometax.certlookup.rows"
+    }
+   }
+  },
+  {
+   "id": "s5b",
+   "type": "extract",
+   "name": "count",
+   "from": {
+    "regex": {
+     "target": "hometax.certlookup.count",
+     "patternRef": "lookup.countPattern"
     }
    }
   },

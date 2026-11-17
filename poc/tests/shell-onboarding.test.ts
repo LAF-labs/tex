@@ -331,7 +331,7 @@ describe('동의 화면 4종', () => {
 });
 
 describe('요약·첫 작업·이어 하기', () => {
-  it('맡길 업무·거래처·요약 확인은 묻지 않는다(B4): 인증 뒤 바로 첫 작업 제안, 업무는 지금 되는 일(세금계산서)', async () => {
+  it('맡길 업무·거래처·요약 확인은 묻지 않는다(B4): 인증 뒤 바로 첫 작업 제안, 업무는 지금 되는 일(세금계산서·사업자등록증명)', async () => {
     const { flow } = make();
     await walk(flow, [
       { step: 'terms', choice: 'agree' },
@@ -339,7 +339,8 @@ describe('요약·첫 작업·이어 하기', () => {
       { step: 'auth', choice: 'later' },
     ]);
     assert.equal(flow.state.step, 'first');
-    assert.deepEqual(flow.state.tasks, ['H-01']);
+    // 민원증명(PR #272)도 지금 되는 일이다. 출시판에서 숨긴 납세증명서(H-04, cert-docs hidden)는 들어가지 않는다
+    assert.deepEqual(flow.state.tasks, ['H-01', 'H-03']);
     // 옛 요약 화면에 멈춘 저장은 [확인했어요]로 마친다
     const old = make();
     const f = new OnboardingFlow(old.ports, { ...flow.state, step: 'summary' }, NOW);

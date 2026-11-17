@@ -1,3 +1,8 @@
 {
- "certlookup.title": "민원신청 처리결과 조회"
+ "certlookup.title": "민원신청 처리결과 조회",
+ "lookup.countPattern": "^([0-9,]+)$",
+ "lookup.column.certDoc": "tbx_cvaKndNm",
+ "lookup.column.approvalNo": "tbx_rcatNo",
+ "lookup.column.status": "btn_cvaTrtStatCdNm",
+ "lookup.table.cellIdPattern": "^mf_txppWframe_gen_cvaInf_(\\d+)_(.+)$"
 }

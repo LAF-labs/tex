@@ -12,6 +12,7 @@
 | [sovereign-ax/01-business-plan.md](sovereign-ax/01-business-plan.md) ~ [06-feasibility.md](sovereign-ax/06-feasibility.md) | 사업·서비스 기획, 아키텍처 개요, 로드맵, 접근 허용·봇탐지, 가능성 검토 | v1.2 (기준 시나리오·검수 반영) + 서류 카탈로그 반영(ADR-018) |
 | [sovereign-ax/07-document-catalog.md](sovereign-ax/07-document-catalog.md) | 사업자 서류 카탈로그: 공고문 36건 수요 집계, 상황별 세분화, 플레이북 우선순위 근거 | v0.1 (2026-10-30) |
 | [sovereign-ax/08-screen-plan.md](sovereign-ax/08-screen-plan.md) | 화면·기능 기획: 화면 34개(PC 27·모바일 7), 채팅 온보딩, 작업 상태 흐름, 예외 상태, Claude Design 전달 사항 | v0.1 (2026-10-30) |
+| [sovereign-ax/09-bank-matching.md](sovereign-ax/09-bank-matching.md) · [11-cash-flow.md](sovereign-ax/11-cash-flow.md) | 돈 맞추기(받을 돈, 계좌 연결) 1단계 · 낼 돈(매입)과 현금흐름 분석 | 09 v0.1 구현됨 · 11 v0.1 제안 (2026-11-16) |
 | [sovereign-ax/design-system/](sovereign-ax/design-system/README.md) | 디자인 시스템: 토큰(라이트·다크), 데이터 위계, 컴포넌트 14개 | v1.1 (2026-10-30) |
 | [sovereign-ax/design/](sovereign-ax/design/00-overview.md) | 개발 설계서 D00~D19, JSON 스키마 9종, ADR-001~029(ADR-024는 별도 PR, ADR-030 예약) | v1.3 (공격표면 감사 3건 반영) · AUDIT-D 반영 2026-11-03: [D19](sovereign-ax/design/19-attack-surface.md) §3.5에 확정 53건 등록, ADR-025~029 |
 | [sovereign-ax/legal/](sovereign-ax/legal/README.md) | 이용약관·개인정보 처리방침(F-06): 전문은 사이트 `/terms`·`/privacy`, 채울 회사 정보·코드 불일치·변호사 확인 목록 | 초안 (2026-11-16) |

@@ -11,8 +11,11 @@ import { isSecretEntry, type SelectorDict, type SelectorEntry } from './types.ts
 const NUMERIC_KEYS = new Set(['supplyAmount', 'taxAmount', 'totalAmount', 'itemCount']);
 const BIZNO_KEYS = new Set(['supplierBizNo', 'counterpartBizNo']);
 const DATE_KEY = /Date$/;
-/** DOM value를 읽는 역할. 그 밖의 역할(표시 요소·라디오 등)은 보이는 텍스트를 읽는다. */
-const INPUT_ROLES = new Set(['textbox', 'spinbutton', 'combobox', 'searchbox']);
+/**
+ * DOM value를 읽는 역할(드라이버 value: select는 고른 선택지의 이름, radiogroup은 고른 라디오의 이름). 그 밖의 역할(표시 요소·라디오 하나 등)은 보이는 텍스트를 읽는다.
+ * radiogroup(민원증명 발급유형·주민번호 공개 여부, 홈택스 라디오 묶음)의 보이는 텍스트는 선택지 전부라 값이 아니다.
+ */
+const INPUT_ROLES = new Set(['textbox', 'spinbutton', 'combobox', 'searchbox', 'radiogroup']);
 
 type Normalizable = Pick<SelectorEntry, 'fieldKey' | 'inputType'>;
 
@@ -56,10 +59,15 @@ export function displayEntryKeys(dict: SelectorDict, fieldKey: string): string[]
 
 /** 요소의 화면 값: 입력 역할이면 DOM value, 아니면 보이는 텍스트. */
 export async function domValue(page: PageReader, entry: SelectorEntry, el: ElementRef): Promise<string> {
-  return INPUT_ROLES.has(entry.role) ? page.value(el) : page.text(el);
+  // 역할 없는 라디오 묶음(홈택스 민원증명 발급유형: div 안 라디오, inputType radio)도 고른 라디오 이름을 읽는다(2026-11-14 실화면 run-3f242cd5)
+  return INPUT_ROLES.has(entry.role) || entry.inputType === 'radio' ? page.value(el) : page.text(el);
 }
 
-export type FieldRead = { ok: true; value: string } | { ok: false; code: string };
+/** detail: 진단용 글자 모양만(값 없음, ⑦). 숫자 9·영문 a·한글 k·그 밖 _ 로 바꾸고 12자까지. 예: dom:9999_a11y:empty */
+export type FieldRead = { ok: true; value: string } | { ok: false; code: string; detail?: string };
+
+/** 진단 로그용 글자 모양(값 없음): 엔진 로그 안전 문자(SAFE_VALUE)만 쓴다. */
+const shape = (v: string): string => (v === '' ? 'empty' : [...v.slice(0, 12)].map((c) => (/\d/.test(c) ? '9' : /[A-Za-z]/.test(c) ? 'a' : /[\uAC00-\uD7A3]/.test(c) ? 'k' : '_')).join('') + (v.length > 12 ? `.${v.length}` : ''));
 
 /** fieldKey 하나를 세 값 일치로 되읽는다. 정규화한 값을 돌려준다. */
 export async function readField(page: PageReader, dict: SelectorDict, fieldKey: string): Promise<FieldRead> {
@@ -76,12 +84,14 @@ export async function readField(page: PageReader, dict: SelectorDict, fieldKey: 
     return { ok: true, value: String(n) };
   }
   const value = normalizeFieldValue(entry, await domValue(page, entry, r.t.el));
-  if (normalizeFieldValue(entry, await page.a11yValue(r.t.el)) !== value) return { ok: false, code: 'step.readback_mismatch' };
+  const a11y = normalizeFieldValue(entry, await page.a11yValue(r.t.el));
+  if (a11y !== value) return { ok: false, code: 'step.readback_mismatch', detail: `dom:${shape(value)}_a11y:${shape(a11y)}` };
   for (const dk of displayEntryKeys(dict, fieldKey)) {
     if (isSecretEntry(dict.entries[dk])) return { ok: false, code: 'step.secret_field' };
     const d = await resolveTarget(page, dict, dk);
     if (!d.ok) return { ok: false, code: d.code };
-    if (normalizeFieldValue(entry, await page.text(d.t.el)) !== value) return { ok: false, code: 'step.readback_mismatch' };
+    const shown = normalizeFieldValue(entry, await page.text(d.t.el));
+    if (shown !== value) return { ok: false, code: 'step.readback_mismatch', detail: `dom:${shape(value)}_display:${shape(shown)}` };
   }
   return { ok: true, value };
 }

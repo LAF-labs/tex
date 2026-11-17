@@ -35,6 +35,8 @@ export interface RunHistoryRow {
   counterpartyName: string | null;
   supply: number | null;
   tax: number | null;
+  /** 민원증명 실행의 입력 요약(서류·용도·제출처·주민번호 공개 선택값 등 패키지 선언 키). H-01·옛 실행·읽지 못하면 null. */
+  certInputs: Readonly<Record<string, string>> | null;
 }
 
 const aad = (runId: string) => `runs.inputs_json_enc|${runId}`;
@@ -46,12 +48,35 @@ export function recordRunInputs(db: Db, cipher: ColumnCipher, runId: string, s: 
   db.prepare('UPDATE runs SET inputs_json_enc = ? WHERE id = ?').run(blob, runId);
 }
 
-function openInputs(cipher: ColumnCipher | null, runId: string, blob: unknown): RunInputsSummary | null {
+/** 민원증명 입력 요약 상한(칸 수·값 길이). 엔진 certInputs가 이미 검사한 선택값만 온다. */
+const CERT_MAX_KEYS = 16;
+const CERT_MAX_LEN = 100;
+
+/**
+ * 민원증명 실행 입력 요약을 봉인해 runs 행에 둔다(H-01 요약과 같은 칸·같은 AAD 규칙, kind cert). 값은 패키지 선언의 선택값(용도·제출처·주민번호 공개 여부 등)이고
+ * 주민번호 같은 비밀 값은 선언에 없다. 모양이 다르면 아무것도 쓰지 않는다.
+ */
+export function recordCertInputs(db: Db, cipher: ColumnCipher, runId: string, inputs: Readonly<Record<string, string>>): void {
+  const e = Object.entries(inputs);
+  if (e.length > CERT_MAX_KEYS || e.some(([k, v]) => !/^[A-Za-z0-9_]{1,40}$/.test(k) || typeof v !== 'string' || v.length > CERT_MAX_LEN)) return;
+  const blob = cipher.seal(JSON.stringify({ v: 1, kind: 'cert', inputs: Object.fromEntries(e) }), aad(runId));
+  db.prepare('UPDATE runs SET inputs_json_enc = ? WHERE id = ?').run(blob, runId);
+}
+
+type Opened = { kind: 'invoice'; s: RunInputsSummary } | { kind: 'cert'; inputs: Record<string, string> } | null;
+
+function openInputs(cipher: ColumnCipher | null, runId: string, blob: unknown): Opened {
   if (!cipher || !(blob instanceof Uint8Array) || blob.length === 0) return null;
   try {
-    const o = JSON.parse(cipher.open(blob, aad(runId))) as Partial<RunInputsSummary> & { v?: number };
-    if (o.v !== 1 || typeof o.counterpartyId !== 'string' || !Number.isSafeInteger(o.supply) || !Number.isSafeInteger(o.tax)) return null;
-    return { counterpartyId: o.counterpartyId, supply: o.supply!, tax: o.tax! };
+    const o = JSON.parse(cipher.open(blob, aad(runId))) as Partial<RunInputsSummary> & { v?: number; kind?: unknown; inputs?: unknown };
+    if (o.v !== 1) return null;
+    if (o.kind === 'cert') {
+      const x = o.inputs;
+      if (!x || typeof x !== 'object' || Array.isArray(x) || Object.values(x).some((v) => typeof v !== 'string')) return null;
+      return { kind: 'cert', inputs: x as Record<string, string> };
+    }
+    if (typeof o.counterpartyId !== 'string' || !Number.isSafeInteger(o.supply) || !Number.isSafeInteger(o.tax)) return null;
+    return { kind: 'invoice', s: { counterpartyId: o.counterpartyId, supply: o.supply!, tax: o.tax! } };
   } catch {
     return null;
   }
@@ -61,7 +86,8 @@ function openInputs(cipher: ColumnCipher | null, runId: string, blob: unknown): 
 export function runInputsOf(db: Db, cipher: ColumnCipher, runId: string): (RunInputsSummary & { startedAt: string }) | null {
   const r = db.prepare('SELECT started_at, inputs_json_enc FROM runs WHERE id = ?').get(runId) as { started_at: string; inputs_json_enc: unknown } | undefined;
   const s = r ? openInputs(cipher, runId, r.inputs_json_enc) : null;
-  return s && r ? { ...s, startedAt: String(r.started_at) } : null;
+  // 세금계산서 입력만 되살린다(민원증명 in_doubt는 발급목록 재조회 대상이 아니다)
+  return s?.kind === 'invoice' && r ? { ...s.s, startedAt: String(r.started_at) } : null;
 }
 
 export const RUN_HISTORY_MAX = 200;
@@ -92,7 +118,8 @@ export function runHistory(db: Db, cipher: ColumnCipher | null, limit = 50): Run
       }
     }
     const l = ledger.get(runId) as { state: string; verify_ref: string | null } | undefined;
-    const inputs = openInputs(cipher, runId, r.inputs_json_enc);
+    const opened = openInputs(cipher, runId, r.inputs_json_enc);
+    const inputs = opened?.kind === 'invoice' ? opened.s : null;
     const name = inputs ? cpName.get(inputs.counterpartyId) : undefined;
     const d = doc.get(runId);
     return {
@@ -111,6 +138,7 @@ export function runHistory(db: Db, cipher: ColumnCipher | null, limit = 50): Run
       counterpartyName: typeof name === 'string' ? name : null,
       supply: inputs?.supply ?? null,
       tax: inputs?.tax ?? null,
+      certInputs: opened?.kind === 'cert' ? opened.inputs : null,
     };
   });
 }

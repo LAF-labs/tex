@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import ajv2020 from 'ajv/dist/2020.js';
 import type { KeyObject } from 'node:crypto';
 import type { ValidateFunction } from 'ajv';
-import { AGENT_TOOLSETS, BROWSER_AGENT, JEV_LATEST, COMPUTER_USE, DECISION_CHOICE_MAX_CHARS, DECISION_MAX_CHOICES, DECISION_PICK, DECISION_STATE_MAX_CHARS, MASKED_SHOT_MAX_BYTES, CHAT_AGENT, CHAT_REPLY, PAGE_JUDGE, QUERY_PARSE, canonicalJson, selectorRepair, toolsetPrefix, type BundleCatalog, type LoadedBundle, type ToolsetDef } from '@sax/model';
+import { AGENT_TOOLSETS, BROWSER_AGENT, JEV_LATEST, COMPUTER_USE, DECISION_CHOICE_MAX_CHARS, DECISION_MAX_CHOICES, DECISION_PICK, DECISION_STATE_MAX_CHARS, MASKED_SHOT_MAX_BYTES, CHAT_AGENT, CHAT_DIGEST, CHAT_PHONE, CHAT_REPLY, PAGE_JUDGE, PHONE_ONLY_TOOLSETS, PHONE_TOOLSETS, QUERY_PARSE, canonicalJson, selectorRepair, toolsetPrefix, type BundleCatalog, type LoadedBundle, type ToolsetDef } from '@sax/model';
 import { piiTripwire } from '@sax/net';
 import {
   b64u,
@@ -50,6 +50,8 @@ export function loadRequestValidators(): { decide: ValidateFunction; respond: Va
  * chat_agent(대화 에이전트, 2026-11-12)는 도구 6개·4턴이고 같은 대화 범위 예산을 쓴다. 발급·전송 도구는 없다.
  * page_judge·browser_agent(예상 밖 화면 판정·브라우저 에이전트, 2026-11-13)는 도구 없이 1턴이고 실행 범위의 따로 된 예산(agentPerRun)과
  * 따로 된 모델(models.agent)을 쓴다. 엔진은 첫 게이트 앞에서만 부른다.
+ * chat_phone·chat_digest(폰 대화·대화 요약, ADR-047)는 대화 범위 예산(l2PerChat)을 쓴다. chat_phone은 도구 5개·4턴이고 폰 토큰(chat 범위)만,
+ * chat_digest는 도구 없이 1턴이고 폰과 데스크톱 모두 부른다. 폰 토큰은 이 둘만 부를 수 있다(toolsetAllowed).
  */
 /** 판정·에이전트 기본 모델: OpenRouter 라우터 typesafe/jev-router(요청마다 모델·추론 강도를 고른다, tools·structured_outputs, 2026-11-13 목록). 공급자 고정 없이 부른다(RespondSpec.unpinned). */
 export const DEFAULT_AGENT_MODEL = 'typesafe/jev-router';
@@ -92,8 +94,19 @@ export function gatewayToolsets(): Map<string, ToolsetDef> {
     [PAGE_JUDGE.id, PAGE_JUDGE],
     [BROWSER_AGENT.id, BROWSER_AGENT],
     [COMPUTER_USE.id, COMPUTER_USE],
+    [CHAT_PHONE.id, CHAT_PHONE],
+    [CHAT_DIGEST.id, CHAT_DIGEST],
     [DECISION_PICK.id, DECISION_PICK],
   ]);
+}
+
+/**
+ * 역할이 부를 수 있는 툴셋인가(ADR-047). 폰(mobile)은 폰 대화 툴셋만, 데스크톱은 폰 전용(chat_phone)을 뺀 전부.
+ * 라우터가 본문 검증 전에 한 번, 서비스가 검증 뒤에 한 번 더 본다.
+ */
+export function toolsetAllowed(role: 'desktop' | 'mobile', toolset: unknown): boolean {
+  if (typeof toolset !== 'string') return false;
+  return role === 'mobile' ? (PHONE_TOOLSETS as readonly string[]).includes(toolset) : !(PHONE_ONLY_TOOLSETS as readonly string[]).includes(toolset);
 }
 
 function hasImage(v: unknown, depth = 0): boolean {
@@ -155,7 +168,8 @@ export interface GatewayDeps {
   sleep?: (ms: number) => Promise<void>;
 }
 
-type Who = Pick<DeviceClaims, 'acc' | 'dev'> & { tier?: DeviceClaims['tier'] };
+/** role이 없으면 데스크톱으로 본다(이 서비스를 직접 부르는 시험·내부 호출). 라우터는 늘 토큰의 role을 넘긴다. */
+type Who = Pick<DeviceClaims, 'acc' | 'dev'> & { tier?: DeviceClaims['tier']; role?: DeviceClaims['role'] };
 
 export class GatewayService {
   readonly now: () => number;
@@ -185,6 +199,8 @@ export class GatewayService {
   async issueRunToken(who: Who, scope: { runId: string } | { chatSessionId: string }): Promise<{ runToken: string; expiresAt: number; budget: { l1: number; l2: number } }> {
     const k: 'run' | 'chat' = 'runId' in scope ? 'run' : 'chat';
     const id = 'runId' in scope ? scope.runId : scope.chatSessionId;
+    // 폰은 실행을 시작하지 못한다(ADR-047): 대화 범위만. 실행 범위 토큰이 없으면 판정(decide)·에이전트 예산도 열리지 않는다.
+    if (who.role === 'mobile' && k !== 'chat') fail('account.scope_denied');
     // 범위 키는 계정에 묶는다(다른 계정이 같은 runId를 써도 예산이 섞이지 않는다). 원문 ID는 저장하지 않는다.
     const sh = hmacHex(this.d.scopeKey, 'SAX-run-scope-v1', '\u0000', who.acc, '\u0000', k, '\u0000', id).slice(0, 32);
     const now = this.now();
@@ -356,6 +372,7 @@ export class GatewayService {
   // ---------- POST /v1/decide ----------
 
   async decide(who: Who, body: unknown): Promise<{ model: string; answers: unknown; usage: { input_tokens: number; output_tokens: number }; questionsDigest: string }> {
+    if (who.role === 'mobile') fail('account.scope_denied');
     if (!this.v.decide(body)) fail('gateway.param_rejected');
     const b = body as { bundleId: string; bundleDigest: string; input: string; runToken: string };
     const bundle: LoadedBundle | undefined = this.d.catalog.get(b.bundleId);
@@ -423,6 +440,7 @@ export class GatewayService {
     };
     // 규칙 (7): Phase 1 이미지 입력 없음. replay의 item은 스키마가 열어 둔 객체라 여기서 다시 본다.
     if (hasImage(b.replay)) fail('gateway.param_rejected');
+    if (!toolsetAllowed(who.role ?? 'desktop', b.toolset)) fail('account.scope_denied');
     const t = this.toolsets.get(b.toolset);
     if (!t) fail('gateway.param_rejected');
     // 예외(대표 결정 2026-11-16): computer_use만 가린 화면 사진 한 장(PC가 입력 칸·숫자·메일 글을 검게 가린 JPEG). 다른 툴셋의 이미지는 거부.
@@ -432,6 +450,7 @@ export class GatewayService {
     const decision = t!.id === DECISION_PICK.id ? (b.messages.length === 1 && b.messages[0]!.content.length === 1 && b.messages[0]!.content[0]!.type === 'input_text' && !b.replay?.length ? decisionInput(b.messages[0]!.content[0]!.text) : null) : undefined;
     if (decision === null) fail('gateway.param_rejected');
     const rt = this.verifyRunToken(b.runToken, who);
+    if (who.role === 'mobile' && rt.k !== 'chat') fail('gateway.run_token_invalid');
     const replay = b.replay ?? [];
     const callIds = new Set<string>();
     let turns = 0;

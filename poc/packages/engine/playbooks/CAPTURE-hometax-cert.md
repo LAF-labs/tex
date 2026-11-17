@@ -14,19 +14,8 @@
 
 | 서류 | 셀렉터 | 캡처할 것 |
 |---|---|---|
-| H-03 | `hometax.login.simpleAuthButton` | 민원증명 발급에 쓰는 로그인 수단: 공동·금융인증서 버튼 이름(사업자용 간편인증으로 발급되는지 S16, ADR-018 결정 10) |
 | H-03 | `hometax.cert.menu.civil` | 상단 메뉴 「증명·등록·신청」 링크의 접근성 이름(R2 §4) |
 | H-03 | `hometax.cert.menu.issue` | 「민원증명(발급)」(또는 「즉시발급 증명」) 하위 메뉴 이름(02 §5.1·R2 §4 표기가 다르다) |
-| H-03 | `hometax.cert.form.root` | 본문 틀 #mf_txppWframe의 역할(form인지)과 접근성 이름(양식 제목) |
-| H-03 | `hometax.cert.form.docName` | 양식 제목(서류 이름)을 읽을 요소. 제목 요소 id는 wq_uuid라 고정이 아니다 → 역할·이름 확인 |
-| H-03 | `hometax.cert.form.applicantBizNo` | 「기본 인적 사항」에 보이는 신청인 사업자번호 요소(입력 칸이 아님)의 id·역할 |
-| H-03 | `hometax.cert.form.applicantName` | 「기본 인적 사항」의 상호 요소의 id·역할 |
-| H-03 | `hometax.cert.form.language` | 라디오 묶음 요소(_input_0 한글, _input_1 영문증명)의 역할·이름 |
-| H-03 | `hometax.cert.form.rrnDisclosure` | 라디오 묶음 요소(_input_0 공개, _input_1 비공개)의 역할·이름 |
 | H-03 | `hometax.cert.form.issueButton` | [작성완료]을 유효한 값으로 누른 뒤: 확인창·전자서명 창이 뜨는지, wqAction actionId(HAR → commitEndpoints). 접수가 실제로 생기므로 사용자 승인 뒤 |
 | H-03 | `hometax.cert.alert` | 알림창(.w2window.w2popup_window.msg)의 접근성 역할·이름. 본문 「해당 화면은 개인사업자는 이용할 수 없습니다.」 |
-| H-08 | `hometax.cert.form.periodStartYear` | 시작 연도 접근성 이름(라벨 「과세기간」이 시작 연도에 붙어 있다), 값 2026~1997 선택(캡처) |
 | H-08 | `hometax.cert.form.issueButton` | [신청하기]을 유효한 값으로 누른 뒤: 확인창·전자서명 창이 뜨는지, wqAction actionId(HAR → commitEndpoints). 접수가 실제로 생기므로 사용자 승인 뒤 |
-| H-09 | `hometax.cert.menu.doc` | 표준재무제표증명 메뉴 코드(tm3lIdx). 2026-11-10 캡처에는 없다(소득금액증명 4315011000은 개인사업자 로그인에서 막혔다) |
-| H-09 | `hometax.cert.form.root` | 표준재무제표증명 양식 제목·제출 버튼(작성완료·신청하기)·개인사업자 로그인에서 막히는지 |
-| H-09 | `hometax.cert.form.fiscalYear` | 귀속연도(또는 사업연도) 칸의 id·이름·값 형식. 신고가 전산에 반영되지 않은 해는 목록에 없을 수 있음(R10) |

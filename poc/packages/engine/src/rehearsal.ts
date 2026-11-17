@@ -98,8 +98,77 @@ export class RehearsalReport {
   }
 }
 
+/** 페이지 안에서 도는 요소 목록 함수(rehearsalSnap). 보이는 것 위주로 최대 600개. */
+const DOM_INVENTORY = (): unknown => {
+  const vis = (e: Element) => {
+    const r = (e as HTMLElement).getBoundingClientRect?.();
+    return !!r && r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden';
+  };
+  const t = (s: string | null | undefined, n = 60) => (s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+  const sel = 'a, button, input, select, textarea, label, th, h1, h2, h3, h4, legend, [role], .w2window, [id$="_title"], [class*="title"]';
+  const out: unknown[] = [];
+  for (const e of document.querySelectorAll(sel)) {
+    if (out.length >= 600) break;
+    const v = vis(e);
+    const tag = e.tagName.toLowerCase();
+    if (!v && tag !== 'select') continue;
+    const x: Record<string, unknown> = { tag, id: e.id || undefined, cls: t(e.getAttribute('class'), 50) || undefined, role: e.getAttribute('role') || undefined, vis: v };
+    const label = e.getAttribute('aria-label') || e.getAttribute('title');
+    if (label) x.label = t(label);
+    if (tag === 'input') {
+      const i = e as HTMLInputElement;
+      x.type = i.type;
+      x.name = i.name || undefined;
+      if (i.type === 'radio' || i.type === 'checkbox') {
+        x.checked = i.checked;
+        const l = i.id ? document.querySelector(`label[for="${CSS.escape(i.id)}"]`) : null;
+        x.text = t(l?.textContent ?? i.parentElement?.textContent ?? '');
+      }
+      x.disabled = i.disabled || undefined;
+      // 단추 꼴 input은 value가 접근성 이름이다(제출 단추 이름 확인용). 글 칸 값은 넣지 않는다
+      if (i.type === 'button' || i.type === 'submit') x.text = t(i.value, 40);
+    } else if (tag === 'select') {
+      const s = e as HTMLSelectElement;
+      x.options = [...s.options].slice(0, 40).map((o) => t(o.textContent, 40));
+      x.selected = t(s.selectedOptions[0]?.textContent, 40);
+      x.disabled = s.disabled || undefined;
+    } else if (tag !== 'textarea') {
+      x.text = t((e as HTMLElement).innerText ?? e.textContent, tag === 'label' || tag === 'th' ? 40 : 80);
+    }
+    out.push(x);
+  }
+  // id가 있고 자기 글(바로 아래 글 마디)이 있는 보이는 요소: 화면에 값만 보이는 칸(신청인 사업자번호·상호, 경로 표시)을 읽을 자리를 찾는다.
+  const leaves: unknown[] = [];
+  for (const e of document.querySelectorAll('[id]')) {
+    if (leaves.length >= 400) break;
+    if (e.matches(sel) || !vis(e)) continue;
+    const own = [...e.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent ?? '').join(' ');
+    if (!t(own)) continue;
+    leaves.push({ tag: e.tagName.toLowerCase(), id: e.id, cls: t(e.getAttribute('class'), 50) || undefined, role: e.getAttribute('role') || undefined, text: t(own, 60) });
+  }
+  return {
+    leaves, url: location.pathname + location.search.replace(/([?&](?!w2xPath|tmIdx|tm2lIdx|tm3lIdx|menuCd)[^=&]+)=[^&]*/g, '$1=_'), items: out };
+};
+
 /** 화면 기록에 남기는 쿼리 키(메뉴·화면 위치만). 그 밖의 키는 값이 개인값일 수 있어 버린다. */
 const SNAP_QUERY_KEYS = new Set(['w2xPath', 'tmIdx', 'tm2lIdx', 'tm3lIdx', 'menuCd', 'screenId']);
+
+/** 예행 탭의 JS 대화상자(alert·confirm) 글: 최근 5개만, 로컬 snap 파일에만 쓴다(엔진 로그·게이트웨이로 보내지 않는다). */
+const DIALOGS = new WeakMap<Page, Array<{ kind: string; text: string; at: string }>>();
+
+/**
+ * 예행 화면 기록용으로 이 탭의 대화상자 글을 기억한다. 답하지 않는다(답은 엔진 wire의 대화상자 정책이 한다).
+ * H-04 5차 예행(run-ac4e5602): 납세증명서를 누르자 alert가 떠 곧 닫혔는데 글이 어디에도 남지 않아 차단 이유를 알 수 없었다.
+ */
+export function watchDialogs(page: Page): void {
+  if (DIALOGS.has(page)) return;
+  const list: Array<{ kind: string; text: string; at: string }> = [];
+  DIALOGS.set(page, list);
+  page.on('dialog', (d) => {
+    list.push({ kind: d.type(), text: d.message().replace(/\s+/g, ' ').trim().slice(0, 300), at: new Date().toISOString() });
+    if (list.length > 5) list.shift();
+  });
+}
 
 /**
  * 예행 handoff 순간의 화면 기록(부장 2026-11-14): <dir>/snap-<runId>.png(화면 한 장)과 .json(origin·경로·허용 쿼리·문서 제목·단계).
@@ -117,6 +186,9 @@ export async function rehearsalSnap(page: Page, dir: string, runId: string, at: 
   } catch {
     // 금고가 캡처를 거부했거나 시간이 지났다(.json의 shot false)
   }
-  const meta = { runId, phase: at.phase, code: at.code ?? '', origin: u.origin, path: u.pathname, query, title, shot, at: new Date().toISOString() };
+  const meta = { runId, phase: at.phase, code: at.code ?? '', origin: u.origin, path: u.pathname, query, title, shot, at: new Date().toISOString(), dialogs: DIALOGS.get(page) ?? [] };
   await fs.writeFile(path.join(dir, `snap-${runId}.json`), JSON.stringify(meta, null, 1), { mode: 0o600 });
+  // 패키지 맞춤용 요소 목록(예행 전용, 로컬 파일만): 누를 것·고를 것·칸 이름표. 입력 칸의 값은 넣지 않는다(select·radio는 고른 선택지 이름만).
+  const dom = await page.evaluate(DOM_INVENTORY).catch(() => null);
+  if (dom) await fs.writeFile(path.join(dir, `snap-${runId}.dom.json`), JSON.stringify(dom), { mode: 0o600 });
 }
