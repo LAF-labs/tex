@@ -55,7 +55,7 @@ export class ReplyShapeError extends Error {
   }
 }
 
-export type ReplyFilter = null | 'advice' | 'unsafe' | 'refusal' | 'number';
+export type ReplyFilter = null | 'advice' | 'unsafe' | 'refusal' | 'number' | 'slot';
 
 /** 검사를 마친 답. filtered가 있으면 text는 고정 문구다. */
 export interface CheckedReply<K extends string = string, A extends string = string> {
@@ -79,7 +79,32 @@ export interface ReplyCheckCtx<K extends string, A extends string> {
   fallbackText: string;
   /** 슬롯·토큰 밖 숫자가 있고 같이 보일 결과가 있을 때의 고정 안내 */
   numberText: string;
+  /** 사장님이 이번에 쓴 문장(마스킹된 것). 거기 쓴 달·날짜("9월", "10월 31일")는 따라 써도 숫자로 거르지 않는다. 없으면 모두 거른다. */
+  userText?: string;
+  /** 되묻는 답(kind ask)이 숫자로 걸렸을 때 그 칸의 고정 되묻기 문장. 있으면 되묻기는 살린다(사장님이 빈 칸을 채울 수 있게). */
+  askText?: (ask: A) => string;
+  /**
+   * 모르는 결과를 가리키는 슬롯·틀린 슬롯("{d2.first.supply}")이 있을 때. 있으면 그 답을 쓰고(부르는 쪽이 이번 턴 결과로 고정 문장을 고른다),
+   * 없으면 ReplyShapeError.
+   */
+  badSlot?: (kind: K, ask: A | null, show: string[]) => CheckedReply<K, A>;
 }
+
+/**
+ * 토큰을 중괄호로 쓴 것("{AMT_1}", "{NAME_2}")은 대괄호 토큰과 같은 뜻으로 받는다(chat-eval 2026-11-16: 슬롯 문법에 끌려 금액 인자·문장에
+ * 중괄호 토큰을 넣어 턴 전체가 bad_response). 슬롯({r1.first.total})은 소문자 ref라 겹치지 않는다. 문자열이나 평평한 객체(도구 인자)를 받는다.
+ */
+export function braceTokens<T>(v: T): T {
+  const fix = (x: string) => x.replace(/\{([A-Z]+_\d+)\}/g, '[$1]');
+  if (typeof v === 'string') return fix(v) as T;
+  if (v && typeof v === 'object' && !Array.isArray(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, typeof x === 'string' ? fix(x) : x])) as T;
+  return v;
+}
+
+/** 달·날짜("9월", "10월 31일") */
+const DAY = /(?<!\d)(?:1[0-2]|[1-9])월(?:\s*(?:3[01]|[12]\d|[1-9])일)?(?!\d)/gu;
+/** 문장 안 ref 표기("[ref:r1]", "(보임: r1, d2)"): 화면이 표·카드로 보이므로 지운다(숫자로 걸러지지 않게) */
+const REF_NOTE = /\s*[[(](?:ref|보임)\s*[:：]?\s*[rd][1-9]\d{0,5}(?:\s*,\s*[rd][1-9]\d{0,5})*[\])]/gu;
 
 const REF = /^[rd][1-9][0-9]{0,5}$/;
 
@@ -99,17 +124,29 @@ export function checkAgentReply<K extends string, A extends string>(out: unknown
   const k = kind as K;
   const a = ask as A | null;
   if (k === 'tax_advice') return { kind: k, text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice' };
-  // 슬롯 안 공백("{ r1.first.total }")은 뜻이 같으니 붙인다
-  const text = o.text.replace(/\s+/g, ' ').trim().replace(/\{([^{}]*)\}/g, (_m, x: string) => `{${x.replace(/\s+/g, '')}}`);
+  // 중괄호 토큰은 대괄호로, 문장 속 ref 표기는 지우고, 슬롯 안 공백("{ r1.first.total }")은 뜻이 같으니 붙인다
+  const text = braceTokens(o.text)
+    .replace(REF_NOTE, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\{([^{}]*)\}/g, (_m, x: string) => `{${x.replace(/\s+/g, '')}}`);
   if (!text || [...text].length > CHAT_REPLY_MAX_CHARS) throw bad();
   for (const m of text.matchAll(TOKEN_RE)) if (!ctx.hasToken(m[0])) throw bad();
-  for (const m of text.matchAll(slotAnywhere())) if (!ctx.hasRef(m[1]!)) throw bad();
-  if (/[{}]/.test(text.replace(slotAnywhere(), ''))) throw bad();
   const refs = [...new Set(show as string[])];
   if (!refs.every((r) => REF.test(r) && ctx.canShow(r))) throw bad();
+  if ([...text.matchAll(slotAnywhere())].some((m) => !ctx.hasRef(m[1]!)) || /[{}]/.test(text.replace(slotAnywhere(), ''))) {
+    if (ctx.badSlot) return ctx.badSlot(k, a, refs);
+    throw bad();
+  }
   if (chatAdviceMentioned(text)) return { kind: k, text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice' };
-  const bare = text.replace(TOKEN_RE, ' ').replace(slotAnywhere(), ' ');
+  // 사장님이 이번 문장에 쓴 달·날짜는 그대로 따라 써도 된다(지어낸 값이 아니다, chat-eval look-sept·issue-date)
+  const norm = (x: string) => x.replace(/\s+/g, '');
+  const said = new Set([...(ctx.userText ?? '').matchAll(DAY)].flatMap((m) => [norm(m[0]), norm(m[0]).replace(/\d+일$/, '')]));
+  const bare = text.replace(TOKEN_RE, ' ').replace(slotAnywhere(), ' ').replace(DAY, (m) => (said.has(norm(m)) ? '그날' : m));
   if (unsafeText(bare)) return { kind: k, text: ctx.fallbackText, show: [], ask: null, filtered: 'unsafe' };
-  if (numberShaped(bare)) return { kind: k, text: refs.length ? ctx.numberText : ctx.fallbackText, show: refs, ask: null, filtered: 'number' };
+  if (numberShaped(bare)) {
+    if (k === 'ask' && a && ctx.askText) return { kind: k, text: ctx.askText(a), show: refs, ask: a, filtered: 'number' };
+    return { kind: k, text: refs.length ? ctx.numberText : ctx.fallbackText, show: refs, ask: null, filtered: 'number' };
+  }
   return { kind: k, text, show: refs, ask: a, filtered: null };
 }

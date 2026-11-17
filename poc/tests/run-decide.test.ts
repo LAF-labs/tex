@@ -122,7 +122,8 @@ describe('decide 핸들러(D02 §4, D04 §3, D06)', () => {
     await run1(x.r);
     const [t, p] = x.journal.at(-1)!;
     assert.equal(t, 'decide.result');
-    assert.deepEqual(p, { stepId: 's2', bundle: 'screen_state_v2', outcome: 'unknown', rule: 3, provider: 'openai', l0Only: false, injectionHit: false });
+    // model: 응답이 밝힌 판정 모델(별칭이 풀린 버전). 화면 글이 아니다
+    assert.deepEqual(p, { stepId: 's2', bundle: 'screen_state_v2', outcome: 'unknown', rule: 3, provider: 'openai', l0Only: false, injectionHit: false, model: 'm' });
     assert.ok(!JSON.stringify(x.journal).includes('알림'));
   });
   it('예약 결과는 엔진이 처리한다: blocked → portal.blocked, logged_out_by_other_session → portal.logged_out_by_other_session', async () => {

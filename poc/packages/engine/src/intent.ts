@@ -8,7 +8,7 @@
 // - 로그·저널에 문장·금액·거래처를 남기지 않는다(⑦). 결과 종류·via만 돌려준다.
 import { randomUUID } from 'node:crypto';
 import { CounterpartyRepo, ProfileRepo, type Db } from '@sax/db';
-import { BundleCatalog, CHAT_REPLY, DefaultModelLayer, GatewayDecideAdapter, OpenAIResponsesAdapter, ThresholdProfiles, gatewayRunToken, type DecideResult, type RunToken } from '@sax/model';
+import { BundleCatalog, CHAT_REPLY, DefaultModelLayer, GatewayDecideAdapter, L1_MODEL, OpenAIResponsesAdapter, ThresholdProfiles, gatewayRunToken, type DecideResult, type RunToken } from '@sax/model';
 import type { Egress } from '@sax/net';
 import { CHAT_MAP_IDLE_MS, Redactor } from '@sax/redaction';
 import { Judge } from './l0/judge.ts';
@@ -180,7 +180,7 @@ export function gatewayIntentModel(egress: Egress, opts: { catalog?: BundleCatal
   const catalog = opts.catalog ?? BundleCatalog.load();
   const b = catalog.get(INTENT_BUNDLE);
   if (!b) return null;
-  const layer = new DefaultModelLayer({ catalog, profiles: opts.profiles ?? ThresholdProfiles.load(), decider: new GatewayDecideAdapter({ egress }) });
+  const layer = new DefaultModelLayer({ catalog, profiles: opts.profiles ?? ThresholdProfiles.load(), decider: new GatewayDecideAdapter({ egress, model: L1_MODEL }) });
   const judge = new Judge(layer, opts.promoted ?? loadPromotions());
   const q = b.def.questions.find((x) => x.name === 'playbook');
   const playbooks = q && q.type === 'choice' ? q.choices.map((c) => c.value).filter((v) => v !== 'none_of_these') : [];
@@ -197,7 +197,7 @@ export function gatewayIntentModel(egress: Egress, opts: { catalog?: BundleCatal
 export function gatewayRunJudge(egress: Egress, opts: { catalog?: BundleCatalog; profiles?: ThresholdProfiles; promoted?: Set<string> } = {}): { judge: Judge; runTokenFor: (runId: string) => Promise<RunToken>; locate: OpenAIResponsesAdapter } | null {
   if (!egress.gatewayGuard) return null;
   const catalog = opts.catalog ?? BundleCatalog.load();
-  const layer = new DefaultModelLayer({ catalog, profiles: opts.profiles ?? ThresholdProfiles.load(), decider: new GatewayDecideAdapter({ egress }) });
+  const layer = new DefaultModelLayer({ catalog, profiles: opts.profiles ?? ThresholdProfiles.load(), decider: new GatewayDecideAdapter({ egress, model: L1_MODEL }) });
   // AI 위치 찾기(core/locate.ts): 같은 게이트웨이의 /v1/respond 툴셋 selector_repair. 같은 실행 토큰(L2 예산 2)을 쓴다.
   return { judge: new Judge(layer, opts.promoted ?? loadPromotions()), runTokenFor: (runId) => gatewayRunToken(egress, { runId }), locate: new OpenAIResponsesAdapter({ transport: 'gateway', egress }) };
 }

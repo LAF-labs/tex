@@ -62,14 +62,15 @@ export class PageJudge {
   }
 
   /** 막힌 스텝의 판정과 처방 실행. 다시 돌 곳 또는 false(사람에게). */
-  async onStuck(stepId: string, cause: string): Promise<{ from: string } | false> {
+  async onStuck(stepId: string, cause: string, o: { locateTried?: boolean } = {}): Promise<{ from: string } | false> {
     const s = this.info.get(stepId)?.step;
     const n = this.used.get(stepId) ?? 0;
     if (!s || !this.eligible(s, cause) || !this.d.page.listInteractive) return false;
     this.used.set(stepId, n + 1);
     const { items, els } = await screenList(this.d);
-    const fields = this.fieldKeys(stepId);
     const target = (s as Step & { target?: string }).target;
+    // 폴백 사슬이 이 대상의 위치 찾기를 이미 했으면 같은 칸 fix_field는 같은 답만 낸다(실모델 예행 2026-11-16): 후보에서 뺀다.
+    const fields = this.fieldKeys(stepId).filter((k) => !(o.locateTried && k === target));
     const j = await this.d.model.judge({ stepId, step: `${s.type}${target ? ` ${target}` : ''}`, cause, dialog: null, lastNotice: this.d.lastNotice(), screen: items, fields });
     if (!j) return this.done(stepId, 'none', 'model_unavailable', false);
     switch (j.prescription) {
@@ -98,10 +99,12 @@ export class PageJudge {
         if (cause === 'step.timeout' && (s.type === 'click' || s.type === 'fill' || s.type === 'select')) return this.done(stepId, j.prescription, 'found_not_actionable', false);
         const key = j.field!;
         const e = this.d.dict.entries[key];
-        if (!this.d.locate || !e) return this.done(stepId, j.prescription, 'no_locate', false);
+        if (!this.d.locate || !e) return this.agentAfter(stepId, j.prescription, 'no_locate');
         const purpose = e.role === 'textbox' || e.role === 'combobox' ? 'fill' : 'click';
         const r = await locateTarget({ page: this.d.page, dict: this.d.dict, loc: this.d.locate, stepId, key, purpose, rejected: [], calls: { n: 0 } });
-        return this.done(stepId, j.prescription, r ? 'ok' : 'not_found', r ? { from: stepId } : false);
+        if (r) return this.done(stepId, j.prescription, 'ok', { from: stepId });
+        // 칸을 못 찾았다: 판정이 본 대로 칸이 바뀐 화면이니 사람 앞에 에이전트를 한 번 쓴다(판정을 다시 부르지 않는다).
+        return this.agentAfter(stepId, j.prescription, 'not_found');
       }
       case 'agent_mode': {
         const resume = this.d.agent ? await this.d.agent.run(stepId) : null;
@@ -131,6 +134,11 @@ export class PageJudge {
     const answer = j?.prescription === 'dismiss_dialog' ? j.dialogAnswer : null;
     this.d.journal('judge.dialog', { stepId, kind, answer: answer ?? 'default', prescription: j?.prescription ?? 'none' });
     return answer;
+  }
+
+  private async agentAfter(stepId: string, prescription: string, why: string): Promise<{ from: string } | false> {
+    const resume = this.d.agent ? await this.d.agent.run(stepId) : null;
+    return this.done(stepId, prescription, resume ? `${why}+agent_ok` : `${why}${this.d.agent ? '+agent_failed' : ''}`, resume ? { from: resume } : false);
   }
 
   private done(stepId: string, prescription: string, result: string, out: { from: string } | false): { from: string } | false {

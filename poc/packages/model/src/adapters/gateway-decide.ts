@@ -22,14 +22,27 @@ export function questionsDigest(b: LoadedBundle): string {
   return createHash('sha256').update(canonicalJson(b.def.questions)).digest('hex');
 }
 
+/**
+ * 제품 결정 모델: OpenRouter decisions의 TypeSafe Jev, 별칭으로 부른다(대표 2026-11-16 "jev만, latest로"). 게이트웨이 MODEL_DECIDE·MODEL_DECISION 기본값.
+ * 2026-11-16 탐침: ~typesafe/jev-latest → 응답 model typesafe/jev-1.14-20261014.
+ */
+export const JEV_LATEST = '~typesafe/jev-latest';
+/**
+ * L1 판정 응답 model 접두이자 임계값 프로필 키: Jev 계열 전체. 별칭이 새 버전으로 옮겨 가도 판정은 멈추지 않고 같은 프로필을 쓴다.
+ * 그래서 풀린 버전을 호출마다 남기고(decide.result model, 게이트웨이 ops_stats model:<이름>), 버전이 바뀌면 S7·칸 고르기 평가를 다시 돌린다.
+ * 진행 쪽 하한(BV-03 0.85)은 프로필로 낮출 수 없어 새 버전이 덜 뾰족해도 unknown(멈춤) 쪽으로만 기운다.
+ */
+export const L1_MODEL = 'typesafe/jev-';
+
 export interface GatewayDecideOptions {
   egress: Egress;
-  /** 게이트웨이가 쓰는 공급사 모델(응답 model 접두 확인용). 기본 gpt-6-luna */
+  /** 게이트웨이가 쓰는 공급사 모델(응답 model 접두 확인·임계값 프로필 선택). 기본 gpt-6-luna(시험), 제품은 L1_MODEL */
   model?: string;
 }
 
 export class GatewayDecideAdapter implements DecideAdapter {
-  readonly provider = 'openai' as const;
+  /** 임계값 프로필의 공급사 칸: OpenAI Decisions(gpt-6-luna)는 openai, OpenRouter decisions(jev 등)는 openai_compat */
+  readonly provider: 'openai' | 'openai_compat';
   readonly model: string;
   /** 게이트웨이 뒤 공급사가 OpenAI Decisions이므로 같은 한도. 입력 한도는 번들 maxInputBytes(≤ 16KB)가 먼저 막는다. */
   readonly limits: AdapterLimits = { maxChoices: 255, maxQuestions: 400, refusals: true, maxRequestBytes: 900_000 };
@@ -38,6 +51,7 @@ export class GatewayDecideAdapter implements DecideAdapter {
   constructor(opts: GatewayDecideOptions) {
     this.egress = opts.egress;
     this.model = opts.model ?? LUNA;
+    this.provider = this.model === LUNA ? 'openai' : 'openai_compat';
   }
 
   requestBytes(b: LoadedBundle, input: RedactedText): number {
