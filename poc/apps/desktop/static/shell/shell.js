@@ -931,11 +931,12 @@ function agentIssued(x) {
   ];
 }
 
-/** 결과 표(매출·발급 기록·받을 돈): 제목에 건수·합계(main이 슬롯과 같은 집계로 낸 것), 행은 최근부터 10개. 글자는 텍스트 노드로만. */
+/** 결과 표(매출·발급 기록·받을 돈·낼 돈·돈 흐름): 제목에 건수·합계(main이 슬롯과 같은 집계로 낸 것), 행은 최근부터 10개. 글자는 텍스트 노드로만. */
 function agentTable(t) {
   const md = (d) => `${Number(d.slice(5, 7))}월 ${Number(d.slice(8, 10))}일`;
   const rows = t.rows.slice(0, AGENT_TABLE_ROWS);
-  const issued = t.table !== 'receivables';
+  // 승인번호·PDF·메일 칸은 발급한 세금계산서 표에만(받을 돈·낼 돈·돈 흐름 표에는 없다)
+  const issued = t.table === 'sales' || t.table === 'history';
   return h(
     'div',
     { class: 'sx-agent-table', 'data-agent-table': t.table },

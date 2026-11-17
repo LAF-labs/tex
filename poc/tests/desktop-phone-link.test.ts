@@ -86,7 +86,15 @@ const asRelayLink = (l: Link): RelayLink => Object.assign(l, { onEnv() {}, close
 const seal: TokenSeal = { seal: (p) => `sealed:${b64(p.map((x) => x ^ 0x5a))}`, open: (s) => fromB64(s.slice(7)).map((x) => x ^ 0x5a) };
 
 let dirs: string[] = [];
+let links: PhoneLink[] = [];
 afterEach(async () => {
+  // 폴더를 지우기 전에 링크를 멈추고 늦은 저장(멈춘 뒤 끝나는 lastSeenAt 등)까지 기다린다.
+  // 기다리지 않으면 지우는 사이 저장이 임시 파일을 새로 만들어 Windows에서 ENOTEMPTY로 떨어졌다.
+  for (const l of links) {
+    l.stop();
+    await l.idle();
+  }
+  links = [];
   for (const d of dirs) await fs.rm(d, { recursive: true, force: true });
   dirs = [];
 });
@@ -109,8 +117,8 @@ async function world() {
   };
   const eng = fakeEngine();
   const deleted: string[] = [];
-  const mk = (live = true, over: Partial<PhoneLinkOptions> = {}) =>
-    new PhoneLink({
+  const mk = (live = true, over: Partial<PhoneLinkOptions> = {}) => {
+    const l = new PhoneLink({
       store: new PhoneStore(file),
       seal,
       keys: async () => ({ noise: w.desk.keys.noise, vd: w.desk.keys.vd, qdPublic: qd.publicKey, hpkeOpen: async (r) => hpkeOpen(qd.secretKey, r.enc, r.info, r.aad, r.ct) }),
@@ -123,6 +131,9 @@ async function world() {
       pollMs: { live: 60_000, idle: 60_000 },
       ...over,
     });
+    links.push(l);
+    return l;
+  };
   return { w, relay, pc, phone, file, qd, queueOf, eng, deleted, mk };
 }
 

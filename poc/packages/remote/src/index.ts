@@ -9,6 +9,7 @@ export * from './devlist.ts';
 export * from './envelope.ts';
 export * from './frame.ts';
 export * from './hpke.ts';
+export * from './issue.ts';
 export * from './jcs.ts';
 export * from './keys.ts';
 export * from './noise.ts';

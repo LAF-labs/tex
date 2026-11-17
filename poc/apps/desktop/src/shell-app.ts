@@ -61,7 +61,10 @@ import { GatewayAuthHost } from './gateway-auth.ts';
 import { IssueLockHost } from './issue-lock-host.ts';
 import type { AccountClient, BillingView, CloudPorts, DeviceAuth, PcLinkVault, VaultKeysFactory } from './remote-ports.ts';
 import { PairingHost } from './remote-pairing.ts';
-import { PhoneLink, PhoneStore, type TokenSeal } from './phone-link.ts';
+import { buildPhoneCopy } from './phone-copy.ts';
+import { CmdLog, PhoneIssue } from './phone-issue.ts';
+import { DESKTOP_CAPS, PhoneLink, PhoneStore, type TokenSeal } from './phone-link.ts';
+import { phoneSession, SESSION_CAPS } from './phone-session.ts';
 import { DeviceManager } from './remote-devices.ts';
 import { PcLinkHost } from './remote-pclink.ts';
 import { phoneReceiver } from './phone-receive.ts';
@@ -1256,6 +1259,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       onCreated: (run) => agentCreated.push(run),
       // 받을 돈(#284): 계좌가 하나도 없으면 null(not_set_up). 계좌·거래내역이 있으면 못 받은 건을 준다.
       receivables: () => bank.receivables(),
+      // 낼 돈·돈 흐름(11 §2·§3): 계좌가 없으면 null(not_set_up)
+      payables: () => bank.payables(),
+      cashFlow: (month) => bank.cashFlowValues(month),
       // 시연: 씨앗 이력(승인번호 있는 것)도 지난 발급이다. 제품은 원장만.
       pastIssued: () => (seed?.past ?? []).flatMap((x) => (x.kind === 'issued' && x.approvalNo && x.who && x.day ? [{ counterpartyId: cps.find((c) => c.name === x.who)?.id ?? null, counterparty: x.who, date: x.day, total: x.total, approvalNo: x.approvalNo, documentId: x.documentId, mail: null }] : [])),
       onProgress: (phase: AgentPhase) => send({ type: 'chat-progress', phase }),
@@ -1451,6 +1457,22 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     open: (v) => new Uint8Array(Buffer.from(v.startsWith('ss1:') ? safeStorage.decryptString(Buffer.from(v.slice(4), 'base64')) : v.startsWith('b64:') ? v.slice(4) : '', 'base64')),
   };
   let phoneLink: PhoneLink | null = null;
+  // 폰 발급 명령(v1.8): 초안을 만들고 [홈택스에서 준비]를 바로 시작한다. 승인은 PC 승인 바(폰 승인 중계 전까지 pc_only).
+  let phoneIssue: PhoneIssue | null = null;
+  const phoneIssueOf = (): PhoneIssue => {
+    phoneIssue ??= new PhoneIssue({
+      counterparty: (ref) => cps.find((c) => c.id === ref) ?? null,
+      createDraft: (cp, supply, item) => runs.createDraft(cp, supply, 'separate', item),
+      prepare: (id) => prepareNow(id),
+      anyActive: () => runs.anyActive(),
+      get: (id) => runs.get(id),
+      onDraft: () => pushBoard(), // 초안은 update 이벤트 없이 생긴다
+      cmds: new CmdLog(path.join(appPaths(root ?? defaultAppRoot()).userData, 'remote-cmds.json')),
+      log: (n, d) => log.event(n, d ?? {}),
+    });
+    return phoneIssue;
+  };
+  runs.on('update', (run) => phoneIssue?.update(run));
   const phones = (): PhoneLink | null => {
     if (phoneLink) return phoneLink;
     const cloud = opts.remote?.cloud;
@@ -1480,6 +1502,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         }),
       deviceListVersion: () => account.device()?.deviceList.listVersion ?? 0,
       appVersion: app.getVersion(),
+      capabilities: () => [...DESKTOP_CAPS, ...SESSION_CAPS],
+      session: phoneSession({
+        issue: phoneIssueOf(),
+        copy: () => buildPhoneCopy({ counterparties: () => cps, runs: () => runs.list(), bank: (m, p) => bank.call(m, p ?? {}) }),
+        log: (n, d) => log.event(n, d ?? {}),
+      }),
       log: (n, d) => log.event(n, d ?? {}),
       onChange: () => {
         send({ type: 'account', account: account.view() });

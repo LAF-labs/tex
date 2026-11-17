@@ -1,7 +1,7 @@
 // 릴레이 WSS 클라이언트(ws-link, services/relay/API.md): 주입한 소켓만 쓰고, wss 강제(로컬 개발만 ws),
 // 경로 규칙(룸·우편함 라이브), 우편함 헤더(기기 토큰 DPoP + X-Mbx-Read/Write), 토큰은 URL에 없고, 프레임 순서를 지킨다.
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe, it, type TestContext } from 'node:test';
 import { allowDevLanHosts, b64url, encodeHs, relayOrigin, relayUrl, wsRelayClient, KIND, RELAY_CLOSE, RELAY_PING, type WebSocketLike } from '@sax/remote';
 
 class FakeWs implements WebSocketLike {
@@ -188,42 +188,68 @@ describe('ws-link(services/relay/API.md)', () => {
     assert.ok(closed && link.closed);
   });
 
-  it('입장 뒤 ping을 보내고, 닫히면 멈춘다', async () => {
+  // ping·keepalive는 타이머 횟수를 센다. 실제 시계로 10ms 간격을 45·60ms 재면 Windows(타이머 해상도 약 15.6ms)와 바쁜 러너에서
+  // 횟수가 모자라거나 pong 간격이 늘어 죽은 연결로 끊겼다(n >= 2 실패). 가짜 시계(setInterval·setTimeout·Date)로 정확히 돌린다.
+  // setImmediate는 그대로 두어 입장 처리(마이크로태스크·Promise)를 흘려 보낸다.
+  const fakeClock = (t: TestContext) => {
+    t.mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'] });
+    return {
+      flush: () => new Promise<void>((r) => setImmediate(r)),
+      /** ms만큼 1ms씩 시계를 앞으로 보낸다(사이사이 Promise를 흘린다). */
+      advance: async (ms: number, each?: () => void) => {
+        for (let i = 0; i < ms; i++) {
+          t.mock.timers.tick(1);
+          each?.();
+          await new Promise<void>((r) => setImmediate(r));
+        }
+      },
+    };
+  };
+
+  it('입장 뒤 ping을 보내고, 닫히면 멈춘다', async (t) => {
+    const clock = fakeClock(t);
     const { c, made } = harness({ pingMs: 10 });
-    const link = await c.joinRoom(ROOM, 'mobile');
-    await tick(45);
+    const p = c.joinRoom(ROOM, 'mobile');
+    await clock.flush();
+    const link = await p;
+    await clock.advance(45);
     const n = made[0]!.pings;
-    assert.ok(n >= 2);
+    assert.equal(n, 4, '10ms 간격으로 45ms 동안 네 번');
     link.close();
-    await tick(30);
+    await clock.advance(30);
     assert.equal(made[0]!.pings, n);
   });
 
-  it('우편함 keepalive: ping()이 없는 소켓(PC 내장 WebSocket)도 텍스트 ping을 보내고, pong이 오면 유지한다', async () => {
+  it('우편함 keepalive: ping()이 없는 소켓(PC 내장 WebSocket)도 텍스트 ping을 보내고, pong이 오면 유지한다', async (t) => {
+    const clock = fakeClock(t);
     const { c, made } = harness({ pingMs: 10 });
     const p = c.joinMailbox(MBX, TOK, 'desktop');
-    await tick();
+    await clock.flush();
     const ws = made[0]!;
     ws.msg('{"t":"peer","online":false}');
     const link = await p;
-    const pong = setInterval(() => ws.msg('{"t":"pong"}'), 5);
-    await tick(60);
-    clearInterval(pong);
+    let ms = 0;
+    await clock.advance(60, () => {
+      if (++ms % 5 === 0) ws.msg('{"t":"pong"}');
+    });
     assert.ok(ws.sent.filter((x) => x === RELAY_PING).length >= 3, '30초 간격 텍스트 ping');
     assert.equal(ws.pings, 0, '우편함은 프레임 ping을 쓰지 않는다');
     assert.equal(link.closed, false);
     link.close();
   });
 
-  it('우편함 keepalive: 2.5배 간격 동안 아무것도 못 받으면 죽은 연결로 끊는다(잠자기·NAT 만료)', async () => {
+  it('우편함 keepalive: 2.5배 간격 동안 아무것도 못 받으면 죽은 연결로 끊는다(잠자기·NAT 만료)', async (t) => {
+    const clock = fakeClock(t);
     const { c, made } = harness({ pingMs: 10 });
     const p = c.joinMailbox(MBX, TOK, 'desktop');
-    await tick();
+    await clock.flush();
     made[0]!.msg('{"t":"peer","online":true}');
     const link = await p;
     let closed = false;
     link.onClose(() => (closed = true));
-    await tick(60);
+    await clock.advance(20);
+    assert.equal(closed, false, '2.5배 간격 전에는 끊지 않는다');
+    await clock.advance(40);
     assert.ok(closed && link.closed, '반쯤 열린 연결을 붙잡지 않는다');
   });
 });

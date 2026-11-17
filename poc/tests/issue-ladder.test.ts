@@ -29,6 +29,9 @@ async function tempDb(): Promise<Db> {
   return openDatabase(path.join(dir, 'db.sqlite'), new Uint8Array(randomBytes(32)));
 }
 const key = (): IssueKey => parseIssueKey(ulid())!;
+// 발급 안 됨(not_committed)은 클릭 뒤 0건 조회 2번이 verify 상한 안에 끝나야 나온다. fixture 기본 상한 3초는 느린 Windows·macOS
+// 러너에서 조회 두 번을 다 담지 못해 in_doubt(held)로 끝나므로, 이 파일에서만 상한을 늘린다(결과 모름 시험은 그만큼 길어진다).
+const slowRunnerPortal = (origin: string) => ({ ...fixturePortal(origin), verify: { ...fixturePortal(origin).verify, maxMs: 15_000 } });
 const poll = <T>(pred: () => T | undefined, ms = 60_000): Promise<T> =>
   new Promise((resolve, reject) => {
     const until = Date.now() + ms;
@@ -154,7 +157,7 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
     const data = new DataService(db, new BizVerifier(new Egress()));
     data.profiles.upsert({ kind: 'business', displayName: SUPPLIER.name, bizNo: SUPPLIER.bizNo, corpNo: null, repName: '김가나', bizType: null, bizItem: null, address: null, email: null, signMethod: 'simple_auth' });
     const cp = data.counterparties.create({ ...C }).id;
-    const runs = new RunService({ ...(o.ir ? { engine: 'ir' as const, ir: irPackage(o.judge) } : { engine: 'h01' as const }), db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, page: o.page ?? sharedPage, postGate: (m) => gateMsgs.push(m) });
+    const runs = new RunService({ ...(o.ir ? { engine: 'ir' as const, ir: irPackage(o.judge) } : { engine: 'h01' as const }), db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: slowRunnerPortal(fx.origin), log, page: o.page ?? sharedPage, postGate: (m) => gateMsgs.push(m) });
     const runEvents: RunEvent[] = [];
     runs.on('event', (e: RunEvent) => runEvents.push(e));
     const api = o.api === undefined ? new FakeIssueApi('ok') : o.api;

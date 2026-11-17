@@ -4,15 +4,17 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { CHAT_ADVICE_TEXT, type DomainCall, type ShownReply, type StepParams, type StepResult, type ToolOutput } from '@sax/engine';
 import { finalOf, fixJosa } from '../apps/desktop/src/josa.ts';
-import { SLOT_FIELDS as MODEL_SLOT_FIELDS, SLOT_PATHS as MODEL_SLOT_PATHS, SLOT_POSITIONS as MODEL_SLOT_POSITIONS } from '@sax/model';
+import { CASH_FIELDS as MODEL_CASH_FIELDS, SLOT_FIELDS as MODEL_SLOT_FIELDS, SLOT_PATHS as MODEL_SLOT_PATHS, SLOT_POSITIONS as MODEL_SLOT_POSITIONS } from '@sax/model';
 import { CHAT_MAP_IDLE_MS as REDACTION_IDLE_MS } from '@sax/redaction';
 import {
+  AGENT_CASH_MISSING_TEXT,
   AGENT_ERROR_TEXT,
   AGENT_UNAVAILABLE_TEXT,
   AGENT_SETUP_TEXT,
   AGENT_SLOT_MISSING_TEXT,
   AGENT_STEP_MAX,
   AgentChat,
+  CASH_FIELDS,
   CHAT_MAP_IDLE_MS,
   SLOT_FIELDS,
   SLOT_PATHS,
@@ -20,6 +22,7 @@ import {
   type AgentChatPorts,
   type AgentCounterparty,
   type AgentPhase,
+  type CashFlowValues,
   type DraftCard,
   type IssuedRow,
   type ReceivableRow,
@@ -36,7 +39,7 @@ const ISSUED: IssuedRow[] = [
   { counterpartyId: 'cpA', counterparty: 'A상사', date: '2026-09-03', total: 2_200_000 },
   { counterpartyId: null, counterparty: 'C테크', date: '2026-11-02', total: null },
 ];
-const PORT_KEYS = ['step', 'profileId', 'drafts', 'issued', 'receivables', 'counterparties', 'today', 'onProgress', 'now'];
+const PORT_KEYS = ['step', 'profileId', 'drafts', 'issued', 'receivables', 'payables', 'cashFlow', 'counterparties', 'today', 'onProgress', 'now'];
 const DRAFT_KEYS = ['list', 'setupMissing', 'create', 'update', 'discard'];
 
 type Handler = (p: StepParams) => StepResult;
@@ -102,6 +105,9 @@ let strays: string[];
 let clock: number;
 let profile: string | null;
 let receivable: ReceivableRow[] | null;
+let payable: ReceivableRow[] | null;
+let cash: CashFlowValues | null;
+let cashMonths: string[];
 
 function chat(): AgentChat {
   const ports: AgentChatPorts = {
@@ -115,6 +121,8 @@ function chat(): AgentChat {
     drafts: guarded(drafts, DRAFT_KEYS, strays),
     issued: () => ISSUED,
     receivables: async () => receivable,
+    payables: async () => payable,
+    cashFlow: async (m) => (cashMonths.push(m), cash),
     counterparties: () => BOOK,
     today: () => '2026-11-12',
     onProgress: (p) => phases.push(p),
@@ -132,6 +140,9 @@ beforeEach(() => {
   clock = 1_000_000;
   profile = 'pf-1';
   receivable = null;
+  payable = null;
+  cash = null;
+  cashMonths = [];
 });
 
 async function say(a: AgentChat, text: string, ...steps: Handler[]) {
@@ -585,11 +596,60 @@ describe('AgentChat 진행 표시·오류', () => {
   });
 });
 
+describe('AgentChat 낼 돈·돈 흐름(11 §2·§3)', () => {
+  it('낼 돈은 받을 돈과 같은 표(안 낸 돈), 계좌 연결 전이면 not_set_up', async () => {
+    const a = chat();
+    await say(a, '안 낸 돈 있어?', () => tools({ tool: 'payables', counterpartyId: null }), (p) => {
+      assert.deepEqual(outputs(p), [{ ref: null, status: 'not_set_up', fields: null, needs: null }]);
+      return reply({ text: '계좌 연결이 아직이에요.' });
+    });
+    payable = [
+      { counterpartyId: 'cpB', counterparty: 'B상사', date: '2026-10-05', total: 330_000 },
+      { counterpartyId: 'cpA', counterparty: 'A상사', date: '2026-11-01', total: 110_000 },
+    ];
+    const t = agent(await say(a, '안 낸 돈 있어?', () => tools({ tool: 'payables', counterpartyId: null }), (p) => {
+      const [o] = outputs(p);
+      assert.equal(o!.status, 'ok');
+      return reply({ text: `{${o!.ref}.count}건, 모두 {${o!.ref}.sum.total}이에요. 가장 오래된 건은 {${o!.ref}.last.counterparty} 건이에요.` });
+    }));
+    assert.equal(t.text, '2건, 모두 440,000원이에요. 가장 오래된 건은 B상사 건이에요.');
+    assert.equal(t.show.length, 1);
+    assert.ok(t.show[0]!.type === 'table' && t.show[0]!.table === 'payables' && t.show[0]!.title.startsWith('안 낸 돈 2건'));
+    assert.deepEqual(strays, []);
+  });
+
+  it('돈 흐름은 cash 슬롯으로 채우고 표는 내지 않는다. partial이면 그대로 알리고, 모르는 잔액은 지어내지 않는다', async () => {
+    const a = chat();
+    cash = { complete: false, through: '2026-10-31', in: 3_300_000, out: 1_200_000, net: 2_100_000, balance: null, nextIn: 550_000, nextOut: 440_000 };
+    const t = agent(await say(a, '지난달 돈 남았어?', () => tools({ tool: 'cash_flow', monthOffset: -1 }), (p) => {
+      const [o] = outputs(p);
+      assert.deepEqual(o, { ref: o!.ref, status: 'partial', fields: null, needs: null });
+      return reply({ text: `일부 계좌는 확인 못 했어요. 들어온 돈 {${o!.ref}.cash.in}, 나간 돈 {${o!.ref}.cash.out}이에요.` });
+    }));
+    assert.deepEqual(cashMonths, ['2026-10']);
+    assert.equal(t.text, '일부 계좌는 확인 못 했어요. 들어온 돈 3,300,000원, 나간 돈 1,200,000원이에요.');
+    assert.ok(t.show.length === 1 && t.show[0]!.type === 'table' && t.show[0]!.table === 'cash_flow' && t.show[0]!.title.startsWith('10월 돈 흐름(일부'));
+    assert.deepEqual(t.show[0]!.type === 'table' && t.show[0]!.rows.map((r) => [r.counterparty, r.total]), [['들어온 돈', 3_300_000], ['나간 돈', 1_200_000], ['차이', 2_100_000], ['지금 잔액', null], ['앞으로 한 달 받을 돈', 550_000], ['앞으로 한 달 낼 돈', 440_000]]);
+    const t2 = agent(await say(a, '잔액은?', () => reply({ text: '지금 잔액은 {r1.cash.balance}예요.' })));
+    assert.equal(t2.text, AGENT_CASH_MISSING_TEXT);
+    // 돈 흐름 결과에 행 슬롯을 쓰면 채우지 않는다
+    const t3 = agent(await say(a, '몇 건?', () => reply({ text: '{r1.count}건이에요.' })));
+    assert.equal(t3.text, AGENT_SLOT_MISSING_TEXT);
+    cash = null;
+    await say(a, '이번 달은?', () => tools({ tool: 'cash_flow', monthOffset: 0 }), (p) => {
+      assert.deepEqual(outputs(p), [{ ref: null, status: 'not_set_up', fields: null, needs: null }]);
+      return reply({ text: '계좌 연결이 아직이에요.' });
+    });
+    assert.deepEqual(strays, []);
+  });
+});
+
 describe('AgentChat 옮겨 둔 상수', () => {
   it('슬롯 칸·위치·쉬는 시간이 @sax/model·@sax/redaction과 같다', () => {
     assert.deepEqual([...SLOT_FIELDS], [...MODEL_SLOT_FIELDS]);
     assert.deepEqual([...SLOT_POSITIONS], [...MODEL_SLOT_POSITIONS]);
     assert.deepEqual([...SLOT_PATHS], [...MODEL_SLOT_PATHS]);
+    assert.deepEqual([...CASH_FIELDS], [...MODEL_CASH_FIELDS]);
     assert.equal(CHAT_MAP_IDLE_MS, REDACTION_IDLE_MS);
   });
 });

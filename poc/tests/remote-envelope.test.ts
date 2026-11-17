@@ -34,7 +34,7 @@ const SAMPLES: Record<string, { from: 'desktop' | 'mobile'; body: object; bad: o
   'cmd.run': { from: 'mobile', body: { cmdId: ulid(), playbookId: 'hometax.issue_tax_invoice', inputs: {} }, bad: { cmdId: ulid(), playbookId: 'Bad Id', inputs: {} } },
   'cmd.abort': { from: 'mobile', body: { runId: ulid() }, bad: { runId: 'nope' } },
   'cmd.resume': { from: 'mobile', body: { runId: ulid() }, bad: {} },
-  'run.event': { from: 'desktop', body: { runId: ulid(), event: 'run.started', at: 1 }, bad: { runId: ulid(), event: 'Run Started!', at: 1 } },
+  'run.event': { from: 'desktop', body: { runId: ulid(), event: 'run.done', at: 1, cmdId: ulid(), phase: 'done', result: { approvalNo: '20261116-41000000-12345678', total: 1353000, emailSent: true, docId: uuid4() } }, bad: { runId: ulid(), event: 'Run Started!', at: 1 } },
   'gate.request': {
     from: 'desktop',
     body: { runId: ulid(), stepId: 's3', reqId: ulid(), cardId: 'c1', gateKind: 'commit', effects: ['issue_document'], fields: [{ key: 'totalAmount', value: '550000' }], cardHashInputs: { readbackHash: H, packageDigest: H, authorizes: ['s4'], intentId: ulid() }, actionHash: H, requiredSigAlg: 'p256', challenge: k32(), exp: 1 },
@@ -61,6 +61,24 @@ const SAMPLES: Record<string, { from: 'desktop' | 'mobile'; body: object; bad: o
   'receipt.ack': { from: 'desktop', body: { msgId: ulid(), state: 'partial', missing: [1, 2] }, bad: { msgId: ulid(), state: 'stored', missing: [1] } },
   'cash.entry': { from: 'mobile', body: { msgId: ulid(), day: '2026-11-05', amount: 320000, enteredAt: 1 }, bad: { msgId: ulid(), day: '2026-13-01', amount: -5, enteredAt: 1 } },
   'cash.ack': { from: 'desktop', body: { msgId: ulid(), state: 'stored' }, bad: { msgId: ulid(), state: 'partial' } },
+  'cmd.ack': { from: 'desktop', body: { cmdId: ulid(), state: 'accepted', runId: ulid() }, bad: { cmdId: ulid(), state: 'rejected' } },
+  'phone.copy': {
+    from: 'desktop',
+    body: {
+      asOf: 1,
+      counterparties: [{ ref: 'cp_1', name: '서울청과', aliases: ['서울'], bizNo: '211-09-87654', emailHint: 'ta***@seoulfruit.example', phoneApprovable: true, last: { supply: 800000, vatMode: 'excl', item: '과일', day: '2026-11-16' } }],
+      toIssue: [{ ref: 'cp_1', supply: 800000, item: '과일', due: '2026-11-30' }],
+      money: {
+        asOf: 1,
+        accounts: 2,
+        receivable: { unpaidCount: 3, unpaidTotal: 2640000, overdueCount: 1, overdueTotal: 880000, dueSoonCount: 1, dueSoonTotal: 880000, reviewCount: 0 },
+        payable: { unpaidCount: 0, unpaidTotal: 0, overdueCount: 0, overdueTotal: 0, dueSoonCount: 0, dueSoonTotal: 0, reviewCount: 0 },
+        cashflow: { month: '2026-11', complete: false, missing: ['기업 1234'], inTotal: null, outTotal: 1200000, net: null, in30: 880000, out30: 300000, noDueOutCount: 1, alerts: [{ id: 'a1', kind: 'slow_collection', text: 'A상사 입금이 평소보다 늦어지고 있어요' }] },
+      },
+      todayApprovalsLeft: 5,
+    },
+    bad: { asOf: 1, counterparties: [{ ref: 'cp 1', name: '' }], chat: 'x' },
+  },
 };
 
 function env(type: string, from: 'desktop' | 'mobile', body: object): Envelope {
