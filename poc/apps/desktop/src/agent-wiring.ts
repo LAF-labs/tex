@@ -4,7 +4,7 @@
 // - 받을 돈은 #284(BankHost.receivables()) 전에는 null(계좌 연결 전)이다.
 import type { StepParams, StepResult } from '@sax/engine';
 import { kstToday } from './approval-gate.ts';
-import type { AgentChatPorts, AgentPhase, CashFlowValues, DraftCard, IssuedRow, ReceivableRow } from './agent-chat.ts';
+import type { AgentChatPorts, AgentPhase, CashFlowValues, DraftCard, DraftExtraValues, DraftPatch, IssuedRow, ReceivableRow } from './agent-chat.ts';
 import { INVOICE_PLAYBOOK } from './run-history.ts';
 import type { Counterparty, RunView, VatMode } from './shell-model.ts';
 
@@ -28,8 +28,8 @@ export const AGENT_HISTORY_LIMIT = 200;
 export interface AgentRuns {
   list(): RunView[];
   readonly counterparties: Counterparty[];
-  createDraft(cp: Counterparty, amount: number, vat: VatMode | null, item?: string | null): RunView;
-  updateDraft(id: string, patch: { vat?: VatMode; amount?: number; item?: string }): RunView;
+  createDraft(cp: Counterparty, amount: number, vat: VatMode | null, item?: string | null, extra?: DraftExtraValues): RunView;
+  updateDraft(id: string, patch: DraftPatch): RunView;
   discardDraft(id: string): RunView;
 }
 
@@ -83,11 +83,11 @@ export function agentPorts(w: AgentWiring): AgentChatPorts {
     drafts: {
       list: () => w.runs.list().filter((r) => r.status === 'draft' && !r.cert).map(draftCard),
       setupMissing: () => w.setupMissing(),
-      create: (counterpartyId, amount, vat, item) => {
+      create: (counterpartyId, amount, vat, item, extra) => {
         if (w.setupMissing()) return { setup: true };
         const cp = w.runs.counterparties.find((c) => c.id === counterpartyId);
         if (!cp) throw new Error('no_counterparty');
-        const run = w.runs.createDraft(cp, amount, vat, item);
+        const run = extra ? w.runs.createDraft(cp, amount, vat, item, extra) : w.runs.createDraft(cp, amount, vat, item);
         w.onCreated(run);
         return { runId: run.id };
       },

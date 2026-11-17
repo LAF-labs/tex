@@ -57,6 +57,7 @@ export const CHAT_AGENT_ASK_TEXT: Record<AgentAsk, string> = {
   counterparty: '어느 거래처인가요? 장부에 있는 거래처 중에서 골라 주세요.',
   vat: '부가세 별도인가요, 포함인가요?',
   which_card: '어느 카드를 말씀하시는지 골라 주세요.',
+  date: '작성일자를 다시 알려 주세요. 오늘이나 지난 날로만 정할 수 있고, 신고 기한이 지난 기간의 날짜는 아직 받지 않아요.',
 };
 /** 엔진이 도구 결과로 턴을 닫을 때의 고정 문장(마지막 결과 status별). 없으면 CHAT_AGENT_NUMBER_TEXT. */
 export const CHAT_AGENT_DONE_TEXT: Partial<Record<ToolStatus, string>> = {
@@ -82,7 +83,16 @@ const OLDEST_ASK = /늦게|오래\s*(?:된|못|안)|제일\s*오래|밀린|연�
 /** 승인번호를 물은 조회 되풀이(chat-eval look-approval: 건수·합계만 말하고 물은 승인번호가 빠짐) */
 export const CHAT_AGENT_APPROVAL_TEXT = (ref: string): string => `가장 최근 건({${ref}.first.date})의 승인번호는 {${ref}.first.approvalNo}예요.`;
 /** 이번 턴 같은 카드 판정 키: 거래처와 금액 */
-const cardKey = (c: { counterpartyId: string; amount: DraftAmount }): string => `${c.counterpartyId}:${JSON.stringify(c.amount)}`;
+const cardKey = (c: { counterpartyId: string; amount: DraftAmount; quantity?: string | null; unitPrice?: DraftAmount }): string =>
+  `${c.counterpartyId}:${JSON.stringify(c.amount)}${c.quantity || c.unitPrice ? `:${c.quantity ?? ''}x${JSON.stringify(c.unitPrice ?? null)}` : ''}`;
+/** 카드 문장의 작성일 말(모델 인자 그대로, 계산 없음): 지난달 말일, 이번 달 25일 */
+const dateWords = (d: DraftExtra['date'] | undefined): string | null => {
+  if (!d) return null;
+  const mo = d.monthOffset ?? 0;
+  const month = mo === 0 ? '이번 달' : mo === -1 ? '지난달' : `${-mo}달 전`;
+  const day = d.day === 'last' ? '말일' : d.day && /^\d{1,2}$/.test(d.day) ? `${Number(d.day)}일` : null;
+  return day ? `${month} ${day}` : null;
+};
 /** closeOnCards가 닫는 결과 */
 const CARD_CLOSE: ReadonlySet<ToolStatus> = new Set(['card_shown', 'card_updated', 'discarded', 'needs_input']);
 /** 다시 보낼 턴이라 대화록에 남기지 않는 오류 */
@@ -93,6 +103,7 @@ const REPLAY_MAX = 12;
 export const TOOL_STATUSES = ['ok', 'partial', 'empty', 'unknown_counterparty', 'not_set_up', 'card_shown', 'needs_input', 'setup_missing', 'card_updated', 'no_such_draft', 'not_editable', 'discarded'] as const;
 export type ToolStatus = (typeof TOOL_STATUSES)[number];
 // 대화 경로 가림 규칙·금액 읽기는 @sax/chat-core로 옮겼다(폰과 같은 코드, ADR-047 결정 4). 이름은 여기서 그대로 다시 내보낸다.
+export { draftDate, issueDateRule, lineSupply, parseQuantity, shortDate, type IssueDateRule } from '@sax/chat-core';
 export { TOOL_NEEDS, chatInput, chatMaskSpans, emailFragmentRes, gluedName, numberShaped, parseKrw, typoAliases, type ToolNeed } from '@sax/chat-core';
 
 /** main이 모델에 돌려주는 도구 결과. 값·행·개수가 없다(C-10). */
@@ -115,6 +126,16 @@ export type StepParams = { start: { text: string; frame: ScreenFrame; profileId:
 /** 금액 인자: 금액 토큰을 로컬에서 읽은 값, 또는 main이 채울 결과 슬롯 */
 export type DraftAmount = { value: number } | { slot: string } | null;
 
+/**
+ * 작성일자·수량·단가(ADR-049). 날짜는 모델이 준 달·날 그대로(계산은 main이 KST 오늘로 한다), 수량은 말한 수 그대로(정수 검사는 main),
+ * 단가는 금액 토큰을 읽은 값이나 결과 슬롯. 모두 없으면 지금과 같다.
+ */
+export interface DraftExtra {
+  date?: { monthOffset: number | null; day: string | null } | null;
+  quantity?: string | null;
+  unitPrice?: DraftAmount;
+}
+
 /** 역치환한 도구 호출. counterpartyId는 'cp:' 없는 거래처 레코드 ID다. */
 export type DomainCall =
   | { tool: 'sales_summary'; monthOffset: number }
@@ -122,8 +143,8 @@ export type DomainCall =
   | { tool: 'receivables'; counterpartyId: string | null }
   | { tool: 'payables'; counterpartyId: string | null }
   | { tool: 'cash_flow'; monthOffset: number }
-  | { tool: 'invoice_draft'; counterpartyId: string; amount: DraftAmount; vat: Vat | null; item: string | null }
-  | { tool: 'draft_edit'; draft: string; amount: DraftAmount; vat: Vat | null; item: string | null }
+  | ({ tool: 'invoice_draft'; counterpartyId: string; amount: DraftAmount; vat: Vat | null; item: string | null } & DraftExtra)
+  | ({ tool: 'draft_edit'; draft: string; amount: DraftAmount; vat: Vat | null; item: string | null } & DraftExtra)
   | { tool: 'draft_discard'; draft: string };
 
 /** 검사를 마친 답. filtered가 있으면 text는 엔진 고정 문구다. */
@@ -426,6 +447,7 @@ export class ChatAgent {
         }
         f.p.vat = p.vat ?? f.p.vat;
         f.p.item = p.item ?? f.p.item;
+        if (p.date) f.p.date = p.date;
         dupOf.set(c.callId, f.callId);
       }
       turn.pending = parsed.map(({ c, p }) => ({ callId: c.callId, tool: c.name as ChatAgentToolName, key: key(c), call: 'status' in p ? null : p, args: c.arguments as Record<string, unknown>, answer: 'status' in p ? p : null, ...(dupOf.has(c.callId) ? { dupOf: dupOf.get(c.callId)! } : {}) }));
@@ -482,15 +504,22 @@ export class ChatAgent {
     const vatWord = (v: unknown) => (v === 'included' ? '부가세 포함' : v === 'separate' ? '부가세 별도' : null);
     const line = (r: (typeof round)[number]): string | null => {
       const a = r.args;
+      const ex = r.call && (r.call.tool === 'invoice_draft' || r.call.tool === 'draft_edit') ? r.call : null;
+      const when = dateWords(ex?.date ?? null);
+      // 수량×단가로 만든 카드: "단가 [AMT_1] × 10" (수량은 사장님이 쓴 말 그대로, 곱은 화면 카드가 보인다)
+      const unit = tok(a.unit_price, /^(?:\[AMT_\d+\]|\{r[1-9]\d{0,5}\.[a-z.]+\})$/);
+      const qty = ex?.quantity && /^[\d,]{1,12}\s?[가-힣a-zA-Z]{0,3}$/.test(ex.quantity) ? ex.quantity : null;
+      const line2 = unit && qty ? `단가 ${unit} × ${qty}` : null;
       if (r.o.status === 'card_shown') {
         const who = nameOf(a);
-        const amt = amtOf(a);
+        const amt = amtOf(a) ?? line2;
         // 부가세를 말하지 않았으면(null) 앱이 별도로 둔다: 문장 끝에 한 번 알린다(vatNote)
         const vat = vatWord(a.vat);
-        return `${who ? `${who} 앞으로 ` : ''}${amt ? `${amt}${vat ? ', ' : ' '}` : ''}${vat ? `${vat}로 ` : ''}확인 카드를 만들었어요.`;
+        return `${who ? `${who} 앞으로 ` : ''}${when ? `작성일 ${when}, ` : ''}${amt ? `${amt}${vat ? ', ' : ' '}` : ''}${vat ? `${vat}로 ` : ''}확인 카드를 만들었어요.`;
       }
       if (r.o.status === 'card_updated') {
-        const parts = [amtOf(a) ? `금액 ${amtOf(a)}` : null, vatWord(a.vat), r.call?.tool === 'draft_edit' && r.call.item ? '품목' : null].filter((x) => x);
+        const parts = [amtOf(a) ? `금액 ${amtOf(a)}` : line2 ? `금액 ${line2}` : null, vatWord(a.vat), r.call?.tool === 'draft_edit' && r.call.item ? '품목' : null, when ? `작성일 ${when}` : null].filter((x) => x);
+        if (parts.length === 1 && when && parts[0] === `작성일 ${when}`) return `카드의 작성일을 ${when}로 고쳤어요.`;
         return parts.length === 1 ? `카드를 ${parts[0] === '품목' ? '품목을 바꿔' : `${parts[0]}으로`} 고쳤어요.` : parts.length ? `카드의 ${parts.join(', ')}을 고쳤어요.` : null;
       }
       return null;
@@ -565,6 +594,18 @@ export class ChatAgent {
       return String(r.value).trim() || null;
     };
     const vat = (v: unknown): Vat | null => (v === 'separate' || v === 'included' ? v : null);
+    const extra = (): DraftExtra => {
+      const mo = a.date_month_offset;
+      const day = a.date_day;
+      const q = a.quantity;
+      const qt = q === null || q === undefined ? null : String(q).trim();
+      const date = (mo === null || mo === undefined) && (day === null || day === undefined) ? null : { monthOffset: typeof mo === 'number' ? mo : null, day: day === null || day === undefined ? null : String(day).trim() };
+      // 큰 수량은 금액 규칙에 가려 토큰으로 온다(10000개): 원값으로 되돌린다
+      const quantity = qt === null ? null : /^\[AMT_\d+\]$/.test(qt) ? (s.red.map.valueOf(qt) ?? null) : qt;
+      const unitPrice = a.unit_price === undefined || a.unit_price === null ? null : amount(a.unit_price);
+      // 쓰지 않은 칸은 싣지 않는다(main에 가는 호출 모양이 예전과 같다)
+      return { ...(date ? { date } : {}), ...(quantity !== null ? { quantity } : {}), ...(unitPrice ? { unitPrice } : {}) };
+    };
     const tool = c.name as ChatAgentToolName;
     const parse: { [K in ChatAgentToolName]: () => Extract<DomainCall, { tool: K }> | ToolOutput } = {
       sales_summary: () => ({ tool: 'sales_summary', monthOffset: Number(a.month_offset) }),
@@ -583,11 +624,11 @@ export class ChatAgent {
       cash_flow: () => ({ tool: 'cash_flow', monthOffset: Number(a.month_offset) }),
       invoice_draft: () => {
         const id = cp(a.counterparty);
-        return id ? { tool: 'invoice_draft', counterpartyId: id, amount: amount(a.amount), vat: vat(a.vat), item: item(a.item) } : unknown(a.counterparty);
+        return id ? { tool: 'invoice_draft', counterpartyId: id, amount: amount(a.amount), vat: vat(a.vat), item: item(a.item), ...extra() } : unknown(a.counterparty);
       },
       draft_edit: () => {
         const d = draft(a.draft);
-        return d ? { tool: 'draft_edit', draft: d, amount: amount(a.amount), vat: vat(a.vat), item: item(a.item) } : engineAnswer('no_such_draft');
+        return d ? { tool: 'draft_edit', draft: d, amount: amount(a.amount), vat: vat(a.vat), item: item(a.item), ...extra() } : engineAnswer('no_such_draft');
       },
       draft_discard: () => {
         const d = draft(a.draft);
@@ -599,7 +640,9 @@ export class ChatAgent {
     // 이번 턴에 같은 거래처·금액으로 만든 카드가 있으면 새 카드를 또 만들지 않고 그 카드를 고친다
     // (chat-eval issue-korean-amount: 부가세만 바꿔 카드를 다시 만들고 앞 카드를 취소하다 턴 상한에 걸림)
     const same = !('status' in p) && p.tool === 'invoice_draft' ? turn.cards.get(cardKey(p)) : undefined;
-    if (same && !('status' in p) && p.tool === 'invoice_draft') return { tool: 'draft_edit', draft: same, amount: p.amount, vat: p.vat, item: p.item };
+    if (same && !('status' in p) && p.tool === 'invoice_draft') {
+      return { tool: 'draft_edit', draft: same, amount: p.amount, vat: p.vat, item: p.item, ...(p.date ? { date: p.date } : {}), ...(p.quantity ? { quantity: p.quantity } : {}), ...(p.unitPrice ? { unitPrice: p.unitPrice } : {}) };
+    }
     return p;
   }
 

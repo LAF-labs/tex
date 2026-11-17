@@ -438,6 +438,15 @@ export interface RunViewBase {
   /** 앱이 다시 켜지거나 맥이 깨어난 뒤 같은 값으로 다시 시작한 실행(앞 실행 id). 카드에 "이어서 해요" 한 줄. */
   resumedFrom?: string;
   writeDate: string;
+  /** 대화·카드에서 작성일자를 정했다(ADR-049). 없으면 writeDate는 만든 날(KST 오늘)이다. */
+  writeDateSet?: boolean;
+  /** 수량 × 단가로 만든 카드(ADR-049). 공급가액(amount)은 그 곱이다. 1단계에서는 홈택스에 넣지 않는다. */
+  quantity?: number;
+  unitPrice?: number;
+  /** 정한 작성일자가 국세청 안내 발급기한(공급한 달 다음 달 10일)을 지났다. 막지 않고 카드에 한 줄(ADR-049, 2026-11-17 결정). */
+  issueDateLate?: boolean;
+  /** 오늘이 아닌 작성일자라 아직 준비할 수 없다(홈택스 작성일자 칸 채우기 전, ADR-049 결정 4). */
+  issueDateHeld?: boolean;
   auth: string;
   steps: Array<{ label: string; state: StepState; note?: string }>;
   turn: { text: string; note: string } | null;

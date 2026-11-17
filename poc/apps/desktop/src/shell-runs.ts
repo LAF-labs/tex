@@ -7,6 +7,8 @@ import { certDocByCode, type CertCode } from './cert-docs.ts';
 import { cleanItem, dayOffset, SIGN_LABEL, emptyPending, hm, parseAmount, split, type Counterparty, type Doc, type Drafts, type Pending, type RunView, type StepState, type VatMode } from './shell-model.ts';
 import { emailOk } from './onboarding.ts';
 import type { ResumeItem } from './run-resume.ts';
+import type { DraftExtraValues } from './agent-chat.ts';
+import { issueDateRule } from '@sax/engine';
 
 // 셸의 발급 실행(PoC-6). 초안은 main이 만들고(요청 해석은 아직 정규식 목업), [홈택스에서 준비]부터는 엔진이 H-01 플레이북을 돈다.
 // 실행 단계·승인 대기·발급 확정·승인번호는 엔진 이벤트에서 온다. 게이트 요청은 게이트 포트로 와서 승인 바가 받는다(shell-app).
@@ -368,6 +370,11 @@ export interface ShellRunsSource {
    * 없으면 엔진을 부르지 않고 초안 카드에 안내를 남긴다(엔진까지 가면 chrome.not_installed로 끝나 [다시 준비]가 필요했다). 없으면(시험) 보지 않는다.
    */
   chromeReady?(): boolean;
+  /**
+   * 홈택스 작성일자 칸을 채우는 패키지인가(ADR-049 2단계). 아니면 오늘이 아닌 작성일자 카드는 준비하지 않는다
+   * (홈택스가 오늘을 보여 s19e가 게이트 전에 멈추는 길로 보내지 않는다).
+   */
+  issueDateFill?(): boolean;
   /** 실행이 끝난 상태·코드(화면에는 코드를 보이지 않는다). 값·거래처는 넣지 않는다. */
   log?(name: string, data: Record<string, string>): void;
   /** 점검 끝 자동 재시작이 새 초안을 시작하는 길([홈택스에서 준비]와 같은 상한·레지스트리 재조회). 없으면 prepare 그대로(시험). */
@@ -587,7 +594,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
   }
 
   /** item: 문장에서 뽑았거나 되묻기에서 받은 품목. 없으면 거래처의 저장 품목(추정). */
-  createDraft(cp: Counterparty, amount: number, vat: VatMode | null, item?: string | null): RunView {
+  createDraft(cp: Counterparty, amount: number, vat: VatMode | null, item?: string | null, extra: DraftExtraValues = {}): RunView {
     const s = split(amount, vat ?? 'separate');
     const run: RunView = {
       id: `run-${randomUUID().slice(0, 8)}`,
@@ -604,7 +611,9 @@ export class ShellRuns extends EventEmitter implements Drafts {
       ...s,
       item: cleanItem(item ?? '') ?? cleanItem(cp.item ?? '') ?? '',
       itemGuessed: !cleanItem(item ?? ''),
-      writeDate: dayOffset(0),
+      writeDate: extra.writeDate ?? dayOffset(0),
+      ...(extra.writeDate ? { writeDateSet: true } : {}),
+      ...(extra.quantity && extra.unitPrice ? { quantity: extra.quantity, unitPrice: extra.unitPrice } : {}),
       auth: this.src.auth(),
       steps: stepsOf('H-01'),
       turn: null,
@@ -613,6 +622,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
       warnings: [],
     };
     this.markDup(run);
+    this.markDate(run);
     this.runs.set(run.id, run);
     return run;
   }
@@ -658,13 +668,21 @@ export class ShellRuns extends EventEmitter implements Drafts {
     return this.prepare(this.createCertDraft(code, inputs, o).id);
   }
 
+  /** 작성일자 표시(ADR-049): 오늘이 아닌 날을 정했으면 기한 경과(late, 막지 않고 경고)와 아직 준비할 수 없음(held)을 카드에 둔다. */
+  private markDate(r: RunView): void {
+    const today = dayOffset(0);
+    const set = !!r.writeDateSet && r.writeDate !== today;
+    r.issueDateLate = set && issueDateRule(r.writeDate, today) === 'late';
+    r.issueDateHeld = set && !this.src.issueDateFill?.();
+  }
+
   /** 초안의 오늘 중복 표시(F-10): 오늘 발급을 마친(또는 발급됐는지 모르는) 같은 거래처·같은 합계 실행이 있는가. 거래처·금액을 고치면 다시 본다. */
   private markDup(r: RunView): void {
     const today = dayOffset(0);
     r.dupToday = [...this.runs.values()].some((x) => x.id !== r.id && (x.status === 'done' || x.inDoubt === true) && x.writeDate === today && x.counterparty.id === r.counterparty.id && x.total === r.total);
   }
 
-  updateDraft(id: string, patch: { vat?: VatMode; amount?: number; amountText?: string; item?: string; email?: string; counterpartyId?: string }): RunView {
+  updateDraft(id: string, patch: { vat?: VatMode; amount?: number; amountText?: string; item?: string; email?: string; counterpartyId?: string } & DraftExtraValues): RunView {
     if (patch.amountText !== undefined) {
       const t = patch.amountText.trim();
       const v = parseAmount(/^[\d,]+$/.test(t) ? `${t}원` : t);
@@ -692,6 +710,21 @@ export class ShellRuns extends EventEmitter implements Drafts {
     if (patch.amount !== undefined) {
       if (!Number.isInteger(patch.amount) || patch.amount <= 0 || patch.amount > 1e12) throw new Error('bad_amount');
       r.amount = patch.amount;
+      // 금액만 고쳤으면 앞의 수량×단가는 더 맞지 않는다(ADR-049)
+      if (patch.quantity && patch.unitPrice && patch.quantity * patch.unitPrice === patch.amount) {
+        r.quantity = patch.quantity;
+        r.unitPrice = patch.unitPrice;
+      } else {
+        delete r.quantity;
+        delete r.unitPrice;
+      }
+    }
+    // 작성일자(ADR-049). 오늘(KST)로 되돌리면 정한 표시를 지운다.
+    if (patch.writeDate !== undefined) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(patch.writeDate)) throw new Error('bad_issue_date');
+      r.writeDate = patch.writeDate;
+      if (patch.writeDate === dayOffset(0)) delete r.writeDateSet;
+      else r.writeDateSet = true;
     }
     // 카드에서 고친 품목·받는 이메일(08 §2 "값은 카드 필드로 보여 주고 그 자리에서 고친다"). 품목은 비울 수 없다(엔진 item_missing).
     if (patch.item !== undefined) {
@@ -707,6 +740,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     }
     Object.assign(r, split(r.amount, r.vat));
     this.markDup(r);
+    this.markDate(r);
     this.emit('update', r);
     return r;
   }
@@ -1020,6 +1054,10 @@ export class ShellRuns extends EventEmitter implements Drafts {
     if (!r.cert && !cleanItem(r.item)) throw new Error('item_required');
     // 합계 0원은 준비하지 않는다(대표 결정 2026-11-16). 카드의 금액을 고치게 한다. 민원증명은 금액이 없다
     if (!r.cert && !(r.supply + r.tax > 0)) throw new Error('amount_zero');
+    // 오늘이 아닌 작성일자는 홈택스 작성일자 칸을 채우는 패키지가 들어온 뒤에만 준비한다(ADR-049 결정 4). 자정을 넘겨 다시 보면 규칙도 다시 본다.
+    if (!r.cert) this.markDate(r);
+    if (!r.cert && r.issueDateHeld) throw new Error('issue_date.not_supported');
+    if (!r.cert && r.writeDateSet && r.writeDate !== dayOffset(0) && issueDateRule(r.writeDate, dayOffset(0)) !== 'ok' && issueDateRule(r.writeDate, dayOffset(0)) !== 'late') throw new Error('issue_date.out_of_range');
     // 받는 이메일은 홈택스에 아이디·도메인 두 칸으로 들어간다(H-01 2.2.0). 모양이 틀린 장부 값은 시작하지 않고 고치게 한다.
     if (!r.cert && !emailOk(r.email.value)) throw new Error('bad_email');
     if (this.busy()) throw new Error('busy');
@@ -1045,7 +1083,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
       }
       const rehearsal = r.rehearsal ? { rehearsal: true } : {};
       if (r.cert) await this.host.rpc('run.startCert', { runId: r.id, playbookId: r.cert.playbookId, inputs: r.cert.inputs, ...rehearsal });
-      else await this.host.rpc('run.start', { runId: r.id, counterpartyId: r.counterparty.id, supply: r.supply, tax: r.tax, itemName: r.item, email: r.email.value || null, ...rehearsal });
+      else await this.host.rpc('run.start', { runId: r.id, counterpartyId: r.counterparty.id, supply: r.supply, tax: r.tax, itemName: r.item, email: r.email.value || null, ...(r.writeDateSet ? { issueDate: r.writeDate } : {}), ...rehearsal });
       // 시작하는 동안 온 [중지]를 이제 엔진에 전한다(엔진은 다음 정지 확인에서 멈춘다. 게이트 전이다).
       if (this.stopEarly.has(r.id)) await this.host.rpc('run.stop', { runId: r.id }).catch(() => {});
     } catch (e) {
