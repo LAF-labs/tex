@@ -7,10 +7,10 @@ import { vaultDesktopKeys } from './remote-keys.ts';
 import type { RemoteWiring } from './shell-app.ts';
 
 /**
- * 운영 폰 연결을 켜는가. 운영 룸 호스트(rooms.tax.laf-co.com)는 아직 DNS가 없고(2026-11-16 확인, NXDOMAIN) 폰 앱은 출시 뒤에 나온다.
- * 그동안 설치본은 [폰 연결]을 숨긴다(누르면 깨진 QR 창이 뜨던 것). 룸 호스트를 띄우고 폰 앱을 낼 때 true로 바꾼다. 개발 스택은 늘 켠다.
+ * 운영 폰 연결을 켜는가. 운영 룸 호스트(rooms.tax.laf-co.com)는 2026-11-16에 AWS 서울에 떴고 DNS가 있다(rooms-host-deploy).
+ * 폰 앱 실기기 시험부터 설치본에서도 [폰 연결]을 연다. 다시 닫으려면 false로 바꾼다(설치본은 "폰 앱은 곧 나와요" 안내). 개발 스택은 늘 켠다.
  */
-export const PROD_PHONE_PAIRING = false;
+export const PROD_PHONE_PAIRING = true;
 
 const DEV_HOST = /^(localhost|127\.0\.0\.1):[0-9]{1,5}$/;
 

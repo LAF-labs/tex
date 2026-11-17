@@ -25,9 +25,9 @@ describe('제품 배선: 어느 클라우드에 붙는가', () => {
     assert.equal(r.keys, vaultDesktopKeys);
     assert.equal(r.cloud?.relayHost, 'rooms.tax.laf-co.com');
     assert.equal(r.cloud?.insecureLocal, false);
-    // 운영 룸 호스트·폰 앱 출시 전에는 폰 연결을 닫는다(PROD_PHONE_PAIRING)
+    // 운영 룸 호스트가 떠서 설치본도 폰 연결을 연다(PROD_PHONE_PAIRING)
     assert.equal(r.pairing, PROD_PHONE_PAIRING);
-    assert.equal(PROD_PHONE_PAIRING, false);
+    assert.equal(PROD_PHONE_PAIRING, true);
   });
   it('설치본은 SAX_CLOUD_DEV를 무시하고 운영으로 간다', () => {
     assert.deepEqual(cloudTarget({ isPackaged: true, env: { SAX_CLOUD_DEV: 'localhost:8787' } }), { env: 'prod' });
