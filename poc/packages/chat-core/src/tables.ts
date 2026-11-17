@@ -6,6 +6,18 @@ const obj = (properties: Record<string, unknown>) => ({ type: 'object', properti
 const VAT = { type: ['string', 'null'], enum: ['separate', 'included', null] };
 const NULLABLE_STRING = { type: ['string', 'null'] };
 
+/**
+ * 카드 인자 중 작성일자·수량·단가(ADR-049). 모델은 말한 그대로 넘기고 기기가 날짜·곱을 계산한다.
+ * 날짜는 달(이번 달 0, 지난달 -1)과 날("1"~"31", 말일 "last") 두 칸이다. 공급사 strict 스키마에서 nullable 객체가 흔들릴 수 있어 폈다.
+ */
+export const DATE_MONTH_MIN = -12;
+const DRAFT_EXTRA = {
+  date_month_offset: { type: ['integer', 'null'], minimum: DATE_MONTH_MIN, maximum: 0 },
+  date_day: NULLABLE_STRING,
+  quantity: NULLABLE_STRING,
+  unit_price: NULLABLE_STRING,
+};
+
 /** 도구 표. counterparty는 거래처 토큰, amount는 금액 토큰이나 결과 슬롯, draft는 카드 ref(d#)다. */
 export const CHAT_AGENT_TOOLS = [
   { name: 'sales_summary', parameters: obj({ month_offset: { type: 'integer', minimum: -12, maximum: 0 } }) },
@@ -13,8 +25,8 @@ export const CHAT_AGENT_TOOLS = [
   { name: 'receivables', parameters: obj({ counterparty: NULLABLE_STRING }) },
   { name: 'payables', parameters: obj({ counterparty: NULLABLE_STRING }) },
   { name: 'cash_flow', parameters: obj({ month_offset: { type: 'integer', minimum: -12, maximum: 0 } }) },
-  { name: 'invoice_draft', parameters: obj({ counterparty: { type: 'string' }, amount: NULLABLE_STRING, vat: VAT, item: NULLABLE_STRING }) },
-  { name: 'draft_edit', parameters: obj({ draft: { type: 'string' }, amount: NULLABLE_STRING, vat: VAT, item: NULLABLE_STRING }) },
+  { name: 'invoice_draft', parameters: obj({ counterparty: { type: 'string' }, amount: NULLABLE_STRING, vat: VAT, item: NULLABLE_STRING, ...DRAFT_EXTRA }) },
+  { name: 'draft_edit', parameters: obj({ draft: { type: 'string' }, amount: NULLABLE_STRING, vat: VAT, item: NULLABLE_STRING, ...DRAFT_EXTRA }) },
   { name: 'draft_discard', parameters: obj({ draft: { type: 'string' } }) },
 ] as const;
 export type ChatAgentToolName = (typeof CHAT_AGENT_TOOLS)[number]['name'];
@@ -52,7 +64,7 @@ export const slotPattern = new RegExp(`^\\{(r[1-9]\\d{0,5})\\.(${SLOT_PATHS.map(
 export const slotAnywhere = (): RegExp => new RegExp(slotPattern.source.slice(1, -1), 'g');
 
 export const AGENT_REPLY_KINDS = ['answer', 'did', 'ask', 'cannot', 'tax_advice', 'smalltalk'] as const;
-export const AGENT_ASKS = ['counterparty', 'amount', 'item', 'vat', 'which_card'] as const;
+export const AGENT_ASKS = ['counterparty', 'amount', 'item', 'vat', 'which_card', 'date'] as const;
 export type AgentReplyKind = (typeof AGENT_REPLY_KINDS)[number];
 export type AgentAsk = (typeof AGENT_ASKS)[number];
 /** 답과 같이 보일 ref 상한 */
@@ -61,7 +73,7 @@ export const AGENT_SHOW_MAX = 3;
 export const CHAT_REPLY_MAX_CHARS = 200;
 
 /** 도구 결과의 빈 값 종류(needs) */
-export const TOOL_NEEDS = ['amount', 'item', 'counterparty'] as const;
+export const TOOL_NEEDS = ['amount', 'item', 'counterparty', 'date'] as const;
 export type ToolNeed = (typeof TOOL_NEEDS)[number];
 export type Vat = 'separate' | 'included';
 

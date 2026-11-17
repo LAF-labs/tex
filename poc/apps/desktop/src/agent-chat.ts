@@ -3,7 +3,8 @@
 // - 모델에 돌려주는 도구 결과는 ref·status·fields·needs뿐이다(C-10). 값·행·개수·이름은 화면 쪽 결과(AgentTurnResult)에만 실린다.
 // - 초안 포트에는 준비·발급 메서드가 없다. 어떤 모델 출력으로도 run.prepare가 시작되지 않는다(발급은 카드 버튼 IPC 하나뿐).
 // - 문장·토큰·값을 로그에 남기지 않는다.
-import type { AgentReply, DomainCall, ScreenFrame, ShownReply, StepParams, StepResult, ToolOutput, Vat } from '@sax/engine';
+import { draftDate, issueDateRule, lineSupply, parseQuantity } from '@sax/engine';
+import type { AgentReply, DomainCall, DraftExtra, ScreenFrame, ShownReply, StepParams, StepResult, ToolOutput, Vat } from '@sax/engine';
 import { CHAT_ERROR_TEXT } from './chat-reply.ts';
 import { fillWithJosa, finalOf, fixJosa } from './josa.ts';
 import { cleanItem, split } from './shell-model.ts';
@@ -68,14 +69,22 @@ export interface DraftCard {
   status: string;
 }
 
+/** 카드의 작성일자(KST YYYY-MM-DD, 오늘이면 없음)와 수량·단가(ADR-049). 공급가액은 amount에 곱한 값이 이미 들어 있다. */
+export interface DraftExtraValues {
+  writeDate?: string;
+  quantity?: number;
+  unitPrice?: number;
+}
+export type DraftPatch = { amount?: number; vat?: Vat; item?: string } & DraftExtraValues;
+
 /** shell-runs 위의 좁은 포트. 준비·발급 메서드는 일부러 없다. */
 export interface AgentDrafts {
   list(): DraftCard[];
   /** 내 사업장·발급 인증이 빠졌는가. 금액·품목을 묻기 전에 본다(물어 놓고 끝에 등록이 빠졌다고 하지 않게). */
   setupMissing(): boolean;
   /** 내 사업장 등록이 빠졌으면 { setup: true }(초안을 만들지 않는다) */
-  create(counterpartyId: string, amount: number, vat: Vat | null, item: string | null): { runId: string } | { setup: true };
-  update(runId: string, patch: { amount?: number; vat?: Vat; item?: string }): void;
+  create(counterpartyId: string, amount: number, vat: Vat | null, item: string | null, extra?: DraftExtraValues): { runId: string } | { setup: true };
+  update(runId: string, patch: DraftPatch): void;
   discard(runId: string): void;
 }
 
@@ -174,7 +183,15 @@ interface Session {
   results: Map<string, Result>;
   refOfRun: Map<string, string>;
   runOfRef: Map<string, string>;
+  /** 이번 차례에 사장님이 쓴 문장(미래 날짜 말 확인용, ADR-049) */
+  said?: string;
 }
+
+/**
+ * 사장님이 미래 작성일자를 말했다("다음 달 1일자로", "내일 날짜로"). 모델이 날짜를 비우거나 이번 달로 바꿔 넣어도(parasail date-future)
+ * 기기가 받지 않고 날짜를 되묻는다. 작성일자는 오늘이나 지난 날만 된다.
+ */
+const FUTURE_DATE_SAID = /(?:다음\s?달|담달|내달|다음\s?주|내년|다음\s?해)\s*(?:\d{1,2}\s*일|말일?|초|중순|말경)|(?:^|[^가-힣])(?:내일|모레)\s*(?:날짜|자|일자)/u;
 
 const TOOL_PHASE: Record<DomainCall['tool'], Exclude<AgentPhase, 'thinking'>> = {
   sales_summary: 'reading',
@@ -237,6 +254,7 @@ export class AgentChat {
     const profileId = this.ports.profileId();
     if (!profileId) return { kind: 'agent', text: AGENT_SETUP_TEXT, show: [], ask: null, filtered: null, setup: true };
     const s = this.open(profileId);
+    s.said = text;
     const created: string[] = [];
     this.ports.onProgress('thinking');
     let phase: AgentPhase = 'thinking';
@@ -360,12 +378,16 @@ export class AgentChat {
         const cp = cpOf(call.counterpartyId);
         if (!cp) return out('unknown_counterparty');
         if (this.ports.drafts.setupMissing()) return out('setup_missing');
-        const amount = this.amount(s, call.amount);
+        const ex = this.extra(s, call);
+        const amount = ex.line ? (ex.line === 'bad' ? null : { value: ex.line.supply, vat: ex.line.vat }) : this.amount(s, call.amount);
         const item = call.item === null ? null : cleanItem(call.item);
         // 품목이 문장에도 거래처 저장 품목에도 없으면 만들지 않는다. 빈 품목 초안은 준비에서야 item_missing으로 멈춘다(interpret와 같은 규칙).
-        const needs: ToolNeed[] = [...(amount ? [] : ['amount' as const]), ...(item || cleanItem(cp.item ?? '') ? [] : ['item' as const])];
+        const needs: ToolNeed[] = [...(amount ? [] : ['amount' as const]), ...(item || cleanItem(cp.item ?? '') ? [] : ['item' as const]), ...(ex.date === 'bad' ? ['date' as const] : [])];
         if (needs.length) return out('needs_input', null, needs);
-        const r = this.ports.drafts.create(cp.id, amount!.value, call.vat ?? amount!.vat, item);
+        const r = this.ports.drafts.create(cp.id, amount!.value, call.vat ?? amount!.vat, item, {
+          ...(ex.date && ex.date !== this.ports.today() ? { writeDate: ex.date as string } : {}),
+          ...(ex.line && ex.line !== 'bad' ? { quantity: ex.line.quantity, unitPrice: ex.line.unitPrice } : {}),
+        });
         if ('setup' in r) return out('setup_missing');
         created.push(r.runId);
         return out('card_shown', this.cardRef(s, r.runId));
@@ -385,9 +407,18 @@ export class AgentChat {
           }
           return out('discarded', ref);
         }
-        const patch: { amount?: number; vat?: Vat; item?: string } = {};
+        const patch: DraftPatch = {};
         const needs: ToolNeed[] = [];
-        if (call.amount !== null) {
+        const ex = this.extra(s, call);
+        if (ex.date === 'bad') needs.push('date');
+        else if (ex.date) patch.writeDate = ex.date;
+        if (ex.line === 'bad') needs.push('amount');
+        else if (ex.line) {
+          patch.amount = ex.line.supply;
+          patch.quantity = ex.line.quantity;
+          patch.unitPrice = ex.line.unitPrice;
+          if (ex.line.vat) patch.vat = ex.line.vat;
+        } else if (call.amount !== null) {
           const a = this.amount(s, call.amount);
           if (a) {
             patch.amount = a.value;
@@ -413,6 +444,27 @@ export class AgentChat {
   }
 
   /** 금액 인자 → 원 단위 값. 합계 슬롯이면 그 금액은 부가세 포함이다. 채울 수 없으면 null. */
+  /**
+   * 작성일자·수량×단가(ADR-049). 날짜는 KST 오늘에서 계산하고 규칙(미래·지난 과세기간)에 걸리면 'bad'(되묻기 date).
+   * 수량과 단가가 둘 다 있으면 공급가액 = 수량 × 단가. 하나만 있거나 정수가 아니거나 amount와 곱이 다르면 'bad'(되묻기 amount).
+   */
+  private extra(s: Session, call: Extract<DomainCall, { tool: 'invoice_draft' | 'draft_edit' }>): { date: string | null | 'bad'; line: { supply: number; quantity: number; unitPrice: number; vat: Vat | null } | null | 'bad' } {
+    const today = this.ports.today();
+    const d = call.date ? draftDate(today, call.date.monthOffset, call.date.day) : null;
+    const rule = d === null || d === 'bad' ? null : issueDateRule(d, today);
+    const futureSaid = FUTURE_DATE_SAID.test(s.said ?? '') && (call.tool === 'invoice_draft' || call.date);
+    const date = rule === 'future' || rule === 'past_period' || futureSaid ? 'bad' : d;
+    const q = (call as DraftExtra).quantity ?? null;
+    const u = (call as DraftExtra).unitPrice ?? null;
+    if (q === null && u === null) return { date, line: null };
+    const quantity = parseQuantity(q);
+    const unit = this.amount(s, u);
+    const supply = quantity !== null && unit ? lineSupply(quantity, unit.value) : null;
+    const given = call.amount === null ? null : this.amount(s, call.amount);
+    if (supply === null || !unit || quantity === null || (given && given.value !== supply)) return { date, line: 'bad' };
+    return { date, line: { supply, quantity, unitPrice: unit.value, vat: unit.vat } };
+  }
+
   private amount(s: Session, a: Extract<DomainCall, { tool: 'invoice_draft' }>['amount']): { value: number; vat: Vat | null } | null {
     if (a === null) return null;
     if ('value' in a) return validAmount(a.value) ? { value: a.value, vat: null } : null;

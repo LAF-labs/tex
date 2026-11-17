@@ -32,7 +32,9 @@ let profileId: string;
 let clock: number;
 
 type Item = Record<string, unknown>;
-const fc = (name: string, args: object, id = `call_${randomBytes(3).toString('hex')}`): Item[] => [{ type: 'function_call', call_id: id, name, arguments: JSON.stringify(args) }];
+/** 카드 도구의 작성일자·수량·단가 칸(ADR-049)은 strict 스키마라 늘 있어야 한다. 시험이 쓰지 않으면 null로 채운다. */
+const DRAFT_NULLS = { date_month_offset: null, date_day: null, quantity: null, unit_price: null };
+const fc = (name: string, args: object, id = `call_${randomBytes(3).toString('hex')}`): Item[] => [{ type: 'function_call', call_id: id, name, arguments: JSON.stringify(name === 'invoice_draft' || name === 'draft_edit' ? { ...DRAFT_NULLS, ...args } : args) }];
 const msg = (o: object): Item[] => [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify(o) }] }];
 const reply = (o: Partial<{ kind: string; text: string; show: string[]; ask: string | null }>) => msg({ kind: 'answer', text: '확인했어요.', show: [], ask: null, ...o });
 const userText = (body: Item) => ((body.messages as Array<{ content: Array<{ text: string }> }>)[0]!.content[0]!.text);
@@ -520,6 +522,13 @@ describe('chat.step 턴 상한·세션 폐기', () => {
     script(() => reply({ kind: 'did', text: '10월 30일자로 준비할게요.' }));
     r = (await say(a, pc, 'A상사 10월 31일자로 끊어줘')).reply;
     assert.equal(r.filtered, 'number');
+    // 달 없이 쓴 날("다음 달 1일로")도 사장님이 쓴 날만 따라 쓴다(ADR-049 date-future)
+    script(() => reply({ kind: 'ask', text: '1일자는 아직 오지 않은 날이라 정할 수 없어요. 작성일자를 다시 알려 주세요.', ask: 'date' }));
+    r = (await say(a, pc, 'A상사 다음 달 1일로 끊어줘')).reply;
+    assert.equal(r.filtered, null);
+    script(() => reply({ kind: 'ask', text: '2일자는 정할 수 없어요.', ask: 'date' }));
+    r = (await say(a, pc, 'A상사 다음 달 1일로 끊어줘')).reply;
+    assert.equal(r.filtered, 'number');
   });
 
   it('closeOnCards: 카드 결과만 나온 차례는 모델을 다시 부르지 않고 닫는다. 조회가 섞이면 모델이 이어 간다', async () => {
@@ -540,6 +549,23 @@ describe('chat.step 턴 상한·세션 폐기', () => {
     script(() => fc('sales_summary', { month_offset: 0 }), (b) => reply({ text: '이번 달 {X.count}건이에요.'.replace('X', lastOutput(b)!.ref!), show: [lastOutput(b)!.ref!] }));
     const r3 = (await say(a, pc, '이번 달 매출')).reply;
     assert.equal(r3.filtered, null);
+  });
+
+  it('작성일자·수량×단가(ADR-049): 달·날과 수량·단가를 그대로 main에 넘기고, 닫는 문장에 작성일과 단가×수량을 쓴다', async () => {
+    const egress = new Egress({ env: {}, testOrigins: { gateway: mock.origin }, gateway: { auth: { headers: async () => ({ authorization: 'DPoP device-token', dpop: 'proof' }) }, bundles: catalog.allowEntries() } });
+    const a = new ChatAgent(db, { model: gatewayChatAgentModel(egress), now: () => clock, closeOnCards: true });
+    const pc = new FakePc();
+    script((b) => fc('invoice_draft', { counterparty: toks(nowLine(b), 'NAME')[0], amount: null, vat: null, item: '원두', date_month_offset: -1, date_day: 'last', quantity: '10', unit_price: toks(nowLine(b), 'AMT')[0] }));
+    const r = (await say(a, pc, 'A상사 원두 10kg kg당 12,000원 지난달 말일로 끊어줘')).reply;
+    assert.equal(responds().length, 1);
+    const call = pc.calls[0] as Extract<DomainCall, { tool: 'invoice_draft' }>;
+    assert.deepEqual([call.amount, call.date, call.quantity, call.unitPrice], [null, { monthOffset: -1, day: 'last' }, '10', { value: 12_000 }]);
+    assert.equal(r.filtered, 'closed');
+    assert.match(r.text, /^\[NAME_\d+\] 앞으로 작성일 지난달 말일, 단가 \[AMT_\d+\] × 10 확인 카드를 만들었어요\./);
+    // 쓰지 않은 칸은 main 호출에 싣지 않는다(예전 모양 그대로)
+    script((b) => fc('invoice_draft', { counterparty: toks(nowLine(b), 'NAME')[0], amount: toks(nowLine(b), 'AMT')[0], vat: null, item: '원두' }));
+    await say(a, pc, 'A상사 110만원 원두 끊어줘');
+    assert.deepEqual(Object.keys(pc.calls.at(-1)!).sort(), ['amount', 'callId', 'counterpartyId', 'item', 'tool', 'vat']);
   });
 
   it('중괄호 토큰("{AMT_1}")은 대괄호 토큰으로 받는다(인자·문장), 승인번호를 물은 조회 되풀이는 승인번호 슬롯으로 답한다', async () => {

@@ -103,6 +103,8 @@ export function braceTokens<T>(v: T): T {
 
 /** 달·날짜("9월", "10월 31일") */
 const DAY = /(?<!\d)(?:1[0-2]|[1-9])월(?:\s*(?:3[01]|[12]\d|[1-9])일)?(?!\d)/gu;
+/** 달 없이 쓴 날("다음 달 1일로", "25일자로"): 사장님이 이번 문장에 쓴 날만 따라 써도 된다(ADR-049) */
+const SOLO_DAY = /(?<!\d|월\s*)(?:3[01]|[12]\d|[1-9])일(?!\d)/gu;
 /** 문장 안 ref 표기("[ref:r1]", "(보임: r1, d2)"): 화면이 표·카드로 보이므로 지운다(숫자로 걸러지지 않게) */
 const REF_NOTE = /\s*[[(](?:ref|보임)\s*[:：]?\s*[rd][1-9]\d{0,5}(?:\s*,\s*[rd][1-9]\d{0,5})*[\])]/gu;
 
@@ -142,7 +144,12 @@ export function checkAgentReply<K extends string, A extends string>(out: unknown
   // 사장님이 이번 문장에 쓴 달·날짜는 그대로 따라 써도 된다(지어낸 값이 아니다, chat-eval look-sept·issue-date)
   const norm = (x: string) => x.replace(/\s+/g, '');
   const said = new Set([...(ctx.userText ?? '').matchAll(DAY)].flatMap((m) => [norm(m[0]), norm(m[0]).replace(/\d+일$/, '')]));
-  const bare = text.replace(TOKEN_RE, ' ').replace(slotAnywhere(), ' ').replace(DAY, (m) => (said.has(norm(m)) ? '그날' : m));
+  const saidDay = new Set([...(ctx.userText ?? '').replace(DAY, ' ').matchAll(SOLO_DAY)].map((m) => m[0]));
+  const bare = text
+    .replace(TOKEN_RE, ' ')
+    .replace(slotAnywhere(), ' ')
+    .replace(DAY, (m) => (said.has(norm(m)) ? '그날' : m))
+    .replace(SOLO_DAY, (m) => (saidDay.has(m) ? '그날' : m));
   if (unsafeText(bare)) return { kind: k, text: ctx.fallbackText, show: [], ask: null, filtered: 'unsafe' };
   if (numberShaped(bare)) {
     if (k === 'ask' && a && ctx.askText) return { kind: k, text: ctx.askText(a), show: refs, ask: a, filtered: 'number' };
