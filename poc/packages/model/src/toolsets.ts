@@ -123,7 +123,7 @@ export const CHAT_REPLY: ToolsetDef = {
 };
 
 /** 예상 밖 화면 판정(page_judge)과 브라우저 에이전트(browser_agent): 첫 게이트 앞에서만 엔진이 부른다. 예산은 실행당 따로 센다(AGENT_TOOLSETS). */
-export const AGENT_TOOLSETS = ['page_judge', 'browser_agent', 'computer_use'] as const;
+export const AGENT_TOOLSETS = ['page_judge', 'browser_agent', 'computer_use', 'decision_pick'] as const;
 export const JUDGE_SITUATIONS = ['js_dialog', 'notice_popup', 'unexpected_screen', 'session_expired', 'target_missing', 'other'] as const;
 export const JUDGE_PRESCRIPTIONS = ['dismiss_dialog', 'relogin', 'reload_checkpoint', 'fix_field', 'agent_mode', 'handoff'] as const;
 export type JudgePrescription = (typeof JUDGE_PRESCRIPTIONS)[number];
@@ -222,6 +222,35 @@ export const COMPUTER_USE: ToolsetDef = {
     },
   },
 };
+
+/**
+ * 결정 모델 고르기(decision_pick, 대표 2026-11-16 "jev·clef 같은 결정 모델"): 가린 화면 목록에서 목표 요소 하나를 고르는 분류.
+ * 게이트웨이는 OpenRouter decisions(기본 ~typesafe/jev-latest, 2026-11-16 jev-1.14로 풀림)로 부른다: 생성 없이 선택지 확률만 내서 0.4초·호출당 약 0.15원(맥북 평가 2026-11-16).
+ * 메시지는 input_text 하나, 그 글은 JSON `{"state": 설명, "choices": {값: 설명}}`이다. 질문 지시문은 이 툴셋 접두(게이트웨이 정본)이고 PC가 정하지 않는다.
+ * 출력은 게이트웨이가 결정 답을 바꾼 `{choice, confidence, p}`(p = 고른 값의 확률).
+ */
+export const DECISION_PICK: ToolsetDef = {
+  id: 'decision_pick',
+  effort: 'low',
+  maxOutputTokens: 200,
+  maxTurns: 1,
+  prefixKey: 'decision_pick',
+  commonPrefix: false,
+  tools: [],
+  output: {
+    name: 'decision_choice',
+    schema: {
+      type: 'object',
+      properties: { choice: { type: 'string', maxLength: 64 }, confidence: { type: 'number', minimum: 0, maximum: 1 }, p: { type: 'number', minimum: 0, maximum: 1 } },
+      required: ['choice', 'confidence', 'p'],
+      additionalProperties: false,
+    },
+  },
+};
+/** 선택지 상한(값 'none' 포함)과 설명·상태 글 길이 상한. 가짜 작성 화면 textbox가 55개라 64로 둔다(decisions API는 56개를 받았다, 2026-11-16). */
+export const DECISION_MAX_CHOICES = 64;
+export const DECISION_CHOICE_MAX_CHARS = 160;
+export const DECISION_STATE_MAX_CHARS = 4_000;
 
 const DIR = new URL('../toolsets/', import.meta.url);
 

@@ -1,6 +1,6 @@
 // S7 회귀 세트(D04 §9, D14 M3-7): screen_state_v2 결과 라벨 정확도(통과 98%+), blocked·captcha 재현율(99%+),
 // 질문별 정확도, 지연 p50/p95, 판정당 입력 토큰. 번들 버전을 올릴 때마다 돌리고 정확도 98% 미만이면 배포 금지.
-//   node --conditions=development scripts/s7-regression.ts [--mock] [--n=100] [--gate] [--model=openai/gpt-6-luna] [--intent=N] [--out=/abs/path.json]
+//   node --conditions=development scripts/s7-regression.ts [--mock] [--n=100] [--gate] [--model=openai/gpt-6-luna] [--intent=N] [--out=/abs/path.json] [--decisions=~typesafe/jev-latest] [--answers]
 // 코퍼스: tests/fixtures/l0-corpus.ts의 화면 라벨 코퍼스(합성, PoC-3 이후 홈택스 실화면 라벨 100장으로 바꾼다).
 // 입력 경로는 제품과 같다: 관측 노드 → A11yNode 트리 → Redactor.applyTree(절단·마스킹·구분자) → decide().
 // 키 우선순위(2026-11-05 yulmu): OPENROUTER_API_KEY → OpenRouter(OpenAI 호환 Chat Completions, @sax/net/demo DemoEgress,
@@ -9,7 +9,7 @@
 // 실측일 때만 intent_route_v1 구어 코퍼스(300문장+)도 돌려 플레이북 정확도와 mentions_tax_advice 오탐·누락률을 잰다(D04 §3, M6-11).
 // 모의 서버는 의도 답을 흉내 내지 않으므로 모의 모드에서는 건너뛴다. 배포 게이트는 screen_state_v2만 본다(D04 §9).
 import fs from 'node:fs';
-import { BundleCatalog, DefaultModelLayer, OpenAICompatDecideAdapter, OpenAIDecisionsAdapter, ThresholdProfiles, evaluateMapping, localRunToken, statesOf, type BundleAnswers, type DecideAdapter, type Usage } from '@sax/model';
+import { BundleCatalog, DefaultModelLayer, OpenAICompatDecideAdapter, OpenAIDecisionsAdapter, OpenRouterDecisionsAdapter, ThresholdProfiles, evaluateMapping, localRunToken, statesOf, type BundleAnswers, type DecideAdapter, type Usage } from '@sax/model';
 import { Egress } from '@sax/net';
 import { DemoEgress } from '@sax/net/demo';
 import { Redactor, apply, type A11yNode } from '@sax/redaction';
@@ -23,12 +23,16 @@ const forceMock = process.argv.includes('--mock');
 const gate = process.argv.includes('--gate');
 const n = Number(process.argv.find((a) => a.startsWith('--n='))?.slice(4) ?? 100);
 const outArg = process.argv.find((a) => a.startsWith('--out='))?.slice(6);
+/** 질문별 답 수치(선택값·신뢰도·확률, 술어 확률)와 라벨을 표본마다 남긴다. 모델별 임계값 프로필을 재산정할 때 쓴다. 글은 남기지 않는다. */
+const withAnswers = process.argv.includes('--answers');
 /** 의도 코퍼스 표본 수 상한(기본 전부). 시험 실행을 싸게 할 때만 줄인다. */
 const intentN = Number(process.argv.find((a) => a.startsWith('--intent='))?.slice(9) ?? Infinity);
 const orKey = forceMock ? undefined : process.env.OPENROUTER_API_KEY || undefined;
 const apiKey = forceMock || orKey ? undefined : process.env.OPENAI_API_KEY || undefined;
 const mode: 'openrouter' | 'live' | 'mock' = orKey ? 'openrouter' : apiKey ? 'live' : 'mock';
 const compatModel = process.argv.find((a) => a.startsWith('--model='))?.slice(8) ?? 'openai/gpt-6-luna';
+/** OpenRouter decisions 모델(System One 계약: Clef·Jev). 주면 Chat Completions 대신 /api/alpha/decisions로 잰다. */
+const decisionsModel = process.argv.find((a) => a.startsWith('--decisions='))?.slice(12);
 const COST_CAP = 2;
 const PASS = 0.98;
 const RECALL = 0.99;
@@ -39,9 +43,15 @@ const PRICES: Record<string, [number, number, number, number]> = {
   'openai/gpt-6-luna': [0.1, 0.1, 0.1, 0.5],
   'upstage/solar-pro4': [0.15, 0.15, 0.15, 0.6],
   'upstage/solar-mini4': [0.05, 0.05, 0.05, 0.2],
+  // OpenRouter decisions(맥북 탐침 2026-11-16, 출력 0원). 응답 model 이름에 날짜가 붙기도 한다(clef-omni-20261009).
+  'cloudflare/clef-flash': [0.038, 0.038, 0.038, 0],
+  'cloudflare/clef': [0.24, 0.24, 0.24, 0],
+  'cloudflare/clef-omni': [0.15, 0.15, 0.15, 0],
+  'typesafe/jev-1.14': [0.042, 0.042, 0.042, 0],
+  '~typesafe/jev-latest': [0.042, 0.042, 0.042, 0],
 };
 /** 모르는 모델은 비싸게 잡아 상한이 먼저 걸리게 한다. */
-const priceOf = (m: string) => PRICES[m] ?? PRICES[m.replace(/-\d{4}-\d{2}-\d{2}$/, '')] ?? [10, 10, 10, 50];
+const priceOf = (m: string) => PRICES[m] ?? PRICES[m.replace(/-\d{4}-\d{2}-\d{2}$/, '')] ?? PRICES[m.replace(/-\d{8}$/, '')] ?? [10, 10, 10, 50];
 const costOf = (m: string, u: Usage) => {
   const [i, c, w, o] = priceOf(m);
   return ((u.inputTokens - u.cachedTokens - u.cacheWriteTokens) * i + u.cachedTokens * c + u.cacheWriteTokens * w + u.outputTokens * o) / 1e6;
@@ -101,8 +111,11 @@ async function main() {
     const demo = new DemoEgress(guard);
     egress = demo;
     // 학습·보관하지 않는 공급사로만 라우팅(data_collection: deny). 모델이 스스로 적은 확률이라 번들 기본 임계값('initial')으로 본다.
-    decider = new OpenAICompatDecideAdapter({ transport: demo, apiKey: orKey!, model: compatModel, extraBody: { provider: { data_collection: 'deny' } } });
-    profiles = new ThresholdProfiles([...base.items, ...catalog.list().map((x) => ({ bundle: x.wireId, bundleDigest: x.digest, provider: 'openai_compat' as const, model: compatModel, status: 'initial' as const, overrides: [] }))]);
+    decider = decisionsModel
+      ? new OpenRouterDecisionsAdapter({ apiKey: orKey!, model: decisionsModel, provider: { data_collection: 'deny' }, fetchFn: fetch })
+      : new OpenAICompatDecideAdapter({ transport: demo, apiKey: orKey!, model: compatModel, extraBody: { provider: { data_collection: 'deny' } } });
+    const m = decisionsModel ?? compatModel;
+    profiles = new ThresholdProfiles([...base.items, ...catalog.list().map((x) => ({ bundle: x.wireId, bundleDigest: x.digest, provider: 'openai_compat' as const, model: m, status: 'initial' as const, overrides: [] }))]);
   } else {
     egress = new Egress({ ...guard, ...(mock ? { testOrigins: { openai: mock.origin } } : {}) });
     decider = new OpenAIDecisionsAdapter({ apiKey: apiKey ?? 'sk-mock', egress });
@@ -125,10 +138,12 @@ async function main() {
     if ([...byOutcome.values()].every((xs) => i >= xs.length)) break;
   }
 
-  const rows: Array<{ id: string; expect: string; got: string; reason?: string; ms: number; inputTokens: number }> = [];
+  const rows: Array<{ id: string; expect: string; got: string; reason?: string; ms: number; inputTokens: number; answers?: Record<string, unknown>; labels?: Record<string, unknown> }> = [];
   const perQ = new Map<string, { n: number; ok: number }>();
   let cost = 0;
   let stopped = false;
+  /** 별칭이 풀린 모델(응답 model). 버전이 바뀌면 이 회귀와 칸 고르기 평가를 다시 돌린다. */
+  const resolved = new Set<string>();
   for (const [i, { s, expect }] of picked.entries()) {
     if (cost >= COST_CAP) {
       stopped = true;
@@ -139,7 +154,9 @@ async function main() {
     const r = await layer.decide({ bundleId: BUNDLE, bundleDigest: b.digest, input, runToken: localRunToken(egress, { runId: `s7-${i}` }) });
     const ms = performance.now() - t0;
     cost += costOf(r.model, r.usage);
-    rows.push({ id: s.id, expect, got: r.outcome, ...(r.reason ? { reason: r.reason } : {}), ms, inputTokens: r.usage.inputTokens });
+    if (r.model) resolved.add(r.model);
+    const nums = () => Object.fromEntries(Object.entries(r.raw).map(([k, a]) => [k, a.type === 'predicate' ? { p: a.probability } : a.type === 'choice' ? { value: a.value, confidence: a.confidence, probabilities: a.probabilities } : { type: a.type }]));
+    rows.push({ id: s.id, expect, got: r.outcome, ...(r.reason ? { reason: r.reason } : {}), ms, inputTokens: r.usage.inputTokens, ...(withAnswers ? { answers: nums(), labels: s.labels } : {}) });
     for (const q of b.def.questions) {
       const a = r.raw[q.name];
       const l = s.labels[q.name];
@@ -201,6 +218,7 @@ async function main() {
   const result = {
     mode,
     model: decider.model,
+    resolvedModels: [...resolved],
     bundle: BUNDLE,
     bundleDigest: b.digest,
     corpus: 'l0-corpus screenCorpus(20, 7) — 합성',
@@ -217,12 +235,13 @@ async function main() {
     costUsd: +cost.toFixed(5),
     perQuestion: Object.fromEntries([...perQ].map(([k, v]) => [k, +(v.ok / v.n).toFixed(4)])),
     confusion,
-    misses: rows.filter((r) => r.got !== r.expect).slice(0, 30),
+    misses: rows.filter((r) => r.got !== r.expect).slice(0, 30).map(({ answers: _a, labels: _l, ...x }) => x),
+    ...(withAnswers ? { rows } : {}),
     intent,
   };
   const out = outArg ?? fileURLToPath(new URL(`../reports/raw/s7-${mode}.json`, import.meta.url));
   fs.writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);
-  console.log(`S7 ${mode}: n=${result.n} accuracy=${result.accuracy} blocked=${result.recall.blocked} captcha=${result.recall.captcha} p50=${result.latencyMs.p50}ms p95=${result.latencyMs.p95}ms tokens=${result.inputTokensAvg} cost=$${result.costUsd} pass=${result.pass}`);
+  console.log(`S7 ${mode}: n=${result.n} accuracy=${result.accuracy} blocked=${result.recall.blocked} captcha=${result.recall.captcha} p50=${result.latencyMs.p50}ms p95=${result.latencyMs.p95}ms tokens=${result.inputTokensAvg} cost=$${result.costUsd} pass=${result.pass} models=${result.resolvedModels.join(",")}`);
   if (intent) console.log(`intent_route_v1: n=${intent.n} playbook=${intent.playbookAccuracy} taxAdviceFP=${intent.taxAdviceFalsePositiveRate} taxAdviceMiss=${intent.taxAdviceMissRate}`);
   console.log(`→ ${out}`);
   if (gate && !result.pass) process.exit(1);

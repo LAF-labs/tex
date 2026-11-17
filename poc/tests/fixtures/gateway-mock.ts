@@ -23,6 +23,8 @@ export interface GatewayMockOptions {
   answers?: Record<string, number | string>;
   /** choice 답의 신뢰도(기본 0.97). 낮추면 매핑 문턱(예: intent_route_v1 route ≥ 0.8) 아래로 간다 */
   choiceConfidence?: number;
+  /** /v1/decide 응답 model(기본 별칭이 풀린 버전 typesafe/jev-1.14-20261014) */
+  decideModel?: string;
   /** respond 응답 output(기본: query_parse 구조화 출력 한 건) */
   respondOutput?: Array<Record<string, unknown>>;
   /** respond 응답 status(기본 completed) */
@@ -70,7 +72,7 @@ export async function startGatewayMock(opts: GatewayMockOptions = {}): Promise<G
           return { type: 'score', name: q.name, score: 1, confidence: 0.9 };
         });
         const qd = state.opts.tamperDigest ? createHash('sha256').update('tampered').digest('hex') : questionsDigest(b);
-        return send(200, { id: 'dec_mock', model: 'gpt-6-luna-2026-10-22', answers, usage: { input_tokens: 1200, output_tokens: 0 }, questionsDigest: qd });
+        return send(200, { id: 'dec_mock', model: state.opts.decideModel ?? 'typesafe/jev-1.14-20261014', answers, usage: { input_tokens: 1200, output_tokens: 0 }, questionsDigest: qd });
       }
       if (path === '/v1/respond') {
         const script = state.opts.respondScript;
