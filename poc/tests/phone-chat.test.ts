@@ -1,22 +1,21 @@
 // 폰 대화 코어(@sax/chat-core PhoneChat, ADR-047 결정 5·6). 모델은 대본대로 답하는 가짜다(모의 기준).
-// 보는 것: 모델에 값이 가지 않는다, 컨텍스트 순서와 상한, 사본으로 답하는 도구와 슬롯 채우기, 되풀이 호출 안전망, 접기, PC로 되돌릴 구간.
+// 보는 것: 모델에 값이 가지 않는다, 컨텍스트 순서와 상한, 사본으로 답하는 도구와 슬롯 채우기, 되풀이 호출 안전망, 접기, 이 폰에만 두는 기록.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   PHONE_CONTEXT_MAX_TOKENS,
   PHONE_NUMBER_TEXT,
+  PHONE_FALLBACK_TEXT,
+  PHONE_ASK_TEXT,
   PHONE_PREFIX_EST_TOKENS,
   PHONE_SESSION_TURNS,
   PHONE_TURNS_MAX,
   PhoneChat,
   PhoneChatError,
-  cleanSegment,
   estimateTokens,
-  mergeSegment,
   rebind,
   capture,
   type ChatMessage,
-  type PcContext,
   type PhoneChatPorts,
   type PhoneCopy,
   type PhoneModel,
@@ -158,26 +157,30 @@ describe('폰 대화: 컨텍스트와 가림', () => {
     assert.match(s.reqs[0]!.text, /사본: stale/);
   });
 
-  it('PC가 넘긴 요약·최근 턴은 [요약]·(PC에서) 줄로 맨 앞에 오고, 값으로 받은 토큰은 이 세션 번호로 다시 쓴다', async () => {
-    const t = rig();
-    const pc: PcContext = {
-      summary: { t: '[NAME_7]에 매달 [AMT_3] 세금계산서를 끊는다.', e: { '[NAME_7]': { k: 'NAME', v: '서울상사', r: 'cp:c2' }, '[AMT_3]': { k: 'AMT', v: '33만원' } } },
-      messages: [
-        { id: ULID(900), at: T0 - 7200_000, from: 'user', origin: 'pc', text: '서울상사에 33만원 끊어줘', ctx: { t: '[NAME_7]에 [AMT_3] 끊어줘', e: { '[NAME_7]': { k: 'NAME', v: '서울상사', r: 'cp:c2' }, '[AMT_3]': { k: 'AMT', v: '33만원' } } } },
-        { id: ULID(901), at: T0 - 7100_000, from: 'app', origin: 'pc', text: '서울상사 카드를 만들었어요.', kind: 'did' },
+  it('옛 판이 저장한 기록(PC 컨텍스트, origin·base·synced 칸)을 열어도 이 폰의 대화만 남고, 값으로 받은 토큰은 이 세션 번호로 다시 쓴다', async () => {
+    const e = { '[NAME_7]': { k: 'NAME', v: '서울상사', r: 'cp:c2' }, '[AMT_3]': { k: 'AMT', v: '33만원' } };
+    const stored = JSON.stringify({
+      v: 1,
+      seq: 3,
+      pc: { summary: { t: 'PC 요약', e: {} }, messages: [{ id: ULID(800), at: 1, from: 'app', origin: 'pc', text: 'PC에서 한 말' }], cursor: ULID(800), at: 2 },
+      phone: [
+        { id: ULID(900), at: T0 - 7200_000, from: 'user', origin: 'phone', base: ULID(800), synced: true, text: '서울상사에 33만원 끊어줘', ctx: { t: '[NAME_7]에 [AMT_3] 끊어줘', e } },
+        { id: ULID(901), at: T0 - 7100_000, from: 'app', origin: 'phone', base: ULID(800), text: '서울상사 카드를 만들었어요.', kind: 'did' },
+        { id: 7, text: '깨진 줄' },
       ],
-      cursor: ULID(901),
-      at: T0 - 7000_000,
-    };
-    assert.equal(await t.chat.applyContext(pc), true);
-    assert.equal(await t.chat.applyContext({ ...pc, messages: [{ id: 'x' }] }), false, '모양이 틀리면 받지 않는다');
+      fold: null,
+      drafts: [],
+    });
+    const t = rig({ stored });
+    assert.deepEqual((await t.chat.messages()).map((x) => Object.keys(x).sort()), [['at', 'ctx', 'from', 'id', 'text'], ['at', 'from', 'id', 'kind', 'text']]);
     reply(await t.chat.send('아까 그 금액 그대로 한빛전자에도'));
     const text = t.reqs[0]!.text;
-    const m = /^\[요약\]\n(\[NAME_\d+\])에 매달 (\[AMT_\d+\]) 세금계산서를 끊는다\.\n\[앞 대화\]\n\(PC에서\) 사용자: (\[NAME_\d+\])에 (\[AMT_\d+\]) 끊어줘\n\(PC에서\) 앱: (\[NAME_\d+\]) 카드를 만들었어요\.\n\[사실\]/.exec(text);
+    const m = /^\[앞 대화\]\n사용자: (\[NAME_\d+\])에 (\[AMT_\d+\]) 끊어줘\n앱: (\[NAME_\d+\]) 카드를 만들었어요\.\n\[사실\]/.exec(text);
     assert.ok(m, text);
-    assert.deepEqual([m[1], m[2], m[1]], [m[3], m[4], m[5]], '같은 값은 같은 토큰(요약·PC 턴·규칙으로 가린 PC 답)');
+    assert.equal(m[1], m[3], '같은 값은 같은 토큰(값으로 받은 것과 규칙으로 가린 것)');
+    assert.ok(!text.includes('PC 요약') && !text.includes('PC에서'), '다른 기기의 대화는 컨텍스트에 넣지 않는다');
     assertNoRaw(t.reqs, ['33만원']);
-    assert.deepEqual((await t.chat.messages()).map((x) => [x.origin, x.from]), [['pc', 'user'], ['pc', 'app'], ['phone', 'user'], ['phone', 'app']]);
+    assert.ok(!t.saved()!.includes('"pc"') && !t.saved()!.includes('synced'), '다시 저장할 때 옛 칸을 버린다');
   });
 
   it('세션이 바뀌어도(15분 쉼) 기록은 값으로 이어지고 새 세션 토큰으로 다시 가려 나간다', async () => {
@@ -195,13 +198,12 @@ describe('폰 대화: 컨텍스트와 가림', () => {
 
   it('상한을 넘으면 사실 → 오래된 턴 순으로 줄이고, 요약과 이번 문장은 남긴다', async () => {
     const long = '세금계산서 품목과 납품 일정 이야기를 길게 적는다 '.repeat(12);
-    const msgs: ChatMessage[] = [];
+    const msgs: ChatMessage[] = [{ id: ULID(499), at: T0 - 9100_000, from: 'user', text: '접힌 줄' }];
     for (let i = 0; i < 20; i++) {
-      msgs.push({ id: ULID(500 + i * 2), at: T0 - 9000_000 + i, from: 'user', origin: 'pc', text: `${i}번째 ${long}` });
-      msgs.push({ id: ULID(501 + i * 2), at: T0 - 9000_000 + i, from: 'app', origin: 'pc', text: `${i}번째 답 ${long}`, kind: 'answer' });
+      msgs.push({ id: ULID(500 + i * 2), at: T0 - 9000_000 + i, from: 'user', text: `${i}번째 ${long}` });
+      msgs.push({ id: ULID(501 + i * 2), at: T0 - 9000_000 + i, from: 'app', text: `${i}번째 답 ${long}`, kind: 'answer' });
     }
-    const t = rig();
-    await t.chat.applyContext({ summary: { t: '요약 첫 문장이다.', e: {} }, messages: msgs, cursor: msgs.at(-1)!.id, at: T0 });
+    const t = rig({ stored: JSON.stringify({ v: 1, seq: 0, phone: msgs, fold: { summary: { t: '요약 첫 문장이다.', e: {} }, upto: ULID(499) }, drafts: [] }) });
     reply(await t.chat.send('한빛전자 발급 기록'));
     const text = t.reqs[0]!.text;
     assert.ok(PHONE_PREFIX_EST_TOKENS + estimateTokens(text) <= PHONE_CONTEXT_MAX_TOKENS);
@@ -295,7 +297,7 @@ describe('폰 대화: 도구와 카드', () => {
     assert.equal(reply(await t.chat.send('세금 줄이는 법')).filtered, 'advice');
     t.setScript((_r, n) => say(n, 'answer', '비밀번호를 입력하세요.'));
     assert.equal(reply(await t.chat.send('안 돼')).filtered, 'unsafe');
-    for (const bad of [say(9, 'answer', '[NAME_99]예요.'), say(9, 'answer', '{r77.count}건이에요.'), say(9, 'answer', '네', ['r77']), say(9, 'issue', '발급했어요.')]) {
+    for (const bad of [say(9, 'answer', '[NAME_99]예요.'), say(9, 'answer', '네', ['r77']), say(9, 'issue', '발급했어요.')]) {
       t.setScript(() => bad);
       const r = await t.chat.send('한빛전자');
       assert.deepEqual([r.kind, r.kind === 'unavailable' && r.code], ['unavailable', 'chat.bad_response']);
@@ -304,6 +306,41 @@ describe('폰 대화: 도구와 카드', () => {
     const d = reply(await t.chat.send('이번 달 매출 얼마야'));
     assert.equal(d.reply, 'defer');
     assert.equal((await t.chat.messages()).at(-1)!.kind, 'defer');
+  });
+
+  it('PC 대화에서 실제 모델로 찾은 실패와 같은 규칙: 사장님이 쓴 달·날짜는 따라 써도 되고, 되묻기에 숫자가 섞이면 되묻기는 살리고, 틀린 슬롯·중괄호 토큰은 턴을 버리지 않는다', async () => {
+    const t = rig({ script: (_r, n) => say(n, 'answer', '9월 기록을 표로 보여 드릴게요.', ['r1']) });
+    const a = reply(await t.chat.send('한빛전자 9월 발급 기록'));
+    assert.deepEqual([a.text, a.filtered, a.show.length], ['9월 기록을 표로 보여 드릴게요.', null, 1]);
+    // 사장님이 쓰지 않은 달은 지어낸 값일 수 있다: 문장만 버린다
+    t.setScript((_r, n) => say(n, 'answer', '10월 기록을 표로 보여 드릴게요.', ['r1']));
+    assert.deepEqual([reply(await t.chat.send('한빛전자 9월 발급 기록')).filtered], ['number']);
+    // 되묻는 문장에 숫자가 섞였다: 되묻기와 선택지는 살리고 문장은 고정 문장
+    t.setScript((_r, n) => say(n, 'ask', '금액은 550000원이 맞나요, 아니면 다른 금액인가요?', [], 'amount'));
+    const b = reply(await t.chat.send('서울상사에 끊어줘'));
+    assert.deepEqual([b.text, b.filtered, b.ask?.kind], [PHONE_ASK_TEXT.amount, 'number', 'amount']);
+    // 모르는 결과를 가리킨 슬롯: 보일 것이 없으면 고정 안내, 턴은 버리지 않는다
+    t.setScript((_r, n) => say(n, 'answer', '{r77.count}건이에요.'));
+    const c = reply(await t.chat.send('안녕'));
+    assert.deepEqual([c.text, c.filtered, c.show.length], [PHONE_FALLBACK_TEXT, 'slot', 0]);
+
+    // 카드 ref에 슬롯을 붙이고 인자에 중괄호 토큰을 쓴 턴: 카드는 만들어지고, 문장만 고정 문장으로 바뀐다. 카드를 만든 턴의 부가세는 묻지 않는다.
+    const u = rig({
+      script: (r, n) => {
+        if (!r.replay.length) return call(n, 'invoice_draft', { counterparty: '{NAME_1}', amount: '{AMT_1}', vat: null, item: null });
+        const ref = /"ref":"(d\d+)"/.exec((r.replay[1] as { output: string }).output)![1]!;
+        return say(n, 'ask', `{${ref}.first.supply}으로 카드를 만들었어요. 부가세는 별도인가요?`, [], 'vat');
+      },
+    });
+    const d = reply(await u.chat.send('한빛전자에 55만원 끊어줘'));
+    const card = d.show.find((x) => x.type === 'card');
+    assert.ok(card && card.type === 'card', JSON.stringify(d));
+    assert.deepEqual([card.draft.amount, d.text, d.filtered, d.ask], [550000, PHONE_NUMBER_TEXT, 'slot', null]);
+    assertNoRaw(u.reqs);
+    // 카드가 없는 턴의 틀린 슬롯 되묻기는 그 칸의 고정 문장으로 되묻는다
+    u.setScript((_r, n) => say(n, 'ask', '{d9.first.item} 품목이 맞나요?', [], 'item'));
+    const e = reply(await u.chat.send('품목은 뭐였지'));
+    assert.deepEqual([e.text, e.filtered, e.ask?.kind], [PHONE_ASK_TEXT.item, 'slot', 'item']);
   });
 
   it('사본에 없는 거래처: 사장님이 쓴 이름이면 화면 안내에 싣고, 모델에는 unknown_counterparty만 간다', async () => {
@@ -349,15 +386,15 @@ describe('폰 대화: 접기와 PC로 되돌리기', () => {
     const digests = t.reqs.filter((r) => r.toolset === 'chat_digest');
     assert.equal(digests.length, 1);
     const d = digests[0]!.text;
-    assert.match(d, /^\[대화\]\n\(11월 16일\) \(폰에서\) 사용자: \[NAME_\d+\] 가\n\(11월 16일\) \(폰에서\) 앱: 네\./);
+    assert.match(d, /^\[대화\]\n\(11월 16일\) 사용자: \[NAME_\d+\] 가\n\(11월 16일\) 앱: 네\./);
     assert.equal(d.split('\n').filter((l) => l.includes('사용자:')).length, PHONE_TURNS_MAX / 2 + 1, '오래된 턴 11개(21 - 10)를 접는다');
     assertNoRaw([digests[0]!]);
     reply(await t.chat.send('서울상사는'));
     const text = t.reqs.at(-1)!.text;
-    assert.match(text, /^\[요약\]\n\(그 뒤 폰에서\) \[NAME_\d+\]와 인사를 나눴다\. 아직 끝나지 않은 일은 없다\.\n\[앞 대화\]\n사용자: \[NAME_\d+\] 가{12}\n/, '슬롯은 요약에 옮기지 않는다');
+    assert.match(text, /^\[요약\]\n\[NAME_\d+\]와 인사를 나눴다\. 아직 끝나지 않은 일은 없다\.\n\[앞 대화\]\n사용자: \[NAME_\d+\] 가{12}\n/, '슬롯은 요약에 옮기지 않는다');
     assert.equal(text.split('\n').filter((l) => l.startsWith('사용자:')).length, PHONE_TURNS_MAX / 2 + 1);
-    // 접은 메시지도 PC에 보낼 구간에는 그대로 남는다
-    assert.equal((await t.chat.pendingSync())!.messages.length, (PHONE_TURNS_MAX + 2) * 2);
+    // 접은 메시지도 화면 목록에는 그대로 남는다
+    assert.equal((await t.chat.messages()).length, (PHONE_TURNS_MAX + 2) * 2);
   });
 
   it('요약 호출이 실패하거나 요약에 식별자가 섞이면 요약 없이 접기만 한다', async () => {
@@ -371,67 +408,25 @@ describe('폰 대화: 접기와 PC로 되돌리기', () => {
     }
   });
 
-  it('폰 구간: 받았다는 답이 올 때까지 다시 보내고, 답이 온 것은 다음 chat.context 때 PC 것으로 바뀐다. 저장은 포트로만(다시 열어도 이어진다)', async () => {
+  it('대화는 이 폰에만 둔다: 저장은 포트로만 하고 다시 열어도 이어진다. 실행 토큰은 저장하지 않는다', async () => {
     const t = rig({ script: (_r, n) => say(n, 'did', '[NAME_1] 건을 적어 뒀어요.') });
     await t.chat.send('한빛전자 건 메모');
     await t.chat.send('서울상사도');
-    const seg = (await t.chat.pendingSync())!;
-    assert.deepEqual([seg.base, seg.messages.length], [null, 4]);
-    assert.deepEqual(cleanSegment(JSON.parse(JSON.stringify(seg))), seg, '봉투로 오가도 같은 모양');
-    assert.ok(seg.messages.every((m) => m.origin === 'phone' && !('synced' in m)));
-    assert.deepEqual(await t.chat.pendingSync(), seg, '답이 없으면 같은 묶음을 다시 보낸다');
-    // PC가 합친다(두 번 받아도 같다)
-    const pcLog: ChatMessage[] = [{ id: ULID(800), at: T0 - 10, from: 'app', origin: 'pc', text: 'PC에서 한 말' }];
-    const m1 = mergeSegment(pcLog, seg);
-    const m2 = mergeSegment(m1.log, seg);
-    assert.deepEqual([m1.added, m2.added, m2.log.length], [4, 0, 5]);
-    assert.deepEqual(m2.accepted, seg.messages.map((m) => m.id));
-    assert.equal(await t.chat.acked(m1.accepted.slice(0, 2)), 2);
-    assert.equal((await t.chat.pendingSync())!.messages.length, 2, '답이 온 것은 다시 보내지 않는다');
-    await t.chat.acked(m1.accepted);
-    assert.equal(await t.chat.pendingSync(), null);
+    const before = await t.chat.messages();
+    assert.deepEqual(before.map((m) => [m.from, m.text]), [['user', '한빛전자 건 메모'], ['app', '한빛전자 건을 적어 뒀어요.'], ['user', '서울상사도'], ['app', '한빛전자 건을 적어 뒀어요.']]);
+    assert.ok(before.every((m) => !('origin' in m) && !('base' in m) && !('synced' in m)));
+    // 다른 기기로 내보내는 길이 없다(ADR-046 결정 7: 대화는 기기마다 따로)
+    for (const gone of ['pendingSync', 'acked', 'applyContext']) assert.equal((t.chat as unknown as Record<string, unknown>)[gone], undefined, gone);
     // 다시 연 앱: 저장된 것으로 이어진다
-    const again = rig({ stored: t.saved() });
-    assert.equal((await again.chat.messages()).length, 4);
-    await again.chat.applyContext({ summary: null, messages: m2.log.slice(-3).map((m) => ({ ...m, synced: undefined })), cursor: m2.log.at(-1)!.id, at: T0 + 1 });
-    assert.deepEqual((await again.chat.messages()).map((m) => m.id), m2.log.slice(-3).map((m) => m.id), '받았다는 답이 온 폰 메시지는 PC가 준 목록으로 바뀐다');
+    const again = rig({ stored: t.saved(), script: (_r, n) => say(n, 'smalltalk', '네.') });
+    assert.deepEqual(await again.chat.messages(), before);
     reply(await again.chat.send('고마워'));
-    assert.equal((await again.chat.pendingSync())!.base, m2.log.at(-1)!.id, '새 구간의 자리는 그때 알던 PC 마지막 메시지 뒤');
+    assert.match(again.reqs[0]!.text, /^\[앞 대화\]\n사용자: \[NAME_\d+\] 건 메모\n앱: \[NAME_\d+\] 건을 적어 뒀어요\.\n사용자: \[NAME_\d+\]도\n/);
     assert.ok(!again.saved()!.includes('rt-chat_'), '실행 토큰은 저장하지 않는다');
   });
 });
 
-describe('대화 기록 합치기(mergeSegment)와 가린 글 다시 쓰기', () => {
-  const msg = (n: number, at: number, origin: 'pc' | 'phone'): ChatMessage => ({ id: ULID(n), at, from: 'user', origin, text: `m${n}` });
-
-  it('구간은 base 바로 뒤부터, 그 뒤 PC 메시지와는 쓴 시각으로 맞추고 구간 안 순서는 지킨다', () => {
-    const log = [msg(1, 100, 'pc'), msg(2, 200, 'pc'), msg(3, 300, 'pc'), msg(4, 400, 'pc')];
-    const seg = { base: ULID(2), messages: [msg(10, 250, 'phone'), msg(11, 350, 'phone'), msg(12, 360, 'phone')] };
-    assert.deepEqual(mergeSegment(log, seg).log.map((m) => m.text), ['m1', 'm2', 'm10', 'm3', 'm11', 'm12', 'm4']);
-    // 폰 시계가 한참 늦어도 이미 본 PC 메시지(base) 앞으로 가지 않고, 구간 안 순서도 그대로다
-    const slow = { base: ULID(2), messages: [msg(10, 5, 'phone'), msg(11, 1, 'phone')] };
-    assert.deepEqual(mergeSegment(log, slow).log.map((m) => m.text), ['m1', 'm2', 'm10', 'm11', 'm3', 'm4']);
-    // base를 모르면 전체를 시각으로 맞춘다
-    assert.deepEqual(mergeSegment(log, { base: ULID(99), messages: [msg(10, 150, 'phone')] }).log.map((m) => m.text), ['m1', 'm10', 'm2', 'm3', 'm4']);
-    assert.deepEqual(mergeSegment([], { base: null, messages: [msg(10, 1, 'phone')] }).log.map((m) => [m.text, m.origin, m.synced]), [['m10', 'phone', true]]);
-  });
-
-  it('cleanSegment: 모양이 틀린 묶음은 받지 않는다(id 꼴, 중복, origin, 길이)', () => {
-    const ok = { base: null, messages: [msg(10, 1, 'phone')] };
-    assert.ok(cleanSegment(ok));
-    for (const bad of [
-      { base: 'x', messages: ok.messages },
-      { base: null, messages: [] },
-      { base: null, messages: [msg(10, 1, 'pc')] },
-      { base: null, messages: [msg(10, 1, 'phone'), msg(10, 2, 'phone')] },
-      { base: null, messages: [{ ...msg(10, 1, 'phone'), id: 'not-ulid' }] },
-      { base: null, messages: [{ ...msg(10, 1, 'phone'), text: '가'.repeat(4001) }] },
-      { base: null, messages: [{ ...msg(10, 1, 'phone'), kind: 'did' }] },
-      { base: null, messages: [{ ...msg(10, 1, 'phone'), ctx: { t: 'x', e: { '[NAME_1]': { k: 'name', v: 'x' } } } }] },
-    ]) assert.equal(cleanSegment(bad), null, JSON.stringify(bad).slice(0, 80));
-    assert.deepEqual(Object.keys(cleanSegment({ base: null, messages: [{ ...msg(10, 1, 'phone'), extra: 1, synced: true }] })!.messages[0]!).sort(), ['at', 'from', 'id', 'origin', 'text']);
-  });
-
+describe('가린 글 다시 쓰기', () => {
   it('capture → rebind: 다른 세션에서 같은 값은 그 세션의 토큰이 되고 레코드 묶음도 따라간다. 값 없는 토큰은 자리표시가 된다', () => {
     const a = new Redactor({ chatSessionId: 'chat_a' });
     a.addRecord({ recordId: 'cp:c9', names: ['다른상사'] });

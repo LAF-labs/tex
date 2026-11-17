@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "대화 코어(ADR-047 결정 4). PC 엔진과 폰 앱이 같이 쓰는 대화 규칙(표·가림·답 검사)과 폰 대화 루프(컨텍스트·도구·기록·합치기). 순수 TS, Node 전용 API 없음. 폰 앱에는 고정 사본으로 들어간다.",
+  "description": "대화 코어(ADR-047 결정 4). PC 엔진과 폰 앱이 같이 쓰는 대화 규칙(표·가림·답 검사)과 폰 대화 루프(컨텍스트·도구·그 폰에만 두는 기록). 순수 TS, Node 전용 API 없음. 폰 앱에는 고정 사본으로 들어간다.",
   "exports": {
     ".": { "types": "./src/index.ts", "development": "./src/index.ts", "default": "./dist/index.js" }
   },

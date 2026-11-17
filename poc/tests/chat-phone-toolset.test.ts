@@ -85,7 +85,9 @@ describe('chat_phone 머리말', () => {
 
   it('모든 도구 이름·status·슬롯 위치·슬롯 칸·답 종류·되묻기 칸·사본 상태·입력 묶음을 적는다', () => {
     for (const w of [...CHAT_PHONE_TOOLS.map((t) => t.name), ...PHONE_TOOL_STATUSES, ...SLOT_POSITIONS, ...SLOT_FIELDS, 'sum.supply', 'sum.total', 'count', ...PHONE_REPLY_KINDS, ...AGENT_ASKS, ...PHONE_COPY_STATES]) assert.ok(p.includes(w), w);
-    for (const block of ['[요약]', '[앞 대화]', '[사실]', '[지금]', '사본:', '(PC에서)']) assert.ok(p.includes(block), block);
+    for (const block of ['[요약]', '[앞 대화]', '[사실]', '[지금]', '사본:']) assert.ok(p.includes(block), block);
+    // 대화는 기기마다 따로다(ADR-046 결정 7): 다른 기기에서 한 말이라는 표시를 머리말에 두지 않는다
+    assert.ok(!p.includes('(PC에서)'));
   });
 
   it('폰에 없는 도구는 도구로 적지 않고, PC가 꺼져 있음·맡기기·defer·세무 판단·데이터 규칙을 적는다', () => {
@@ -107,7 +109,7 @@ describe('chat_digest 머리말', () => {
   const p = toolsetPrefix(CHAT_DIGEST);
 
   it('입력 묶음·글자 상한·토큰 규칙·데이터 규칙을 적고, 발급했다고 적지 말라고 한다', () => {
-    for (const w of ['[앞 요약]', '[대화]', '(PC에서)', '(폰에서)', `${CHAT_DIGEST_MAX_CHARS}자`, '[NAME_1]', '# 데이터 규칙', 'summary']) assert.ok(p.includes(w), w);
+    for (const w of ['[앞 요약]', '[대화]', '(날짜)', `${CHAT_DIGEST_MAX_CHARS}자`, '[NAME_1]', '# 데이터 규칙', 'summary']) assert.ok(p.includes(w), w);
     assert.match(p, /발급했다고 적지 않는다/);
     assert.doesNotMatch(p, /판정기다/);
   });
