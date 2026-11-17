@@ -26,10 +26,11 @@
 | `OPENROUTER_PROVIDERS` | openrouter | 슬러그 `a,b`(1~8개, 중복 금지) | 공급자 고정(`only` + `allow_fallbacks:false`). 비면 기동 거부 |
 | `PROVIDER_BASE_URL` | openai-compat | `https://…` | 공급사 주소 |
 | `PROVIDER_API_KEY` ⚿ | openai-compat | | 공급사 API 키 |
-| `MODEL_DECIDE` / `MODEL_RESPOND` | 예 | 모델 ID | 판정·응답 모델(클라이언트가 정하지 않는다) |
+| `MODEL_DECIDE` / `MODEL_RESPOND` | 예 | 모델 ID | 판정·응답 모델(클라이언트가 정하지 않는다). OpenRouter 운영의 `MODEL_DECIDE`는 `~typesafe/jev-latest`(L1을 `/api/alpha/decisions`로). PC는 응답 model이 `typesafe/jev-`로 시작해야 받고, 그 계열의 임계값 프로필을 쓴다 |
 | `MODEL_AGENT` | 아니오(`typesafe/jev-router`) | OpenRouter 모델 ID | 예상 밖 화면 판정·브라우저 에이전트(`page_judge`·`browser_agent`) 모델. 기본은 요청마다 모델·추론 강도를 고르는 라우터다. **이 두 툴셋 호출에는 `OPENROUTER_ZDR`·`OPENROUTER_DATA_COLLECTION`·`OPENROUTER_PROVIDERS`를 적용하지 않는다**(provider 필드 없이 보낸다, 대표 2026-11-13: 라우터 뒤쪽 공급사가 요청마다 달라 고정하면 막힌다). 보내는 글은 지금처럼 가린 요소 목록·대화상자 문구뿐이다. 다른 툴셋은 그대로 고정한다 |
 | `OPENROUTER_AGENT_PRIVACY` | 아니오(`off`) | `off` \| `deny` \| `zdr` | 위 두 툴셋 호출의 보관 조건. 공급자는 고정하지 않고 `provider`에 보관 조건만 싣는다: `deny` = `data_collection:"deny"`, `zdr` = `zdr:true` + `data_collection:"deny"`. `off`는 provider 필드 없음(대표 2026-11-13 결정). 처리방침 6항의 예외 문구를 지우려면 `zdr`로 켜야 한다. 라우터 뒤 공급사가 못 맞추면 OpenRouter가 거절할 수 있으니 실키로 판정 몇 건을 돌려 본 뒤 켠다. 다른 값이면 기동 거부 |
 | `MODEL_VISION` | 아니오(`MODEL_AGENT`) | OpenRouter 모델 ID(이미지 입력·structured outputs 지원) | 화면 보기(`computer_use`, 대표 결정 2026-11-16) 모델. PC가 입력 칸·숫자·메일 글을 검게 가린 JPEG 한 장을 받는다. **판정·에이전트와 달리 `OPENROUTER_ZDR`·`OPENROUTER_DATA_COLLECTION`·`OPENROUTER_PROVIDERS` 고정을 그대로 건다**: 고정 목록 공급사가 이미지 입력을 받는 모델을 골라야 한다. 이미지는 이 툴셋에서만 받고 다른 툴셋의 이미지는 `400 gateway.param_rejected` |
+| `MODEL_DECISION` | 아니오(`~typesafe/jev-latest`) | OpenRouter decisions 모델 ID | 결정 모델 고르기(`decision_pick`, 위치 찾기 앞 칸: 가린 같은 역할 요소 목록에서 목표 칸 번호 하나). OpenRouter `/api/alpha/decisions`(생성 없이 선택지 확률)로 부른다. 공급자 고정 없이 `OPENROUTER_AGENT_PRIVACY` 보관 조건만 건다(판정·에이전트와 같다). 2026-11-16 비교로 jev를 골랐고 대표 지시로 별칭(latest)으로 부른다. 풀린 버전은 `ops_stats`(surface `model:<이름>`, outcome `seen`)에 날마다 센다. 버전이 바뀌면 `scripts/s7-regression.ts --decisions=~typesafe/jev-latest --n=100 --answers --gate`와 `tests/ladder-live/pick-eval.ts`를 다시 돌린다 |
 | `GW_MONTHLY_TOKENS` | 아니오(3,000,000) | 양의 정수(아니면 기동 거부) | 계정 월 토큰 한도(100% L2 중단, 200% 이후 안전 판정만 계정당 분당 6회) |
 | `GW_PRICES_JSON` | 아니오(0) | `{"decideIn":…,"decideOut":…,"respondIn":…,"respondOut":…}` | 마이크로 달러 / 100만 토큰. S9·계약 전에는 0 |
 | `GW_DAILY_KRW_TRIAL` | 아니오(`50`) | 양의 정수(원) | 무료 체험 하루 AI 사용 금액 한도. 하루는 한국 시간 새벽 4시에 바뀐다(사용자 결정 2026-11-16) |

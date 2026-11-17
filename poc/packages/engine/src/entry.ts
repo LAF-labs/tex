@@ -167,7 +167,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   bank = new BankService(db, cipher, bankKey, { vaultDir: paths.vault });
   bankKey.fill(0);
   intent = new IntentResolver(db, { model: gatewayIntentModel(egress) });
-  chatAgent = new ChatAgent(db, { model: gatewayChatAgentModel(egress) });
+  chatAgent = new ChatAgent(db, { model: gatewayChatAgentModel(egress), closeOnCards: true });
   // 계좌 자동조회(CODEF): 계좌 고르기가 돈 맞추기 계좌로 잇고, bank.refresh가 원천(codefTxnSource)으로 가져와 넣고 맞춘다
   const codefBank = bankServicePort(bank, db);
   codef = new CodefLink({

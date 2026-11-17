@@ -575,6 +575,10 @@ export class DeviceSession {
   get deviceList(): DeviceListJson {
     return this.#id.deviceList;
   }
+  /** 이 PC의 기기 ID(기기 화면에서 "이 PC" 표시, 스스로 끊기 구분) */
+  get deviceId(): string {
+    return this.#id.deviceId;
+  }
 
   /** Authorization: DPoP <token> + DPoP 증명(Vd). 401·토큰 만료면 호출자가 clearToken() 뒤 한 번 다시 한다. */
   readonly auth: DeviceAuth = async (htm, htu) => deviceAuthHeaders(await this.#cache.token(), (await this.#keys()).vd, htm, htu, this.#now());

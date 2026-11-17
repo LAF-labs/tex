@@ -112,14 +112,16 @@ PG에는 무작위 `pgCustomerRef`만 넘기고 이메일을 주지 않는다. �
 | 메서드·경로 | 인증 | 요청 | 응답 | 오류 |
 |---|---|---|---|---|
 | `POST /v1/aik` | 세션 | `{aikPub, deviceList:{listVersion:1, entries:[자기 항목], revoked:[]}, platform:"windows"\|"macos", name}` | `201 {deviceId}` | `account.aik_already_pinned`, `account.aik_signature_invalid`. 계정당 1회, 알림 메일 |
-| `GET /v1/devices` | 세션 또는 기기:devlist | — | `200 {devices:[{deviceId, role, platform, name, state, registeredAt, Sx, Vx, holdUntil, deleteAfter}]}` | |
+| `GET /v1/devices` | 세션 또는 기기:devlist·devices | — | `200 {devices:[{deviceId, role, platform, name, state, registeredAt, Sx, Vx, holdUntil, deleteAfter}]}` | |
 | `POST /v1/devices/enroll` | 세션 | `{deviceId(uuid4), role, platform, name, Sx, Vx}` | `201 {holdUntil}` | 플랫폼·역할 불일치 400, `account.device_limit`(데스크톱 3·모바일 3, 폐기 제외. 본문은 코드뿐이고 서버는 어느 기기도 대신 끊지 않는다, ADR-048), `account.device_churn_limit`(30일 추가 데스크톱 5·모바일 5), 이미 있는 기기 ID 400 |
 | `POST /v1/devices/enroll`(폰 대리 등록) | 데스크톱 기기:devlist | `{deviceId(uuid4), role:"mobile", platform:"ios"\|"android", name, Sx, Vx, roomId}` | `201 {holdUntil}`, 재등록 `200 {holdUntil, state}` | 폰 앱에는 계정 로그인이 없어서 페어링 7단계에서 PC가 대신 등록한다(팀장 결정 2026-11-06, D08 §4.2). `roomId`는 그 PC가 `POST /v1/rooms`로 만들고 폰이 실제로 붙은(정원 2가 찬) 1회용 룸이어야 하고, 등록에 한 번만 쓸 수 있다(릴레이 `/internal/v1/rooms/:id/redeem`). 룸이 없음·만료·미페어링·다른 PC는 모두 `404 relay.room_unavailable`, 그 PC의 룸이 이미 등록에 쓰였으면 `409 relay.room_used`. 폰 토큰 403 `account.scope_denied`. 상한·교체 한도는 세션 경로와 같고 룸을 소비하기 전에 본다. 등록된 폰은 pending이고 같은 PC의 `PUT /v1/device-list`로 활성이 된다. **재등록은 멱등이다**(팀장 결정 2026-11-06): 같은 계정·같은 `deviceId`·같은 `Sx`·`Vx`의 pending/active 폰이면 `200 {holdUntil(pending일 때만, 아니면 null), state}`로 기존 기록을 돌려준다. 이때 상한·교체 한도에 다시 넣지 않고 알림도 없다. **룸 하나에 enroll 성공은 한 번**이다. 200도 룸을 사용됨으로 표시한다(룸은 `PAIR_OK`까지 그대로 열려 있다). 같은 룸의 두 번째 enroll은 키와 무관하게 `409 relay.room_used`다. 같은 `deviceId`인데 키·계정이 다르거나 정지·폐기된 기록이면 `400 request.param_rejected`(룸 소비 전)이고, 폐기 뒤 새 기기 ID로 등록한다. `RELAY_INTERNAL_URL`이 없으면 이 경로는 닫힌다(404) |
 | `POST /v1/devices/:id/activate` | 세션 | — | `204` | `423 account.device_hold`(+`Retry-After`): 이메일만으로 추가한 기기는 72시간 뒤. `account.not_pending`, `account.device_not_found` |
 | `POST /v1/devices/:id/suspend` | 세션 | — | `204` | 긴급 정지. 즉시 릴레이·푸시 정지 훅 + 알림 메일 |
 | `POST /v1/devices/:id/delete-request` | 세션 | — | `202 {deleteAfter}` | 7일 유예 + 알림 메일 |
 | `POST /v1/devices/:id/delete-cancel` | 세션 | — | `204` | `account.device_not_found`(유예 중 아님). 폐기 유예(7일 미만 데스크톱의 폐기)도 여기서 취소된다 |
-| `GET /v1/device-list` | 세션 또는 기기:devlist | — | `200 {aikPub, deviceList}` | 페어링 3단계(폰이 AIK 서명 목록 확인) |
+| `GET /v1/device-list` | 세션 또는 기기:devlist·devices | — | `200 {aikPub, deviceList}` | 페어링 3단계(폰이 AIK 서명 목록 확인). 폰은 `devices` 범위로 읽어 기기 화면의 이름·역할을 AIK 서명으로 확인한다 |
+| `POST /v1/devices/self/leave` | 기기:devlist·devices | — | `204` | 이 기기가 스스로 나간다(ADR-048 결정 6). 바로 폐기 + 정지 훅 + 알림 메일, 자리가 바로 빈다. AIK 폐기 레코드는 없고, 데스크톱이 다음 `PUT /v1/device-list`에서 이 기기를 폐기 레코드로 옮긴다. 계정에 남은 마지막 활성 데스크톱은 `409 account.last_desktop`(그 PC는 로그아웃만 한다) |
+| `POST /v1/devices/:id/stop` | 기기:devlist·devices | — | `202 {deleteAfter}` | 다른 기기 정지(잃어버린 폰·PC, ADR-048 결정 6). 바로 정지 + 정지 훅 + 7일 뒤 폐기 예약 + 알림 메일. AIK가 없으니 정지까지만이고, 켜져 있는 데스크톱이 AIK 폐기로 확정하거나 `reactivate`로 되돌린다(예약도 같이 취소). 자기 자신은 `400 request.param_rejected`(`self/leave`를 쓴다), 없는·폐기된 기기 `account.device_not_found`, 마지막 활성 데스크톱 `409 account.last_desktop`. 요청 기기당 하루 5회 |
 | `GET /v1/acct-claim` | 데스크톱 기기:devlist | — | `200 {claim:{account_id, email, aik_pub, iat, exp}, sig}` | 서버 서명 계정 클레임(D08 §4.2 7단계, 팀장 결정 2026-11-06). PC가 받아 `PAIR_OK`에 싣고, 폰은 앱에 고정한 공개키로 검증하고 `aik_pub`가 `PAIR_OK`의 `AIK_pub`와 같은지 본다. 서명 입력은 `utf8("SAX-acct-claim-v1")‖JCS(claim)`([CONTRACT §11](../shared/CONTRACT.md)). `email`은 전체(소문자 정규화)이고 가림은 폰 화면에서 한다. `exp = iat + 10분`(밀리초). 클레임은 언제나 토큰 계정의 것이다. 폰 토큰 `403 account.scope_denied`, 정지된 PC `403 account.device_suspended`, AIK 미고정 `409 account.aik_not_pinned`, 기기당 30회/시. `ACCT_CLAIM_SIGNING_KEY`가 없으면 `404` |
 
 등록 신청한 기기는 `pending`이다. 활성화 경로는 둘: 기존 데스크톱이 AIK 서명 목록에 넣는다(즉시), 또는 72시간 뒤 `activate`. 어느 쪽이든 기기 범위 토큰은 AIK 인증서가 있어야 발급되므로 AIK 없이 이메일만 탈취한 공격자는 토큰을 얻지 못한다.
@@ -131,13 +133,13 @@ PG에는 무작위 `pgCustomerRef`만 넘기고 이메일을 주지 않는다. �
 | `PUT /v1/device-list` | 기기:devlist | `{deviceList:{listVersion, entries:[{entry, aikSig}], revoked:[{device_id, revoked_at, aikSig}]}}` | `200 {listVersion}` | `account.aik_not_pinned`, `account.list_version_stale`(저장된 버전 이하), `account.aik_signature_invalid`, 새 항목 키가 등록 신청과 다르면 400, 활성·정지 기기를 폐기 레코드 없이 빼면 400 |
 | `POST /v1/devices/:id/reactivate` | 기기:acct_op | `{op:{op:"device.reactivate", account_id, target:<id>, ts}, aikSig}` | `204` | `account.aik_signature_invalid`(서명·대상·±5분) |
 
-폐기: 목록을 올린 데스크톱이 등록 7일 미만이면 폐기는 7일 뒤(유예 중 계정 웹에서 정지 가능), 7일 이상이면 즉시. 유예는 처음 폐기 레코드가 들어온 때부터 세고 목록을 다시 올려도 다시 시작하지 않는다. 폐기되면 정지 훅이 나간다.
+폐기(ADR-048 결정 6): 목록을 올린 데스크톱이 계정의 첫 PC(AIK를 고정한 PC)이거나 등록 7일 이상이면 즉시. 나중에 붙은 데스크톱이 등록 7일 미만이면 폐기는 7일 뒤다. 이 유예 중에도 대상이 폰이면 바로 정지하고(정지 훅 + 알림 메일, 자리는 유예가 끝나야 빈다), 대상이 PC면 정지하지 않는다(새로 붙은 PC가 쓰던 PC를 바로 멈추지 못하게). 유예는 처음 폐기 레코드가 들어온 때부터 세고 목록을 다시 올려도 다시 시작하지 않는다. 유예를 되돌리려면 계정 웹의 `delete-cancel` 뒤 `reactivate`다(`reactivate`만으로는 폐기 레코드가 있는 예약이 남는다). 폐기되면 정지 훅이 나간다.
 
 ## 기기 범위 토큰
 
 | 메서드·경로 | 인증 | 요청 | 응답 | 오류 |
 |---|---|---|---|---|
-| `POST /v1/device-tokens` | DPoP(Vx, `ath = b64u(sha256(JCS(cert)))`) | `{cert:{cert:{device_id, role, Sx, Vx, Kx?, Px?, not_after}, aikSig}, scopes?: string[]}` | `200 {token, expiresAt, scopes}`(`scopes`는 실제로 준 범위, 역할 범위 순서) | `account.cert_invalid`(AIK 서명·만료·91일 초과·키 불일치), `account.device_suspended`, `request.param_rejected`(`scopes`가 빈 배열·모르는 이름·중복이면 검증 전 스키마에서, 역할 범위의 부분집합이 아니면 검증 뒤), IP당 600회/시(검증 전), 기기당 60회/시(인증서·DPoP 검증 통과 뒤에만 셈). `scopes`가 없으면 역할 전체(하위 호환). 범위 축소는 엔진용 gateway 전용 토큰 등에 쓴다(ADR-040 결정 1). 역할 범위는 데스크톱 `gateway, relay, wake, slots, devlist, acct_op`, 폰 `relay, push, chat`(ADR-047). 유료 범위(`gateway`·`chat`)는 체험·구독 중일 때만 주고 토큰에 `tier`를 싣는다: 권리가 없으면 그 범위만 빼고 주고, 유료 범위만 요청했으면 `402 account.subscription_required`. 발급 기록은 이벤트 이름 `account.device_token_issued.<역할>.<범위를 -로 이음 \| all>`뿐이다(기기·계정 ID 없음) |
+| `POST /v1/device-tokens` | DPoP(Vx, `ath = b64u(sha256(JCS(cert)))`) | `{cert:{cert:{device_id, role, Sx, Vx, Kx?, Px?, not_after}, aikSig}, scopes?: string[]}` | `200 {token, expiresAt, scopes}`(`scopes`는 실제로 준 범위, 역할 범위 순서) | `account.cert_invalid`(AIK 서명·만료·91일 초과·키 불일치), `account.device_suspended`, `request.param_rejected`(`scopes`가 빈 배열·모르는 이름·중복이면 검증 전 스키마에서, 역할 범위의 부분집합이 아니면 검증 뒤), IP당 600회/시(검증 전), 기기당 60회/시(인증서·DPoP 검증 통과 뒤에만 셈). `scopes`가 없으면 역할 전체(하위 호환). 범위 축소는 엔진용 gateway 전용 토큰 등에 쓴다(ADR-040 결정 1). 역할 범위는 데스크톱 `gateway, relay, wake, slots, devlist, acct_op`, 폰 `relay, push, chat, devices`(ADR-047, `devices`는 ADR-048 결정 6: 기기 목록 보기·스스로 나가기·다른 기기 정지). 유료 범위(`gateway`·`chat`)는 체험·구독 중일 때만 주고 토큰에 `tier`를 싣는다: 권리가 없으면 그 범위만 빼고 주고, 유료 범위만 요청했으면 `402 account.subscription_required`. 발급 기록은 이벤트 이름 `account.device_token_issued.<역할>.<범위를 -로 이음 \| all>`뿐이다(기기·계정 ID 없음) |
 
 ## 프로필 슬롯·사업자 HMAC(B-28, C-09)
 

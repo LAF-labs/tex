@@ -3,7 +3,7 @@
 // 이 모듈은 아무것도 저장하지 않는다: 계정 세션·기기 토큰은 호출자(main 메모리)가 넘기고, 응답의 토큰은 그대로 돌려줄 뿐 파일·로그에 두지 않는다.
 // 오류는 Error.code에 서버 코드(`<영역>.<코드>`) 또는 `net.<egress 코드>`만 담는다. 메시지에 본문·URL·토큰·이메일을 넣지 않는다.
 import { CLOUD_ORIGIN, CLOUD_WS_HOST, EgressError, type CloudMethod, type Egress } from '@sax/net';
-import type { AccountClient, AccountLogin, CloudPorts, DeviceAuth, RelayHttpClient } from './remote-ports.ts';
+import type { AccountClient, AccountLogin, CloudPorts, DeviceAuth, RelayHttpClient, ServerDevice } from './remote-ports.ts';
 import {
   b64url,
   relayOrigin,
@@ -243,6 +243,23 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
     async putDeviceList(auth, list) {
       const url = `${accountOrigin}/v1/device-list`;
       await call('PUT', url, [200], { headers: await authed(auth, 'PUT', url), body: { deviceList: list } });
+    },
+    async devices(auth) {
+      const url = `${accountOrigin}/v1/devices`;
+      const b = await call('GET', url, [200], { headers: await authed(auth, 'GET', url) });
+      if (!isObj(b) || !Array.isArray(b.devices) || b.devices.length > 64) shape();
+      return ((b as { devices: unknown[] }).devices).map((d): ServerDevice => {
+        if (!isObj(d) || !str(d.deviceId, 36) || !str(d.name, 40) || !str(d.Sx, 64) || !str(d.Vx, 64) || !int(d.registeredAt)) shape();
+        const x = d as Record<string, unknown>;
+        if (x.role !== 'desktop' && x.role !== 'mobile') shape();
+        if (!['windows', 'macos', 'ios', 'android'].includes(x.platform as string) || !['pending', 'active', 'suspended', 'revoked'].includes(x.state as string)) shape();
+        if (!(x.deleteAfter === null || x.deleteAfter === undefined || int(x.deleteAfter))) shape();
+        return { deviceId: x.deviceId as string, role: x.role as ServerDevice['role'], platform: x.platform as ServerDevice['platform'], name: x.name as string, state: x.state as ServerDevice['state'], registeredAt: x.registeredAt as number, Sx: x.Sx as string, Vx: x.Vx as string, deleteAfter: (x.deleteAfter as number | null | undefined) ?? null };
+      });
+    },
+    async leaveDevice(auth) {
+      const url = `${accountOrigin}/v1/devices/self/leave`;
+      await call('POST', url, [204], { headers: await authed(auth, 'POST', url), body: {} });
     },
     async accountDeletion(auth) {
       const url = `${accountOrigin}/v1/account/deletion`;

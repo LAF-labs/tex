@@ -97,10 +97,28 @@ export interface AccountClient {
   enrollPhone(auth: DeviceAuth, b: { deviceId: string; role: 'mobile'; platform: 'ios' | 'android'; name: string; Sx: string; Vx: string; roomId: string }): Promise<void>;
   /** PUT /v1/device-list(기기 토큰): AIK 서명 새 목록. */
   putDeviceList(auth: DeviceAuth, list: DeviceListJson): Promise<void>;
+  /** GET /v1/devices(기기 토큰): 서버가 아는 기기 상태(ADR-048 결정 6). 역할·키는 호출자가 AIK 서명 목록과 맞춰 본다. */
+  devices(auth: DeviceAuth): Promise<ServerDevice[]>;
+  /** POST /v1/devices/self/leave(기기 토큰): 이 PC가 계정에서 나간다(바로 폐기). 마지막 활성 PC면 account.last_desktop. */
+  leaveDevice(auth: DeviceAuth): Promise<void>;
   /** 탈퇴(기기 토큰, 데스크톱만): GET /v1/account/deletion, POST delete-request(7일 유예·구독 해지), POST delete-cancel. */
   accountDeletion(auth: DeviceAuth): Promise<{ deleteAfter: number | null }>;
   requestAccountDelete(auth: DeviceAuth): Promise<{ deleteAfter: number }>;
   cancelAccountDelete(auth: DeviceAuth): Promise<void>;
+}
+
+/** 계정 서비스가 아는 기기 한 대(GET /v1/devices). 이름·플랫폼·상태는 서버 값이다. */
+export interface ServerDevice {
+  deviceId: string;
+  role: 'desktop' | 'mobile';
+  platform: 'windows' | 'macos' | 'ios' | 'android';
+  name: string;
+  state: 'pending' | 'active' | 'suspended' | 'revoked';
+  registeredAt: number;
+  Sx: string;
+  Vx: string;
+  /** 삭제 유예 끝(ms). 없으면 null */
+  deleteAfter: number | null;
 }
 
 /** 릴레이(services/relay) HTTP 클라이언트. 클라우드 세션 구현. 바이트 값은 base64url로 보낸다(서버 API.md). */

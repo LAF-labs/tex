@@ -309,6 +309,29 @@ describe('M4-6 게이트웨이: /v1/respond 툴셋·replay 태그·이미지 거
     assert.match(String(r.json.toolsetDigest), /^[0-9a-f]{64}$/);
   });
 
+  it('decision_pick: {state, choices} 글 하나만 받아 결정 모델(기본 ~typesafe/jev-latest)에 decisions 본문으로 보내고, 답은 {choice, confidence, p} 한 줄', async () => {
+    const rt = await e.runToken();
+    const text = JSON.stringify({ state: '[목표] 1행 품목 칸', choices: { '22': '"" #gen_0_edtLsatNmTop', '23': '"1행 규격" #gen_0_edtLsatRszeNmTop', none: '없음' } });
+    e.provider.decisionChoice = '22';
+    const r = await e.call('/v1/respond', respondBody(rt, { messages: [{ role: 'user', content: [{ type: 'input_text', text }] }] }, 'decision_pick'));
+    assert.equal(r.status, 200, r.text);
+    const sent = e.provider.responds[0]!;
+    assert.equal(sent.model, '~typesafe/jev-latest');
+    assert.equal(sent.state, '[목표] 1행 품목 칸');
+    const q = (sent.questions as { pick: { type: string; criteria: Record<string, string> } }).pick;
+    assert.equal(q.type, 'choice');
+    assert.deepEqual(Object.keys(q.criteria), ['22', '23', 'none']);
+    const out = r.json.output as Array<{ item: { content: Array<{ text: string }> } }>;
+    assert.deepEqual(JSON.parse(out[0]!.item.content[0]!.text), { choice: '22', confidence: 0.9, p: 0.95 });
+    // 글이 JSON이 아니거나, 선택지가 하나뿐이거나, 메시지가 둘이면 공급사로 보내지 않고 400
+    for (const messages of [
+      [{ role: 'user', content: [{ type: 'input_text', text: '그냥 글' }] }],
+      [{ role: 'user', content: [{ type: 'input_text', text: JSON.stringify({ state: 's', choices: { none: '없음' } }) }] }],
+      [{ role: 'user', content: [{ type: 'input_text', text }] }, { role: 'user', content: [{ type: 'input_text', text }] }],
+    ]) assert.equal((await e.call('/v1/respond', respondBody(rt, { messages }, 'decision_pick'))).json.error, 'gateway.param_rejected');
+    assert.equal(e.provider.responds.length, 1);
+  });
+
   it('클라이언트의 developer 역할·이미지·input_file·툴 정의·알 수 없는 툴셋은 400', async () => {
     const rt = await e.runToken();
     const bad = [
@@ -498,6 +521,8 @@ describe('M4-6 게이트웨이: 기기 자동 정지·계량 분리·진위확�
     assert.deepEqual(
       stats.map((x) => [x.surface, x.outcome, Number(x.n)]),
       [
+        // 판정 모델이 밝힌 이름(별칭이 풀린 버전)을 날마다 센다(계정 없음)
+        ['model:model-decide', 'seen', 1],
         ['query_parse', 'ok', 1],
         ['screen_state_v2', 'ok', 1],
       ],
@@ -617,7 +642,7 @@ describe('게이트웨이: 폰 대화 직접 호출(ADR-047, chat 범위)', () =
 
   it('폰 토큰은 chat 범위와 등급만 싣고(gateway 없음), 대화 범위 실행 토큰만 받는다', async () => {
     const c = claimsOf(await phone.token());
-    assert.deepEqual([c.role, c.scp, c.tier], ['mobile', ['relay', 'push', 'chat'], 'trial']);
+    assert.deepEqual([c.role, c.scp, c.tier], ['mobile', ['relay', 'push', 'chat', 'devices'], 'trial']);
     const run = await e.call('/v1/run-tokens', { runId: 'run-12345678' }, phone);
     assert.deepEqual([run.status, run.json.error], [403, 'account.scope_denied']);
     const chat = await e.call('/v1/run-tokens', chatId(), phone);
@@ -822,6 +847,38 @@ describe('M4-6 게이트웨이: 공급사 와이어', () => {
     assert.equal(r[0]!.b_stt_cd, '');
   });
 
+  it('OpenRouter L1 판정은 /alpha/decisions(System One)로: 접두+화면 글 state 하나, 이름 키 질문, 답은 클라이언트가 읽는 배열 꼴로', async () => {
+    const sent: Array<{ url: string; body: Record<string, unknown> }> = [];
+    let status = 200;
+    const fetchFn = (async (url: string, init: { body: string }) => {
+      sent.push({ url, body: JSON.parse(init.body) as Record<string, unknown> });
+      return new Response(
+        JSON.stringify({ model: 'typesafe/jev-1.14', answers: { screen: { type: 'choice', choice: 'form', confidence: 0.98, probabilities: { form: 0.98, unknown: 0.02 } }, has_error_modal: { type: 'noul', noul: 0.03 } }, usage: { input_tokens: 3000 } }),
+        { status },
+      );
+    }) as unknown as typeof fetch;
+    const p = new OpenRouterProvider({ apiKey: 'k', routing: parseOpenRouterRouting(ROUTING_ENV), fetchFn, agentPrivacy: 'deny' });
+    const questions = SCREEN.def.questions.filter((q) => q.name === 'screen' || q.name === 'has_error_modal');
+    const r = await p.decide({ model: 'typesafe/jev-1.14', prefix: 'PREFIX', input: 'heading "x"', questions, cacheKey: 'acct:x:b:y', safetyId: 'sid' });
+    assert.equal(sent[0]!.url, 'https://openrouter.ai/api/alpha/decisions');
+    assert.equal(sent[0]!.body.state, 'PREFIX\n\nheading "x"');
+    assert.equal(sent[0]!.body.user, 'sid');
+    const q = sent[0]!.body.questions as Record<string, { type: string; criteria?: Record<string, string> }>;
+    assert.equal(q.has_error_modal!.type, 'noul');
+    assert.equal(q.screen!.type, 'choice');
+    assert.ok(q.screen!.criteria && 'unknown' in q.screen!.criteria);
+    assert.equal(sent[0]!.body.provider !== undefined, true);
+    assert.equal(r.model, 'typesafe/jev-1.14');
+    assert.deepEqual(r.answers, [
+      { type: 'choice', name: 'screen', choice: 'form', confidence: 0.98, probabilities: [{ value: 'form', probability: 0.98 }, { value: 'unknown', probability: 0.02 }] },
+      { type: 'predicate', name: 'has_error_modal', probability: 0.03 },
+    ]);
+    status = 503;
+    await assert.rejects(p.decide({ model: 'm', prefix: 'P', input: 'i', questions, cacheKey: 'c', safetyId: 's' }), (e: ProviderError) => e.retryable);
+    status = 400;
+    await assert.rejects(p.decide({ model: 'm', prefix: 'P', input: 'i', questions, cacheKey: 'c', safetyId: 's' }), (e: ProviderError) => !e.retryable);
+  });
+
   it('OpenRouter 요청마다 provider{zdr, data_collection:deny, only, allow_fallbacks:false}를 싣고 적용 사실만 이벤트로, 고정 밖 공급자 응답은 버린다', async () => {
     const sent: Array<{ url: string; body: Record<string, unknown> }> = [];
     let reply: Record<string, unknown> = { model: 'openai/gpt-x', status: 'completed', output: [], usage: { input_tokens: 5, output_tokens: 1 } };
@@ -863,10 +920,6 @@ describe('M4-6 게이트웨이: 공급사 와이어', () => {
     // 고정 공급자를 쓸 수 없으면(404) 재시도하지 않는다
     status = 404;
     await assert.rejects(p.respond(SPEC), (e: ProviderError) => !e.retryable);
-    // L1(Decisions)은 OpenRouter에 없다: 호출하지 않고 재시도 불가
-    const before = sent.length;
-    await assert.rejects(p.decide(), (e: ProviderError) => !e.retryable);
-    assert.equal(sent.length, before);
     assert.ok(events.every((e) => /^upstream_[a-z_]+$/.test(e)));
   });
 });
