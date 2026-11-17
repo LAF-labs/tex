@@ -57,7 +57,9 @@ describe('민원증명 제품 실행(run.startCert, 가짜 민원증명 페이�
 
   const svc = (over: Partial<RunServiceDeps> = {}) => {
     const r = new RunService({
-      db, data, ledgerKey, portal: fixturePortal(fx.origin), log, engine: 'ir',
+      // 발급 안 됨(not_committed)은 클릭 뒤 0건 조회 2번이 verify 상한 안에 끝나야 나온다. 조회 IR이 [조회] 뒤 요청이 잦아들 때까지
+      // 기다리게 되어(s4b wait idle) 조회 한 번이 느린 macOS 러너에서 1.5초를 넘기므로, fixture 기본 상한 3초로는 unknown(in_doubt)으로 끝난다.
+      db, data, ledgerKey, portal: { ...fixturePortal(fx.origin), verify: { ...fixturePortal(fx.origin).verify, maxMs: 20_000 } }, log, engine: 'ir',
       page: async () => (page && !page.isClosed() ? page : (page = (await connectRunBrowser(h.client)).page)),
       postGate: (m) => gateMsgs.push(m),
       trace: (runId, e) => traces.set(runId, [...(traces.get(runId) ?? []), `${e.name}:${e.stepId}${e.code ? `:${e.code}` : ''}`]),
