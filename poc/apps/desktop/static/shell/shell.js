@@ -7,6 +7,7 @@ import { accountCard, accountErrText, loginScreen } from './shell-account.js';
 import { bizEditStart, bizProfileCard } from './shell-biz.js';
 import { createBankAuto } from './shell-bank-auto.js';
 import { createBilling } from './shell-billing.js';
+import { createDevices } from './shell-devices.js';
 import { createBankScreen } from './shell-bank.js';
 import { createPackScreen } from './shell-pack.js';
 import { identityIn } from './password-rules.js';
@@ -1874,6 +1875,30 @@ const SETTINGS_TABS = [
 ];
 /** 설정 > 구독(shell-billing.js) */
 const billing = createBilling({ call, rerender: () => render(), errText: (e) => errText(e) });
+/** 설정 > 기기 연결의 계정 기기 목록·새 PC 요청(shell-devices.js) */
+const devices = createDevices({
+  call,
+  rerender: () => state.view === 'settings' && state.setTab === 'devices' && renderKeepCode(),
+  errText: (e) => errText(e),
+  visible: () => state.view === 'settings' && state.setTab === 'devices',
+  signedIn: () => state.account?.step === 'signed_in',
+  onAccount: (v) => {
+    state.account = v;
+    state.login = null;
+    render();
+  },
+  relogin: async () => {
+    await signOut();
+    if (state.account?.step !== 'signed_in' && !state.login) openLogin();
+  },
+});
+/** 6자리를 넣는 칸에 있던 초점·커서를 다시 그린 뒤에도 그 칸에 둔다(새 PC 요청을 다시 읽어 그릴 때). */
+function renderKeepCode() {
+  const a = document.activeElement;
+  const id = a?.dataset?.pclinkCode;
+  render();
+  if (id) $(`[data-pclink-code="${CSS.escape(id)}"]`)?.focus();
+}
 /** 계좌 자동조회(CODEF, shell-bank-auto.js). 연결한 계좌는 받을 돈 화면에서 [최신화]한다 */
 const bankAuto = createBankAuto({ call, rerender: () => render(), toast: (t) => toast(t), uploadFile: () => void go('bank'), openBank: () => void go('bank') });
 
@@ -1979,7 +2004,7 @@ function setTab(tab) {
   state.setTab = tab;
   render();
   if (tab === 'auth') void loadCertMemory();
-  if (tab === 'devices') refreshAccount();
+  if (tab === 'devices') void refreshAccount().then(() => devices.load());
   if (tab === 'bank') void bankAuto.load();
   if (tab === 'billing') void billing.load();
 }
@@ -2167,6 +2192,9 @@ const loginCtx = () => ({
     render();
     $('#modal .acct-password')?.focus();
   },
+  // 새 PC 연결: 쓰던 PC에 '연결됐어요'가 떴다 · 그만두기
+  linkAccept: () => accountStep('account.linkAccept', {}),
+  linkCancel: () => accountStep('account.linkCancel', {}),
   // 계정 만들기 화면에서 보낸 코드면 signup(확인 뒤 비밀번호가 없으면 만들기 단계)
   sendCode: (email) => accountStep('account.sendCode', state.login.screen === 'signup' ? { email, signup: true } : { email }),
   setPassword: (password) => {
@@ -2267,7 +2295,7 @@ function settingsView() {
       : state.setTab === 'bank'
       ? bankAuto.view()
       : state.setTab === 'devices'
-      ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin, openPair, signOut), deletionRow(), legalRow())
+      ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 연결한 PC와 폰을 보고 끊어요. PC와 폰은 3대씩 연결할 수 있어요.')), devices.gone() ? null : accountCard(state.account, openLogin, openPair, signOut), ...devices.view(), deletionRow(), legalRow())
       : h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '발급 인증'), h('p', { class: 'sx-body-sm is-muted' }, '세금계산서를 발급할 때 쓰는 인증이에요.')), authCard()),
   );
 }

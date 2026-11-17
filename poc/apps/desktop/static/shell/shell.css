@@ -565,3 +565,20 @@ section[data-view="bundle"] .rs-col { max-width: 920px; }
 .card-ask-input { width: 84px; height: 40px; padding: 0 10px; border: 0; box-shadow: inset 0 0 0 1px var(--line-strong); border-radius: var(--radius-md); background: var(--canvas); color: var(--ink); font: inherit; letter-spacing: 0.2em; }
 .card-ask-input:focus { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
 [data-card-register] .opt-main { width: 100%; }
+
+/* 설정 > 기기 연결: 계정 기기 목록·새 PC 연결 요청(shell-devices.js). 줄은 발급 인증 줄(auth-row)과 같은 모양, 줄 사이는 안쪽 선 */
+.dev-group .sx-card-hd { justify-content: flex-start; gap: var(--space-2); }
+.dev-group .sx-card-hd .sx-card-title { margin: 0; }
+.dev-rows { display: grid; }
+.dev-rows > * + * { border-top: 1px solid var(--line); }
+.dev-row { min-height: 52px; padding: 6px 0; }
+.dev-row .opt-main { display: grid; gap: 2px; }
+.dev-row .sx-btn { flex: none; }
+.dev-req { display: grid; gap: var(--space-2); padding-bottom: 8px; }
+.dev-confirm { display: grid; gap: var(--space-2); padding: 10px 0; }
+.dev-code-row { display: flex; align-items: center; gap: var(--space-2); }
+.dev-code { width: 148px; font-family: var(--font-mono); font-size: 16px; letter-spacing: 0.2em; }
+.dev-done-mk { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); }
+.dev-done-mk svg { width: 16px; height: 16px; }
+/* 새 PC 연결: 쓰던 PC에 넣을 6자리를 크게 보인다(입력 칸이 아니다) */
+.acct-cells.is-show .acct-cell { height: 64px; font-size: 28px; }

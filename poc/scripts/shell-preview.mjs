@@ -112,7 +112,45 @@ const bankDetail = (id) => {
   return { receivable: v, allocs, events, attachable: v.status === 'received' ? [] : bankReview.filter((t) => t.candidates.some((c) => c.receivableIds.includes(id))) };
 };
 
+// 설정 > 기기 연결(ADR-048): 계정 기기 목록·새 PC 요청 목업. 모양은 remote-devices.ts DeviceView, remote-pclink.ts PcLinkRequestView와 같다.
+const DEV_DAY = 86_400_000;
+const devRow = (id, role, platform, name, o = {}) => ({ deviceId: `0000000${id}-0000-4000-8000-000000000000`, role, platform, name, state: 'active', registeredAt: Date.now() - (o.ago ?? 10) * DEV_DAY, deleteAfter: null, self: false, listed: true, ...o });
+const DEV = {
+  normal: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(2, 'desktop', 'windows', '집 PC', { ago: 9 }), devRow(3, 'mobile', 'ios', 'iPhone', { ago: 12 }), devRow(4, 'mobile', 'android', '', { ago: 3 })],
+  full: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(2, 'desktop', 'windows', '집 PC', { ago: 9 }), devRow(5, 'desktop', 'windows', '세무 담당 노트북', { ago: 2 }), devRow(3, 'mobile', 'ios', 'iPhone', { ago: 12 }), devRow(4, 'mobile', 'android', '', { ago: 3 }), devRow(6, 'mobile', 'ios', '직원 아이폰', { ago: 1, state: 'pending', listed: false })],
+  suspended: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(2, 'desktop', 'windows', '집 PC', { ago: 9, state: 'suspended', deleteAfter: Date.now() + 5 * DEV_DAY + 3_600_000 }), devRow(3, 'mobile', 'ios', 'iPhone', { ago: 12 }), devRow(4, 'mobile', 'android', '잃어버린 폰', { ago: 30, state: 'suspended', deleteAfter: Date.now() + 1_800_000 })],
+  alone: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(3, 'mobile', 'ios', 'iPhone', { ago: 12 })],
+};
+const req = (stage, o = {}) => ({ deviceId: '00000009-0000-4000-8000-000000000000', name: '새 노트북', platform: 'windows', createdAt: Date.now() - 60_000, stage, triesLeft: stage === 'code' ? 3 : null, ...o });
+const signedIn = { step: 'signed_in', email: 'owner@ganada.example', codeExpiresAt: null, error: null, phones: 2 };
+const devFail = (code) => {
+  throw new Error(code);
+};
+Object.assign(S, { acct: signedIn, devices: DEV.normal(), devErr: null, reqs: [], pcMode: 'ok' });
+
 const handlers = {
+  'account.view': () => S.acct,
+  'account.deletion': () => ({ deleteAfter: null }),
+  'account.signOut': () => (S.acct = { step: 'signed_out', email: S.acct.email, codeExpiresAt: null, error: null, phones: 0 }),
+  'account.linkCancel': () => (S.acct = { step: 'signed_out', email: S.acct.email, codeExpiresAt: null, error: null, phones: 0 }),
+  'account.linkAccept': () => (S.acct = signedIn),
+  'devices.list': () => (S.devErr ? devFail(S.devErr) : { devices: S.devices }),
+  'devices.unlink': (p) => ({ devices: (S.devices = S.devices.filter((d) => d.deviceId !== p.deviceId)) }),
+  'devices.leave': () => devFail('account.last_desktop'),
+  'pclink.list': () => ({ requests: S.reqs }),
+  'pclink.begin': () => ({ requests: (S.reqs = [req('wait')]) }),
+  'pclink.reject': () => ({ requests: (S.reqs = []) }),
+  'pclink.confirm': (p) => {
+    if (S.pcMode === 'limit') devFail('account.device_limit');
+    const r = S.reqs[0];
+    if (S.pcMode === 'expired') return { ok: false, requests: (S.reqs = []) };
+    if (p.code === '482915') {
+      S.devices = [...S.devices, devRow(9, 'desktop', 'windows', '새 노트북', { ago: 0 })];
+      return { ok: true, requests: (S.reqs = [req('done')]) };
+    }
+    const left = r.triesLeft - 1;
+    return { ok: false, requests: (S.reqs = left > 0 ? [{ ...r, triesLeft: left }] : []) };
+  },
   'shell.bootstrap': async () => ({ onboarding: S.onb ? await S.onb.view() : null, board: boardNow(), layout: SHELL, profiles: PROFILES, profile: 'business', counterparties: EMPTY || S.emptyBoot ? [] : cps, docs: EMPTY || S.emptyBoot ? [] : [...store.docs], timeline: seedTimeline(), quick: QUICK, platform: 'win32', payrollEnabled: !!process.env.PAYROLL }),
   'profile.set': (p) => ({ profile: p.kind }),
   'onboarding.reply': async (p) => {
@@ -478,7 +516,105 @@ const scenes = {
   },
 };
 
-const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', ...(EMPTY ? ['empty'] : [])];
+// 설정 > 기기 연결 장면들(쓰던 PC 쪽 목록·새 PC 요청, 새 PC 쪽 로그인 세 단계, 끊긴 PC)
+const devTab = async (win) => {
+  await js(win, `document.querySelector('#rail [data-view=settings]').click()`);
+  await sleep(100);
+  await js(win, `document.querySelector('[data-set-tab=devices]').click()`);
+  await sleep(400);
+};
+const devScroll = (win, sel) => js(win, `document.querySelector(${JSON.stringify(sel)})?.scrollIntoView({ block: 'start' })`);
+const typeCode = async (win, v) => {
+  await js(win, `(() => { const i = document.querySelector('[data-pclink-code]'); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event('input')); })()`);
+  await js(win, `document.querySelector('[data-act=pclink-confirm]').click()`);
+  await sleep(250);
+};
+const linkView = (step, o = {}) => ({ step, email: 'owner@ganada.example', codeExpiresAt: null, error: null, phones: 0, ...o });
+Object.assign(scenes, {
+  async devices(win) {
+    const reset = (devices, reqs = [], o = {}) => Object.assign(S, { acct: signedIn, devices, reqs, devErr: null, pcMode: 'ok', ...o });
+    reset(DEV.normal());
+    await devTab(win);
+    await shot(win, '70-devices');
+    await devScroll(win, '[data-device-group=desktop]');
+    await shot(win, '70b-devices-list');
+    await js(win, `document.querySelectorAll('[data-act=device-unlink-open]')[0].click()`);
+    await sleep(150);
+    await shot(win, '70c-devices-unlink-confirm');
+    await js(win, `document.querySelector('[data-act=device-confirm-back]').click()`);
+    reset(DEV.full());
+    await devTab(win);
+    await devScroll(win, '[data-device-group=desktop]');
+    await shot(win, '71-devices-full');
+    reset(DEV.suspended());
+    await devTab(win);
+    await devScroll(win, '[data-device-group=desktop]');
+    await shot(win, '72-devices-suspended');
+    reset(DEV.alone());
+    await devTab(win);
+    await devScroll(win, '[data-device-group=desktop]');
+    await shot(win, '73-devices-last-pc');
+    // 새 PC 요청: 들어옴 → [연결] → 새 PC의 응답 기다림 → 6자리 칸 → 틀림 → 맞음(연결됐어요)
+    reset(DEV.normal(), [req('new')]);
+    await devTab(win);
+    await devScroll(win, '[data-pclink-card]');
+    await shot(win, '74-pclink-request');
+    await js(win, `document.querySelector('[data-act=pclink-begin]').click()`);
+    await sleep(250);
+    await shot(win, '75-pclink-wait');
+    S.reqs = [req('code')];
+    await sleep(3_400);
+    await shot(win, '76-pclink-code');
+    await typeCode(win, '482916');
+    await shot(win, '77-pclink-wrong');
+    await typeCode(win, '482915');
+    await devScroll(win, '[data-pclink-card]');
+    await shot(win, '78-pclink-done');
+    // 3번 틀림, 10분 지남, PC 한도
+    reset(DEV.normal(), [req('code', { triesLeft: 1 })]);
+    await devTab(win);
+    await typeCode(win, '111111');
+    await devScroll(win, '[data-device-msg]');
+    await shot(win, '79-pclink-tries');
+    reset(DEV.normal(), [req('code')], { pcMode: 'expired' });
+    await devTab(win);
+    await typeCode(win, '482915');
+    await devScroll(win, '[data-device-msg]');
+    await shot(win, '80-pclink-expired');
+    reset(DEV.full().filter((d) => d.state !== 'pending'), [req('code')], { pcMode: 'limit' });
+    await devTab(win);
+    await typeCode(win, '482915');
+    await devScroll(win, '[data-pclink-card]');
+    await shot(win, '81-pclink-limit');
+    // 이 PC가 다른 기기에서 끊김
+    reset([], [], { devErr: 'account.device_suspended' });
+    await devTab(win);
+    await shot(win, '82-device-gone');
+  },
+  // 새 PC 쪽: 로그인 뒤 쓰던 PC의 승인을 기다림 → 6자리 → '연결됐어요'가 떴나요? · PC 3대가 찬 계정
+  async newPc(win) {
+    Object.assign(S, { acct: { step: 'signed_out', email: null, codeExpiresAt: null, error: null, phones: 0 }, devErr: null });
+    await devTab(win);
+    await js(win, `document.querySelector('[data-act=account-login]').click()`);
+    await sleep(150);
+    for (const [name, v] of [['83-link-wait', linkView('link_wait')], ['84-link-code', linkView('link_code', { linkCode: '482915' })], ['85-link-confirm', linkView('link_confirm', { linkCode: '482915' })]]) {
+      S.acct = v;
+      ev(win, { type: 'account', account: v });
+      await sleep(200);
+      await shot(win, name);
+    }
+    S.acct = linkView('signed_out', { error: 'account.link_rejected' });
+    ev(win, { type: 'account', account: S.acct });
+    await sleep(200);
+    await shot(win, '86-link-rejected');
+    S.acct = linkView('signed_out', { error: 'account.device_limit' });
+    ev(win, { type: 'account', account: S.acct });
+    await sleep(200);
+    await shot(win, '87-link-limit');
+  },
+});
+
+const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'newPc', ...(EMPTY ? ['empty'] : [])];
 const agreed = { version: 'pv', choice: 'agreed', at: '' };
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {

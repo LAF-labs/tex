@@ -14,7 +14,11 @@ const ERR = {
   'account.code_expired': '코드 시간이 지났어요. 코드를 다시 받아 주세요',
   'account.aik_already_pinned': '이 계정에는 이미 등록된 PC가 있어요. 두 번째 PC 연결은 곧 지원해요',
   'account.passkey_required': '이 계정은 패스키로 로그인해야 해요. 패스키 로그인은 곧 지원해요',
-  'account.device_limit': '이 계정에 등록할 수 있는 PC 수를 넘었어요',
+  'account.device_limit': '이 계정에는 PC가 3대 연결돼 있어요. 쓰던 PC의 설정 > 기기 연결에서 하나를 끊은 뒤 다시 로그인해 주세요',
+  // 새 PC 연결(ADR-048 결정 3)이 끝나지 못했을 때. 화면은 로그인 처음으로 돌아온다
+  'account.link_rejected': '쓰던 PC에서 연결을 거절했어요. 다시 하려면 다시 로그인해 주세요',
+  'account.link_expired': '시간이 지나 연결을 마치지 못했어요. 다시 로그인해 주세요',
+  'account.link_mismatch': '쓰던 PC의 답이 맞지 않아 연결하지 않았어요. 다시 로그인해 주세요',
   'account.device_churn_limit': '최근에 PC를 여러 번 바꿨어요. 며칠 뒤에 다시 해 주세요',
   'account.keys_unavailable': '금고가 열려 있지 않아요. 앱을 다시 켠 뒤 해 주세요',
   'policy.rate_limited': '요청이 많아요. 잠시 뒤에 다시 해 주세요',
@@ -164,10 +168,44 @@ export function loginScreen(ctx) {
   const errNote = (code) => (code ? h('p', { class: 'acct-err sx-body-sm', role: 'alert' }, icon('warn'), accountErrText(code)) : null);
   // 재설정 코드를 보낸 뒤(main step reset_code)는 코드 칸, 6자리를 받아 두면 렌더러가 새 비밀번호 칸으로 넘긴다(서버 검증은 마지막 제출 때, 명세 §8 G6).
   const resetScreen = ctx.screen === 'reset_new' ? 'reset_new' : 'reset_code';
-  let screen = v.step === 'code_sent' ? 'code' : v.step === 'working' ? 'working' : v.step === 'set_password' ? 'signup_pw' : v.step === 'reset_code' ? resetScreen : ctx.screen;
+  let screen = v.step.startsWith('link_') ? v.step : v.step === 'code_sent' ? 'code' : v.step === 'working' ? 'working' : v.step === 'set_password' ? 'signup_pw' : v.step === 'reset_code' ? resetScreen : ctx.screen;
   let body;
 
-  if (screen === 'reset_email') {
+  if (screen === 'link_wait' || screen === 'link_code' || screen === 'link_confirm') {
+    // 새 PC 연결(ADR-048 결정 3, D08 §4.3): 쓰던 PC가 [연결]을 누르면 6자리가 뜨고, 사람이 그 숫자를 쓰던 PC에 넣는다.
+    // 열쇠가 오면 "쓰던 PC에 '연결됐어요'가 떴나요?"를 묻는다(새 PC는 쓰던 PC를 암호로 확인하지 못해 이 확인이 그 자리를 메운다).
+    const stop = quiet('그만두기', () => !busy && ctx.linkCancel(), 'account-link-cancel');
+    if (screen === 'link_wait')
+      body = [
+        mark(),
+        head('쓰던 PC에서 승인해 주세요', [h('b', { 'data-acct-to': '' }, v.email), ' 계정에 이미 연결된 PC가 있어요']),
+        h(
+          'div',
+          { class: 'acct-stack' },
+          h('div', { class: 'acct-box' }, h('p', { class: 'sx-body-sm' }, icon('pc'), '쓰던 PC에서 설정 > 기기 연결을 열어 주세요'), h('p', { class: 'sx-body-sm' }, icon('check'), "'새 PC 연결 요청'에서 [연결]을 눌러 주세요")),
+          h('p', { class: 'sx-meta', 'data-link-waiting': '' }, '누르면 이 화면에 6자리가 떠요.'),
+          links(stop),
+        ),
+      ];
+    else if (screen === 'link_code')
+      body = [
+        mark(),
+        head('쓰던 PC에 이 숫자를 넣어 주세요', '쓰던 PC의 기기 연결 화면에 6자리 칸이 떠 있어요'),
+        h(
+          'div',
+          { class: 'acct-stack' },
+          h('div', { class: 'acct-cells is-show', role: 'text', 'aria-label': `6자리 ${(v.linkCode ?? '').split('').join(' ')}`, 'data-link-code': '' }, ...Array.from({ length: 6 }, (_, i) => h('span', { class: 'acct-cell' }, v.linkCode?.[i] ?? ''))),
+          h('p', { class: 'sx-meta' }, '다른 사람에게 알려 주지 마세요. 10분이 지나면 숫자가 바뀌어요.'),
+          links(stop),
+        ),
+      ];
+    else
+      body = [
+        mark(),
+        head("쓰던 PC에 '연결됐어요'가 떴나요?", '떴을 때만 눌러 주세요. 안 떴으면 그만두고 다시 로그인해 주세요'),
+        h('div', { class: 'acct-stack' }, primary('네, 떴어요', () => !busy && ctx.linkAccept(), 'account-link-accept', busy), errNote(err), links(stop)),
+      ];
+  } else if (screen === 'reset_email') {
     // 비밀번호 찾기(인계 명세 §4 email). 계정이 없어도 같은 응답이라 늘 코드 단계로 간다.
     const send = () => !busy && ctx.startReset(email());
     body = [
