@@ -522,6 +522,13 @@ describe('chat.step 턴 상한·세션 폐기', () => {
     script(() => reply({ kind: 'did', text: '10월 30일자로 준비할게요.' }));
     r = (await say(a, pc, 'A상사 10월 31일자로 끊어줘')).reply;
     assert.equal(r.filtered, 'number');
+    // 달 없이 쓴 날("다음 달 1일로")도 사장님이 쓴 날만 따라 쓴다(ADR-049 date-future)
+    script(() => reply({ kind: 'ask', text: '1일자는 아직 오지 않은 날이라 정할 수 없어요. 작성일자를 다시 알려 주세요.', ask: 'date' }));
+    r = (await say(a, pc, 'A상사 다음 달 1일로 끊어줘')).reply;
+    assert.equal(r.filtered, null);
+    script(() => reply({ kind: 'ask', text: '2일자는 정할 수 없어요.', ask: 'date' }));
+    r = (await say(a, pc, 'A상사 다음 달 1일로 끊어줘')).reply;
+    assert.equal(r.filtered, 'number');
   });
 
   it('closeOnCards: 카드 결과만 나온 차례는 모델을 다시 부르지 않고 닫는다. 조회가 섞이면 모델이 이어 간다', async () => {

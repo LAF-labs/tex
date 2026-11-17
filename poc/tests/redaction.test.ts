@@ -160,6 +160,14 @@ describe('M1-5 엔티티 확장(D06 §4)', () => {
     assert.match(r, /고객님 담당자에게 2026-11-05 14:32$/);
   });
 
+  it('조사 "로" 뒤의 금액은 주소가 아니라 금액으로 가린다(월합계로 330만원), 도로명 주소는 그대로 가린다', () => {
+    const r = apply('대한테크 10월 거 월합계로 330만원 계산서 끊어줘 / 포함으로 55만원 / 단가로 12,000원 / 사업장 테헤란로 123 / 세종대로 110 2층', { runId: 'r' }, { frame: 'none' }).redacted;
+    assert.doesNotMatch(r, /월합계로 \[ADDR|포함으로 \[ADDR|단가로 \[ADDR/, r);
+    assert.doesNotMatch(r, /330|55만|12,000/, r);
+    assert.match(r, /사업장 \[ADDR_1\]/, r);
+    assert.match(r, /\[ADDR_2\]/, r);
+  });
+
   it('같은 값은 구분자가 달라도 같은 번호(정규 키)', () => {
     const r = new Redactor({ runId: 'r' });
     assert.match(r.apply('123-45-67890', { frame: 'none' }).redacted, /^\[BIZNO_1\]$/);

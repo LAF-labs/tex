@@ -57,7 +57,7 @@ export const CHAT_AGENT_ASK_TEXT: Record<AgentAsk, string> = {
   counterparty: '어느 거래처인가요? 장부에 있는 거래처 중에서 골라 주세요.',
   vat: '부가세 별도인가요, 포함인가요?',
   which_card: '어느 카드를 말씀하시는지 골라 주세요.',
-  date: '작성일자를 다시 알려 주세요. 오늘이나 지난 날로만 정할 수 있고, 신고 기한이 지난 기간의 날짜는 아직 받지 않아요.',
+  date: '작성일자를 다시 알려 주세요. 작성일자는 오늘이나 지난 날로만 정할 수 있어요.',
 };
 /** 엔진이 도구 결과로 턴을 닫을 때의 고정 문장(마지막 결과 status별). 없으면 CHAT_AGENT_NUMBER_TEXT. */
 export const CHAT_AGENT_DONE_TEXT: Partial<Record<ToolStatus, string>> = {
