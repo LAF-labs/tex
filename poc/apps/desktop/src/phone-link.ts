@@ -128,6 +128,10 @@ export class PhoneStore {
     this.#chain = p.catch(() => undefined);
     return p;
   }
+  /** 이미 시작한 저장이 모두 끝나면 풀린다(실패해도). */
+  idle(): Promise<void> {
+    return this.#chain.then(() => undefined);
+  }
 }
 
 export interface PhoneLinkKeys {
@@ -212,6 +216,8 @@ export class PhoneLink {
   #sleep: NonNullable<PhoneLinkOptions['sleep']>;
   #log: NonNullable<PhoneLinkOptions['log']>;
   #started = false;
+  /** 돌고 있는 큐·라이브 루프. 멈춘 뒤에도 끝날 때까지 남는다(idle). */
+  #loops = new Set<Promise<void>>();
   /** 페어마다 수신기 하나(라이브와 큐가 같은 조립·중복 판정을 쓴다) */
   #receivers = new Map<string, PhoneReceiver>();
 
@@ -296,10 +302,24 @@ export class PhoneLink {
     return this.#recs.map((r) => ({ pairId: r.pairId, name: r.name, platform: r.platform, pairedAt: r.pairedAt, online: this.#runs.get(r.pairId)?.online ?? false, lastSeenAt: r.lastSeenAt }));
   }
 
-  /** 모든 수신을 멈춘다(앱 종료). 기록은 그대로다. */
+  /** 모든 수신을 멈춘다(앱 종료). 기록은 그대로다. 진행 중이던 저장까지 끝나기를 기다리려면 idle()을 본다. */
   stop(): void {
     for (const id of [...this.#runs.keys()]) this.#stopRun(id);
     this.#started = false;
+  }
+
+  /**
+   * 멈춘 루프가 다 빠져나가고 그 뒤의 늦은 저장(lastSeenAt·ikTsMax 등)까지 끝나면 풀린다.
+   * stop() 바로 뒤 폴더를 지우면(시험 정리) 늦은 저장이 임시 파일을 새로 만들어 Windows에서 ENOTEMPTY가 났다.
+   */
+  async idle(): Promise<void> {
+    while (this.#loops.size) await Promise.all([...this.#loops]);
+    await this.#o.store.idle();
+  }
+
+  #track(p: Promise<void>): void {
+    const done = p.catch(() => {}).finally(() => this.#loops.delete(done));
+    this.#loops.add(done);
   }
 
   /** 저장된 큐를 지금 한 번 비운다(시험·[지금 받기]). */
@@ -338,7 +358,7 @@ export class PhoneLink {
     const run: Runner = { rec, abort, link: null, online: false, kick: () => wake?.(), retry: null };
     this.#runs.set(rec.pairId, run);
     // 큐: 번들 갱신 + 폴링
-    void (async () => {
+    this.#track((async () => {
       while (!abort.signal.aborted) {
         try {
           await this.#ensureBundle(rec);
@@ -346,6 +366,8 @@ export class PhoneLink {
         } catch (e) {
           this.#log('main.phone_queue', { result: codeOf(e) });
         }
+        // 멈춘 뒤에 걸어 둔 abort 듣기는 불리지 않는다: 대기에 들어가기 전에 빠져나간다
+        if (abort.signal.aborted) break;
         const poll = this.#o.pollMs ?? { live: 5 * 60_000, idle: 30_000 };
         const ac = new AbortController();
         const onAbort = () => ac.abort();
@@ -355,9 +377,9 @@ export class PhoneLink {
         wake = null;
         abort.signal.removeEventListener('abort', onAbort);
       }
-    })();
+    })());
     // 라이브: 붙어 있는 동안 세션을 받는다. 실패하면 1초부터 30초까지 늘려 다시 시도한다(LIVE_BACKOFF).
-    if (this.#o.joinMailbox) void this.#live(run);
+    if (this.#o.joinMailbox) this.#track(this.#live(run));
   }
 
   /**
@@ -376,6 +398,7 @@ export class PhoneLink {
 
   /** 재시도 대기. wake()가 끊으면 백오프를 처음으로 돌린다. */
   async #retryWait(run: Runner, ms: number): Promise<boolean> {
+    if (run.abort.signal.aborted) return false;
     const ac = new AbortController();
     let woke = false;
     const onAbort = () => ac.abort();

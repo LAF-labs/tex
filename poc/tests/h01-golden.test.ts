@@ -314,7 +314,14 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
   });
 
   it('늦은 반영(최소 경과 뒤)은 committed', async () => {
-    const o = await both('C', 150_000, approve, { knob: { set: () => (fx.knobs.reflectDelayMs = 1_500), reset: () => (fx.knobs.reflectDelayMs = 0) } });
+    // 반영(1.5초)은 verify 하한(600ms) 뒤다. 반영 뒤 조회가 verify 상한 안에 한 번은 시작돼야 committed인데, fixture 기본 상한 3초에서는
+    // 반영 뒤 남는 1.5초 안에 조회 한 번이 끝나야 해서, 조회 한 번이 1.5초를 넘는 느린 Windows 러너에서는 한쪽만 in_doubt로 끝났다(IR ≠ H01).
+    // 이 경우는 "늦게 반영돼도 찾는다"를 보는 것이라 상한을 넉넉히 둔다. 반영되면 바로 끝나므로 시험 시간은 늘지 않는다.
+    const portal = fixturePortal(fx.origin);
+    const o = await both('C', 150_000, approve, {
+      deps: { portal: { ...portal, verify: { ...portal.verify, maxMs: 20_000 } } },
+      knob: { set: () => (fx.knobs.reflectDelayMs = 1_500), reset: () => (fx.knobs.reflectDelayMs = 0) },
+    });
     same(o);
     assert.deepEqual([o.ir.status, o.ir.ledger], ['success', 'committed']);
   });
