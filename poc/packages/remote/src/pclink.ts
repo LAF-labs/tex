@@ -184,19 +184,31 @@ export class PcLinkApprover {
   }
 
   /**
-   * 승인 뒤: 새 PC를 넣은 목록, 새 PC 인증서, 봉인한 RK. sealRk는 금고가 한다(RK는 금고 밖으로 나오지 않는다).
-   * 호출자는 목록을 서버에 올린 뒤(서버가 새 PC를 활성화) grant를 우편함에 넣는다.
+   * 승인 뒤 1: 새 PC를 넣은 목록(AIK 서명). 호출자가 서버에 올린다(서버가 한도를 보고 새 PC를 활성화한다).
+   * 한도(PC 3대)를 넘으면 여기서 던진다. RK는 아직 봉인하지 않는다.
    */
-  async grant(o: { aik: AikSigner; deviceList: DeviceListJson; sealRk: (recipient: Uint8Array, info: Uint8Array, aad: Uint8Array) => Promise<{ enc: Uint8Array; ct: Uint8Array }>; now?: number }): Promise<{ grant: PcLinkGrant; deviceList: DeviceListJson }> {
+  async listWithNew(aik: AikSigner, deviceList: DeviceListJson, now: number = this.#now()): Promise<DeviceListJson> {
+    this.#needApproved(aik);
+    return addDevice(aik, deviceList, { deviceId: this.hello.device_id, role: 'desktop', noisePub: fromB64(this.hello.Sx), signPub: fromB64(this.hello.Vx), registeredAt: now });
+  }
+
+  /**
+   * 승인 뒤 2: 서버에 올라간 목록(새 PC가 같은 키로 들어 있어야 한다)으로 새 PC 인증서를 서명하고 RK를 봉인한다.
+   * sealRk는 금고가 한다(RK는 금고 밖으로 나오지 않는다). 목록이 올라가기 전에는 부르지 않는다(서버가 거절하면 RK를 봉인하지 않는다).
+   */
+  async grant(o: { aik: AikSigner; deviceList: DeviceListJson; sealRk: (recipient: Uint8Array, info: Uint8Array, aad: Uint8Array) => Promise<{ enc: Uint8Array; ct: Uint8Array }>; now?: number }): Promise<PcLinkGrant> {
+    const transcript = this.#needApproved(o.aik);
+    const h = this.hello;
+    if (!o.deviceList.entries.some((e) => e.entry.device_id === h.device_id && e.entry.role === 'desktop' && e.entry.Sx === h.Sx && e.entry.Vx === h.Vx)) throw new Error('pclink: not listed');
+    const cert = await issueCert(o.aik, { device_id: h.device_id, role: 'desktop', Sx: fromB64(h.Sx), Vx: fromB64(h.Vx), not_after: certNotAfter(o.now ?? this.#now()) });
+    const sealed = await o.sealRk(fromB64(h.Hx), utf8(CTX.pclinkRk), transcript);
+    return { v: 1, cert, deviceList: o.deviceList, enc: b64(sealed.enc), ct: b64(sealed.ct) };
+  }
+
+  #needApproved(aik: AikSigner): Uint8Array {
     if (this.#state !== 'approved' || !this.#transcript) throw new Error('pclink: not approved');
-    if (!equal(o.aik.publicKey, fromB64(this.challenge.aik_pub))) throw new Error('pclink: aik changed');
-    const now = o.now ?? this.#now();
-    const noisePub = fromB64(this.hello.Sx);
-    const signPub = fromB64(this.hello.Vx);
-    const deviceList = await addDevice(o.aik, o.deviceList, { deviceId: this.hello.device_id, role: 'desktop', noisePub, signPub, registeredAt: now });
-    const cert = await issueCert(o.aik, { device_id: this.hello.device_id, role: 'desktop', Sx: noisePub, Vx: signPub, not_after: certNotAfter(now) });
-    const sealed = await o.sealRk(fromB64(this.hello.Hx), utf8(CTX.pclinkRk), this.#transcript);
-    return { grant: { v: 1, cert, deviceList, enc: b64(sealed.enc), ct: b64(sealed.ct) }, deviceList };
+    if (!equal(aik.publicKey, fromB64(this.challenge.aik_pub))) throw new Error('pclink: aik changed');
+    return this.#transcript;
   }
 }
 

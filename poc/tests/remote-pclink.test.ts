@@ -45,7 +45,10 @@ describe('새 PC 연결: 정상 흐름', () => {
     assert.equal(ap.state, 'awaiting_sas');
     assert.equal(ap.confirm(r.sas), true);
     assert.equal(ap.state, 'approved');
-    const { grant, deviceList } = await ap.grant({ aik: e.aik, deviceList: e.list, sealRk: e.sealRk });
+    // 목록을 먼저 만들고(호출자가 서버에 올린다), 올라간 목록으로 인증서·봉인문을 만든다
+    await assert.rejects(ap.grant({ aik: e.aik, deviceList: e.list, sealRk: e.sealRk }), /not listed/);
+    const deviceList = await ap.listWithNew(e.aik, e.list);
+    const grant = await ap.grant({ aik: e.aik, deviceList, sealRk: e.sealRk });
     assert.equal(deviceList.listVersion, 2);
     const chk = verifyDeviceList(deviceList, e.aik.publicKey);
     assert.ok(chk.ok && chk.devices.filter((d) => d.role === 'desktop').length === 2);
@@ -93,6 +96,7 @@ describe('새 PC 연결: 가운데에서 바꾸는 경우', () => {
     const r1 = pcLinkReveal(n.hello, ap1.challenge, n.nonce);
     assert.equal(ap1.reveal(r1.reveal), false);
     assert.equal(ap1.state, 'failed');
+    await assert.rejects(ap1.listWithNew(e.aik, e.list), /not approved/);
     await assert.rejects(ap1.grant({ aik: e.aik, deviceList: e.list, sealRk: e.sealRk }), /not approved/);
     // (2) 서버가 자기 난수로 약속까지 새로 낸다: reveal은 통과하지만 새 PC 화면의 6자리와 다르다
     const forged = pcLinkHello({ ...n.self, linkPub: evil.publicKey });
@@ -137,7 +141,7 @@ describe('새 PC 연결: 가운데에서 바꾸는 경우', () => {
     const r = pcLinkReveal(n.hello, ap.challenge, n.nonce);
     ap.reveal(r.reveal);
     ap.confirm(r.sas);
-    const { grant } = await ap.grant({ aik: e.aik, deviceList: e.list, sealRk: e.sealRk });
+    const grant = await ap.grant({ aik: e.aik, deviceList: await ap.listWithNew(e.aik, e.list), sealRk: e.sealRk });
     const check = (g: unknown, c = ap.challenge) => checkPcLinkGrant(n.hello, c, r.transcript, g);
     assert.equal(check(grant).ok, true);
     // 모양
@@ -188,7 +192,8 @@ describe('새 PC 연결: 가운데에서 바꾸는 경우', () => {
     ap.reveal(r.reveal);
     ap.confirm(r.sas);
     let sealed = 0;
-    await assert.rejects(ap.grant({ aik: e.aik, deviceList: list, sealRk: async (...a) => (sealed++, e.sealRk(...a)) }), /too many devices/);
-    assert.equal(sealed, 0, '목록을 못 만들면 RK를 봉인하지 않는다');
+    await assert.rejects(ap.listWithNew(e.aik, list), /too many devices/);
+    await assert.rejects(ap.grant({ aik: e.aik, deviceList: list, sealRk: async (...a) => (sealed++, e.sealRk(...a)) }), /not listed/);
+    assert.equal(sealed, 0, '새 PC가 목록에 없으면 RK를 봉인하지 않는다');
   });
 });

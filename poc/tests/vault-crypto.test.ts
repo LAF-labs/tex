@@ -314,7 +314,7 @@ describe('계정 루트 키 넘기기(ADR-048 결정 3, D08 §4.3)', () => {
     const shown = pcLinkReveal(hello, approver.challenge, nonce);
     assert.equal(approver.reveal(shown.reveal), true);
     assert.equal(approver.confirm(shown.sas), true);
-    const { grant } = await approver.grant({ aik, deviceList: list, sealRk: (recipient, inf, a) => oldPc.c.rkSeal({ recipient, info: new TextDecoder().decode(inf), aad: a }) });
+    const grant = await approver.grant({ aik, deviceList: await approver.listWithNew(aik, list), sealRk: (recipient, inf, a) => oldPc.c.rkSeal({ recipient, info: new TextDecoder().decode(inf), aad: a }) });
     const chk = checkPcLinkGrant(hello, approver.challenge, shown.transcript, grant);
     assert.equal(chk.ok, true, JSON.stringify(chk.ok ? {} : chk));
     if (!chk.ok) return;

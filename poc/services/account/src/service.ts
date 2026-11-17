@@ -1492,9 +1492,16 @@ export class AccountService {
     });
   }
 
-  /** 신청 지우기: 새 PC(세션, 끝났거나 그만둠) 또는 기존 PC(기기 토큰, 6자리가 틀렸거나 거절). 없어도 오류가 아니다. */
-  async deletePcLink(accountId: string, deviceId: string): Promise<void> {
-    await this.db.run('DELETE FROM pc_links WHERE device_id = $1 AND account_id = $2', [deviceId, accountId]);
+  /**
+   * 신청 지우기. 없어도 오류가 아니다.
+   * - 새 PC(세션): 받아 갔거나 그만둘 때. 신청 중인 기기 기록은 둔다(같은 PC가 다시 시도하면 그대로 쓴다. 7일 뒤 정리).
+   * - 쓰던 PC(기기 토큰, dropPending): 6자리가 다르거나 거절할 때. 아직 활성화되지 않은(pending) 그 데스크톱 기록도 지워 자리를 비운다.
+   */
+  async deletePcLink(accountId: string, deviceId: string, dropPending = false): Promise<void> {
+    await this.db.tx(async (q) => {
+      await q.run('DELETE FROM pc_links WHERE device_id = $1 AND account_id = $2', [deviceId, accountId]);
+      if (dropPending) await q.run("DELETE FROM devices WHERE device_id = $1 AND account_id = $2 AND role = 'desktop' AND state = 'pending'", [deviceId, accountId]);
+    });
   }
 
   private async pcLink(accountId: string, deviceId: string): Promise<{ challenge: string | null; reveal: string | null; grant_msg: string | null }> {

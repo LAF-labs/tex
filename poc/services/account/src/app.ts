@@ -477,7 +477,9 @@ export function accountRouter(o: AccountAppOpts): Router {
     return json(204, undefined);
   });
   r.add('DELETE', '/v1/pc-links/:id', async (ctx) => {
-    await svc.deletePcLink(dpopAuth(ctx) ? (await linkOld(ctx)).accountId : (await linkNew(ctx)).accountId, linkId(ctx));
+    // 쓰던 PC가 지우면(거절) 아직 활성화되지 않은 그 PC의 신청 기록도 지운다. 새 PC가 지우면 우편함만 비운다
+    const old = dpopAuth(ctx);
+    await svc.deletePcLink(old ? (await linkOld(ctx)).accountId : (await linkNew(ctx)).accountId, linkId(ctx), old);
     return json(204, undefined);
   });
 

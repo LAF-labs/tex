@@ -166,7 +166,7 @@ PC가 2대 이상인 계정에서 홈택스 발급은 잠금을 잡은 PC 하나
 | `GET /v1/pc-links` | 기기:devlist | — | `200 {links:[{deviceId, name, platform, createdAt, hello, challengedBy, reveal}]}` | 끝났거나(grant) 만료된 신청은 빠진다. 이름·플랫폼은 새 PC가 신청 때 적은 값이다 |
 | `POST /v1/pc-links/:id/challenge` | 기기:devlist | `{challenge:{v:1, device_id, aik_pub, nonce}}` | `204` | `request.param_rejected`(`device_id`가 부르는 기기가 아니다), `409 account.link_state`(다른 PC가 먼저 답했다) |
 | `POST /v1/pc-links/:id/grant` | 기기:devlist | `{grant:{v:1, cert, deviceList, enc, ct}}` | `204` | `409 account.link_state`(답한 PC가 아니다, reveal이 없다, 새 PC가 아직 활성이 아니다, 이미 올렸다). 쓰던 PC는 새 목록(`PUT /v1/device-list`)을 먼저 올린 뒤 부른다 |
-| `DELETE /v1/pc-links/:id` | 세션 또는 기기:devlist | — | `204` | 없어도 204. 새 PC는 받아 간 뒤나 그만둘 때, 쓰던 PC는 6자리가 다르거나 거절할 때 부른다 |
+| `DELETE /v1/pc-links/:id` | 세션 또는 기기:devlist | — | `204` | 없어도 204. 새 PC(세션)는 받아 간 뒤나 그만둘 때 부르고 우편함만 비운다(신청 중인 기기 기록은 남아 같은 PC가 다시 시도할 때 쓴다). 쓰던 PC(기기 토큰)는 6자리가 다르거나 거절할 때 부르고, 아직 활성화되지 않은 그 데스크톱의 신청 기록도 지워 자리를 비운다(활성 기기는 건드리지 않는다) |
 
 새 PC가 정지·폐기되면 그 신청도 바로 지운다. 답한 PC가 사라져 멈춘 신청은 새 PC가 hello를 다시 올려 새로 시작한다.
 

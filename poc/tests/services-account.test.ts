@@ -766,8 +766,18 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     const h4 = { v: 1, device_id: d4.id, Sx: d4.S.b64, Vx: d4.V.b64, Hx: k(), commit: k() };
     assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s2), body: { deviceId: d4.id, role: 'desktop', platform: 'macos', name: '또 다른 PC', Sx: d4.S.b64, Vx: d4.V.b64 } })).status, 201);
     assert.equal((await e.req('PUT', `/v1/pc-links/${d4.id}`, { headers: bearer(s2), body: { hello: h4 } })).status, 204);
+    // 새 PC가 그만두면 우편함만 비고 신청 중인 기기 기록은 남는다(다시 시도할 때 쓴다)
+    assert.equal((await e.req('DELETE', `/v1/pc-links/${d4.id}`, { headers: bearer(s2) })).status, 204);
+    assert.equal(((await pcB.call('GET', '/v1/devices')).json.devices as Array<{ deviceId: string; state: string }>).find((x) => x.deviceId === d4.id)?.state, 'pending');
+    assert.equal((await e.req('PUT', `/v1/pc-links/${d4.id}`, { headers: bearer(s2), body: { hello: h4 } })).status, 204);
+    // 쓰던 PC가 거절하면 신청 기록까지 지워 자리가 빈다. 활성 기기는 이 경로로 지워지지 않는다
     assert.equal((await pcB.call('DELETE', `/v1/pc-links/${d4.id}`)).status, 204);
     assert.equal((await e.req('GET', `/v1/pc-links/${d4.id}`, { headers: bearer(s2) })).status, 404);
+    assert.equal(((await pcB.call('GET', '/v1/devices')).json.devices as Array<{ deviceId: string }>).some((x) => x.deviceId === d4.id), false);
+    assert.equal((await pcB.call('DELETE', `/v1/pc-links/${pcB.d.id}`)).status, 204);
+    assert.equal(((await pcB.call('GET', '/v1/devices')).json.devices as Array<{ deviceId: string; state: string }>).find((x) => x.deviceId === pcB.d.id)?.state, 'active');
+    assert.equal((await e.req('PUT', `/v1/pc-links/${d4.id}`, { headers: bearer(s2), body: { hello: h4 } })).status, 404);
+    assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s2), body: { deviceId: d4.id, role: 'desktop', platform: 'macos', name: '또 다른 PC', Sx: d4.S.b64, Vx: d4.V.b64 } })).status, 201);
     // 다시 올리면 앞 단계가 지워지고 새로 시작한다
     assert.equal((await e.req('PUT', `/v1/pc-links/${d4.id}`, { headers: bearer(s2), body: { hello: h4 } })).status, 204);
     assert.equal((await pcB.call('POST', `/v1/pc-links/${d4.id}/challenge`, { challenge: { ...challenge, device_id: pcB.d.id, aik_pub: pcB.aik.b64 } })).status, 204);
