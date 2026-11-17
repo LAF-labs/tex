@@ -62,6 +62,7 @@
 | `SAX-run-token-v1` | 서버: 모델 게이트웨이 키 | 실행당 예산 `runToken` 클레임 (D09 §3, D04 §7, M4-6) |
 | `SAX-kv-v1` | `Vd` | 금고 비밀 봉인 키 `Kv_pub` 배포·연 1회 회전(`PAIR_OK`·`HELLO`, D05 §5) |
 | `SAX-SAS-v1`, `SAX-pair-v1`, `SAX-session-v1` | — | SAS 유도, Noise prologue |
+| `SAX-pclink-commit-v1`, `SAX-pclink-v1`, `SAX-pclink-sas-v1`, `SAX-pclink-rk-v1` | — | 새 PC 연결(§4.3, ADR-048 결정 3): 약속 해시, 대조 해시, 6자리 유도, RK 봉인 HPKE info. 서명 용도가 아니다 |
 
 - 클라우드 경계의 서명 맥락(팀장 결정 2026-11-05): 클라이언트 서명은 `Vx`: `SAX-dpop-v1`, AIK: `SAX-acct-op-v1`·`SAX-devlist-v1`·`SAX-revoke-v1`·`SAX-cert-v1`이다. 서버 서명은 `SAX-token-v1`·`SAX-run-token-v1`·`SAX-acct-claim-v1`(2026-11-06)이다. 서버가 AIK 맥락으로 서명하는 일은 없다.
 - 클라우드 서비스의 HMAC·해시·AEAD 라벨(예: `SAX-login-code-v1`)은 서명 맥락이 아니므로 이 표에 넣지 않는다. 목록이 필요하면 D09 부록 "라벨 목록"에 둔다.
@@ -152,6 +153,31 @@ QR 페이로드(바이너리, URL 아님): `SAXP|v1 | intent | 릴레이 호스�
 QR을 스캔할 수 없을 때: 8~9개 BIP39 단어(88~99비트)를 `ps`로 직접 입력(Keybase KEX 방식). 폰은 `Sd`를 AIK 서명 목록에서 고르되, 데스크톱 항목이 둘이면 PC 화면에 표시된 기기 이름과 대조하게 한다. 3단계의 24시간 경고는 그대로 적용한다. 새 프리미티브(PAKE)는 추가하지 않는다.
 
 20비트 SAS가 충분한 이유는 폰이 QR로 PC를 인증하므로 브리징 MITM이 성립하지 않기 때문이다 `[검토]`. SAS는 "공격자 PC로 사용자를 유도하는 원격 피싱"을 막지 못한다. 그 경로는 AIK 서명 기기 목록(계정 탈취자는 목록에 서명할 수 없음)과 24시간 경고·폰 화면 경고로 막는다(C-01).
+
+### 4.3 새 PC 연결 (ADR-048 결정 3, `[검토]` SP-5)
+
+계정의 두 번째·세 번째 PC를 붙인다. 켜져 있는 기존 PC가 6자리 확인으로 승인하고 계정 열쇠(RK)를 넘긴다. 그 뒤 모든 PC가 같은 RK·AIK·`K_idx`를 쓴다. 구현은 `@sax/remote` `pclink.ts`(프로토콜)이고, 통로는 계정 서비스의 연결 우편함이다. 서버는 메시지를 보고 바꿀 수 있다고 가정한다.
+
+1. [새 PC] 로그인하고 기기를 신청한다(`POST /v1/devices/enroll`, `pending`). 이 연결에만 쓰는 HPKE 수신 키 `Kx`를 금고 메모리에 만들고 난수 `nonce_n`(32B)을 뽑는다.
+   - m1 `hello{v, device_id, Sx, Vx, Kx, commit}`, `commit = SHA-256(utf8("SAX-pclink-commit-v1") ‖ nonce_n ‖ JCS({device_id, Sx, Vx, Kx}))`.
+2. [기존 PC] 신청을 보면 **hello를 받은 뒤에** 난수(32B)를 뽑아 답한다.
+   - m2 `challenge{v, device_id, aik_pub, nonce}`. `device_id`는 승인하는 기존 PC다.
+3. [새 PC] m2를 받으면 `nonce_n`을 공개하고(m3 `reveal{v, nonce}`) 6자리를 화면에 보인다.
+   - `t = SHA-256(utf8("SAX-pclink-v1") ‖ JCS({hello, challenge, nonce_n}))`, `SAS = HKDF(t, "SAX-pclink-sas-v1") mod 10^6`.
+   - 새 PC는 서버가 주는 계정의 `aik_pub`(`GET /v1/device-list`)와 m2의 `aik_pub`가 같은지 본다(릴레이만 침해된 경우를 막는다. 서버 전체가 악의적이면 막지 못한다).
+4. [기존 PC] m3의 난수가 `commit`과 맞는지 본다. 맞지 않으면 신청을 버린다. 사용자가 새 PC 화면의 6자리를 기존 PC에 넣는다. 3번 틀리거나 10분이 지나면 신청을 버린다.
+5. [기존 PC] 6자리가 맞으면:
+   - AIK로 새 PC를 넣은 기기 목록을 서명해 올린다(서버가 새 PC를 활성화한다). 한도(PC 3대)를 넘으면 여기서 멈추고 RK를 봉인하지 않는다.
+   - 새 PC 인증서(`Cert`, 90일)를 서명한다.
+   - 금고가 RK를 `Kx`로 HPKE 봉인한다(§7과 같은 스위트, `info = "SAX-pclink-rk-v1"`, `aad = t`). RK 평문은 금고 밖으로 나오지 않는다.
+   - m4 `grant{v, cert, deviceList, enc, ct}`.
+6. [새 PC] m4를 본다: 목록과 인증서가 m2의 `aik_pub`로 서명됐는지, 자기 `Sx`·`Vx`가 목록과 인증서에 그대로 있는지, 승인한 PC가 목록의 데스크톱인지. 통과하면 사용자에게 "쓰던 PC에 '연결됐어요'가 떴나요?"를 묻고, 그렇다고 한 뒤에만 금고에 넘긴다.
+   - 금고는 봉인문을 열고, 연 RK에서 나온 AIK 공개키(`HKDF("aik")`)가 `aik_pub`와 같을 때만 RK를 바꾼다. 쓰던 RK는 보관 항목으로 옮긴다(지우지 않는다).
+7. [양쪽] `Kx`·난수를 지우고 우편함의 신청을 지운다.
+
+6자리가 충분한 이유 `[검토]`: 서버가 새 PC의 `Kx`를 자기 키로 바꾸려면 기존 PC의 난수를 보기 전에 `commit`을 내야 한다. 그 뒤 기존 PC가 계산하는 6자리는 기존 PC의 난수에 달려 있어 서버가 고를 수 없고, 새 PC가 보이는 6자리는 서버가 모르는 `nonce_n`에 달려 있다. 둘이 같을 확률은 10^-6이고 시도는 신청당 3번이다.
+
+남는 위험: (a) 새 PC는 기존 PC를 암호로 확인하지 못한다. 서버가 기존 PC인 척 엉뚱한 RK를 줄 수 있고, 6단계의 사용자 확인이 이것을 막는 유일한 장치다(진짜 기존 PC에는 "연결됐어요"가 뜨지 않는다). (b) 기존 PC의 금고에 RK 봉인 연산이 생긴다. 금고 control 포트(main)만 부를 수 있고 엔진 포트에는 없다. main이 침해되면 공격자 키로 RK를 봉인받을 수 있다(지금도 main 침해는 AIK 서명 오라클로 기기를 추가할 수 있다. RK가 나가면 AIK 교체 전까지 되돌릴 수 없다는 점이 더 나쁘다). 금고는 봉인을 하루 3번으로 막고 `vault.rk_sealed`를 남기며, 서버는 새 PC 활성화를 메일로 알린다. (c) 끊긴 PC의 금고에는 RK 사본이 남는다(ADR-048 결정 6 잔여 위험).
 
 ## 5. 상시 세션과 키 교체
 

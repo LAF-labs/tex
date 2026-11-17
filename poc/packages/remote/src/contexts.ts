@@ -21,6 +21,11 @@ export const CTX = {
   session: 'SAX-session-v1',
   /** 계정 서비스가 서명하는 계정 확인 주장(PAIR_OK.acctClaim, 팀장 결정 2026-11-06). 서명 키는 계정 서비스 키(앱에 고정). */
   acctClaim: 'SAX-acct-claim-v1',
+  /** 새 PC 연결(ADR-048 결정 3, D08 §4.3): 약속 해시·대조 해시·6자리 유도·RK 봉인 info. 서명 용도가 아니다(금고 서명 허용 목록에 없다). */
+  pclinkCommit: 'SAX-pclink-commit-v1',
+  pclink: 'SAX-pclink-v1',
+  pclinkSas: 'SAX-pclink-sas-v1',
+  pclinkRk: 'SAX-pclink-rk-v1',
 } as const;
 
 /** AIK 용도(D05 §5.1 AikPurpose). */
