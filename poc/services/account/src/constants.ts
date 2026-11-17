@@ -73,6 +73,8 @@ export const DEVICE = {
   deviceTokensPerHour: 60,
   /** 검증 전 IP당 시도(같은 사무실 NAT 뒤 여러 기기) */
   deviceTokenAttemptsPerIpHour: 600,
+  /** 기기 토큰으로 하는 다른 기기 정지(ADR-048 결정 6), 요청 기기당 하루 */
+  stopsPerDeviceDay: 5,
   /** acct_claim 발급(페어링 7단계마다 한 번), 기기당 */
   acctClaimsPerHour: 30,
 } as const;

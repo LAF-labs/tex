@@ -284,6 +284,14 @@ export class PhoneLink {
     return true;
   }
 
+  /** 기기 ID로 연결 해제(기기 화면에서 끊었거나 폰이 스스로 나갔을 때). 그 폰의 기록이 없으면 false. */
+  async removeDevice(deviceId: string): Promise<boolean> {
+    const ids = this.#recs.filter((x) => x.deviceId === deviceId).map((x) => x.pairId);
+    let any = false;
+    for (const id of ids) any = (await this.remove(id)) || any;
+    return any;
+  }
+
   list(): PhoneView[] {
     return this.#recs.map((r) => ({ pairId: r.pairId, name: r.name, platform: r.platform, pairedAt: r.pairedAt, online: this.#runs.get(r.pairId)?.online ?? false, lastSeenAt: r.lastSeenAt }));
   }

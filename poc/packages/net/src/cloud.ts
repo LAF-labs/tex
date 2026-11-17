@@ -41,6 +41,9 @@ export const CLOUD_ROUTES: ReadonlyArray<{ name: string; method: CloudMethod; pa
   { name: 'deviceTokens', method: 'POST', path: /^\/v1\/device-tokens$/ },
   { name: 'acctClaim', method: 'GET', path: /^\/v1\/acct-claim$/ },
   { name: 'devices.enroll', method: 'POST', path: /^\/v1\/devices\/enroll$/ },
+  // 기기 관리(ADR-048 결정 6): 계정의 기기 상태 보기, 이 PC 나가기. 다른 기기 끊기는 deviceList.put(AIK 폐기 레코드)으로 한다
+  { name: 'devices.list', method: 'GET', path: /^\/v1\/devices$/ },
+  { name: 'devices.leave', method: 'POST', path: /^\/v1\/devices\/self\/leave$/ },
   // 설정 > 구독(기기 토큰, services/account/API.md 구독). 카드 등록 창은 기본 브라우저가 연다(이 egress 밖)
   { name: 'billing.subscription', method: 'GET', path: /^\/v1\/billing\/subscription$/ },
   { name: 'billing.checkout', method: 'POST', path: /^\/v1\/billing\/checkout$/ },

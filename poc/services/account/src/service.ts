@@ -61,6 +61,8 @@ interface AccountRow {
   status: string;
   created_at: number;
   aik_pub: string | null;
+  /** AIK를 고정한 시각(첫 PC의 등록 시각과 같다) */
+  aik_pinned_at: number | null;
   device_list_version: number;
   device_list_json: string | null;
   last_biz_change_at: number | null;
@@ -1316,6 +1318,8 @@ export class AccountService {
    */
   async updateDeviceList(requester: { accountId: string; deviceId: string }, l: DeviceList): Promise<{ listVersion: number }> {
     const stopped: string[] = [];
+    /** 유예 중이라 폐기는 아직이지만 바로 정지한 폰 */
+    const halted: string[] = [];
     await this.db.tx(async (q) => {
       const a = await q.one<AccountRow>(`SELECT * FROM accounts WHERE id = $1${q.forUpdate}`, [requester.accountId]);
       if (!a) return fail('account.unauthorized');
@@ -1350,13 +1354,22 @@ export class AccountService {
         if (n && !(await this.countOk(q, requester.accountId, role, 0))) fail('account.device_limit');
       }
       for (const d of toActivate) await q.run("UPDATE devices SET state = 'active', email_hold_until = NULL WHERE device_id = $1", [d.device_id]);
-      const cooling = now - me!.registered_at < DEVICE.newDeviceCoolingDays * MS.D;
+      // 유예(등록 7일 미만 데스크톱의 폐기)는 새로 붙은 PC가 쓰던 기기를 밀어내지 못하게 하는 장치다. 계정의 첫 PC(AIK를 고정한 PC)는 대상이 아니다(ADR-048 결정 6)
+      const first = a.aik_pinned_at !== null && Number(me!.registered_at) <= Number(a.aik_pinned_at);
+      const cooling = !first && now - me!.registered_at < DEVICE.newDeviceCoolingDays * MS.D;
       for (const [id, r] of revoked) {
         const d = byId.get(id);
         if (!d || d.state === 'revoked') continue;
         // 유예는 처음 폐기 레코드가 들어온 때부터 센다(목록을 다시 올려도 다시 시작하지 않는다)
-        if (cooling) await q.run('UPDATE devices SET delete_after = COALESCE(delete_after, $1), revoke_record = $2 WHERE device_id = $3', [now + ACCOUNT.deleteGraceDays * MS.D, jcs(r), id]);
-        else {
+        if (cooling) {
+          await q.run('UPDATE devices SET delete_after = COALESCE(delete_after, $1), revoke_record = $2 WHERE device_id = $3', [now + ACCOUNT.deleteGraceDays * MS.D, jcs(r), id]);
+          // 폰은 유예 중에도 바로 정지한다(잃어버린 폰의 토큰·우편함·푸시가 7일 살아 있지 않게). 자리는 유예가 끝나야 빈다.
+          // PC는 정지하지 않는다: 새로 붙은 PC가 쓰던 PC를 즉시 멈출 수 없어야 한다
+          if (d.role === 'mobile' && (d.state === 'active' || d.state === 'pending')) {
+            await q.run("UPDATE devices SET state = 'suspended' WHERE device_id = $1", [id]);
+            halted.push(id);
+          }
+        } else {
           await q.run("UPDATE devices SET state = 'revoked', revoke_record = $1, delete_after = NULL WHERE device_id = $2", [jcs(r), id]);
           await q.run("INSERT INTO device_events (account_id, role, kind, day) VALUES ($1, $2, 'remove', $3)", [requester.accountId, d.role, kstDay(now)]);
           stopped.push(id);
@@ -1364,9 +1377,55 @@ export class AccountService {
       }
       await q.run('UPDATE accounts SET device_list_version = $1, device_list_json = $2 WHERE id = $3', [l.listVersion, jcs(l), requester.accountId]);
     });
-    for (const id of stopped) await this.stopped(id);
+    for (const id of [...stopped, ...halted]) await this.stopped(id);
     if (stopped.length) await this.notify(requester.accountId, 'device_revoked');
+    if (halted.length) await this.notify(requester.accountId, 'device_suspended');
     return { listVersion: l.listVersion };
+  }
+
+  /**
+   * 기기가 스스로 나간다(ADR-048 결정 6, 기기 토큰). 바로 폐기하고 자리를 비운다. AIK 폐기 레코드는 없다:
+   * 자기 자신을 빼는 것이라 남을 밀어낼 수 없고, 데스크톱이 다음 목록 갱신 때 이 항목을 폐기 레코드로 옮긴다(이미 폐기된 기기의 레코드는 그대로 받는다).
+   * 계정에 남은 마지막 활성 데스크톱은 나갈 수 없다(AIK를 가진 기기가 없어지면 기기를 더하거나 끊을 수 없다. 그 PC는 로그아웃만 한다).
+   */
+  async leave(requester: { accountId: string; deviceId: string }): Promise<void> {
+    await this.db.tx(async (q) => {
+      await q.one(`SELECT id FROM accounts WHERE id = $1${q.forUpdate}`, [requester.accountId]);
+      const me = await q.one<DeviceRow>('SELECT * FROM devices WHERE device_id = $1 AND account_id = $2', [requester.deviceId, requester.accountId]);
+      if (!me || me.state !== 'active') return fail('account.device_not_found');
+      if (me.role === 'desktop' && !(await this.otherActiveDesktop(q, requester.accountId, me.device_id))) fail('account.last_desktop');
+      const now = this.now();
+      await q.run("UPDATE devices SET state = 'revoked', delete_after = NULL WHERE device_id = $1", [me.device_id]);
+      await q.run("INSERT INTO device_events (account_id, role, kind, day) VALUES ($1, $2, 'remove', $3)", [requester.accountId, me.role, kstDay(now)]);
+    });
+    await this.stopped(requester.deviceId);
+    await this.notify(requester.accountId, 'device_revoked');
+  }
+
+  /**
+   * 기기 토큰으로 다른 기기를 정지한다(ADR-048 결정 6: 폰에서 잃어버린 폰·PC 막기). AIK가 없으니 정지까지만 한다:
+   * 바로 suspended(토큰·우편함·푸시가 즉시 멈춤) + 7일 뒤 폐기 예약 + 알림 메일. 켜져 있는 데스크톱이 AIK 폐기로 바로 확정하거나 재활성화로 되돌린다.
+   * 마지막 남은 활성 데스크톱은 정지할 수 없다(훔친 폰으로 계정을 잠그지 못하게). 자기 자신은 leave로 한다.
+   */
+  async stopByDevice(requester: { accountId: string; deviceId: string }, deviceId: string): Promise<{ deleteAfter: number }> {
+    if (deviceId === requester.deviceId) fail('request.param_rejected');
+    const after = await this.db.tx(async (q) => {
+      await q.one(`SELECT id FROM accounts WHERE id = $1${q.forUpdate}`, [requester.accountId]);
+      const d = await q.one<DeviceRow>('SELECT * FROM devices WHERE device_id = $1 AND account_id = $2', [deviceId, requester.accountId]);
+      if (!d || d.state === 'revoked') return fail('account.device_not_found');
+      if (d.role === 'desktop' && d.state === 'active' && !(await this.otherActiveDesktop(q, requester.accountId, d.device_id))) fail('account.last_desktop');
+      const at = d.delete_after ?? this.now() + ACCOUNT.deleteGraceDays * MS.D;
+      await q.run("UPDATE devices SET state = 'suspended', delete_after = $1 WHERE device_id = $2", [at, deviceId]);
+      return Number(at);
+    });
+    await this.stopped(deviceId);
+    await this.notify(requester.accountId, 'device_suspended');
+    return { deleteAfter: after };
+  }
+
+  private async otherActiveDesktop(q: Sql, accountId: string, except: string): Promise<boolean> {
+    const r = await q.one<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE account_id = $1 AND role = 'desktop' AND state = 'active' AND device_id <> $2", [accountId, except]);
+    return Number(r?.n ?? 0) > 0;
   }
 
   private async stopped(deviceId: string): Promise<void> {
@@ -1403,7 +1462,11 @@ export class AccountService {
   async reactivate(requester: { accountId: string; deviceId: string }, deviceId: string, op: { op: AcctOp; aikSig: string }): Promise<void> {
     const a = await this.account(requester.accountId);
     if (!a.aik_pub || op.op.op !== 'device.reactivate' || !opSigOk(fromB64(a.aik_pub, 32)!, op, a.id, deviceId, this.now())) fail('account.aik_signature_invalid');
-    const n = await this.db.run("UPDATE devices SET state = 'active' WHERE device_id = $1 AND account_id = $2 AND state = 'suspended'", [deviceId, a.id]);
+    // 폐기 레코드 없이 예약된 삭제(기기 토큰 정지·세션 삭제 요청)는 재활성화로 같이 취소한다. AIK 폐기 유예(revoke_record 있음)는 그대로 둔다
+    const n = await this.db.run(
+      "UPDATE devices SET state = 'active', delete_after = CASE WHEN revoke_record IS NULL THEN NULL ELSE delete_after END WHERE device_id = $1 AND account_id = $2 AND state = 'suspended'",
+      [deviceId, a.id],
+    );
     if (!n) fail('account.device_not_found');
   }
 

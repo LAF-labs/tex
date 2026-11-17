@@ -64,6 +64,7 @@ import { buildPhoneCopy } from './phone-copy.ts';
 import { CmdLog, PhoneIssue } from './phone-issue.ts';
 import { DESKTOP_CAPS, PhoneLink, PhoneStore, type TokenSeal } from './phone-link.ts';
 import { phoneSession, SESSION_CAPS } from './phone-session.ts';
+import { DeviceManager } from './remote-devices.ts';
 import { phoneReceiver } from './phone-receive.ts';
 import { closeAction, shouldStayAwake, StayAwake } from './phone-presence.ts';
 import type { VaultDesktopKeys } from './remote-keys.ts';
@@ -1465,6 +1466,26 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     });
     return phoneLink;
   };
+  // 기기 관리(remote-devices.ts, ADR-048 결정 6): 계정의 PC·폰을 보고 끊는다. 끊은 폰의 연결 기록·우편함도 같이 지운다.
+  let deviceMgr: DeviceManager | null = null;
+  const devicesOf = (): DeviceManager => {
+    const client = opts.remote?.cloud?.account;
+    if (!client || !account.device()) throw new Error('account_required');
+    return (deviceMgr ??= new DeviceManager({
+      client,
+      session: () => account.device(),
+      aik: async () => (await keysOf()).aik,
+      dropPhone: async (id) => void (await phones()?.removeDevice(id)),
+      log: (n, d) => log.event(n, d),
+    }));
+  };
+  const reconcileDevices = async (): Promise<void> => {
+    try {
+      if ((await devicesOf().reconcile()) > 0) send({ type: 'account', account: account.view() });
+    } catch (e) {
+      log.event('main.device_sync', { result: typeof (e as { code?: unknown }).code === 'string' ? ((e as { code: string }).code) : 'skipped' });
+    }
+  };
   // 폰이 연결돼 있으면 집에 둔 PC가 밖의 폰에 바로 응한다(phone-presence.ts): 창을 닫아도 남고, 전원 연결 중에는 잠들지 않는다.
   const stayAwake = new StayAwake(powerSaveBlocker, (on) => log.event('main.phone_stay_awake', { on }));
   const pairedPhones = () => phoneLink?.list().length ?? 0;
@@ -1506,6 +1527,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   void accountInit()
     .then(() => phones()?.start())
     .then(() => syncAwake())
+    // 꺼져 있던 동안 폰이 스스로 나갔거나 다른 기기가 끊은 것을 목록에 맞춘다(실패해도 다음에 기기 화면·폰 연결을 열 때 다시 한다)
+    .then(() => reconcileDevices())
     .catch(() => undefined);
   const onbView = async () => (onb && onbShow ? await onb.view() : null);
   /** 온보딩이 끝나기 전에는 약관(④) 동의 전 요청을 받지 않는다. 모델 해석은 ②에 동의했을 때만(기존 사용자는 지금처럼). */
@@ -2194,8 +2217,39 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'pair.open': async () => {
       needGesture(3_000);
       await accountInit();
+      // 폰이 스스로 나간 자리가 목록에 남아 있으면 새 폰을 올릴 때 서버가 거부한다. 열기 전에 맞춘다
+      await reconcileDevices();
       pairWindow().open();
       return {};
+    },
+    // 설정 > 기기 연결(ADR-048 결정 6). 목록은 읽기만(보기 전에 서버와 목록을 맞춘다), 끊기·나가기는 실제 입력 뒤에만.
+    'devices.list': async () => {
+      await accountInit();
+      return { devices: await devicesOf().list() };
+    },
+    'devices.unlink': async (p) => {
+      needGesture(3_000);
+      await accountInit();
+      const devices = await devicesOf().unlink(String(p.deviceId));
+      send({ type: 'account', account: account.view() });
+      syncAwake();
+      return { devices };
+    },
+    // 이 PC가 계정에서 나간다: 서버가 바로 폐기한 뒤 로그아웃과 같은 정리를 한다. 발급 실행 중이면 거부, 마지막 PC면 account.last_desktop
+    'devices.leave': async () => {
+      needGesture(3_000);
+      await accountInit();
+      if (runs.anyActive()) throw new Error('run_active');
+      await devicesOf().leave();
+      pairWin?.close();
+      pairWin = null;
+      phoneLink?.stop();
+      phoneLink = null;
+      deviceMgr = null;
+      syncAwake();
+      const v = await account.signOut();
+      pushBoard();
+      return v;
     },
     'onboarding.reply': async (p) => {
       needGesture(3_000);
