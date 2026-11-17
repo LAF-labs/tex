@@ -72,6 +72,13 @@ export const CHAT_AGENT_LOOKUP_TEXT = (ref: string): string => `{${ref}.count}�
 /** 돈 흐름 조회 되풀이(값은 main이 채운다). partial이면 확인 못 한 계좌가 있다고 같이 말한다(11 §3.4: 모르는 것을 0으로 세지 않는다). */
 export const CHAT_AGENT_CASH_TEXT = (ref: string, partial: boolean): string =>
   `${partial ? '일부 계좌 거래내역이 모자라 확인 못 한 부분이 있어요. 확인된 것만 보면 ' : ''}들어온 돈 {${ref}.cash.in}, 나간 돈 {${ref}.cash.out}이에요.`;
+/**
+ * 가장 오래된 건을 물은 조회 되풀이("누가 제일 늦게 줘?", chat-eval look-late: 되풀이로 닫으며 "가장 최근"을 말함).
+ * 조회 결과는 최신이 맨 위라 가장 오래된 건은 last다.
+ */
+export const CHAT_AGENT_OLDEST_TEXT = (ref: string): string => `가장 오래된 건은 {${ref}.last.date} {${ref}.last.counterparty} 건이고, 합계는 {${ref}.last.total}이에요.`;
+/** 가장 오래된 건을 묻는 말(늦게·오래·밀린·연체·제일 먼저) */
+const OLDEST_ASK = /늦게|오래\s*(?:된|못|안)|제일\s*오래|밀린|연체|제일\s*먼저/;
 /** 승인번호를 물은 조회 되풀이(chat-eval look-approval: 건수·합계만 말하고 물은 승인번호가 빠짐) */
 export const CHAT_AGENT_APPROVAL_TEXT = (ref: string): string => `가장 최근 건({${ref}.first.date})의 승인번호는 {${ref}.first.approvalNo}예요.`;
 /** 이번 턴 같은 카드 판정 키: 거래처와 금액 */
@@ -449,7 +456,7 @@ export class ChatAgent {
     if (!limit && (last.status === 'ok' || last.status === 'partial') && last.ref && s.cashRefs.has(last.ref) && show.includes(last.ref))
       return { kind: 'answer', text: CHAT_AGENT_CASH_TEXT(last.ref, last.status === 'partial'), show, ask: null, filtered: 'repeat' };
     if (!limit && last.status === 'ok' && last.ref?.startsWith('r') && show.includes(last.ref))
-      return { kind: 'answer', text: /승인\s*번호/.test(turn.user) ? CHAT_AGENT_APPROVAL_TEXT(last.ref) : CHAT_AGENT_LOOKUP_TEXT(last.ref), show, ask: null, filtered: 'repeat' };
+      return { kind: 'answer', text: /승인\s*번호/.test(turn.user) ? CHAT_AGENT_APPROVAL_TEXT(last.ref) : OLDEST_ASK.test(turn.user) ? CHAT_AGENT_OLDEST_TEXT(last.ref) : CHAT_AGENT_LOOKUP_TEXT(last.ref), show, ask: null, filtered: 'repeat' };
     if (show.length) return { kind: 'did', text: (limit ? null : CHAT_AGENT_DONE_TEXT[last.status]) ?? CHAT_AGENT_NUMBER_TEXT, show, ask: null, filtered: 'repeat' };
     // 빈 조회를 되풀이했으면 없다고 말한다(chat-eval look-empty: "한빛식품 발급 기록 있어?"에 invoice_history 두 번 → turn_limit)
     if (!limit && last.status === 'not_set_up') return { kind: 'answer', text: CHAT_AGENT_DONE_TEXT.not_set_up!, show, ask: null, filtered: 'repeat' };

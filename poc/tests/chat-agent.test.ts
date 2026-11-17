@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { CounterpartyRepo, openDatabase, ProfileRepo, syntheticBizNo, type Db } from '@sax/db';
-import { CHAT_ADVICE_TEXT, CHAT_AGENT_APPROVAL_TEXT, CHAT_AGENT_ASK_TEXT, CHAT_AGENT_CASH_TEXT, CHAT_AGENT_DONE_TEXT, CHAT_AGENT_FALLBACK_TEXT, CHAT_AGENT_INPUT_MAX_BYTES, CHAT_AGENT_LOOKUP_TEXT, CHAT_AGENT_NUMBER_TEXT, CHAT_AGENT_TRANSCRIPT_TURNS, ChatAgent, gatewayChatAgentModel, numberShaped, parseKrw, type DomainCall, type ScreenFrame, type StepResult, type ToolOutput } from '@sax/engine';
+import { CHAT_ADVICE_TEXT, CHAT_AGENT_APPROVAL_TEXT, CHAT_AGENT_ASK_TEXT, CHAT_AGENT_CASH_TEXT, CHAT_AGENT_DONE_TEXT, CHAT_AGENT_FALLBACK_TEXT, CHAT_AGENT_INPUT_MAX_BYTES, CHAT_AGENT_LOOKUP_TEXT, CHAT_AGENT_NUMBER_TEXT, CHAT_AGENT_OLDEST_TEXT, CHAT_AGENT_TRANSCRIPT_TURNS, ChatAgent, gatewayChatAgentModel, numberShaped, parseKrw, type DomainCall, type ScreenFrame, type StepResult, type ToolOutput } from '@sax/engine';
 import { CHAT_AGENT_COMMANDS, COMMANDS, MAIN_ONLY, READ_QUERIES } from '@sax/engine/protocol';
 import { BundleCatalog } from '@sax/model';
 import { Egress } from '@sax/net';
@@ -387,6 +387,16 @@ describe('chat.step 턴 상한·세션 폐기', () => {
     assert.equal(pc.calls.length, 1);
     assert.deepEqual(end.kind === 'reply' && [end.reply.kind, end.reply.text, end.reply.show, end.reply.filtered], ['answer', CHAT_AGENT_CASH_TEXT('r1', true), ['r1'], 'repeat']);
     assert.match(CHAT_AGENT_CASH_TEXT('r1', true), /일부 계좌 거래내역이 모자라/);
+  });
+
+  it('가장 오래된 건을 물은 조회를 되풀이하면 last 슬롯 문장으로 닫는다(chat-eval look-late)', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const call = () => fc('payables', { counterparty: null });
+    script(call, call);
+    const r = await a.step({ start: { text: '누가 제일 늦게 받았어?', frame: { cards: [] }, profileId } });
+    const end = await a.step({ continue: { outputs: r.kind === 'tools' ? r.calls.map((c) => ({ callId: c.callId, output: pc.exec(c) })) : [] } });
+    assert.deepEqual(end.kind === 'reply' && [end.reply.text, end.reply.filtered], [CHAT_AGENT_OLDEST_TEXT('r1'), 'repeat']);
   });
 
   it('낼 돈(payables)은 거래처 토큰을 레코드 ID로 풀어 main에 보낸다', async () => {
