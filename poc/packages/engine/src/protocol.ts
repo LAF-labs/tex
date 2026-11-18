@@ -133,7 +133,7 @@ export const BANK_COMMANDS = [
  * share.collect는 장부에서 올릴 줄을 모으고, pending·sent·dropped는 올리기, cursor·apply는 받기다. 봉인·서명·서버 호출은 main이 한다.
  */
 export const SHARE_READ_QUERIES = ['db.query.share.pending', 'db.query.share.cursor', 'db.query.share.status'] as const;
-export const SHARE_COMMANDS = ['share.collect', 'share.sent', 'share.dropped', 'share.apply'] as const;
+export const SHARE_COMMANDS = ['share.collect', 'share.sent', 'share.dropped', 'share.apply', 'share.resend'] as const;
 /**
  * 실행 명령(main → 엔진 중계 통로). 승인·증언은 여기 없다. 게이트 전용 포트로만 다닌다(ADR-021, D01 §2.1). run.inspect는 값 없는 원장 상태·저널 종류(e2e).
  * run.start = H-01 세금계산서, run.startCert {runId, playbookId, inputs} = 홈택스 민원증명(cert.ts CertStartParams, 승인 카드 cert.confirm).

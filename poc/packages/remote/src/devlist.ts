@@ -119,6 +119,16 @@ export async function initialDeviceList(aik: AikSigner, self: DeviceInfo): Promi
   };
 }
 
+/**
+ * [PC] 계정 열쇠를 새로 걸 때의 목록(ADR-050 개정 1): 남는 PC들을 새 AIK로 다시 서명한다. 버전은 이어 가고 폐기 레코드는 비운다
+ * (옛 AIK로 서명한 레코드는 새 AIK로 검증되지 않는다. 폰은 옛 AIK를 기억하므로 담지 않는다).
+ */
+export async function rekeyedDeviceList(aik: AikSigner, listVersion: number, desktops: DeviceInfo[]): Promise<DeviceListJson> {
+  if (!desktops.length || desktops.length > MAX_DESKTOPS || desktops.some((d) => d.role !== 'desktop')) throw new Error('devlist: too many devices');
+  if (new Set(desktops.map((d) => d.deviceId)).size !== desktops.length) throw new Error('devlist: device id already used');
+  return { listVersion, entries: await signEntries(aik, desktops.map((d) => toEntry(d, listVersion)), listVersion), revoked: [] };
+}
+
 function toEntry(d: DeviceInfo, v: number): DeviceListEntryJson['entry'] {
   return { device_id: d.deviceId, role: d.role, Sx: b64(d.noisePub), Vx: b64(d.signPub), registered_at: d.registeredAt, list_version: v };
 }

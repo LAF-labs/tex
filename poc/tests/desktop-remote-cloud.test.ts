@@ -30,6 +30,7 @@ import {
   deviceAuthHeaders,
   ed25519Keygen,
   addDevice,
+  rekeyedDeviceList,
   initialDeviceList,
   issueCert,
   jcsBytes,
@@ -309,6 +310,8 @@ describe('계정 화면 경로(#224 비밀번호 로그인이 실제 앱에서 n
       putKeyEscrow: [auth, { enc: 'e', ct: 'c' }],
       claimKeyEscrow: ['sxs1.s', { deviceId: uuid4(), Hx: 'h' }],
       joinByKeyEscrow: ['sxs1.s', uuid4(), list],
+      keyEscrowPub: ['sxs1.s'],
+      resetByKeyEscrow: ['sxs1.s', { deviceId: uuid4(), aikPub: 'a', deviceList: list, enc: 'e', ct: 'c' }],
       issueLock: [auth],
       acquireIssueLock: [auth],
       renewIssueLock: [auth, 'L'.repeat(43)],
@@ -549,8 +552,10 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       const dir = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-pclink-'));
       dirs.push(dir);
       const events: string[] = [];
+      // 이 시험은 쓰던 PC의 승인 길을 본다: 계정 열쇠 보관이 꺼진 서버처럼 답하게 한다(켜진 서버에서는 이 길로 오지 않는다, ADR-050 개정 1)
+      const off = () => Promise.reject(Object.assign(new Error('off'), { code: 'request.not_found' }));
       const acct = new DesktopAccount({
-        client: account,
+        client: { ...account, keyEscrowPub: off, claimKeyEscrow: off },
         keys,
         identity: new RemoteIdentityFile(dir),
         platform: 'macos',
@@ -748,7 +753,8 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
   it('계정 열쇠 맡기기(ADR-050): 쓰던 PC가 열쇠를 맡겨 두면 새 PC는 이메일 인증만으로 바로 붙고, 맡긴 것이 없으면 쓰던 PC의 승인을 기다린다', async () => {
     const { account } = ports;
     const dirs: string[] = [];
-    const pc = async (name: string, email: string) => {
+    // legacy: 열쇠 맡기기 이전 버전으로 등록한 PC처럼, 첫 등록 때 맡기지 않는다
+    const pc = async (name: string, email: string, legacy = false) => {
       const ks = new MemoryKeyStore();
       const vlog = new FileEventLog(null, 'vault');
       const c = new VaultCrypto({ keyStore: ks, log: vlog });
@@ -766,9 +772,11 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       const dir = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-escrow-'));
       dirs.push(dir);
       const events: string[] = [];
+      const rekeyed: number[] = [];
       const acct = new DesktopAccount({
-        client: account, keys, identity: new RemoteIdentityFile(dir), platform: 'macos', deviceName: name,
-        linkVault: async () => (await keys()).link, resetKeys: () => void (kp = null),
+        client: legacy ? { ...account, keyEscrowPub: () => Promise.reject(Object.assign(new Error('off'), { code: 'request.not_found' })) } : account,
+        keys, identity: new RemoteIdentityFile(dir), platform: 'macos', deviceName: name,
+        linkVault: async () => (await keys()).link, resetKeys: () => void (kp = null), onRekey: () => void rekeyed.push(1),
         log: (n, d) => void events.push(`${n}:${String(d.result ?? '')}`),
       });
       await acct.init();
@@ -777,15 +785,14 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
         return acct.verify(s.mail.lastCode(email)!);
       };
       const mgr = () => new DeviceManager({ client: account, session: () => acct.device(), aik: async () => (await keys()).aik, dropPhone: async () => {} });
-      return { acct, keys, ks, vlog, events, login, mgr, dir };
+      return { acct, keys, ks, vlog, events, login, mgr, dir, rekeyed };
     };
     try {
       const email = 'escrow@example.com';
       const a = await pc('사무실 PC', email);
       assert.equal(await a.acct.depositKey(), 'skipped', '로그인 전에는 맡기지 않는다');
       assert.equal((await a.login()).step, 'signed_in');
-      // 쓰던 PC가 계정 열쇠를 맡긴다. 이미 맡겼으면 금고를 다시 부르지 않는다
-      assert.equal(await a.acct.depositKey(), 'stored');
+      // 첫 PC는 등록과 같은 요청으로 계정 열쇠를 맡긴다(개정 1). 켤 때는 이미 맡겨져 있어 금고를 다시 부르지 않는다
       assert.equal(await a.acct.depositKey(), 'already');
       assert.equal(a.vlog.lines.filter((l) => l.includes('vault.rk_sealed')).length, 1);
 
@@ -828,13 +835,82 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       await assert.rejects(account.joinByKeyEscrow(session, bDev.deviceId, kicked), { code: 'request.param_rejected' });
       await assert.rejects(account.claimKeyEscrow(session, { deviceId: uuid4(), Hx: b64(x25519Keygen().publicKey) }), { code: 'account.device_not_found' });
 
-      // 맡긴 열쇠가 없는 계정(쓰던 PC가 아직 옛 버전): 새 PC는 지금처럼 쓰던 PC의 승인을 기다린다
-      const o2 = await pc('남의 집 PC', 'escrow-other@example.com');
-      const w = await o2.login();
-      assert.equal(w.step, 'link_wait');
-      assert.ok(o2.events.includes('main.account_escrow:account.escrow_missing'));
-      assert.ok(!o2.vlog.lines.some((l) => l.includes('vault.rk_imported')));
-      await o2.acct.linkCancel();
+      // 맡긴 열쇠가 있는 계정에는 열쇠를 새로 걸 수 없다(받아서 붙어야 한다)
+      const oKeys = await other.keys();
+      const mineSealed = await oKeys.link.sealRk(fromB64(st.pub), utf8(CTX.rkEscrow), escrowStoreAad(oKeys.aik.publicKey));
+      const oList = await rekeyedDeviceList(oKeys.aik, bDev.deviceList.listVersion + 1, [{ deviceId: bDev.deviceId, role: 'desktop', noisePub: oKeys.noise.publicKey, signPub: oKeys.vd.publicKey, registeredAt: Date.now() }]);
+      await assert.rejects(account.resetByKeyEscrow(session, { deviceId: bDev.deviceId, aikPub: b64(oKeys.aik.publicKey), deviceList: oList, enc: b64(mineSealed.enc), ct: b64(mineSealed.ct) }), { code: 'account.aik_already_pinned' });
+
+      // 맡긴 열쇠가 없는 계정(열쇠를 가진 PC가 이 기능 이전 버전이고 꺼져 있다): 새 PC는 승인 화면 없이 자기 열쇠를 계정에 새로 걸고 바로 로그인된다(개정 1)
+      const lmail = 'escrow-legacy@example.com';
+      const old = await pc('옛 PC', lmail, true);
+      assert.equal((await old.login()).step, 'signed_in');
+      const oldAik = old.acct.identity!.aikPub;
+      const oldId = old.acct.identity!.deviceId;
+      // 옛 PC에 폰이 하나 붙어 있다
+      const lstart = await account.startEmailCode(lmail);
+      const ls = (await account.verifyEmailCode(lstart.loginId, s.mail.lastCode(lmail)!)).session;
+      const ph = { id: uuid4(), noise: x25519Keygen(), key: ed25519Keygen() };
+      const pr = await fetch(`${s.origin}/v1/devices/enroll`, { method: 'POST', headers: { authorization: `Bearer ${ls}`, 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: ph.id, role: 'mobile', platform: 'ios', name: '폰', Sx: b64(ph.noise.publicKey), Vx: b64(ph.key.publicKey) }) });
+      assert.equal(pr.status, 201);
+      const oldDev = old.acct.device()!;
+      const withPhone = await addDevice((await old.keys()).aik, oldDev.deviceList, { deviceId: ph.id, role: 'mobile', noisePub: ph.noise.publicKey, signPub: ph.key.publicKey, registeredAt: Date.now() });
+      await account.putDeviceList(oldDev.auth, withPhone);
+      await oldDev.setDeviceList(withPhone);
+
+      const n = await pc('새 PC', lmail);
+      // 서버는 새로 거는 목록을 본다: 쓰던 PC를 빼거나 폰을 담은 목록, 다른 열쇠의 봉인문은 받지 않는다
+      {
+        const nk = await n.keys();
+        const nid = uuid4();
+        await account.enrollDesktop(ls, { deviceId: nid, platform: 'macos', name: '새 PC', Sx: b64(nk.noise.publicKey), Vx: b64(nk.vd.publicKey) });
+        const pub = fromB64((await account.keyEscrowPub(ls)).pub);
+        const good = await nk.link.sealRk(pub, utf8(CTX.rkEscrow), escrowStoreAad(nk.aik.publicKey));
+        const me = { deviceId: nid, role: 'desktop' as const, noisePub: nk.noise.publicKey, signPub: nk.vd.publicKey, registeredAt: Date.now() };
+        const body = (deviceList: Awaited<ReturnType<typeof rekeyedDeviceList>>, sealed = good) => ({ deviceId: nid, aikPub: b64(nk.aik.publicKey), deviceList, enc: b64(sealed.enc), ct: b64(sealed.ct) });
+        const v = withPhone.listVersion + 1;
+        await assert.rejects(account.resetByKeyEscrow(ls, body(await rekeyedDeviceList(nk.aik, v, [me]))), { code: 'request.param_rejected' }, '쓰던 PC를 빼지 못한다');
+        const oldEntry = withPhone.entries.find((e) => e.entry.device_id === oldId)!.entry;
+        const oldInfo = { deviceId: oldId, role: 'desktop' as const, noisePub: fromB64(oldEntry.Sx), signPub: fromB64(oldEntry.Vx), registeredAt: oldEntry.registered_at };
+        await assert.rejects(account.resetByKeyEscrow(ls, body(await rekeyedDeviceList(nk.aik, v + 1, [oldInfo, me]))), { code: 'request.param_rejected' }, '버전은 하나만 오른다');
+        // 금고의 봉인은 하루 3번까지라 새 금고로 만든다
+        const foreignSeal = await (await (await pc('다른 금고', lmail)).keys()).link.sealRk(pub, utf8(CTX.rkEscrow), escrowStoreAad(nk.aik.publicKey));
+        await assert.rejects(account.resetByKeyEscrow(ls, body(await rekeyedDeviceList(nk.aik, v, [oldInfo, me]), foreignSeal)), { code: 'request.param_rejected' }, '맡기는 열쇠의 AIK가 새 AIK여야 한다');
+        assert.equal((await account.deviceList(ls)).aikPub, oldAik);
+      }
+      const nv = await n.login();
+      assert.deepEqual([nv.step, nv.email, nv.linkCode], ['signed_in', lmail, undefined]);
+      assert.ok(n.events.includes('main.account_escrow:account.escrow_missing') && n.events.includes('main.account_escrow:reset'));
+      assert.ok(!n.vlog.lines.some((l) => l.includes('vault.rk_imported')), '새 PC는 자기 열쇠를 그대로 쓴다');
+      const nAik = b64((await n.keys()).aik.publicKey);
+      assert.notEqual(nAik, oldAik);
+      assert.equal(n.acct.identity!.aikPub, nAik);
+      const nl = n.acct.identity!.deviceList;
+      assert.deepEqual([nl.listVersion, nl.revoked.length, nl.entries.map((e) => e.entry.role)], [withPhone.listVersion + 1, 0, ['desktop', 'desktop']], '옛 PC는 목록에 남고 폰은 빠진다');
+      assert.ok(verifyDeviceList(nl, (await n.keys()).aik.publicKey).ok);
+      assert.deepEqual((await n.mgr().list()).filter((d) => d.state !== 'revoked').map((d) => [d.name, d.state, d.self, d.listed]), [['옛 PC', 'active', false, true], ['새 PC', 'active', true, true]]);
+      assert.equal((await account.devicesBySession(ls)).find((d) => d.deviceId === ph.id)!.state, 'revoked', '폰은 옛 열쇠를 기억하므로 다시 연결해야 한다');
+      assert.equal(await n.acct.depositKey(), 'already', '새로 건 열쇠는 같은 요청으로 맡겨졌다');
+      // 로그아웃 뒤 다시 로그인하면 되살린다(다시 걸지 않는다)
+      await n.acct.signOut();
+      assert.equal((await n.login()).step, 'signed_in');
+      assert.equal(n.events.filter((e) => e === 'main.account_escrow:reset').length, 1);
+
+      // 옛 PC를 다시 켠다: 옛 열쇠의 인증서가 통하지 않아 로그인 화면으로 돌아가고, 이메일 로그인 한 번으로 새 열쇠를 받아 같은 기기로 이어 쓴다
+      const old2 = new DesktopAccount({
+        client: account, keys: old.keys, identity: new RemoteIdentityFile(old.dir), platform: 'macos', deviceName: '옛 PC',
+        linkVault: async () => (await old.keys()).link, resetKeys: () => void 0, log: (nm, d) => void old.events.push(`${nm}:${String(d.result ?? '')}`),
+      });
+      assert.equal((await old2.init()).step, 'signed_in');
+      assert.equal(await old2.depositKey(), 'account.cert_invalid');
+      assert.deepEqual([old2.view().step, old2.view().error, old2.view().email], ['signed_out', 'account.key_changed', lmail]);
+      old.acct.device()?.clearToken();
+      await old.acct.signOut();
+      const ov = await old.login();
+      assert.equal(ov.step, 'signed_in');
+      assert.ok(old.events.includes('main.account_escrow:joined') && old.vlog.lines.some((l) => l.includes('vault.rk_imported')));
+      assert.deepEqual([old.acct.identity!.aikPub, old.acct.identity!.deviceId, old.rekeyed.length], [nAik, oldId, 1]);
+      assert.deepEqual((await old.mgr().list()).filter((d) => d.state !== 'revoked').map((d) => [d.name, d.state, d.self, d.listed]), [['옛 PC', 'active', true, true], ['새 PC', 'active', false, true]]);
     } finally {
       for (const d of dirs) await fs.rm(d, { recursive: true, force: true });
     }

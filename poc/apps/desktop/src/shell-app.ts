@@ -1350,6 +1350,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     resetKeys: () => {
       remoteKeys = null;
     },
+    onRekey: () => void host.rpc('share.resend').catch(() => undefined),
     log: (n, d) => log.event(n, d),
   });
   // 새 PC 연결 중(link_* 단계)에는 쓰던 PC의 답을 몇 초마다 본다. 단계가 바뀌면 화면에 알리고, 끝나면 멈춘다
@@ -1363,6 +1364,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     void account.depositKey().then((r) => {
       // 잠깐의 실패는 다음 로그인 화면 갱신 때 다시 해 본다
       if (r !== 'stored' && r !== 'already' && r !== 'request.not_found' && r !== 'skipped') keyDeposited = false;
+      // 다른 PC가 계정 열쇠를 새로 걸었으면 이 PC는 로그인 화면으로 돌아가 있다(account.key_changed)
+      if (r === 'account.cert_invalid') send({ type: 'account', account: account.view() });
     });
   };
   const watchLink = <T extends AccountView>(v: T): T => {
