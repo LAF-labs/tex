@@ -12,7 +12,7 @@ import {
   type Link, type OuterEnv, type OutboxItem, type OutboxStore, type RelayLink, type ShareKeyBody,
 } from '@sax/remote';
 import { LIVE_BACKOFF, PhoneLink, PhoneStore, packTok, unpackTok, type PhoneLinkOptions, type TokenSeal } from '../apps/desktop/src/phone-link.ts';
-import { closeAction, shouldStayAwake, StayAwake } from '../apps/desktop/src/phone-presence.ts';
+import { closeAction, shouldStartPhones, shouldStayAwake, StayAwake } from '../apps/desktop/src/phone-presence.ts';
 import { phoneReceiver } from '../apps/desktop/src/phone-receive.ts';
 import { fakeJpeg, pairOnce, pairWorld, until } from './remote-support.ts';
 
@@ -99,8 +99,8 @@ afterEach(async () => {
   dirs = [];
 });
 
-async function world() {
-  const relay = new MemoryRelay();
+async function world(o: { mailboxKeepsPeer?: boolean } = {}) {
+  const relay = new MemoryRelay(o);
   const w = await pairWorld({ relay });
   const { pc, phone } = await pairOnce(w);
   pc.channel.close();
@@ -388,6 +388,103 @@ describe('PC 폰 수신(phone-link)', () => {
     assert.ok(!JSON.stringify(a.logs).includes(a.x.pc.phone.deviceId), '로그에 기기 id 없음');
     a.end();
     assert.equal(await a.link.pushShareKeys(), 0, '멈춘 뒤에는 보내지 않는다');
+  });
+
+  it('폰이 세션을 닫고 나갔다 다시 와도(60초마다 동기화) 새 세션을 받는다. 닫기 없이 사라졌다 와도 같다(2026-11-18 실기기: 첫 세션만 "PC 켜짐")', async () => {
+    // 실제 릴레이 의미: 폰이 나가도 PC 우편함 연결은 그대로다(예전 MemoryRelay는 양쪽을 닫아 이 버그가 시험에 안 보였다)
+    const x = await world({ mailboxKeepsPeer: true });
+    const logs: string[] = [];
+    const link = x.mk(true, { log: (n, d) => void (n === 'main.phone_live' && logs.push(String(d?.step))) });
+    await link.start();
+    await link.add(x.pc);
+    await new Promise((r) => setTimeout(r, 20));
+    let ts = 0;
+    const open = async () => {
+      const l = await x.relay.joinMailbox(fromB64(x.phone.mbxId), { read: fromB64(x.phone.tokRead), write: fromB64(x.phone.tokWrite) }, 'mobile');
+      const s = await openMobileSession(l, {
+        pairId: x.phone.pairId, noise: x.w.phone.keys.noise, desktopStatic: x.phone.desktopStatic, nextTimestamp: () => (ts = Math.max(Date.now(), ts + 1)),
+        hello: { appVersion: 'm', deviceListVersion: 2, capabilities: [CAP.receipt] }, responseTimeoutMs: 2_000,
+      });
+      return { l, s };
+    };
+    // 1) 폰 pc.ts처럼: 열고 → close 봉투로 닫고 나간다
+    const a = await open();
+    assert.ok(a.s, '첫 세션');
+    a.s.channel.close();
+    // 2) 다음 동기화: 같은 우편함에 다시 와 새 IK
+    const b = await open();
+    assert.ok(b.s, '닫고 나간 뒤 다시 온 폰의 세션');
+    // 3) 닫기 없이 사라졌다(앱이 꺼지거나 망이 끊김) 다시 온다: 새 IK가 옛 세션을 끝낸다
+    b.l.close();
+    const c = await open();
+    assert.ok(c.s, '닫기 없이 사라졌다 다시 온 폰의 세션');
+    c.s.channel.close();
+    await until(() => logs.filter((s) => s === 'session').length >= 3);
+    assert.ok(logs.includes('closed_by_phone') && logs.includes('rehello'), logs.join(','));
+    link.stop();
+  });
+
+  it('지키기 전에 연결을 더해도 바로 우편함을 지킨다(2026-11-18 실기기: 기록만 저장되고 폰에 "PC 꺼짐")', async () => {
+    const x = await world();
+    const link = x.mk(true);
+    // start() 없이 add(): 앱을 로그아웃 상태로 켜고 같은 실행에서 로그인한 뒤 바로 [폰 연결]을 끝낸 순서
+    await link.add(x.pc);
+    assert.equal(link.list().length, 1);
+    await new Promise((r) => setTimeout(r, 20));
+    const phLink = await x.relay.joinMailbox(fromB64(x.phone.mbxId), { read: fromB64(x.phone.tokRead), write: fromB64(x.phone.tokWrite) }, 'mobile');
+    const sess = await openMobileSession(phLink, {
+      pairId: x.phone.pairId, noise: x.w.phone.keys.noise, desktopStatic: x.phone.desktopStatic, nextTimestamp: monotonicClock(0),
+      hello: { appVersion: 'm', deviceListVersion: 2, capabilities: [CAP.receipt] },
+    });
+    assert.ok(sess, '연결 직후 PC가 세션을 받는다');
+    sess.channel.close();
+    phLink.close();
+    link.stop();
+  });
+
+  it('같은 실행에서 로그아웃 → 다시 로그인하면 저장된 폰을 다시 지킨다(전에는 앱을 다시 켤 때까지 폰에 "PC 꺼짐")', async () => {
+    const x = await world();
+    // shell-app watchLink와 같은 순서: 로그인 → 수신 켜기, 로그아웃 → 멈추고 버리기, 다시 로그인 → 다시 켜기
+    let running: PhoneLink | null = null;
+    let signedIn = true;
+    const onAccount = async () => {
+      if (shouldStartPhones({ signedIn, running: !!running })) {
+        running = x.mk(true);
+        await running.start();
+      }
+    };
+    await onAccount();
+    await running!.add(x.pc);
+    // 로그아웃(account.signOut): 멈추고 버린다. 기록 파일은 남는다
+    running!.stop();
+    await running!.idle();
+    running = null;
+    signedIn = false;
+    await onAccount();
+    assert.equal(running, null, '로그아웃 중에는 켜지 않는다');
+    // 다시 로그인: 저장된 폰을 다시 읽어 우편함을 지킨다
+    signedIn = true;
+    await onAccount();
+    const again = running as PhoneLink | null;
+    assert.ok(again, '다시 로그인하면 켠다');
+    assert.equal(again.list().length, 1);
+    assert.equal(again.list()[0]!.pairId, x.pc.pairId);
+    // 폰이 우편함에 붙으면 다시 켜진 PC가 IK 세션을 받는다("PC 켜짐")
+    await new Promise((r) => setTimeout(r, 20));
+    const phLink = await x.relay.joinMailbox(fromB64(x.phone.mbxId), { read: fromB64(x.phone.tokRead), write: fromB64(x.phone.tokWrite) }, 'mobile');
+    const sess = await openMobileSession(phLink, {
+      pairId: x.phone.pairId, noise: x.w.phone.keys.noise, desktopStatic: x.phone.desktopStatic, nextTimestamp: monotonicClock(0),
+      hello: { appVersion: 'm', deviceListVersion: 2, capabilities: [CAP.receipt] },
+    });
+    assert.ok(sess, '다시 로그인한 PC와 세션이 열린다');
+    sess.channel.close();
+    phLink.close();
+    // 이미 켜져 있으면 또 만들지 않는다
+    await onAccount();
+    assert.equal(running, again);
+    assert.equal(shouldStartPhones({ signedIn: true, running: true }), false);
+    assert.equal(shouldStartPhones({ signedIn: false, running: false }), false);
+    again.stop();
   });
 
   it('창 닫기·잠자기 규칙(phone-presence): 폰이 있을 때만 남고, 전원 연결 중에만 잠자기를 막는다', () => {

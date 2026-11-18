@@ -126,13 +126,18 @@ export interface DesktopSessionOptions {
   minProtocol?: number;
   /** IK 뒤 hello 대기(기본 10초). */
   helloTimeoutMs?: number;
+  /**
+   * 이미 받은 msg1 프레임. 앞 세션의 수신 루프가 폰이 다시 접속해 보낸 새 IK를 받았으면 그것을 넘긴다
+   * (같은 우편함 연결 위에서 폰은 세션마다 새로 IK를 연다. 앞 세션이 그 프레임을 삼키면 폰은 응답을 받지 못한다).
+   */
+  first?: Uint8Array;
 }
 
 /** 폰의 msg1을 받아 검사한다. 거부는 무응답(null). */
 export async function acceptDesktopSession(link: Link, o: DesktopSessionOptions): Promise<SessionInfo | null> {
   attachQueue(link);
   try {
-    const f = await nextFrame(link, 30_000);
+    const f = o.first ?? (await nextFrame(link, 30_000));
     const p = f ? parseFrame(f) : null;
     if (!p || p.kind !== KIND.HS) return null;
     const hs = new Handshake({ pattern: 'IK', initiator: false, ctx: CTX.session, s: o.noise, prologue: sessionPrologue(o.pair.pairId) });
