@@ -128,6 +128,17 @@ export interface AccountClient {
   pcLinkGrant(auth: DeviceAuth, deviceId: string, grant: PcLinkGrant): Promise<void>;
   /** DELETE /v1/pc-links/:id(기기 토큰): 거절. 아직 활성화되지 않은 그 PC의 신청 기록도 지워진다. */
   pcLinkDrop(auth: DeviceAuth, deviceId: string): Promise<void>;
+  // ---- 계정 열쇠 맡기기(ADR-050, services/account/API.md 계정 열쇠 보관) ----
+  // 로그인된 PC는 기기 토큰으로 맡기고, 쓰던 PC 없이 로그인한 새 PC는 계정 세션으로 받아 스스로 기기 목록에 들어간다.
+  // 서버에 이 기능이 꺼져 있으면 넷 다 request.not_found다(새 PC는 쓰던 PC의 승인으로 넘어간다).
+  /** GET /v1/key-escrow(기기 토큰): 보관 키의 공개키(base64 32B)와 이 계정의 열쇠가 맡겨져 있는지. */
+  keyEscrowState(auth: DeviceAuth): Promise<{ pub: string; stored: boolean }>;
+  /** PUT /v1/key-escrow(기기 토큰): 금고가 보관 키로 봉인한 계정 열쇠를 맡긴다. */
+  putKeyEscrow(auth: DeviceAuth, sealed: { enc: string; ct: string }): Promise<void>;
+  /** POST /v1/key-escrow/claim(세션): 맡긴 열쇠를 이 PC의 넘겨받기 키(Hx)로 봉인해 받는다. 맡긴 것이 없으면 account.escrow_missing. */
+  claimKeyEscrow(session: string, b: { deviceId: string; Hx: string }): Promise<{ aikPub: string; enc: string; ct: string }>;
+  /** POST /v1/key-escrow/join(세션): 열쇠를 받은 이 PC가 자기를 더한 AIK 서명 목록을 올린다(서버가 이 PC를 활성화한다). */
+  joinByKeyEscrow(session: string, deviceId: string, list: DeviceListJson): Promise<void>;
   /**
    * 발급 잠금(기기 토큰, 데스크톱만. ADR-048 결정 7, API.md 발급 잠금). 계정에 하나이고 잡은 PC만 홈택스 발급에 들어간다.
    * - issueLock: 지금 누가 잡고 있나(잠금 값은 오지 않는다).

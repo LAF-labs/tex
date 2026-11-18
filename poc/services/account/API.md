@@ -185,6 +185,17 @@ PC가 2대 이상인 계정에서 홈택스 발급은 잠금을 잡은 PC 하나
 
 새 PC가 정지·폐기되면 그 신청도 바로 지운다. 답한 PC가 사라져 멈춘 신청은 새 PC가 hello를 다시 올려 새로 시작한다.
 
+## 계정 열쇠 보관(ADR-050)
+
+쓰던 PC 없이 로그인한 새 PC가 이메일 인증만으로 붙게 한다(대표 결정 2026-11-18). 로그인된 PC가 계정 루트키(RK)를 이 서비스의 보관 키(`KEY_ESCROW_KEY`의 X25519 공개키)로 HPKE 봉인해 맡기고, 새 PC는 계정 세션으로 받아 금고에 넣은 뒤 자기를 더한 AIK 서명 목록을 올린다. **이 서비스는 맡긴 열쇠를 열 수 있다**(받기 호출 동안 평문 RK가 메모리에 있다). `KEY_ESCROW_KEY`가 없으면 넷 다 `404 request.not_found`이고 새 PC는 아래 "새 PC 연결 우편함"으로 붙는다. 봉인은 RFC 9180 Base(DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305), info `SAX-rk-escrow-v1`.
+
+| 메서드·경로 | 인증 | 요청 | 응답 | 오류 |
+|---|---|---|---|---|
+| `GET /v1/key-escrow` | 기기:devlist | — | `200 {pub, stored}` | `pub`은 보관 키 공개키(b64 32B). `stored`는 이 계정의 지금 AIK·지금 보관 키로 맡긴 줄이 있을 때만 true |
+| `PUT /v1/key-escrow` | 기기:devlist(활성 데스크톱) | `{enc(b64 32B), ct(b64 48B)}` | `204` | aad는 `SHA-256("SAX-rk-escrow-store-v1" ‖ AIK_pub)`. 열어서 나온 AIK 공개키가 계정의 AIK와 다르면 `400 request.param_rejected`. 다시 올리면 바꾼다 |
+| `POST /v1/key-escrow/claim` | 세션 | `{deviceId(uuid4), Hx(b64 32B)}` | `200 {aikPub, enc, ct}` | `deviceId`는 내 계정의 신청 중이거나 활성인 데스크톱(`404 account.device_not_found`). 맡긴 줄이 없거나 열리지 않으면 `409 account.escrow_missing`. 패스키 계정은 `403 account.passkey_required`. 계정당 하루 6번. 응답은 `Hx`로 봉인한 RK이고 aad는 `SHA-256("SAX-rk-escrow-claim-v1" ‖ AIK_pub ‖ utf8(deviceId) ‖ Hx)` |
+| `POST /v1/key-escrow/join` | 세션 | `{deviceId(uuid4), deviceList}` | `200 {listVersion}` | 검사는 `PUT /v1/device-list`와 같다(AIK 서명, 버전, 신청한 키, 한도). 항목이 정확히 하나 늘고 폐기 레코드가 그대로여야 한다(아니면 400). 성공하면 그 데스크톱이 활성이 되고 연결 우편함의 신청은 지운다 |
+
 ## 프로필 슬롯·사업자 HMAC(B-28, C-09)
 
 | 메서드·경로 | 인증 | 요청 | 응답 | 오류 |

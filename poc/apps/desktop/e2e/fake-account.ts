@@ -94,6 +94,15 @@ export function fakeAccount(o: { hasPassword?: boolean } = {}) {
     pcLinkChallenge: async () => {},
     pcLinkGrant: async () => {},
     pcLinkDrop: async () => {},
+    // 계정 열쇠 맡기기(ADR-050): 이 대역에는 그 기능이 없다(서버가 꺼 둔 것과 같다)
+    keyEscrowState: async () => {
+      throw Object.assign(new Error('escrow'), { code: 'request.not_found' });
+    },
+    putKeyEscrow: async () => {},
+    claimKeyEscrow: async () => {
+      throw Object.assign(new Error('escrow'), { code: 'request.not_found' });
+    },
+    joinByKeyEscrow: async () => {},
     issueLock: async () => ({ held: false, deviceId: null, expiresAt: null, mine: false }),
     acquireIssueLock: async () => ({ lockId: 'fake-lock-0000000000000000', expiresAt: Date.now() + 90_000 }),
     renewIssueLock: async () => ({ expiresAt: Date.now() + 90_000 }),
