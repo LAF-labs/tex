@@ -12,7 +12,7 @@ import {
   type Link, type OuterEnv, type OutboxItem, type OutboxStore, type RelayLink, type ShareKeyBody,
 } from '@sax/remote';
 import { LIVE_BACKOFF, PhoneLink, PhoneStore, packTok, unpackTok, type PhoneLinkOptions, type TokenSeal } from '../apps/desktop/src/phone-link.ts';
-import { closeAction, shouldStayAwake, StayAwake } from '../apps/desktop/src/phone-presence.ts';
+import { closeAction, shouldStartPhones, shouldStayAwake, StayAwake } from '../apps/desktop/src/phone-presence.ts';
 import { phoneReceiver } from '../apps/desktop/src/phone-receive.ts';
 import { fakeJpeg, pairOnce, pairWorld, until } from './remote-support.ts';
 
@@ -388,6 +388,51 @@ describe('PC 폰 수신(phone-link)', () => {
     assert.ok(!JSON.stringify(a.logs).includes(a.x.pc.phone.deviceId), '로그에 기기 id 없음');
     a.end();
     assert.equal(await a.link.pushShareKeys(), 0, '멈춘 뒤에는 보내지 않는다');
+  });
+
+  it('같은 실행에서 로그아웃 → 다시 로그인하면 저장된 폰을 다시 지킨다(전에는 앱을 다시 켤 때까지 폰에 "PC 꺼짐")', async () => {
+    const x = await world();
+    // shell-app watchLink와 같은 순서: 로그인 → 수신 켜기, 로그아웃 → 멈추고 버리기, 다시 로그인 → 다시 켜기
+    let running: PhoneLink | null = null;
+    let signedIn = true;
+    const onAccount = async () => {
+      if (shouldStartPhones({ signedIn, running: !!running })) {
+        running = x.mk(true);
+        await running.start();
+      }
+    };
+    await onAccount();
+    await running!.add(x.pc);
+    // 로그아웃(account.signOut): 멈추고 버린다. 기록 파일은 남는다
+    running!.stop();
+    await running!.idle();
+    running = null;
+    signedIn = false;
+    await onAccount();
+    assert.equal(running, null, '로그아웃 중에는 켜지 않는다');
+    // 다시 로그인: 저장된 폰을 다시 읽어 우편함을 지킨다
+    signedIn = true;
+    await onAccount();
+    const again = running as PhoneLink | null;
+    assert.ok(again, '다시 로그인하면 켠다');
+    assert.equal(again.list().length, 1);
+    assert.equal(again.list()[0]!.pairId, x.pc.pairId);
+    // 폰이 우편함에 붙으면 다시 켜진 PC가 IK 세션을 받는다("PC 켜짐")
+    await new Promise((r) => setTimeout(r, 20));
+    const phLink = await x.relay.joinMailbox(fromB64(x.phone.mbxId), { read: fromB64(x.phone.tokRead), write: fromB64(x.phone.tokWrite) }, 'mobile');
+    const sess = await openMobileSession(phLink, {
+      pairId: x.phone.pairId, noise: x.w.phone.keys.noise, desktopStatic: x.phone.desktopStatic, nextTimestamp: monotonicClock(0),
+      hello: { appVersion: 'm', deviceListVersion: 2, capabilities: [CAP.receipt] },
+    });
+    assert.ok(sess, '다시 로그인한 PC와 세션이 열린다');
+    sess.channel.close();
+    phLink.close();
+    // 이미 켜져 있으면 또 만들지 않는다
+    await onAccount();
+    assert.equal(running, again);
+    assert.equal(shouldStartPhones({ signedIn: true, running: true }), false);
+    assert.equal(shouldStartPhones({ signedIn: false, running: false }), false);
+    again.stop();
   });
 
   it('창 닫기·잠자기 규칙(phone-presence): 폰이 있을 때만 남고, 전원 연결 중에만 잠자기를 막는다', () => {

@@ -69,7 +69,7 @@ import { DeviceManager } from './remote-devices.ts';
 import { engineShareStore, ShareSync } from './share-sync.ts';
 import { PcLinkHost } from './remote-pclink.ts';
 import { phoneReceiver } from './phone-receive.ts';
-import { closeAction, shouldStayAwake, StayAwake } from './phone-presence.ts';
+import { closeAction, shouldStartPhones, shouldStayAwake, StayAwake } from './phone-presence.ts';
 import type { VaultDesktopKeys } from './remote-keys.ts';
 import { qrSvgDataUrl } from './remote-qr.ts';
 import { PairWindow } from './pair-window.ts';
@@ -1372,7 +1372,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     depositKey(v);
     // 로그인(코드 확인·비밀번호·재설정·새 PC 연결 끝)으로 기기 신원이 생기면 저장된 폰을 지킨다.
     // 전에는 앱을 켤 때만 start()해서, 같은 실행에서 로그아웃→다시 로그인하면 다시 켤 때까지 폰이 "PC 꺼짐"으로 보였다.
-    if (account.device() && !phoneLink) {
+    if (shouldStartPhones({ signedIn: !!account.device(), running: !!phoneLink })) {
       void Promise.resolve(phones()?.start())
         .then(() => syncAwake())
         .catch((e: Error) => log.event('main.phone_link', { step: 'start', result: e.message.slice(0, 40) }));

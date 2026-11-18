@@ -30,7 +30,7 @@ function tsFiles(dir: string, out: string[] = []): string[] {
 }
 
 describe('Electron 런타임의 금고 키 연산', () => {
-  it('봉인·개봉, 새 PC 연결의 열쇠 넘기기, 큐 개봉이 Electron에서 돈다', async (t) => {
+  it('봉인·개봉, 새 PC 연결의 열쇠 넘기기, 큐 개봉, CODEF 비밀번호 봉인(RSA PKCS#1)이 Electron에서 돈다', async (t) => {
     const bin = await electronBin();
     if (!bin) {
       // CI는 Electron을 설치한다. 거기서 건너뛰면 이 시험이 지키는 것이 없다
