@@ -52,13 +52,28 @@ export interface BankAutoDeps {
 /** 동의 카드 문구 판(shell-bank-auto.js CONSENT_VERSION과 같다). 문구를 바꾸면 올린다 */
 export const CODEF_CONSENT_VERSION = 'codef-bank-auto-2026-11-12';
 
+/** 로그에 넣어도 되는 짧은 코드만(그 밖은 'other') */
+const safeCode = (c: unknown): string => (typeof c === 'string' && /^[a-z][a-z0-9_.:-]{0,47}$/.test(c) ? c : 'other');
+
 const BANKS = ['0020', '0004', '0088', '0081', '0003', '0011'] as const;
 
 /** 셸 처리기(ipc SHELL_METHODS 'bankAuto.*'). 결과는 엔진의 {ok, …} 그대로(값 없음) */
 export function bankAutoHandlers(d: BankAutoDeps) {
   /** 어느 인증서를 골랐는지(비밀번호 창 문구용, 이름·만료일만) */
   let chosen: BankAutoCert | null = null;
-  const eng = (m: string, p: Record<string, unknown> = {}) => d.engine(m, p);
+  // 실패는 원인이 로그에 남아야 한다(working-notes 1.4): 화면은 던져진 오류를 '연결이 안 돼요' 하나로 뭉친다.
+  // 엔진이 {ok:false, code}로 돌려준 실패와 던진 오류를 단계(메서드)와 코드로 남긴다. 값(계좌·비밀번호·인증서)은 엔진이 결과에 넣지 않는다.
+  const eng = async (m: string, p: Record<string, unknown> = {}) => {
+    try {
+      const r = await d.engine(m, p);
+      const f = r as { ok?: unknown; code?: unknown; cf?: unknown } | null;
+      if (f && f.ok === false) d.log?.('main.bank_auto', { step: m, result: safeCode(f.code), ...(typeof f.cf === 'string' && /^CF-\d{5}$/.test(f.cf) ? { cf: f.cf } : {}) });
+      return r;
+    } catch (e) {
+      d.log?.('main.bank_auto', { step: m, result: 'threw', why: safeCode((e as { code?: unknown } | null)?.code ?? (e as Error | null)?.message) });
+      throw e;
+    }
+  };
   const ordered = async (): Promise<BankAutoCert[]> => {
     const pref = d.preferredCertId?.() ?? null;
     const list = (await d.certs()).map((c) => ({ ...c, ...(c.id === pref ? { issuance: true } : {}) }));
@@ -82,7 +97,10 @@ export function bankAutoHandlers(d: BankAutoDeps) {
       'bankAuto.connect': async (p: { certId: string; bank?: string; clientType?: 'B' | 'P' }) => {
         const list = await d.certs();
         const c = list.find((x) => x.id === p.certId);
-        if (!c || !c.usable) return { ok: false, code: 'cert_missing' };
+        if (!c || !c.usable) {
+          d.log?.('main.bank_auto', { step: 'connect', result: 'cert_missing', certs: list.length });
+          return { ok: false, code: 'cert_missing' };
+        }
         chosen = c;
         const bank = p.bank && (BANKS as readonly string[]).includes(p.bank) ? p.bank : '0020';
         return eng('codef.connect', { certId: c.id, bank, clientType: p.clientType === 'P' ? 'P' : 'B' });

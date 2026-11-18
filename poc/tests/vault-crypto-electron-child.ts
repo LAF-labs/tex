@@ -3,7 +3,8 @@
 // 2026-11-17 새 PC 연결이 crypto.rkSeal의 createCipheriv('chacha20-poly1305')에서 "Unknown cipher"로 멈췄다(Node에서 도는 시험은 통과했다).
 import assert from 'node:assert/strict';
 import { FileEventLog } from '@sax/platform';
-import { hpkeOpenBase, hpkeSealBase, MemoryKeyStore, RK_ESCROW_INFO, RK_LINK_INFO, VaultCrypto, x25519FromSeed } from '@sax/vault';
+import { constants as cc, generateKeyPairSync, publicEncrypt } from 'node:crypto';
+import { codefPublicKey, hpkeOpenBase, hpkeSealBase, MemoryKeyStore, RK_ESCROW_INFO, RK_LINK_INFO, VaultCrypto, x25519FromSeed } from '@sax/vault';
 
 assert.ok(process.versions.electron, 'Electron 런타임이 아니다');
 const utf8 = (s: string) => new TextEncoder().encode(s);
@@ -41,5 +42,14 @@ assert.equal((await oldPc.signVd({ purpose: 'SAX-dpop-v1', msg: utf8('x') })).le
 assert.equal((await oldPc.signAik({ purpose: 'SAX-acct-op-v1', msg: utf8('x') })).length, 64);
 assert.equal((await oldPc.shareKey({ epoch: 0 })).key.length, 32);
 assert.equal((await oldPc.signShare({ msg: utf8('x') })).length, 64);
+
+// 5) 계좌 자동조회(CODEF): 인증서 비밀번호를 CODEF 공개키(RSA, base64 DER SPKI)로 PKCS#1 v1.5 암호화한다(codef-seal.ts).
+//    BoringSSL에서도 키를 읽고 같은 방식으로 암호화되는지 본다. 개인키 복호(privateDecrypt PKCS1)는 Node·Electron이 막아 두어 길이만 본다
+const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const spki = rsa.publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+const codefKey = codefPublicKey(spki);
+assert.ok(codefKey, 'CODEF 공개키(DER SPKI)를 읽지 못했다');
+assert.ok(codefPublicKey(rsa.publicKey.export({ type: 'spki', format: 'pem' }).toString()), 'CODEF 공개키(PEM)를 읽지 못했다');
+assert.equal(publicEncrypt({ key: codefKey, padding: cc.RSA_PKCS1_PADDING }, utf8('TEST-PW')).length, 256);
 
 process.stdout.write(`vault-crypto-electron ok ${process.versions.electron}\n`);
