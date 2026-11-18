@@ -857,6 +857,9 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       const withPhone = await addDevice((await old.keys()).aik, oldDev.deviceList, { deviceId: ph.id, role: 'mobile', noisePub: ph.noise.publicKey, signPub: ph.key.publicKey, registeredAt: Date.now() });
       await account.putDeviceList(oldDev.auth, withPhone);
       await oldDev.setDeviceList(withPhone);
+      // 옛 열쇠로 봉인한 공유 기록이 서버에 한 줄 있다(서버는 내용을 보지 않는다)
+      const oldRow: ShareRowCore<'issue'> = { v: 1, row_id: newShareRowId(), kind: 'issue', epoch: 0, at: Date.now(), dev: oldId, by: 'desktop', body: { doc: 'tax_invoice', approvalNo: '202611184100000012345678', writtenOn: '2026-11-18', buyerBizNo: '1234567890', buyerName: '가나다상사', supply: 1000, tax: 100, how: 'app' } };
+      assert.deepEqual(await account.putShareRow(oldDev.auth, await sealShareRow(new Uint8Array(randomBytes(32)), oldRow, async () => new Uint8Array(64))), { seq: 1 });
 
       const n = await pc('새 PC', lmail);
       // 서버는 새로 거는 목록을 본다: 쓰던 PC를 빼거나 폰을 담은 목록, 다른 열쇠의 봉인문은 받지 않는다
@@ -891,6 +894,9 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       assert.deepEqual((await n.mgr().list()).filter((d) => d.state !== 'revoked').map((d) => [d.name, d.state, d.self, d.listed]), [['옛 PC', 'active', false, true], ['새 PC', 'active', true, true]]);
       assert.equal((await account.devicesBySession(ls)).find((d) => d.deviceId === ph.id)!.state, 'revoked', '폰은 옛 열쇠를 기억하므로 다시 연결해야 한다');
       assert.equal(await n.acct.depositKey(), 'already', '새로 건 열쇠는 같은 요청으로 맡겨졌다');
+      // 옛 열쇠로 봉인한 서버 사본은 지워지고, 순번은 이어 간다(쓰던 PC의 받은 자리가 뒤로 가지 않는다)
+      const wiped = await account.shareRows(n.acct.device()!.auth, 0);
+      assert.deepEqual([wiped.rows.length, wiped.head, wiped.epoch], [0, 1, 0]);
       // 로그아웃 뒤 다시 로그인하면 되살린다(다시 걸지 않는다)
       await n.acct.signOut();
       assert.equal((await n.login()).step, 'signed_in');

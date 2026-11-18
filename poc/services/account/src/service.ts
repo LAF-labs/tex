@@ -1664,7 +1664,7 @@ export class AccountService {
       if (a.aik_pub === o.aikPub) fail('account.aik_already_pinned');
       const held = await q.one<{ aik_pub: string; enc: string; ct: string }>('SELECT aik_pub, enc, ct FROM key_escrow WHERE account_id = $1', [s.accountId]);
       if (held && held.aik_pub === a.aik_pub && this.escrow.holds(fromB64(held.enc, 32)!, fromB64(held.ct, 48)!, fromB64(a.aik_pub!, 32)!)) fail('account.aik_already_pinned');
-      if (l.listVersion !== a.device_list_version + 1 || l.revoked.length !== 0) fail('request.param_rejected');
+      if (l.listVersion !== Number(a.device_list_version) + 1 || l.revoked.length !== 0) fail('request.param_rejected');
       const ids = new Set<string>();
       for (const e of l.entries) {
         if (ids.has(e.entry.device_id) || e.entry.role !== 'desktop' || e.entry.list_version > l.listVersion || !entrySigOk(aik!, e)) fail('account.aik_signature_invalid');
