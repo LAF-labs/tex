@@ -26,6 +26,13 @@ export const CTX = {
   pclink: 'SAX-pclink-v1',
   pclinkSas: 'SAX-pclink-sas-v1',
   pclinkRk: 'SAX-pclink-rk-v1',
+  /**
+   * 계정 열쇠 맡기기(ADR-050): RK 봉인 info와 aad 접두(맡길 때·받을 때). 서명 용도가 아니다.
+   * 계정 서비스(services/account/src/escrow.ts)와 금고(RK_ESCROW_INFO)가 같은 글자를 쓴다.
+   */
+  rkEscrow: 'SAX-rk-escrow-v1',
+  rkEscrowStore: 'SAX-rk-escrow-store-v1',
+  rkEscrowClaim: 'SAX-rk-escrow-claim-v1',
   /** 계정 공유 기록(ADR-048 결정 5, D07 §10): 줄 서명(PC는 계정 공유 기록 서명 키 Ws, 폰은 Vm)과 줄 봉인 aad 접두. */
   share: 'SAX-share-v1',
 } as const;

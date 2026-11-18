@@ -23,6 +23,11 @@ export type VaultDesktopKeys = DesktopKeys & {
 const NOISE_CTX: readonly NoiseCtx[] = [CTX.pair, CTX.session];
 const HPKE_INFO = CTX.env;
 const RK_INFO = CTX.pclinkRk;
+/** 금고가 받는 계정 열쇠 봉인 info: 쓰던 PC끼리 넘기기와 계정 서비스에 맡기기(ADR-050). 그 밖의 글자는 금고에 보내지 않는다 */
+const rkInfo = (info: Uint8Array): string | null => {
+  const s = new TextDecoder().decode(info);
+  return s === RK_INFO || s === CTX.rkEscrow ? s : null;
+};
 
 export class VaultKeysError extends Error {
   readonly code: string;
@@ -99,8 +104,9 @@ export async function vaultDesktopKeys(control: VaultControl): Promise<VaultDesk
         return bytes32(field(await control('crypto.linkKey'), 'pub'));
       },
       async sealRk(recipient, info, aad) {
-        if (new TextDecoder().decode(info) !== RK_INFO || !isLen(recipient, 32) || !isLen(aad, 32)) throw new VaultKeysError('vault.bad_params');
-        const r = await control('crypto.rkSeal', { recipient, info: RK_INFO, aad });
+        const i = rkInfo(info);
+        if (!i || !isLen(recipient, 32) || !isLen(aad, 32)) throw new VaultKeysError('vault.bad_params');
+        const r = await control('crypto.rkSeal', { recipient, info: i, aad });
         const enc = bytes32(field(r, 'enc'));
         const ct = field(r, 'ct');
         // RK 32B + AEAD 태그 16B
@@ -108,8 +114,9 @@ export async function vaultDesktopKeys(control: VaultControl): Promise<VaultDesk
         return { enc, ct: new Uint8Array(ct) };
       },
       async importRk(g) {
-        if (new TextDecoder().decode(g.info) !== RK_INFO || !isLen(g.enc, 32) || !isLen(g.ct, 48) || !isLen(g.aad, 32) || !isLen(g.aikPub, 32)) throw new VaultKeysError('vault.bad_params');
-        const aik = bytes32(field(await control('crypto.rkImport', { enc: g.enc, ct: g.ct, info: RK_INFO, aad: g.aad, aikPub: g.aikPub }), 'aik'));
+        const i = rkInfo(g.info);
+        if (!i || !isLen(g.enc, 32) || !isLen(g.ct, 48) || !isLen(g.aad, 32) || !isLen(g.aikPub, 32)) throw new VaultKeysError('vault.bad_params');
+        const aik = bytes32(field(await control('crypto.rkImport', { enc: g.enc, ct: g.ct, info: i, aad: g.aad, aikPub: g.aikPub }), 'aik'));
         if (!aik.every((b, i) => b === g.aikPub[i])) throw new VaultKeysError('vault.bad_result');
         return aik;
       },

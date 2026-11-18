@@ -57,6 +57,8 @@ export const ERROR_STATUS = {
   /** 새 PC 연결 우편함(ADR-048 결정 3): 신청이 없다 / 지금 단계에서 받을 수 없는 메시지다(이미 다른 PC가 답했다 등) */
   'account.link_not_found': 404,
   'account.link_state': 409,
+  /** 계정 열쇠 보관(ADR-050): 이 계정이 맡긴 열쇠가 없다(쓰던 PC가 아직 맡기지 않았거나 보관 키가 바뀌었다). 새 PC는 쓰던 PC의 승인으로 넘어간다 */
+  'account.escrow_missing': 409,
   /** 계정 공유 기록(ADR-048 결정 5): 같은 줄 id에 다른 내용 / 옛 세대 키로 쓴 줄 / 기기가 하나뿐인 계정(올릴 이유가 없다) / 줄 수 상한 */
   'account.share_row_conflict': 409,
   'account.share_epoch_stale': 409,
@@ -174,6 +176,7 @@ export const PROPOSED_D16: readonly ErrorCode[] = [
   'account.issue_lock_lost',
   'account.link_not_found',
   'account.link_state',
+  'account.escrow_missing',
   'account.share_row_conflict',
   'account.share_epoch_stale',
   'account.share_single_device',

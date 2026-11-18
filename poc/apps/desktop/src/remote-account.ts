@@ -7,22 +7,29 @@
 //   (서버가 다른 세션·갱신 토큰을 모두 폐기) → 첫 PC 등록 → 로그아웃. resetId는 이 객체 안 메모리에만 있다.
 // - 계정 세션·기기 토큰·loginId는 이 객체 안 메모리에만 있다. 렌더러에는 단계·이메일·만료 시각·오류 코드만 간다.
 // - 신원 파일(remote-identity.json)에는 비밀이 없다(deviceId·공개키·AIK 서명 인증서·목록·계정 이메일). 키 연산은 금고(DesktopKeys)가 한다.
-// - 두 번째·세 번째 PC(A-03, 계정에 다른 AIK가 이미 있음)는 쓰던 PC의 6자리 승인으로 붙는다(ADR-048 결정 3, remote-pclink.ts PcLinkJoin).
+// - 두 번째·세 번째 PC(A-03, 계정에 다른 AIK가 이미 있음)는 이메일 인증만으로 바로 붙는다(ADR-050, 대표 결정 2026-11-18):
+//   로그인된 PC가 계정 서비스에 맡겨 둔 계정 열쇠를 세션으로 받아 금고에 넣고, 자기를 더한 AIK 서명 목록을 스스로 올린다(#joinByEscrow).
+//   맡긴 열쇠가 없으면(쓰던 PC가 아직 옛 버전이거나 서버에 그 기능이 꺼져 있음) 쓰던 PC의 6자리 승인으로 붙는다(ADR-048 결정 3, remote-pclink.ts PcLinkJoin).
 //   그동안 세션은 이 객체 안 메모리에 있고(link_* 단계), 끝나거나 그만두면 로그아웃하고 버린다. 금고 연결 연산이 없는 빌드는 account.aik_already_pinned로 끝낸다.
 //   같은 금고(AIK·Sd·Vd가 같음)를 다시 설치한 경우는 서버 목록에서 이 PC 항목을 찾아 신원을 되살린다.
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
+  addDevice,
   b64,
   certNotAfter,
+  CTX,
   DeviceTokenCache,
   deviceAuthHeaders,
+  escrowClaimAad,
+  escrowStoreAad,
   fromB64,
   initialDeviceList,
   isEmailShape,
   issueCert,
   jcsBytes,
+  utf8,
   verifyAcctClaim,
   verifyCert,
   verifyDeviceList,
@@ -612,6 +619,96 @@ export class DesktopAccount {
     }
   }
 
+  /**
+   * 맡겨 둔 계정 열쇠로 이 PC를 계정에 붙인다(ADR-050). 맡긴 열쇠가 없거나 서버에 그 기능이 없으면 null(호출자가 쓰던 PC의 승인으로 넘어간다).
+   * 순서: 신청(한도는 서버가 본다) → 열쇠 받기(금고가 연 열쇠의 AIK가 계정의 AIK와 같을 때만 받는다) → 자기를 더한 목록을 AIK로 서명해 올리기 → 자기 인증서.
+   * 앞 시도에서 열쇠만 받고 끊겼으면(금고의 AIK가 이미 계정의 AIK) 받기를 건너뛰고 목록부터 한다.
+   */
+  async #joinByEscrow(client: AccountClient, session: string, email: string, cur: { aikPub: string; deviceList: DeviceListJson | null }): Promise<RemoteIdentity | null> {
+    const vault = await this.#o.linkVault!();
+    let k = await this.#o.keys();
+    const Sd = b64(k.noise.publicKey);
+    const Vd = b64(k.vd.publicKey);
+    const now = this.#now();
+    const aik = fromB64(cur.aikPub);
+    let step: 'enroll' | 'claim' | 'import' | 'list' = 'enroll';
+    try {
+      const rows = await client.devicesBySession(session);
+      let deviceId = rows.find((d) => d.role === 'desktop' && d.Sx === Sd && d.Vx === Vd && (d.state === 'pending' || d.state === 'active'))?.deviceId;
+      if (!deviceId) {
+        deviceId = randomUUID();
+        await client.enrollDesktop(session, { deviceId, platform: this.#o.platform, name: this.#o.deviceName.slice(0, 40), Sx: Sd, Vx: Vd });
+      }
+      if (b64(k.aik.publicKey) !== cur.aikPub) {
+        step = 'claim';
+        const linkPub = await vault.key();
+        let g: { aikPub: string; enc: string; ct: string };
+        try {
+          g = await client.claimKeyEscrow(session, { deviceId, Hx: b64(linkPub) });
+        } catch (e) {
+          const code = codeOf(e);
+          if (code !== 'account.escrow_missing' && code !== 'request.not_found') throw e;
+          this.#log('main.account_escrow', { result: code });
+          return null;
+        }
+        if (g.aikPub !== cur.aikPub) throw Object.assign(new Error('escrow'), { code: 'account.bad_response' });
+        step = 'import';
+        await vault.importRk({ enc: fromB64(g.enc), ct: fromB64(g.ct), info: utf8(CTX.rkEscrow), aad: escrowClaimAad(aik, deviceId, linkPub), aikPub: aik }).catch(() => {
+          throw Object.assign(new Error('escrow'), { code: 'account.link_mismatch' });
+        });
+        this.#o.resetKeys?.();
+        k = await this.#o.keys();
+        if (b64(k.aik.publicKey) !== cur.aikPub) throw Object.assign(new Error('escrow'), { code: 'account.link_mismatch' });
+      }
+      step = 'list';
+      if (!cur.deviceList || !verifyDeviceList(cur.deviceList, k.aik.publicKey).ok) throw Object.assign(new Error('escrow'), { code: 'account.bad_response' });
+      let list = cur.deviceList;
+      if (!list.entries.some((e) => e.entry.device_id === deviceId && e.entry.role === 'desktop' && e.entry.Sx === Sd && e.entry.Vx === Vd)) {
+        list = await addDevice(k.aik, cur.deviceList, { deviceId, role: 'desktop', noisePub: k.noise.publicKey, signPub: k.vd.publicKey, registeredAt: now }).catch((e: unknown) => {
+          throw Object.assign(new Error('escrow'), { code: /too many/.test(String((e as Error)?.message)) ? 'account.device_limit' : 'account.bad_response' });
+        });
+        await client.joinByKeyEscrow(session, deviceId, list);
+      }
+      const cert = await issueCert(k.aik, { device_id: deviceId, role: 'desktop', Sx: k.noise.publicKey, Vx: k.vd.publicKey, not_after: certNotAfter(now) });
+      const id: RemoteIdentity = { v: 1, accountEmail: email, deviceId, aikPub: cur.aikPub, Sd, Vd, cert, deviceList: list, enrolledAt: now };
+      await this.#o.identity.save(id);
+      this.#log('main.account_escrow', { result: 'joined' });
+      return id;
+    } catch (e) {
+      // 어디서 멈췄는지 남긴다(화면 코드는 하나로 뭉칠 수 있다)
+      this.#log('main.account_escrow', { result: codeOf(e), step });
+      throw e;
+    }
+  }
+
+  /**
+   * 이 PC의 계정 열쇠를 계정 서비스에 맡긴다(ADR-050). 다음에 로그인하는 새 PC가 쓰던 PC 없이 받는다.
+   * 이미 맡겨져 있으면 아무것도 하지 않는다(금고 봉인은 하루 3번까지라 먼저 묻는다). 로그인 전·금고 연결 연산이 없는 빌드·서버에 기능이 없으면 건너뛴다.
+   * 실패해도 로그인에는 영향이 없다(다음에 켤 때 다시 한다). 결과 코드를 돌려준다(시험·기록용).
+   */
+  async depositKey(): Promise<string> {
+    const client = this.#o.client;
+    const dev = this.device();
+    if (!client || !dev || !this.#o.linkVault) return 'skipped';
+    let result: string;
+    try {
+      const st = await client.keyEscrowState(dev.auth);
+      if (st.stored) result = 'already';
+      else {
+        const vault = await this.#o.linkVault();
+        const sealed = await vault.sealRk(fromB64(st.pub), utf8(CTX.rkEscrow), escrowStoreAad(fromB64(dev.aikPub)));
+        await client.putKeyEscrow(dev.auth, { enc: b64(sealed.enc), ct: b64(sealed.ct) });
+        result = 'stored';
+      }
+    } catch (e) {
+      const code = (e as { code?: unknown } | null)?.code;
+      const msg = (e as { message?: unknown } | null)?.message;
+      result = typeof code === 'string' && /^[a-z_]+\.[a-z_]+$/.test(code) ? code : typeof msg === 'string' && /^[a-z_]{1,40}$/.test(msg) ? `vault.${msg}` : 'account.failed';
+    }
+    this.#log('main.account_escrow', { result });
+    return result;
+  }
+
   /** 첫 PC면 등록하고 신원을 돌려준다. 다른 PC가 이미 있는 계정이면 새 PC 연결을 시작하고 null(세션은 #link가 쥔다). */
   async #enroll(client: AccountClient, session: string, email: string): Promise<RemoteIdentity | null> {
     const k = await this.#o.keys();
@@ -628,6 +725,9 @@ export class DesktopAccount {
       const mine = cur.aikPub === aikPub && cur.deviceList && verifyDeviceList(cur.deviceList, k.aik.publicKey).ok ? cur.deviceList.entries.find((e) => e.entry.role === 'desktop' && e.entry.Sx === Sd && e.entry.Vx === Vd) : undefined;
       if (!mine || !cur.deviceList) {
         if (!this.#o.linkVault) throw Object.assign(new Error('pinned'), { code: 'account.aik_already_pinned' });
+        // 맡겨 둔 계정 열쇠가 있으면 이메일 인증만으로 바로 붙는다(ADR-050). 없으면 쓰던 PC의 승인을 기다린다
+        const joined = await this.#joinByEscrow(client, session, email, { aikPub: cur.aikPub, deviceList: cur.deviceList });
+        if (joined) return joined;
         const join = await PcLinkJoin.start({ client, session, aikPub: cur.aikPub, keys: k, vault: await this.#o.linkVault(), platform: this.#o.platform, name: this.#o.deviceName, now: this.#now });
         this.#link = { join, session, email };
         this.#log('main.account_link', { result: 'started' });

@@ -89,6 +89,14 @@ export const PC_LINK = {
   callsPerHour: 1200,
 } as const;
 
+/** 계정 열쇠 보관(ADR-050) */
+export const KEY_ESCROW = {
+  /** 맡긴 열쇠 받기, 계정당 하루(새 PC는 계정당 2대까지 더 붙는다. 다시 시도 여유를 둔다) */
+  claimsPerAccountDay: 6,
+  /** 상태 보기·맡기기·목록 올리기 합계, 세션·기기당 시간 */
+  callsPerHour: 60,
+} as const;
+
 /** 발급 잠금(ADR-048 결정 7) */
 export const ISSUE_LOCK = {
   /** 잡거나 갱신한 뒤 이만큼 지나면 풀린다(PC가 죽어도 90초 뒤 다른 PC가 잡는다). PC는 30초마다 갱신한다 */
