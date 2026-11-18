@@ -18,7 +18,7 @@ import {
   type Limits,
 } from '@sax/svc-shared';
 import { deviceListSchema, signedCertSchema, signedOpSchema, type AcctOp, type DeviceList, type SignedCert } from './aik.ts';
-import { ACCOUNT, DEVICE, ISSUE_LOCK, MS, PASSWORD, PC_LINK, SHARE } from './constants.ts';
+import { ACCOUNT, DEVICE, ISSUE_LOCK, MS, PASSWORD, KEY_ESCROW, PC_LINK, SHARE } from './constants.ts';
 import { pageHeaders } from './pg-toss.ts';
 import { withFloor } from './password.ts';
 import type { AccountService, AuthMethod, BillingCaller, Session, ShareKind } from './service.ts';
@@ -86,6 +86,10 @@ const V = {
   pcLinkGrant: validator<{ grant: { v: 1; cert: SignedCert; deviceList: DeviceList; enc: string; ct: string } }>(
     obj({ grant: obj({ v: { const: 1 }, cert: signedCertSchema, deviceList: deviceListSchema, enc: S.b64key32, ct: { type: 'string', pattern: '^[A-Za-z0-9+/]{64}$' } }) }),
   ),
+  // 계정 열쇠 보관(ADR-050). 봉인문은 모양과 크기만 본다(진위는 서비스가 열어서 본다)
+  keyEscrowPut: validator<{ enc: string; ct: string }>(obj({ enc: S.b64key32, ct: { type: 'string', pattern: '^[A-Za-z0-9+/]{64}$' } })),
+  keyEscrowClaim: validator<{ deviceId: string; Hx: string }>(obj({ deviceId: S.uuid4, Hx: S.b64key32 })),
+  keyEscrowJoin: validator<{ deviceId: string; deviceList: DeviceList }>(obj({ deviceId: S.uuid4, deviceList: deviceListSchema })),
   issueLockId: validator<{ lockId: string }>(obj({ lockId: S.token })),
   // 계정 공유 기록(D07 §10). 본문은 암호문이라 모양(b64url)과 크기만 본다
   shareRowId: validator<{ id: string }>(obj({ id: SHARE_ROW_ID })),
@@ -491,6 +495,34 @@ export function accountRouter(o: AccountAppOpts): Router {
     const old = dpopAuth(ctx);
     await svc.deletePcLink(old ? (await linkOld(ctx)).accountId : (await linkNew(ctx)).accountId, linkId(ctx), old);
     return json(204, undefined);
+  });
+
+  // 계정 열쇠 보관(ADR-050): 로그인된 PC는 데스크톱 기기 토큰으로 맡기고, 새 PC는 계정 세션으로 받아 스스로 목록에 들어간다
+  const escrowOld = async (ctx: Ctx) => {
+    const c = await device(ctx, 'devlist');
+    await limit(`escrow:d:${await devSalt.hash(c.dev)}`, KEY_ESCROW.callsPerHour, MS.H);
+    return { accountId: c.acc, deviceId: c.dev };
+  };
+  const escrowNew = async (ctx: Ctx) => {
+    const s = await session(ctx);
+    await limit(`escrow:s:${await accSalt.hash(s.accountId)}`, KEY_ESCROW.callsPerHour, MS.H);
+    return s;
+  };
+  r.add('GET', '/v1/key-escrow', async (ctx) => json(200, await svc.keyEscrowState((await escrowOld(ctx)).accountId)));
+  r.add('PUT', '/v1/key-escrow', async (ctx) => {
+    await svc.putKeyEscrow(await escrowOld(ctx), V.keyEscrowPut(ctx.body));
+    return json(204, undefined);
+  });
+  r.add('POST', '/v1/key-escrow/claim', async (ctx) => {
+    const s = await escrowNew(ctx);
+    const b = V.keyEscrowClaim(ctx.body);
+    await limit(`escrow:c:${await accSalt.hash(s.accountId)}`, KEY_ESCROW.claimsPerAccountDay, MS.D);
+    return json(200, await svc.claimKeyEscrow(s, b.deviceId, b.Hx));
+  });
+  r.add('POST', '/v1/key-escrow/join', async (ctx) => {
+    const s = await escrowNew(ctx);
+    const b = V.keyEscrowJoin(ctx.body);
+    return json(200, await svc.joinByKeyEscrow(s, b.deviceId, b.deviceList));
   });
 
   // 발급 잠금(ADR-048 결정 7, 데스크톱 기기 토큰). PC가 2대 이상인 계정의 PC만 부른다(PC가 자기 기기 목록으로 판단)
