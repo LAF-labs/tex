@@ -7,7 +7,7 @@ import { bizDigits, bizNoInput, checkFields, emailInput, field, keys, LIMITS, te
 
 const Q = {
   terms: '시작하기 전에 약관과 AI 모델 이용을 한 번 확인해 주세요.',
-  welcome: '반가워요. 세금계산서 발급을 맡아 드릴게요. 몇 가지만 여쭤볼게요. 먼저 사업자부터 확인해요.',
+  welcome: '반가워요. 세금계산서 발급을 맡아 드릴게요. 먼저 사업자부터 확인할게요.',
   'biz-number': '상호와 사업자번호를 알려 주세요. 홈택스에 등록된 것과 같아야 해요.',
   'biz-confirm': '이렇게 등록할게요. 맞는지 봐 주세요.',
   auth: '홈택스 로그인과 서명에 쓸 인증서를 골라 주세요. 비밀번호는 첫 발급 때 한 번만 여쭤봐요.',

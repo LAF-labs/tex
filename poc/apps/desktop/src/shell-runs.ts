@@ -16,14 +16,14 @@ import { issueDateRule } from '@sax/engine';
 /** 발급 뒤 확인(발급목록 조회)은 몇 분 걸린다. 카드가 멈춘 것처럼 보이지 않게 지금 하는 일과 걸리는 시간을 같이 말한다. */
 export const VERIFY_NOW = '홈택스 발급 목록에서 방금 건을 찾고 있어요. 1~2분 걸릴 수 있어요';
 /** 조회를 되풀이할 때(엔진 attempt). 횟수 대신 "다시 보고 있어요"로 말한다. */
-export const verifyNow = (attempt?: number) => (attempt && attempt > 1 ? `홈택스가 늦게 보여 줘서 발급 목록을 다시 보고 있어요(${attempt}번째)` : VERIFY_NOW);
+export const verifyNow = (attempt?: number) => (attempt && attempt > 1 ? `홈택스 반영이 늦어 발급 목록을 다시 보고 있어요(${attempt}번째)` : VERIFY_NOW);
 
 const PHASES = ['login', 'form', 'input', 'readback', 'gate', 'sign', 'verify', 'mail'] as const;
 type Phase = (typeof PHASES)[number];
 /** 서류별 단계 이름(엔진 단계 순서 PHASES). 민원증명은 메일 단계가 없고, 승인 뒤가 서명이 아니라 발급(제출)이다. */
 // 사장님이 쓰는 말로(대표 피드백 2026-11-18 4번: "개발용어처럼 너무 딱딱"). 엔진 말(되읽기·건별발급·발급목록 조회)은 화면에 내지 않는다.
 export const STEP_LABELS: Readonly<Record<RunView['doc'], readonly string[]>> = {
-  'H-01': ['홈택스 로그인', '세금계산서 화면 열기', '내용 넣기', '넣은 내용 확인', '사장님 승인', '인증서로 서명', '발급됐는지 확인', '메일 간 것 확인'],
+  'H-01': ['홈택스 로그인', '세금계산서 화면 열기', '내용 넣기', '넣은 내용 확인', '사장님 승인', '인증서로 서명', '발급됐는지 확인', '메일 보낸 것 확인'],
   cert: ['홈택스 로그인', '신청 화면 열기', '신청 내용 넣기', '넣은 내용 확인', '사장님 승인', '발급 신청', '발급됐는지 확인'],
 };
 /**

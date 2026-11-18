@@ -182,7 +182,7 @@ const STEP_GROUPS = [
   ['내용 넣고 확인', [2, 3]],
   ['사장님 승인', [4]],
   ['서명하고 발급 확인', [5, 6]],
-  ['메일 간 것 확인', [7]],
+  ['메일 보낸 것 확인', [7]],
 ];
 /** 민원증명 단계 묶음(엔진 단계 7개, 메일 없음, shell-runs STEP_LABELS.cert). */
 const CERT_STEP_GROUPS = [
@@ -311,7 +311,7 @@ const certLine = (run) => h('div', { class: 'sx-meta', 'data-cert-inputs': '' },
 const showBrowserBtn = (run, act, primary = false) => btn('홈택스 창 보기', () => act.showBrowser(run.id), primary ? 'sx-btn-primary' : '', { 'data-act': 'show-browser' });
 
 /** 발급 뒤 확인 중 한 줄(main shell-runs verifyNow와 같은 말). */
-const verifyLine = (n) => (n && n > 1 ? `홈택스가 늦게 보여 줘서 발급 목록을 다시 보고 있어요(${n}번째)` : '홈택스 발급 목록에서 방금 건을 찾고 있어요. 1~2분 걸릴 수 있어요');
+const verifyLine = (n) => (n && n > 1 ? `홈택스 반영이 늦어 발급 목록을 다시 보고 있어요(${n}번째)` : '홈택스 발급 목록에서 방금 건을 찾고 있어요. 1~2분 걸릴 수 있어요');
 /** 지금 단계 한 줄: 지금 하는 일 문장(main이 단계 메모로 준다)이 있으면 그 문장, 없으면 단계 이름. 할 일 줄이 같은 말을 하면 이름만(withNote false). */
 const stepLine = (now, withNote = true) => (now ? (withNote && now.note ? now.note : now.label) : '');
 /** 진행 막대(묶음 n/전체): 몇 분 걸리는 실행이 어디쯤인지 한눈에. 색은 무채(파랑은 차례·승인에만). */
