@@ -178,19 +178,19 @@ export function steps(list) {
  */
 const STEP_GROUPS = [
   ['홈택스 로그인', [0]],
-  ['건별발급 화면 열기', [1]],
-  ['항목 입력과 되읽기', [2, 3]],
-  ['승인하고 발급', [4]],
-  ['발급 · 조회로 확정', [5, 6]],
-  ['메일 전송 확인', [7]],
+  ['세금계산서 화면 열기', [1]],
+  ['내용 넣고 확인', [2, 3]],
+  ['사장님 승인', [4]],
+  ['서명하고 발급 확인', [5, 6]],
+  ['메일 간 것 확인', [7]],
 ];
 /** 민원증명 단계 묶음(엔진 단계 7개, 메일 없음, shell-runs STEP_LABELS.cert). */
 const CERT_STEP_GROUPS = [
   ['홈택스 로그인', [0]],
-  ['민원 신청 화면 열기', [1]],
-  ['신청 값 입력과 되읽기', [2, 3]],
-  ['승인하고 발급', [4]],
-  ['발급 · 발급 내역으로 확정', [5, 6]],
+  ['신청 화면 열기', [1]],
+  ['신청 내용 넣고 확인', [2, 3]],
+  ['사장님 승인', [4]],
+  ['발급하고 확인', [5, 6]],
 ];
 const ACTIVE = ['preparing', 'turn', 'waiting', 'issuing'];
 export function runSteps(run) {
@@ -310,8 +310,21 @@ const certLine = (run) => h('div', { class: 'sx-meta', 'data-cert-inputs': '' },
 /** [홈택스 창 보기]: 사람이 할 일이 홈택스 창에 있을 때(로그인·서명·사람 차례). 실행 Chrome 창을 앞으로 올리기만 한다. 다른 주요 단추가 없으면 이것이 주요 단추다. */
 const showBrowserBtn = (run, act, primary = false) => btn('홈택스 창 보기', () => act.showBrowser(run.id), primary ? 'sx-btn-primary' : '', { 'data-act': 'show-browser' });
 
-/** 지금 단계 한 줄: 묶음 이름 · 메모. 할 일 줄이 같은 말을 하면 이름만(withNote false). */
-const stepLine = (now, withNote = true) => (now ? (withNote && now.note ? `${now.label} · ${now.note}` : now.label) : '');
+/** 발급 뒤 확인 중 한 줄(main shell-runs verifyNow와 같은 말). */
+const verifyLine = (n) => (n && n > 1 ? `홈택스가 늦게 보여 줘서 발급 목록을 다시 보고 있어요(${n}번째)` : '홈택스 발급 목록에서 방금 건을 찾고 있어요. 1~2분 걸릴 수 있어요');
+/** 지금 단계 한 줄: 지금 하는 일 문장(main이 단계 메모로 준다)이 있으면 그 문장, 없으면 단계 이름. 할 일 줄이 같은 말을 하면 이름만(withNote false). */
+const stepLine = (now, withNote = true) => (now ? (withNote && now.note ? now.note : now.label) : '');
+/** 진행 막대(묶음 n/전체): 몇 분 걸리는 실행이 어디쯤인지 한눈에. 색은 무채(파랑은 차례·승인에만). */
+function progressBar(run) {
+  const gs = runSteps(run);
+  const done = gs.filter((g) => g.state === 'done').length;
+  const at = gs.findIndex((g) => g.state === 'now' || g.state === 'attention');
+  const n = Math.min(gs.length, done + (at >= 0 ? 0.5 : 0));
+  const fill = h('i');
+  // 인라인 style 속성은 CSP(style-src 'self')가 막는다. CSSOM으로 넣는다.
+  fill.style.width = `${Math.round((n / gs.length) * 100)}%`;
+  return h('div', { class: 'sx-progress', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': String(gs.length), 'aria-valuenow': String(done), 'aria-label': `${gs.length}단계 중 ${done}단계 끝`, 'data-progress': `${done}/${gs.length}` }, fill);
+}
 
 /** 할 일 한 줄(사람 차례·확인 필요): 본문 한 줄 + 보조 줄. 카드 안에 안내 상자를 또 두지 않는다(v2.0). */
 const todoLine = (text, ...meta) => h('div', { class: 'sx-todo' }, h('p', {}, text), meta.filter(Boolean).map((m) => (m instanceof Node ? m : h('p', { class: 'sx-meta' }, m))));
@@ -325,7 +338,10 @@ function fold(card, run, step, stop = null) {
   // 확인 필요는 안내 상자 대신 카드의 황토 안쪽 선으로 보인다(내 차례의 파랑 선과 같은 규칙).
   card.classList.toggle('is-attention', run.status === 'attention');
   card.replaceChildren(
-    h('div', { class: 'sx-card-hd sx-run-hd' }, h('div', { class: 'sx-card-title' }, `${run.batch ? `${run.batch.index + 1}. ` : ''}세금계산서 · ${run.counterparty.name}`), h('span', { class: 'sx-card-now' }, `${num(run.total)}원 · `, step), chip(shownStatus(run)), stop),
+    h('div', { class: 'sx-card-hd sx-run-hd' }, h('div', { class: 'sx-card-title' }, `${run.batch ? `${run.batch.index + 1}. ` : ''}${runTitle(run)}`), chip(shownStatus(run)), stop),
+    // 지금 하는 일 한 문장(대표 피드백 4번: 각 스텝이 어떤 상태인지). 금액·값은 패널에 있다.
+    h('p', { class: 'sx-card-now', 'aria-live': 'polite' }, step),
+    run.status === 'attention' ? null : progressBar(run),
   );
 }
 const stopBtn = (run, act) => btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' });
@@ -465,7 +481,7 @@ export function taskCard(run, act) {
     fold(card, run, stepLine(now, run.steps[0].state !== 'now'), stopBtn(run, act));
   } else if (verifying(run)) {
     // 발급 후 조회 중(08 §11 "발급 후 응답 끊김" 행). 이 상태에서는 어떤 버튼도 다시 발급하지 않는다. 머리 한 줄만, 설명은 패널에 있다.
-    fold(card, run, h('span', { 'data-verify-attempt': run.verifyAttempt ? String(run.verifyAttempt) : null }, run.verifyAttempt ? `발급목록에서 확인하는 중 · 조회 ${run.verifyAttempt}회째` : '발급목록에서 확인하는 중'));
+    fold(card, run, h('span', { 'data-verify-attempt': run.verifyAttempt ? String(run.verifyAttempt) : null }, verifyLine(run.verifyAttempt)));
   } else if (st === 'issuing' && run.steps[5].state === 'now' && run.steps[5].note) {
     // 승인 뒤 서명 단계: 사람 몫(인증서 비밀번호·간편인증 승인)을 바로 보인다. 엔진의 서명 차례(handoff)는 끝 표지를 기다린 뒤에야 온다.
     card.dataset.signNow = '';
@@ -723,7 +739,8 @@ export function runPanel(run, act) {
 /** 실행 중 홈택스 화면을 보이는 상태(B3). */
 export const BROWSER_STATUSES = ['preparing', 'turn', 'waiting', 'issuing'];
 // 금고가 보내는 주소는 "호스트/경로"(scheme·쿼리 없음, vault pageAddress). 홈택스 허용 목록은 https만 쓰고 시험 페이지만 http다.
-const parseUrl = (url) => {
+const parseUrl = (raw) => {
+  const url = raw.replace(/^[a-z]+:\/\//i, '');
   const i = url.indexOf('/');
   const host = i < 0 ? url : url.slice(0, i);
   const rest = i < 0 ? '' : url.slice(i);
@@ -736,15 +753,14 @@ export function browserTabTitle(url) {
   if (/^(127\.0\.0\.1|localhost)(:|$)/.test(host)) return '홈택스(시험 페이지)';
   return host || '홈택스';
 }
-/** 주소창 내용(읽기 전용): 자물쇠 · 호스트 · 나머지 경로. */
+/** 주소 자리(읽기 전용): 자물쇠 · 사이트 이름. 원문 주소는 화면에 쓰지 않고 title(마우스를 올리면)에만 둔다(v2.0 "보이지 않는 것"). */
 export function browserUrlParts(url) {
   const u = parseUrl(url ?? '');
-  if (!u.host) return [h('span', { class: 'bp-host' }, '홈택스')];
-  return [u.secure ? icon('lock') : null, h('span', { class: 'bp-host' }, u.host), u.rest ? h('span', { class: 'bp-path' }, u.rest) : null];
+  return [u.host && u.secure ? icon('lock') : null, h('span', { class: 'bp-host' }, browserTabTitle(url))];
 }
 /**
- * 앱 안 브라우저(Claude 데스크톱 브라우저 창 모양, 대표 2026-11-13): 탭 줄 · 주소창 · 가장자리까지 채운 화면.
- * 화면은 금고 중계 그림이고 직접 눌러·쳐서 조작한다(shell.js wireScreen). 내용은 paintScreen이 채운다.
+ * 앱 안 브라우저(11-18 다듬기): 머리 한 줄(자물쇠 · 사이트 이름 · 상태 점 · [크게]) + 면으로 감싼 화면 칸.
+ * 탭 알약과 원문 주소 줄 두 줄이던 것을 한 줄로 합쳤다. 화면은 금고 중계 그림이거나(직접 눌러 조작, shell.js wireScreen) main이 칸 위에 두는 실제 보기다.
  */
 export function browserPane(run, url, big, act) {
   if (!BROWSER_STATUSES.includes(run.status)) return null;
@@ -754,21 +770,38 @@ export function browserPane(run, url, big, act) {
     act.browserDrag ? h('div', { class: 'bp-resize', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': '브라우저 폭 조절', title: '끌어서 폭 조절', onpointerdown: act.browserDrag }) : null,
     h(
       'div',
-      { class: 'bp-chrome' },
-      h(
-        'div',
-        { class: 'bp-tabs' },
-        h('div', { class: 'bp-tab', title: url || '' }, h('span', { class: 'bp-fav' }, icon('globe')), h('span', { class: 'bp-tab-title', id: 'browser-tab-title' }, browserTabTitle(url))),
-        h('button', { type: 'button', class: 'bp-icon', 'data-act': 'browser-size', 'aria-pressed': String(big), title: big ? '브라우저 작게' : '브라우저 크게', 'aria-label': big ? '브라우저 작게' : '브라우저 크게', onclick: () => act.browserSize(!big) }, icon(big ? 'shrink' : 'expand')),
-      ),
-      h(
-        'div',
-        { class: 'bp-bar' },
-        h('div', { class: 'bp-url', id: 'browser-addr', role: 'status', 'aria-label': '홈택스 주소(읽기 전용)', title: url || '' }, ...browserUrlParts(url)),
-        h('span', { class: 'bp-state', 'data-bp-state': 'loading', title: '이 화면을 직접 눌러 조작할 수 있어요. 인증서 비밀번호는 앱 금고 창에서 받아요.' }, '불러오는 중'),
-      ),
+      { class: 'bp-bar' },
+      h('div', { class: 'bp-url', id: 'browser-addr', role: 'status', 'aria-label': '지금 열린 사이트', title: url || '' }, ...browserUrlParts(url)),
+      h('span', { class: 'bp-state', 'data-bp-state': 'loading', title: '이 화면을 직접 눌러 조작할 수 있어요. 인증서 비밀번호는 앱의 비밀번호 창에서 받아요.' }, '여는 중'),
+      h('button', { type: 'button', class: 'bp-icon', 'data-act': 'browser-size', 'aria-pressed': String(big), title: big ? '브라우저 작게' : '브라우저 크게', 'aria-label': big ? '브라우저 작게' : '브라우저 크게', onclick: () => act.browserSize(!big) }, icon(big ? 'shrink' : 'expand')),
     ),
-    h('div', { class: 'run-screen', 'data-run-screen': run.id }, h('p', { class: 'sx-meta' }, '홈택스 화면을 불러오는 중이에요')),
+    h('div', { class: 'run-screen', 'data-run-screen': run.id }, h('p', { class: 'sx-meta' }, '홈택스 화면을 여는 중이에요')),
+  );
+}
+
+/**
+ * 브라우저 아래 진행 한 덩어리(11-18 대표 지적 "인앱브라우저 하단에 뜨는 것이 지저분"): 제목 · 칩 · [자세히], 지금 하는 일 한 문장, 진행 막대.
+ * 값 목록·단계 목록(runPanel)은 [자세히]를 누를 때만 펼친다. 펼친 내용은 같은 DOM이라 시험·스크린리더가 그대로 찾는다.
+ */
+export function runDock(run, detail, open, onToggle) {
+  const now = nowStep(run);
+  const text = run.turn?.text ?? (verifying(run) ? verifyLine(run.verifyAttempt) : stepLine(now));
+  detail.hidden = !open;
+  const more = h('button', { type: 'button', class: 'sx-btn sx-btn-quiet bp-more', 'aria-expanded': String(open), 'data-act': 'dock-more' }, open ? '접기' : '자세히');
+  more.onclick = () => {
+    const o = detail.hidden;
+    detail.hidden = !o;
+    more.textContent = o ? '접기' : '자세히';
+    more.setAttribute('aria-expanded', String(o));
+    onToggle(o);
+  };
+  return h(
+    'div',
+    { class: `bp-dock${open ? ' is-open' : ''}`, 'data-bp-dock': run.id },
+    h('div', { class: 'bp-dock-hd' }, h('div', { class: 'sx-card-title' }, runTitle(run)), chip(shownStatus(run)), more),
+    text ? h('p', { class: 'sx-card-now' }, text) : null,
+    run.status === 'attention' ? null : progressBar(run),
+    detail,
   );
 }
 

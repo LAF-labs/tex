@@ -14,8 +14,10 @@ body.bar-active .frame.panel-closed { grid-template-columns: var(--l-rail) minma
 body.bar-active .frame.panel-closed #panel { display: block; visibility: hidden; }
 #titlebar { grid-column: 1 / -1; }
 #center { min-width: 0; min-height: 0; position: relative; }
-/* 패널은 선 없이 여백으로 나눈다(v2.0 선 대신 면). */
-#panel { background: var(--canvas); overflow-y: auto; overflow-x: hidden; min-height: 0; }
+/* 패널은 떠 있지 않은 한 장(11-18, 대표 지적 "영역 경계가 없어 어지럽다"): 바탕과 같은 면 + 머리카락 선(line), 모서리 radius-lg.
+   대화 열과 패널이 한 면에 붙어 대화 스크롤바가 경계처럼 보이던 것을 없앤다. 그림자는 쓰지 않는다(떠 있는 것이 아니다). */
+#panel { background: var(--canvas); box-shadow: inset 0 0 0 1px var(--line); border-radius: var(--radius-lg); margin: 0 8px 8px 0; overflow-y: auto; overflow-x: hidden; min-height: 0; }
+#panel .sx-card, #panel .sx-reply { background: var(--surface-tint); }
 
 /* 제목줄: 상호 ▾ · 시연 표시 · [브라우저]. 선 없이 바탕 위에 떠 있는 글자 버튼. */
 .sx-titlebar { padding: 0 14px 0 10px; position: relative; z-index: 5; }
@@ -34,36 +36,39 @@ body[data-platform='darwin'] #titlebar { padding-left: 84px; -webkit-app-region:
 body.browser-live .frame { grid-template-columns: var(--l-rail) minmax(0, 1fr) max(var(--l-panel), 720px); }
 /* 패널 크게(사람 차례·[브라우저]): 대화 열을 줄이고 브라우저 패널을 키운다 */
 body.browser-big .frame { grid-template-columns: var(--l-rail) minmax(320px, 1fr) minmax(0, 2.2fr); }
-/* 앱 안 브라우저: 탭 · 주소 줄은 패널 맨 위에 붙고, 화면은 가장자리까지 채운다. 선 없이 채움으로만 나눈다. */
-.bp { display: flex; flex-direction: column; background: var(--canvas); }
-.bp-chrome { background: var(--canvas); }
-.bp-tabs { display: flex; align-items: center; gap: 4px; height: 40px; padding: 0 6px 0 10px; box-sizing: border-box; }
-.bp-tab { display: flex; align-items: center; gap: 8px; min-width: 120px; max-width: 260px; height: 28px; padding: 0 12px 0 10px; box-sizing: border-box; border-radius: var(--radius-full); background: var(--surface-tint); color: var(--ink); font-size: 12px; line-height: 16px; }
-.bp-tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bp-fav { display: grid; place-items: center; flex: none; color: var(--ink-3); }
-.bp-fav svg { width: 14px; height: 14px; }
-.bp-icon { margin-left: auto; align-self: center; width: 32px; height: 32px; flex: none; border: 0; background: none; color: var(--ink-3); border-radius: var(--radius-full); display: grid; place-items: center; cursor: pointer; }
+/* 앱 안 브라우저(11-18): 머리 한 줄(사이트 이름 · 상태 · [크게]) + 면으로 감싼 화면 칸 + 아래 진행 한 덩어리(runDock). 원문 주소는 쓰지 않는다. */
+.bp { display: flex; flex-direction: column; background: transparent; position: relative; }
+.bp-icon { flex: none; width: 32px; height: 32px; border: 0; background: none; color: var(--ink-3); border-radius: var(--radius-full); display: grid; place-items: center; cursor: pointer; }
 .bp-icon svg { width: 15px; height: 15px; }
 .bp-icon:hover { background: var(--surface-tint); color: var(--ink); }
-.bp-bar { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 10px; box-sizing: border-box; }
-.bp-url { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; box-sizing: border-box; border-radius: var(--radius-full); background: var(--surface-tint); font-size: 12px; line-height: 16px; white-space: nowrap; overflow: hidden; user-select: text; }
+.bp-bar { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 8px 0 12px; box-sizing: border-box; flex: none; }
+.bp-url { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; font-size: 13px; line-height: 20px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; }
 .bp-url svg { width: 12px; height: 12px; flex: none; color: var(--ink-3); }
-.bp-host { color: var(--ink); flex: none; }
-.bp-path { margin-left: -6px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; }
+.bp-host { overflow: hidden; text-overflow: ellipsis; }
 .bp-state { flex: none; display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: var(--ink-3); }
 .bp-state::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); }
 .bp-state[data-bp-state='live']::before { background: var(--accent); }
 .bp-state[data-bp-state='gone']::before { background: var(--ink-3); }
 .bp-state[data-bp-state='paused']::before { background: var(--attention); }
-.bp .run-screen { margin: 0; border-radius: 0; min-height: 260px; background: var(--surface-tint); }
+.bp .run-screen { margin: 0 8px; border-radius: var(--radius-md); min-height: 260px; background: var(--surface-tint); }
+/* 브라우저 아래 진행 덩어리: 카드와 같은 머리 · 지금 하는 일 · 진행 막대. 값·단계는 [자세히]. */
+.bp-dock { flex: none; display: grid; gap: var(--space-3); padding: var(--space-3) var(--space-4) var(--space-4); }
+.bp-dock-hd { display: flex; align-items: center; gap: var(--space-3); min-height: 32px; }
+.bp-dock-hd .sx-card-title { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bp-dock-hd .sx-chip { flex: none; }
+.bp-more { flex: none; margin-right: -8px; }
+.bp-dock .sx-card-now { margin-top: -8px; }
+.bp-dock > .panel-in { padding: 0; }
+.bp-dock > [hidden] { display: none; }
+.bp-dock > .panel-in > .sx-card-hd:first-child, .bp-dock > .panel-in > .sx-amount:nth-child(2) { display: none; }
 /* 앱 안 브라우저(main이 화면 칸 위에 실제 브라우저 보기를 둔다): 패널 폭은 main이 정한다(경계 끌기, 승인 대기 중에는 카드가 대화 열에 들어가게 줄인다).
    패널은 탭·주소 줄 + 화면 칸이 남는 높이를 채우고, 작업 내용은 그 아래에서 따로 스크롤한다. */
 body.browser-live.browser-embedded .frame { grid-template-columns: var(--l-rail) minmax(0, 1fr) var(--l-browser, 720px); }
 body.browser-live.browser-embedded #panel { display: flex; flex-direction: column; overflow: hidden; position: relative; }
 body.browser-live.browser-embedded #panel > .bp { flex: 1 1 auto; min-height: 0; }
 /* 화면 칸 왼쪽 6px는 비워 둔다: 실제 보기는 렌더러 위를 덮어 마우스를 가져가므로 경계 손잡이가 그 띠에 있어야 끌 수 있다 */
-body.browser-live.browser-embedded #panel > .bp .run-screen { flex: 1 1 auto; min-height: 0; margin-left: 6px; }
-body.browser-live.browser-embedded #panel > :not(.bp) { flex: 0 1 auto; max-height: 30%; overflow-y: auto; }
+body.browser-live.browser-embedded #panel > .bp .run-screen { flex: 1 1 auto; min-height: 0; margin: 0 8px 0 8px; }
+body.browser-live.browser-embedded #panel > :not(.bp) { flex: 0 1 auto; max-height: 45%; overflow-y: auto; }
 /* 사람 차례·[브라우저] 크게: 홈택스 인증서 창(높이 600px 남짓)이 잘리지 않게 작업 내용을 접고 화면 칸이 패널 높이를 다 쓴다(진행은 대화 열 카드에 있다) */
 body.browser-big.browser-embedded #panel > :not(.bp) { display: none; }
 /* 실행 중이어도 패널을 닫았고 승인 대기가 아니면 패널 열을 비우지 않는다(레일 화면이 줄고 오른쪽이 비던 것).

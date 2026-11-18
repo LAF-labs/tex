@@ -12,7 +12,7 @@ import { createBankScreen } from './shell-bank.js';
 import { createPackScreen } from './shell-pack.js';
 import { identityIn } from './password-rules.js';
 import { bizDigits, bizNoInput, checkFields, dateInput, emailInput, field, fieldError, keys, LIMITS, secretInput, selectInput, textInput } from './fields.js';
-import { agoText, batchCard, btn, CHIP, emptyState, noteGroup, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, replyOptions, runPanel, runSteps, runTitle, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
+import { agoText, batchCard, btn, CHIP, emptyState, noteGroup, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, replyOptions, runPanel, runSteps, runTitle, steps, browserPane, runDock, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -22,6 +22,8 @@ const state = {
   screen: null, // 진행 화면(B3): { runId, frame, paused }
   // [브라우저] 토글·앱 안 브라우저(main이 알린다). embedded면 패널 화면 칸 위에 main이 실제 브라우저 보기를 두고, 패널 폭(width)도 main이 정한다.
   browser: { shown: false, available: false, embedded: false, width: 0 },
+  /** 브라우저 아래 진행 덩어리의 [자세히] 펼침(사람이 고른 것, 실행이 바뀌어도 둔다) */
+  dockOpen: false,
   boot: null,
   today: new Date(),
   view: 'chat',
@@ -236,7 +238,7 @@ const act = {
       state.draftErr = null;
       renderRun(state.runs.get(id));
     } catch (e) {
-      draftError(id, errText(e) === 'no_counterparty' ? '장부에 없는 거래처예요. 거래처 화면에서 확인해 주세요' : '바꾸지 못했어요. 다시 해 주세요', 'counterparty');
+      draftError(id, errText(e) === 'no_counterparty' ? '거래처 목록에 없는 이름이에요. 거래처 화면에서 확인해 주세요' : '바꾸지 못했어요. 다시 해 주세요', 'counterparty');
     }
   },
   saveFields: async (id, item, email) => {
@@ -297,7 +299,7 @@ const act = {
       const d = await call('run.redraft', { id });
       putRun(d);
     } catch (e) {
-      toast(errText(e) === 'no_counterparty' ? '장부에 없는 거래처예요. 거래처 화면에서 확인해 주세요' : '다시 준비하지 못했어요. 같은 요청을 대화에 다시 말해 주세요');
+      toast(errText(e) === 'no_counterparty' ? '거래처 목록에 없는 이름이에요. 거래처 화면에서 확인해 주세요' : '다시 준비하지 못했어요. 같은 요청을 대화에 다시 말해 주세요');
     }
   },
   again: (run) => {
@@ -914,7 +916,7 @@ async function ask(text, vat) {
 }
 
 /** 대화 에이전트 진행 단계 글자(main 'chat-progress' 이벤트). 값·문장은 오지 않는다. */
-const PROGRESS_TEXT = { thinking: '요청을 읽고 있어요…', reading: '장부를 보고 있어요…', drafting: '카드를 만들고 있어요…' };
+const PROGRESS_TEXT = { thinking: '말씀을 읽고 있어요…', reading: '기록을 찾아보고 있어요…', drafting: '카드를 만들고 있어요…' };
 const AGENT_TABLE_ROWS = 10;
 
 const MAIL_TEXT = { sent: '메일 보냄', unconfirmed: '메일 확인 못 함' };
@@ -1355,7 +1357,9 @@ function renderPanel() {
     const run = state.runs.get(p.id);
     // 앱 안 브라우저(실행 중일 때): 패널 맨 위에 탭·주소창·화면, 그 아래 작업 내용
     const pane = run ? browserPane(run, state.screen?.runId === run.id ? (state.screen.url ?? '') : '', state.browser.shown, act) : null;
-    el.replaceChildren(...(pane ? [pane] : []), run ? runPanel(run, act) : h('div'));
+    // 브라우저가 떠 있으면 그 아래는 진행 한 덩어리(runDock)이고, 값·단계 목록은 [자세히]로 펼친다(11-18 다듬기).
+    const detail = run ? runPanel(run, act) : h('div');
+    el.replaceChildren(...(pane ? [pane, runDock(run, detail, state.dockOpen, (o) => (state.dockOpen = o))] : [detail]));
     paintScreen();
   } else if (p.kind === 'g24') {
     el.replaceChildren(g24Panel(state.g24.get(p.id), act));

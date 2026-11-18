@@ -118,8 +118,8 @@ async function flow() {
 
   // 5b) 대화 응대 오류 코드 → 문구. 연결 안 됨·응답 이상·예산은 [다시 시도], 한도·긴 문장·비밀 값은 문장만
   const ERR: Array<[string, string, boolean]> = [
-    ['chat.unavailable', '지금 AI 모델에 연결하지 못했어요', true],
-    ['chat.bad_response', '지금 AI 모델에 연결하지 못했어요', true],
+    ['chat.unavailable', '지금은 답을 받을 수 없어요', true],
+    ['chat.bad_response', '지금은 답을 받을 수 없어요', true],
     ['chat.budget_exceeded', '잠시 뒤에 다시', true],
     ['chat.quota_exceeded', '이번 달 대화 한도', false],
     ['chat.input_too_large', '짧게 나눠서', false],
@@ -155,7 +155,7 @@ async function flow() {
     await send(`${cpName}에 220만원 세금계산서`);
     check(`판정 못 함(${code}) → 카드 없이 연결 안 됨 + [다시 시도]`, (await until(`unavailable ${code}`, async () => (await unavailable()) === u0 + 1)) && (await runs()) === n0 && (await js<boolean>(`!![...document.querySelectorAll('[data-intent-unavailable]')].pop().querySelector('[data-act=intent-retry]')`)));
   }
-  check('연결 안 됨 문장(정해진 문구, "데모" 없음)', (await lastApp()).startsWith('지금 AI 모델에 연결하지 못했어요') && !(await lastApp()).includes('데모'), await lastApp());
+  check('연결 안 됨 문장(정해진 문구, "데모" 없음)', (await lastApp()).startsWith('지금은 답을 받을 수 없어요') && !(await lastApp()).includes('데모'), await lastApp());
   // [다시 시도]: 이번에는 모델이 고른다 → 같은 문장으로 카드 하나, 연결 안 됨 말풍선은 걷힌다
   n0 = await runs();
   const u1 = await unavailable();

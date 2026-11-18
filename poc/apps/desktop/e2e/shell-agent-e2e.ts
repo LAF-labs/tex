@@ -182,7 +182,7 @@ async function flow() {
   // 7) 장부에 없는 거래처(U8-1): 엔진이 준 이름으로 안내 문장과 [거래처 추가]. 누르면 그 이름이 채워진 추가 폼이 열린다
   await turn('라온상사에 세금계산서 끊어줘', () => reply({ kind: 'ask', text: '어느 거래처에 보낼까요?', ask: 'counterparty', unknownName: '라온상사' }));
   const unk = await js<{ text: string; adds: number } | null>(`(() => { const b = [...document.querySelectorAll('[data-agent-reply]')].pop(); const u = b.querySelector('[data-unknown-name]'); return u ? { text: u.textContent, adds: b.querySelectorAll('[data-act="ask-cp-add"]').length } : null; })()`);
-  check('장부에 없는 이름: 안내 문장(조사 맞춤)과 [거래처 추가] 하나', unk?.text === '라온상사는 장부에 없는 거래처예요.' && unk.adds === 1, unk);
+  check('장부에 없는 이름: 안내 문장(조사 맞춤)과 [거래처 추가] 하나', unk?.text === '라온상사는 거래처 목록에 없어요.' && unk.adds === 1, unk);
   await js(`[...document.querySelectorAll('[data-agent-reply]')].pop().querySelector('[data-act="ask-cp-add"]').click()`);
   check('[거래처 추가] → 그 이름이 채워진 추가 폼', await until('cp form', async () => (await js<string>(`document.querySelector('[data-panel-cp-edit="new"] [name="name"]')?.value ?? ''`)) === '라온상사'));
 

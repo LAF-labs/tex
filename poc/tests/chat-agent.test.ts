@@ -541,7 +541,7 @@ describe('chat.step 턴 상한·세션 폐기', () => {
     assert.equal(responds().length, 1);
     // 무엇을 했는지 토큰으로 말하고 화면 값을 같이 준다
     assert.deepEqual([r1.kind, r1.show, r1.filtered], ['did', ['d1'], 'closed']);
-    assert.match(r1.text, /^\[NAME_\d+\] 앞으로 \[AMT_\d+\] 확인 카드를 만들었어요\. 부가세는 별도로 두었어요\. 포함이면 말씀해 주세요\.$/);
+    assert.match(r1.text, /^\[NAME_\d+\] 앞으로 \[AMT_\d+\] 세금계산서 카드를 만들었어요\. 부가세는 별도로 계산했어요\. 포함이면 말씀해 주세요\.$/);
     assert.deepEqual(Object.values(r1.values).sort(), ['110만원', 'A상사'].sort());
     script(draft(null));
     const r2 = (await say(a, pc, 'A상사 50만원 세금계산서 끊어줘')).reply;
@@ -561,7 +561,7 @@ describe('chat.step 턴 상한·세션 폐기', () => {
     const call = pc.calls[0] as Extract<DomainCall, { tool: 'invoice_draft' }>;
     assert.deepEqual([call.amount, call.date, call.quantity, call.unitPrice], [null, { monthOffset: -1, day: 'last' }, '10', { value: 12_000 }]);
     assert.equal(r.filtered, 'closed');
-    assert.match(r.text, /^\[NAME_\d+\] 앞으로 작성일 지난달 말일, 단가 \[AMT_\d+\] × 10 확인 카드를 만들었어요\./);
+    assert.match(r.text, /^\[NAME_\d+\] 앞으로 작성일 지난달 말일, 단가 \[AMT_\d+\] × 10 세금계산서 카드를 만들었어요\./);
     // 쓰지 않은 칸은 main 호출에 싣지 않는다(예전 모양 그대로)
     script((b) => fc('invoice_draft', { counterparty: toks(nowLine(b), 'NAME')[0], amount: toks(nowLine(b), 'AMT')[0], vat: null, item: '원두' }));
     await say(a, pc, 'A상사 110만원 원두 끊어줘');

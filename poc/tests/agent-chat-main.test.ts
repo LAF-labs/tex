@@ -364,13 +364,13 @@ describe('AgentChat 장부에 없는 거래처(U8-1)', () => {
   it('엔진이 준 이름이 장부에 없으면 안내 문장(조사 맞춤)과 이름을 싣고, 장부에 있는 이름이면 싣지 않는다', async () => {
     const a = chat();
     const r1 = agent(await say(a, '라온상사에 끊어줘', () => reply({ kind: 'ask', text: '어느 거래처인지 알려 주세요.', ask: 'counterparty', unknownName: '라온상사' })));
-    assert.deepEqual(r1.unknown, { name: '라온상사', text: '라온상사는 장부에 없는 거래처예요.' });
+    assert.deepEqual(r1.unknown, { name: '라온상사', text: '라온상사는 거래처 목록에 없어요.' });
     const r2 = agent(await say(a, '가온전자 건', () => reply({ kind: 'ask', text: '어느 거래처인지 알려 주세요.', ask: 'counterparty', unknownName: '가온전자' })));
-    assert.equal(r2.unknown?.text, '가온전자는 장부에 없는 거래처예요.');
+    assert.equal(r2.unknown?.text, '가온전자는 거래처 목록에 없어요.');
     const r3 = agent(await say(a, '한빛통신 건', () => reply({ kind: 'ask', text: '어느 거래처인지 알려 주세요.', ask: 'counterparty', unknownName: '한빛통신' })));
-    assert.equal(r3.unknown?.text, '한빛통신은 장부에 없는 거래처예요.');
+    assert.equal(r3.unknown?.text, '한빛통신은 거래처 목록에 없어요.');
     const r4 = agent(await say(a, 'ACME 건', () => reply({ kind: 'ask', text: '어느 거래처인지 알려 주세요.', ask: 'counterparty', unknownName: 'ACME' })));
-    assert.equal(r4.unknown?.text, 'ACME은(는) 장부에 없는 거래처예요.', '받침을 모르면 은(는)');
+    assert.equal(r4.unknown?.text, 'ACME은(는) 거래처 목록에 없어요.', '받침을 모르면 은(는)');
     const r5 = agent(await say(a, 'A상사 건', () => reply({ kind: 'ask', text: '어느 거래처인지 알려 주세요.', ask: 'counterparty', unknownName: 'A상사' })));
     assert.equal(r5.unknown, undefined, '장부에 있는 이름은 안내하지 않는다');
     const r6 = agent(await say(a, '안녕', () => reply({ text: '안녕하세요.' })));
@@ -578,7 +578,7 @@ describe('AgentChat 진행 표시·오류', () => {
       });
       assert.deepEqual(r, { kind: 'unavailable', code, text: AGENT_ERROR_TEXT[code]!.text, retry }, code);
     }
-    assert.equal(AGENT_ERROR_TEXT['chat.turn_limit']!.text, '한 번에 하기 어려워요. 나눠서 말씀해 주세요.');
+    assert.equal(AGENT_ERROR_TEXT['chat.turn_limit']!.text, '한 번에 하기엔 일이 많아요. 하나씩 나눠서 말씀해 주세요.');
     // 모델 답을 못 받은 경우는 원인을 단정하지 않는다(U8-5): 인터넷·연결 탓 문구가 없다
     for (const c of ['chat.unavailable', 'chat.bad_response', 'chat.bad_tool_output']) {
       assert.equal(AGENT_ERROR_TEXT[c]!.text, AGENT_UNAVAILABLE_TEXT, c);

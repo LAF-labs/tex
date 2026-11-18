@@ -358,7 +358,7 @@ describe('셸 목업', () => {
     let r = runs.get(a.run.id)!;
     assert.equal(r.status, 'turn');
     assert.deepEqual(r.handoff, { phase: 'input', afterGate: false, kind: 'other' });
-    assert.match(r.turn!.text, /^지금 사람이 필요해요 · 이 단계는 직접 해 주세요: 입력$/);
+    assert.match(r.turn!.text, /^여기서는 사장님 손이 필요해요. '내용 넣기'는 홈택스 창에서 해 주세요$/);
     assert.equal(r.steps[2]!.state, 'attention');
     host.fail['run.resume'] = 'relay_down';
     await assert.rejects(runs.resume(a.run.id), /relay_down/);

@@ -46,30 +46,30 @@ export const CHAT_AGENT_FALLBACK_TEXT = '세금계산서 카드 만들기와 발
  * 답 문장에 슬롯·토큰 밖의 숫자가 있을 때(모델이 셈하거나 지어낸 값일 수 있다). 문장은 버리고 같이 보일 표·카드는 그대로 둔다.
  * 다시 묻지 않는 이유: 한 번 더 부르면 3~4초가 늘고 또 틀릴 수 있다. 표·카드의 값은 PC가 낸 것이라 언제나 맞다.
  */
-export const CHAT_AGENT_NUMBER_TEXT = '결과를 화면에 보여 드렸어요. 금액과 날짜는 표와 카드에서 확인해 주세요.';
+export const CHAT_AGENT_NUMBER_TEXT = '결과를 아래에 보여 드렸어요. 금액과 날짜는 표와 카드에 있어요.';
 /**
  * 엔진이 직접 되묻는 고정 문장(되묻기 칸별). 모델이 같은 호출을 되풀이하거나 되묻는 문장에 숫자를 섞었을 때 쓴다.
  * 화면은 이 문장 아래 그 칸의 선택지를 붙인다.
  */
 export const CHAT_AGENT_ASK_TEXT: Record<AgentAsk, string> = {
-  amount: '금액을 알려 주세요. 부가세 포함인지 별도인지도 같이 말씀해 주시면 바로 카드를 만들게요.',
-  item: '품목을 알려 주세요. 예를 들어 디자인 용역처럼 적어 주시면 돼요.',
-  counterparty: '어느 거래처인가요? 장부에 있는 거래처 중에서 골라 주세요.',
-  vat: '부가세 별도인가요, 포함인가요?',
+  amount: '금액을 알려 주세요. 부가세 포함이면 같이 말씀해 주세요.',
+  item: '품목을 알려 주세요. 디자인 용역처럼 적어 주시면 돼요.',
+  counterparty: '어느 거래처예요? 거래처 목록에 있는 이름으로 골라 주세요.',
+  vat: '부가세는 별도예요, 포함이에요?',
   which_card: '어느 카드를 말씀하시는지 골라 주세요.',
-  date: '작성일자를 다시 알려 주세요. 작성일자는 오늘이나 지난 날로만 정할 수 있어요.',
+  date: '작성일자를 다시 알려 주세요. 오늘이나 지난 날로만 정할 수 있어요.',
 };
 /** 엔진이 도구 결과로 턴을 닫을 때의 고정 문장(마지막 결과 status별). 없으면 CHAT_AGENT_NUMBER_TEXT. */
 export const CHAT_AGENT_DONE_TEXT: Partial<Record<ToolStatus, string>> = {
-  card_shown: '세금계산서 확인 카드를 만들었어요. 내용을 확인하시고 [홈택스에서 준비]를 눌러 주세요.',
-  card_updated: '카드를 고쳤어요. 카드에서 바뀐 값을 확인해 주세요.',
-  discarded: '카드를 취소했어요. 아무것도 발급되지 않았어요.',
-  ok: '찾은 기록을 표로 보여 드렸어요.',
-  empty: '찾는 기록이 없어요.',
-  not_set_up: '계좌 연결이 아직이라 확인할 수 없어요. 은행 화면에서 계좌를 먼저 연결해 주세요.',
+  card_shown: '세금계산서 카드를 만들었어요. 맞으면 [홈택스에서 준비]를 눌러 주세요.',
+  card_updated: '카드를 고쳤어요. 바뀐 값을 한 번 봐 주세요.',
+  discarded: '카드를 취소했어요. 홈택스에는 아무것도 보내지 않았어요.',
+  ok: '찾은 기록을 아래 표로 보여 드렸어요.',
+  empty: '찾는 기록이 아직 없어요.',
+  not_set_up: '아직 계좌를 연결하지 않아서 볼 수 없어요. 설정 > 계좌 연결에서 먼저 이어 주세요.',
 };
 /** 엔진이 조회 되풀이로 턴을 닫을 때의 문장. 슬롯은 main이 결과 값으로 채운다. */
-export const CHAT_AGENT_LOOKUP_TEXT = (ref: string): string => `{${ref}.count}건이고 합계는 {${ref}.sum.total}이에요. 가장 최근은 {${ref}.first.date} {${ref}.first.counterparty} 건이에요.`;
+export const CHAT_AGENT_LOOKUP_TEXT = (ref: string): string => `{${ref}.count}건, 합계 {${ref}.sum.total}이에요. 가장 최근은 {${ref}.first.date} {${ref}.first.counterparty} 건이에요.`;
 /** 돈 흐름 조회 되풀이(값은 main이 채운다). partial이면 확인 못 한 계좌가 있다고 같이 말한다(11 §3.4: 모르는 것을 0으로 세지 않는다). */
 export const CHAT_AGENT_CASH_TEXT = (ref: string, partial: boolean): string =>
   `${partial ? '일부 계좌 거래내역이 모자라 확인 못 한 부분이 있어요. 확인된 것만 보면 ' : ''}들어온 돈 {${ref}.cash.in}, 나간 돈 {${ref}.cash.out}이에요.`;
@@ -515,7 +515,7 @@ export class ChatAgent {
         const amt = amtOf(a) ?? line2;
         // 부가세를 말하지 않았으면(null) 앱이 별도로 둔다: 문장 끝에 한 번 알린다(vatNote)
         const vat = vatWord(a.vat);
-        return `${who ? `${who} 앞으로 ` : ''}${when ? `작성일 ${when}, ` : ''}${amt ? `${amt}${vat ? ', ' : ' '}` : ''}${vat ? `${vat}로 ` : ''}확인 카드를 만들었어요.`;
+        return `${who ? `${who} 앞으로 ` : ''}${when ? `작성일 ${when}, ` : ''}${amt ? `${amt}${vat ? ', ' : ' '}` : ''}${vat ? `${vat}로 ` : ''}세금계산서 카드를 만들었어요.`;
       }
       if (r.o.status === 'card_updated') {
         const parts = [amtOf(a) ? `금액 ${amtOf(a)}` : line2 ? `금액 ${line2}` : null, vatWord(a.vat), r.call?.tool === 'draft_edit' && r.call.item ? '품목' : null, when ? `작성일 ${when}` : null].filter((x) => x);
@@ -525,13 +525,13 @@ export class ChatAgent {
       return null;
     };
     const lines = round.map(line);
-    const vatNote = round.some((r) => r.o.status === 'card_shown' && !vatWord(r.args.vat)) ? ' 부가세는 별도로 두었어요. 포함이면 말씀해 주세요.' : '';
+    const vatNote = round.some((r) => r.o.status === 'card_shown' && !vatWord(r.args.vat)) ? ' 부가세는 별도로 계산했어요. 포함이면 말씀해 주세요.' : '';
     const cards = round.filter((r) => r.o.status === 'card_shown').length;
-    const tail = round.at(-1)!.o.status === 'card_shown' ? ' 내용을 확인하시고 [홈택스에서 준비]를 눌러 주세요.' : round.at(-1)!.o.status === 'card_updated' ? ' 카드에서 바뀐 값을 확인해 주세요.' : '';
+    const tail = round.at(-1)!.o.status === 'card_shown' ? ' 맞으면 [홈택스에서 준비]를 눌러 주세요.' : round.at(-1)!.o.status === 'card_updated' ? ' 바뀐 값을 한 번 봐 주세요.' : '';
     const text =
       round.every((r) => r.o.status === 'discarded') ? CHAT_AGENT_DONE_TEXT.discarded!
       : lines.every((l) => l) && lines.length <= 2 ? `${lines.join(' ')}${vatNote || tail}`
-      : cards > 1 ? `확인 카드 ${cards}장을 만들었어요.${vatNote || tail}`
+      : cards > 1 ? `세금계산서 카드 ${cards}장을 만들었어요.${vatNote || tail}`
       : (CHAT_AGENT_DONE_TEXT[round.at(-1)!.o.status] ?? CHAT_AGENT_NUMBER_TEXT);
     return { kind: 'did', text, show, ask: null, filtered: 'closed' };
   }

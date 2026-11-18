@@ -282,7 +282,7 @@ export function cpNameFromAnswer(text: string): string | null {
 }
 /** 거래처가 하나도 없을 때(F-02). */
 export const NO_CP_TEXT = '먼저 거래처를 추가해 주세요. 거래처를 넣으면 이어서 발급할게요.';
-export const UNKNOWN_CP_TEXT = (name: string) => `${name}은(는) 장부에 없는 거래처예요. 거래처를 추가하면 이어서 발급할게요.`;
+export const UNKNOWN_CP_TEXT = (name: string) => `${name}은(는) 거래처 목록에 없어요. 거래처를 추가하면 이어서 발급할게요.`;
 
 /**
  * 되묻던 것(거래처·금액)에 이 문장이 답하는가(interpret의 세금계산서 이어 가기와 같은 조건). 모델이 unknown이라도 이어 가기는 interpret가 맡고

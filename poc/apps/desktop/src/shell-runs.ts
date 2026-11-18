@@ -13,13 +13,28 @@ import { issueDateRule } from '@sax/engine';
 // 셸의 발급 실행(PoC-6). 초안은 main이 만들고(요청 해석은 아직 정규식 목업), [홈택스에서 준비]부터는 엔진이 H-01 플레이북을 돈다.
 // 실행 단계·승인 대기·발급 확정·승인번호는 엔진 이벤트에서 온다. 게이트 요청은 게이트 포트로 와서 승인 바가 받는다(shell-app).
 
+/** 발급 뒤 확인(발급목록 조회)은 몇 분 걸린다. 카드가 멈춘 것처럼 보이지 않게 지금 하는 일과 걸리는 시간을 같이 말한다. */
+export const VERIFY_NOW = '홈택스 발급 목록에서 방금 건을 찾고 있어요. 1~2분 걸릴 수 있어요';
+/** 조회를 되풀이할 때(엔진 attempt). 횟수 대신 "다시 보고 있어요"로 말한다. */
+export const verifyNow = (attempt?: number) => (attempt && attempt > 1 ? `홈택스가 늦게 보여 줘서 발급 목록을 다시 보고 있어요(${attempt}번째)` : VERIFY_NOW);
+
 const PHASES = ['login', 'form', 'input', 'readback', 'gate', 'sign', 'verify', 'mail'] as const;
 type Phase = (typeof PHASES)[number];
 /** 서류별 단계 이름(엔진 단계 순서 PHASES). 민원증명은 메일 단계가 없고, 승인 뒤가 서명이 아니라 발급(제출)이다. */
-const STEP_LABELS: Readonly<Record<RunView['doc'], readonly string[]>> = {
-  'H-01': ['홈택스 로그인', '건별발급 화면', '입력', '되읽기', '승인', '전자서명', '발급목록 확인', '메일 전송 확인'],
-  cert: ['홈택스 로그인', '민원 신청 화면', '입력', '되읽기', '승인', '발급', '발급 확인'],
+// 사장님이 쓰는 말로(대표 피드백 2026-11-18 4번: "개발용어처럼 너무 딱딱"). 엔진 말(되읽기·건별발급·발급목록 조회)은 화면에 내지 않는다.
+export const STEP_LABELS: Readonly<Record<RunView['doc'], readonly string[]>> = {
+  'H-01': ['홈택스 로그인', '세금계산서 화면 열기', '내용 넣기', '넣은 내용 확인', '사장님 승인', '인증서로 서명', '발급됐는지 확인', '메일 간 것 확인'],
+  cert: ['홈택스 로그인', '신청 화면 열기', '신청 내용 넣기', '넣은 내용 확인', '사장님 승인', '발급 신청', '발급됐는지 확인'],
 };
+/**
+ * 단계가 '지금'인데 엔진이 따로 메모를 주지 않을 때 보이는 문장: 지금 앱이 무엇을 하는지(현재형). 확인 단계는 몇 분 걸릴 수 있어 그 말을 같이 둔다.
+ * 사람에게 시키는 말이 아니다(앱이 하는 일). 로그인·서명은 위 LOGIN_NOW·SIGN_BY_AUTH가 따로 준다.
+ */
+export const STEP_NOW: Readonly<Record<RunView['doc'], readonly (string | null)[]>> = {
+  'H-01': [null, '홈택스에서 세금계산서 쓰는 화면을 열고 있어요', '거래처·금액·품목을 홈택스에 넣고 있어요', '홈택스에 들어간 값이 카드와 같은지 하나씩 보고 있어요', '승인을 기다리고 있어요', null, VERIFY_NOW, '받는 분께 메일이 갔는지 보고 있어요'],
+  cert: [null, '홈택스에서 민원 신청 화면을 열고 있어요', '용도·제출처를 넣고 있어요', '넣은 값이 맞는지 보고 있어요', '승인을 기다리고 있어요', '홈택스에 발급을 신청하고 있어요', '발급 내역에서 방금 건을 찾고 있어요'],
+};
+const i6 = () => PHASES.indexOf('verify');
 const stepsOf = (doc: RunView['doc']) => STEP_LABELS[doc].map((label) => ({ label, state: 'todo' as StepState }));
 
 /**
@@ -35,8 +50,8 @@ export type RegateReason = keyof typeof REGATE_NOTE;
 const isRegate = (x: unknown): x is RegateReason => typeof x === 'string' && Object.hasOwn(REGATE_NOTE, x);
 
 /** 핸드오프(HandedOff, D03 §2): 앱이 진행하지 못해 사람에게 넘긴 단계. [다 했어요]·[직접 발급함]은 재개·확인으로만 가고 발급하지 않는다. */
-export const HANDOFF_TEXT = '지금 사람이 필요해요';
-export const HANDOFF_HINT = '전용 Chrome 창에서 직접 마치면 [다 했어요], 홈택스에서 직접 발급하셨다면 [직접 발급함]을 눌러 주세요.';
+export const HANDOFF_TEXT = '여기서는 사장님 손이 필요해요';
+export const HANDOFF_HINT = '홈택스 창에서 마치면 [다 했어요], 홈택스에서 직접 발급하셨으면 [직접 발급함]을 눌러 주세요.';
 /** 사람 차례 한 줄(실화면 기준, 부장 2026-11-12). 실행은 끝나지 않았고 30분 안에 마치지 않으면 멈춘다(run.handoff_timeout). */
 export const HANDOFF_LOGIN = { text: '홈택스 창에서 로그인해 주세요', note: '로그인을 마치면 [이어서]를 눌러 주세요. 30분 안에 마치지 않으면 멈춰요.' };
 export const HANDOFF_SIGN = { text: '홈택스 창에서 인증 방법을 고르고 인증서 비밀번호를 직접 넣어 주세요. 끝나면 자동으로 이어집니다', note: '자동으로 넘어가지 않으면 [다 했어요]를 눌러 주세요.' };
@@ -58,7 +73,7 @@ export const SIGN_BY_AUTH: Record<string, { now: string; text: string }> = {
  * 사람이 할 일(캡차·추가 인증·인증서 고르기·간편인증 대체)은 로그인 차례(handoff, HANDOFF_BY_CODE)로 따로 온다.
  * 그래서 이 줄은 할 일이 아니라 지금 단계 설명이다(대표 지적 2026-11-16: "직접 로그인해 주세요"는 앱이 하는 일과 맞지 않다).
  */
-export const LOGIN_NOW = '앱이 저장된 인증서로 홈택스에 로그인하고 있어요';
+export const LOGIN_NOW = '저장해 둔 인증서로 홈택스에 로그인하고 있어요';
 export const SIGN_NOW_DEFAULT = '홈택스 창에서 인증을 마쳐 주세요';
 const signFor = (auth: string | undefined) => (auth && Object.hasOwn(SIGN_BY_AUTH, auth) ? SIGN_BY_AUTH[auth]! : null);
 /** 발급 전 단계의 사람 차례 코드별 한 줄(끝 문구 NOTE와 다르다: 실행은 아직 기다린다). */
@@ -95,7 +110,7 @@ export function handoffTurn(phase: Phase, code: string | undefined, auth?: strin
   const byCode = code ? HANDOFF_BY_CODE[code] : undefined;
   if (byCode) return { kind: phase === 'login' || RESUME_ONLY.has(code!) ? 'login' : 'other', ...byCode };
   if (phase === 'login') return { kind: 'login', ...HANDOFF_LOGIN };
-  return { kind: 'other', text: `${HANDOFF_TEXT} · 이 단계는 직접 해 주세요: ${labels[PHASES.indexOf(phase)] ?? ''}`, note: code && NOTE[code] && !/아무것도 발급하지 않았어요/.test(NOTE[code]!) ? NOTE[code]! : HANDOFF_HINT };
+  return { kind: 'other', text: `${HANDOFF_TEXT}. '${labels[PHASES.indexOf(phase)] ?? ''}'는 홈택스 창에서 해 주세요`, note: code && NOTE[code] && !/아무것도 발급하지 않았어요/.test(NOTE[code]!) ? NOTE[code]! : HANDOFF_HINT };
 }
 
 type EngineEvent =
@@ -1302,7 +1317,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
     const i = PHASES.indexOf(phase);
     const label = STEP_LABELS[r.doc][i];
     // 그 서류에 없는 단계(민원증명의 메일)는 그리지 않는다
-    if (label !== undefined) r.steps[i] = { label, state, note: noteText };
+    // 지금 단계에 메모가 없으면 지금 하는 일 문장을 붙인다(카드 머리 한 줄이 이 문장이다).
+    if (label !== undefined) r.steps[i] = { label, state, note: noteText ?? (state === 'now' ? (STEP_NOW[r.doc][i] ?? undefined) : undefined) };
   }
 
   private onEngine(e: EngineEvent): void {
@@ -1315,7 +1331,10 @@ export class ShellRuns extends EventEmitter implements Drafts {
       const n = e.phase === 'sign' && e.state === 'now' ? (r.cert ? undefined : (signFor(r.auth)?.now ?? SIGN_NOW_DEFAULT)) : e.phase === 'login' && e.state === 'now' ? LOGIN_NOW : e.code ? NOTE[e.code] : undefined;
       this.step(r, e.phase, e.state === 'attention' ? 'attention' : e.state, n);
       // 발급목록 조회 횟수(08 §11 "확인 중 · 조회 n회째"). 엔진이 attempt를 보낼 때만.
-      if (e.phase === 'verify' && Number.isSafeInteger(e.attempt) && e.attempt! > 0) r.verifyAttempt = e.attempt;
+      if (e.phase === 'verify' && Number.isSafeInteger(e.attempt) && e.attempt! > 0) {
+        r.verifyAttempt = e.attempt;
+        if (!r.cert && r.steps[i6()]?.state === 'now') r.steps[i6()]!.note = verifyNow(e.attempt);
+      }
       if (['sign', 'verify', 'mail'].includes(e.phase) && r.status === 'waiting') {
         r.status = 'issuing';
         r.approvedPending = false;

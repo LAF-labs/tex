@@ -61,37 +61,37 @@ const NAME_MAX = 40;
 // ── 고정 문구 ──
 
 export const PHONE_FALLBACK_TEXT = '세금계산서 카드 만들기와 발급 기록·받을 돈 확인을 도와드려요. 어떤 일을 할까요?';
-export const PHONE_NUMBER_TEXT = '결과를 화면에 보여 드렸어요. 금액과 날짜는 표와 카드에서 확인해 주세요.';
+export const PHONE_NUMBER_TEXT = '결과를 아래에 보여 드렸어요. 금액과 날짜는 표와 카드에 있어요.';
 /**
  * 폰이 직접 되묻는 고정 문장(되묻기 칸별). 모델이 되묻는 문장에 숫자를 섞었거나 틀린 슬롯을 썼을 때 쓴다(PC의 CHAT_AGENT_ASK_TEXT와 같은 쓰임).
  * 화면은 이 문장 아래 그 칸의 선택지를 붙인다.
  */
 export const PHONE_ASK_TEXT: Record<AgentAsk, string> = {
-  amount: '금액을 알려 주세요. 부가세 포함인지 별도인지도 같이 말씀해 주시면 바로 카드를 만들게요.',
-  item: '품목을 알려 주세요. 예를 들어 디자인 용역처럼 적어 주시면 돼요.',
-  counterparty: '어느 거래처인가요? 거래처 목록에서 골라 주세요.',
-  vat: '부가세 별도인가요, 포함인가요?',
+  amount: '금액을 알려 주세요. 부가세 포함이면 같이 말씀해 주세요.',
+  item: '품목을 알려 주세요. 디자인 용역처럼 적어 주시면 돼요.',
+  counterparty: '어느 거래처예요? 거래처 목록에 있는 이름으로 골라 주세요.',
+  vat: '부가세는 별도예요, 포함이에요?',
   which_card: '어느 카드를 말씀하시는지 골라 주세요.',
   date: '작성일자를 정하는 카드는 PC에서 만들 수 있어요. PC가 켜지면 PC 대화에서 말씀해 주세요.',
 };
-export const PHONE_SLOT_MISSING_TEXT = '같이 보이는 표에서 값을 확인해 주세요.';
-export const PHONE_UNAVAILABLE_TEXT = '지금 답을 받지 못했어요. 잠시 뒤 다시 시도해 주세요.';
+export const PHONE_SLOT_MISSING_TEXT = '정확한 값은 아래 표에 있어요.';
+export const PHONE_UNAVAILABLE_TEXT = '답을 받지 못했어요. 잠시 뒤 [다시 시도]를 눌러 주세요.';
 export const PHONE_ENTRUST_TEXT = (name: string): string => `${name} 세금계산서를 맡겼어요. PC가 켜지면 시작하고, 발급 전에 한 번 더 확인을 받아요.`;
 
 /** 오류 코드 → 대화 문장과 [다시 시도]. 화면이 다른 문구를 쓰려면 code로 바꾼다. */
 export const PHONE_ERROR_TEXT: Record<PhoneChatErrorCode, { text: string; retry: boolean }> = {
   'chat.unavailable': { text: PHONE_UNAVAILABLE_TEXT, retry: true },
   'chat.bad_response': { text: PHONE_UNAVAILABLE_TEXT, retry: true },
-  'chat.budget_exceeded': { text: '대화가 많이 이어졌어요. 잠시 뒤에 다시 말해 주세요.', retry: true },
-  'chat.quota_exceeded': { text: '이번 달 대화 한도를 다 썼어요.', retry: false },
-  'chat.daily_limit': { text: '오늘 쓸 수 있는 AI 사용량을 다 썼어요. 새벽 4시에 다시 채워져요.', retry: false },
-  'chat.subscription_required': { text: '무료 체험이 끝났어요. 구독하면 AI 대화를 다시 쓸 수 있어요.', retry: false },
+  'chat.budget_exceeded': { text: '대화가 길어졌어요. 잠시 뒤에 다시 말해 주세요.', retry: true },
+  'chat.quota_exceeded': { text: '이번 달 대화를 다 썼어요.', retry: false },
+  'chat.daily_limit': { text: '오늘 쓸 수 있는 대화를 다 썼어요. 새벽 4시에 다시 채워져요.', retry: false },
+  'chat.subscription_required': { text: '무료 체험이 끝났어요. 구독하면 대화를 다시 쓸 수 있어요.', retry: false },
   'chat.rate_limited': { text: '요청이 잠깐 몰렸어요. 조금 뒤에 다시 보내 주세요.', retry: true },
   'chat.device_suspended': { text: '이 폰의 연결이 정지되어 있어요. PC의 설정에서 폰 연결을 확인해 주세요.', retry: false },
-  'chat.input_too_large': { text: '문장이 너무 길어요. 짧게 나눠서 다시 말해 주세요.', retry: false },
-  'chat.secret_rejected': { text: '비밀번호 같은 비밀 값은 대화창에 입력하지 마세요. 이 문장은 보내지 않았어요.', retry: false },
-  'chat.turn_limit': { text: '한 번에 하기 어려워요. 나눠서 말씀해 주세요.', retry: false },
-  bad_text: { text: '문장이 너무 길어요. 짧게 나눠서 다시 말해 주세요.', retry: false },
+  'chat.input_too_large': { text: '문장이 길어요. 두세 번에 나눠서 말해 주세요.', retry: false },
+  'chat.secret_rejected': { text: '비밀번호 같은 값은 대화창에 쓰지 말아 주세요. 이 문장은 보내지 않았어요.', retry: false },
+  'chat.turn_limit': { text: '한 번에 하기엔 일이 많아요. 하나씩 나눠서 말씀해 주세요.', retry: false },
+  bad_text: { text: '문장이 길어요. 두세 번에 나눠서 말해 주세요.', retry: false },
 };
 
 // ── 폰 사본(PC가 마지막으로 넘긴 것) ──
