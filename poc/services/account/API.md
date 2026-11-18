@@ -195,6 +195,10 @@ PC가 2대 이상인 계정에서 홈택스 발급은 잠금을 잡은 PC 하나
 | `PUT /v1/key-escrow` | 기기:devlist(활성 데스크톱) | `{enc(b64 32B), ct(b64 48B)}` | `204` | aad는 `SHA-256("SAX-rk-escrow-store-v1" ‖ AIK_pub)`. 열어서 나온 AIK 공개키가 계정의 AIK와 다르면 `400 request.param_rejected`. 다시 올리면 바꾼다 |
 | `POST /v1/key-escrow/claim` | 세션 | `{deviceId(uuid4), Hx(b64 32B)}` | `200 {aikPub, enc, ct}` | `deviceId`는 내 계정의 신청 중이거나 활성인 데스크톱(`404 account.device_not_found`). 맡긴 줄이 없거나 열리지 않으면 `409 account.escrow_missing`. 패스키 계정은 `403 account.passkey_required`. 계정당 하루 6번. 응답은 `Hx`로 봉인한 RK이고 aad는 `SHA-256("SAX-rk-escrow-claim-v1" ‖ AIK_pub ‖ utf8(deviceId) ‖ Hx)` |
 | `POST /v1/key-escrow/join` | 세션 | `{deviceId(uuid4), deviceList}` | `200 {listVersion}` | 검사는 `PUT /v1/device-list`와 같다(AIK 서명, 버전, 신청한 키, 한도). 항목이 정확히 하나 늘고 폐기 레코드가 그대로여야 한다(아니면 400). 성공하면 그 데스크톱이 활성이 되고 연결 우편함의 신청은 지운다 |
+| `GET /v1/key-escrow/pub` | 세션 | — | `200 {pub}` | 보관 키 공개키. 아직 기기 토큰이 없는 PC(첫 등록, 열쇠 새로 걸기)가 자기 열쇠를 봉인하는 데 쓴다 |
+| `POST /v1/key-escrow/reset` | 세션 | `{deviceId(uuid4), aikPub, deviceList, enc, ct}` | `200 {listVersion}` | 개정 1: 맡긴 열쇠가 없는 계정에 이 PC의 열쇠를 새 계정 열쇠로 건다. 지금 보관 키로 열리는 맡긴 열쇠가 있으면 `409 account.aik_already_pinned`. 봉인을 연 AIK가 `aikPub`이 아니면 400. 목록은 새 AIK 서명, 버전 +1, 폐기 레코드 없음, 항목은 계정의 활성·정지 데스크톱 전부와 이 PC(빠지거나 폰이 있으면 400). 계정의 폰은 폐기하고 공유 기록 서버 사본(`share_rows`·`share_tasks`)과 PC 연결 신청을 지운다. 알림 메일 `aik_pinned`(폰이 있었으면 `device_revoked`). 한도는 claim과 같이 센다 |
+
+`POST /v1/aik`는 `escrow {enc, ct}`를 함께 받는다(선택). 첫 PC가 등록과 같은 요청으로 열쇠를 맡긴다. 보관 기능이 꺼진 서버는 이 필드를 보지 않는다.
 
 ## 프로필 슬롯·사업자 HMAC(B-28, C-09)
 

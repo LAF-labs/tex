@@ -77,7 +77,7 @@ export interface AccountClient {
   /** GET /v1/device-list(세션). aikPub가 이미 있으면 첫 PC가 아니다(두 번째 PC 추가는 이 범위 밖: account.aik_already_pinned로 안내). */
   deviceList(session: string): Promise<{ aikPub: string | null; deviceList: DeviceListJson | null }>;
   /** POST /v1/aik(세션): 첫 PC의 AIK 고정 + AIK 서명 목록(이 PC 한 줄). */
-  pinFirstDesktop(session: string, b: { aikPub: string; deviceList: DeviceListJson; platform: 'windows' | 'macos'; name: string }): Promise<{ deviceId: string }>;
+  pinFirstDesktop(session: string, b: { aikPub: string; deviceList: DeviceListJson; platform: 'windows' | 'macos'; name: string; escrow?: { enc: string; ct: string } }): Promise<{ deviceId: string }>;
   /**
    * POST /v1/device-tokens: AIK 인증서 + DPoP(Vd) → 15분 토큰. @sax/remote requestDeviceToken과 같다.
    * scopes가 있으면 본문에 실어 그 범위만 달라고 한다(게이트웨이 전용 토큰, ADR-040 예정). 실제로 준 범위는 응답 scopes다.
@@ -139,6 +139,10 @@ export interface AccountClient {
   claimKeyEscrow(session: string, b: { deviceId: string; Hx: string }): Promise<{ aikPub: string; enc: string; ct: string }>;
   /** POST /v1/key-escrow/join(세션): 열쇠를 받은 이 PC가 자기를 더한 AIK 서명 목록을 올린다(서버가 이 PC를 활성화한다). */
   joinByKeyEscrow(session: string, deviceId: string, list: DeviceListJson): Promise<void>;
+  /** GET /v1/key-escrow/pub(세션): 보관 키의 공개키. 서버에 기능이 없으면 request.not_found. */
+  keyEscrowPub(session: string): Promise<{ pub: string }>;
+  /** POST /v1/key-escrow/reset(세션): 맡긴 열쇠가 없는 계정에 이 PC의 열쇠를 새 계정 열쇠로 건다. 맡긴 열쇠가 있으면 account.aik_already_pinned. */
+  resetByKeyEscrow(session: string, b: { deviceId: string; aikPub: string; deviceList: DeviceListJson; enc: string; ct: string }): Promise<void>;
   /**
    * 발급 잠금(기기 토큰, 데스크톱만. ADR-048 결정 7, API.md 발급 잠금). 계정에 하나이고 잡은 PC만 홈택스 발급에 들어간다.
    * - issueLock: 지금 누가 잡고 있나(잠금 값은 오지 않는다).

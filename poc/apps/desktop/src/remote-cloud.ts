@@ -231,7 +231,7 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
       return pinnedList(await call('GET', url, [200], { headers: await authed(auth, 'GET', url) }));
     },
     async pinFirstDesktop(session, x) {
-      const b = await call('POST', `${accountOrigin}/v1/aik`, [201], { headers: bearer(session), body: { aikPub: x.aikPub, deviceList: x.deviceList, platform: x.platform, name: x.name } });
+      const b = await call('POST', `${accountOrigin}/v1/aik`, [201], { headers: bearer(session), body: { aikPub: x.aikPub, deviceList: x.deviceList, platform: x.platform, name: x.name, ...(x.escrow ? { escrow: x.escrow } : {}) } });
       if (!isObj(b) || !str(b.deviceId, 64)) shape();
       return { deviceId: (b as { deviceId: string }).deviceId };
     },
@@ -337,6 +337,14 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
     },
     async joinByKeyEscrow(session, deviceId, list) {
       await call('POST', `${accountOrigin}/v1/key-escrow/join`, [200], { headers: bearer(session), body: { deviceId, deviceList: list } });
+    },
+    async keyEscrowPub(session) {
+      const b = await call('GET', `${accountOrigin}/v1/key-escrow/pub`, [200], { headers: bearer(session) });
+      if (!isObj(b) || !str(b.pub, 44) || !B64_KEY32.test(b.pub)) shape();
+      return { pub: (b as { pub: string }).pub };
+    },
+    async resetByKeyEscrow(session, x) {
+      await call('POST', `${accountOrigin}/v1/key-escrow/reset`, [200], { headers: bearer(session), body: { deviceId: x.deviceId, aikPub: x.aikPub, deviceList: x.deviceList, enc: x.enc, ct: x.ct } });
     },
     async pcLinks(auth) {
       const url = `${accountOrigin}/v1/pc-links`;

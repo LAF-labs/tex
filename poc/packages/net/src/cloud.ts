@@ -59,6 +59,8 @@ export const CLOUD_ROUTES: ReadonlyArray<{ name: string; method: CloudMethod; pa
   { name: 'keyEscrow.get', method: 'GET', path: /^\/v1\/key-escrow$/ },
   { name: 'keyEscrow.put', method: 'PUT', path: /^\/v1\/key-escrow$/ },
   { name: 'keyEscrow.claim', method: 'POST', path: /^\/v1\/key-escrow\/claim$/ },
+  { name: 'keyEscrow.pub', method: 'GET', path: /^\/v1\/key-escrow\/pub$/ },
+  { name: 'keyEscrow.reset', method: 'POST', path: /^\/v1\/key-escrow\/reset$/ },
   { name: 'keyEscrow.join', method: 'POST', path: /^\/v1\/key-escrow\/join$/ },
   // 발급 잠금(ADR-048 결정 7, 데스크톱 기기 토큰): 계정에 하나, 잡은 PC만 홈택스 발급에 들어간다
   { name: 'issueLock.get', method: 'GET', path: /^\/v1\/issue-lock$/ },

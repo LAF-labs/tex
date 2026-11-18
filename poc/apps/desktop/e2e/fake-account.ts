@@ -103,6 +103,10 @@ export function fakeAccount(o: { hasPassword?: boolean } = {}) {
       throw Object.assign(new Error('escrow'), { code: 'request.not_found' });
     },
     joinByKeyEscrow: async () => {},
+    keyEscrowPub: async () => {
+      throw Object.assign(new Error('escrow'), { code: 'request.not_found' });
+    },
+    resetByKeyEscrow: async () => {},
     issueLock: async () => ({ held: false, deviceId: null, expiresAt: null, mine: false }),
     acquireIssueLock: async () => ({ lockId: 'fake-lock-0000000000000000', expiresAt: Date.now() + 90_000 }),
     renewIssueLock: async () => ({ expiresAt: Date.now() + 90_000 }),
