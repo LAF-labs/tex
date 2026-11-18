@@ -11,6 +11,9 @@ import path from 'node:path';
 import {
   acceptDesktopSession,
   b64,
+  KIND,
+  nextFrame,
+  parseFrame,
   CAP,
   fromB64,
   makeQBundle,
@@ -445,10 +448,15 @@ export class PhoneLink {
       const keys = await this.#o.keys();
       const pair: PairRecord = { pairId: rec.pairId, phoneStatic: fromB64(rec.Sm), revoked: false, ikTsMax: rec.ikTsMax };
       const receiver = this.#receiver(rec.pairId);
+      /** 앞 세션 수신 중에 받은 폰의 새 IK(msg1). 다음 accept에 넘긴다 */
+      let nextHs: Uint8Array | undefined;
       while (!link.closed && !abort.signal.aborted) {
         let sess: Awaited<ReturnType<typeof acceptDesktopSession>>;
+        const first = nextHs;
+        nextHs = undefined;
         try {
           sess = await acceptDesktopSession(link, {
+          first,
           noise: keys.noise,
           pair,
           hello: { appVersion: this.#o.appVersion, deviceListVersion: this.#o.deviceListVersion(), asyncSeqMax: rec.asyncSeqMax, capabilities: [...(this.#o.capabilities?.() ?? DESKTOP_CAPS), ...(this.#o.shareKeys ? [CAP.share] : [])] },
@@ -481,9 +489,25 @@ export class PhoneLink {
           this.#log('main.phone_live', { step: 'open', result: codeOf(e) });
         }
         try {
+          // 폰은 보낼 것을 보내면 세션을 닫고(close 봉투) 우편함에서 나갔다가 다음 동기화 때 같은 우편함에 다시 와 새 IK를 연다.
+          // 우편함 연결은 PC 쪽에 그대로 남으므로 채널이 닫혔다고 보이지 않는다. 그래서 (1) close 봉투를 받으면 세션을 끝내고,
+          // (2) 새 IK 프레임이 오면 앞 세션을 끝내고 그 프레임으로 새 세션을 받는다.
+          // 2026-11-18 실기기: 첫 세션만 열리고, 60초 뒤부터 폰의 IK를 옛 채널이 삼켜 폰이 "PC 켜짐 → 꺼짐 → 찾는 중"을 오갔다.
           while (!sess.channel.closed && !abort.signal.aborted) {
-            const env = await sess.channel.recv(30_000);
-            if (env && !(await hook?.handle(rec.pairId, sess.channel, env))) await receiver.queue.handle(sess.channel, env);
+            const f = await nextFrame(link, 30_000);
+            if (!f) continue;
+            if (parseFrame(f)?.kind === KIND.HS) {
+              nextHs = f;
+              this.#log('main.phone_live', { step: 'rehello' });
+              break;
+            }
+            const env = sess.channel.accept(f);
+            if (!env) continue;
+            if (env.type === 'close') {
+              this.#log('main.phone_live', { step: 'closed_by_phone' });
+              break;
+            }
+            if (!(await hook?.handle(rec.pairId, sess.channel, env))) await receiver.queue.handle(sess.channel, env);
           }
         } catch (e) {
           this.#log('main.phone_live', { step: 'recv', result: codeOf(e) });

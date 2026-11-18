@@ -33,6 +33,14 @@ export const CONSENT_CHECKS = [
   ['keep', '(읽음) 인증서 보관 고지 — 공동인증서는 은행에서 조회 밖의 일도 할 수 있는 접근매체예요. CODEF에는 조회하는 동안만 등록하고 조회가 끝나면 바로 지워요. [이 PC에 기억]을 고르면 인증서 비밀번호가 이 PC 키체인에 남아요.'],
 ];
 
+/** 받을 돈 계좌 기록 동의(shell-bank.js 계좌 추가 동의와 같은 내용, bank.consent). 자동 연결 중에 없으면 이 카드에서 받는다 */
+export const BANK_CONSENT_LINES = [
+  '가져온 거래내역과 계좌번호는 이 PC에 암호화해 저장해요. 우리 서버와 AI 모델로 보내지 않아요.',
+  '거래내역에는 입금하신 분의 이름처럼 다른 사람의 정보도 들어 있어요. 사업 거래 확인에만 써 주세요.',
+  '앱은 돈을 보내거나 이체하지 않아요.',
+  '언제든 받을 돈 > 내 계좌에서 계좌와 거래내역을 지울 수 있어요.',
+];
+
 /** 실패 코드 → 사람 말(엔진 CodefFailure). 표에 없으면 일반 문장. 코드는 화면에 보이지 않는다 */
 export function failText(code, bank) {
   const b = bankName(bank || '0020');
@@ -119,6 +127,12 @@ export function createBankAuto(ctx) {
     if (!r.ok) return fail(r);
     await toCerts();
   }
+  /** 받을 돈 계좌 기록 동의(bank.consent, 받을 돈 화면과 같은 동의)를 남기고 고른 인증서로 이어서 연결한다 */
+  async function agreeBank() {
+    const r = await ask('bank.consent');
+    if (r && r.ok === false) return fail(r);
+    await connect();
+  }
   async function toCerts() {
     go({ step: 'certs', certs: null, error: null });
     const r = await ask('bankAuto.certs');
@@ -131,6 +145,8 @@ export function createBankAuto(ctx) {
     if (!s.certId) return;
     go({ step: 'working', phase: 'password', error: null });
     const r = await ask('bankAuto.connect', { certId: s.certId, bank: s.bank, clientType: s.clientType });
+    // 받을 돈의 계좌 기록 동의가 없으면 다른 화면으로 보내지 않고 이 카드에서 받는다(2026-11-18 실기기: [받을 돈 보기]로 가면 [계좌 추가]를 눌러야 동의가 나와 막혔다)
+    if (!r.ok && r.code === 'bank_consent_required') return go({ step: 'bankConsent', phase: null, error: null });
     if (!r.ok) return fail(r);
     go({ step: 'accounts', session: r.sessionId, accounts: r.accounts, pick: (r.accounts.find((a) => a.usable) || {}).key || null, phase: null });
   }
@@ -204,6 +220,14 @@ export function createBankAuto(ctx) {
             h('ul', { class: 'sx-body-sm' }, CONSENT_LINES.map((t) => h('li', {}, t))),
             CONSENT_CHECKS.map(([k, t]) => h('label', { class: 'auth-row' }, h('input', { type: 'checkbox', checked: !!s.checks[k], 'data-bank-check': k, onchange: (e) => go({ checks: { ...s.checks, [k]: e.target.checked } }) }), h('span', { class: 'opt-main sx-body-sm' }, t))),
             h('div', { class: 'sx-actions' }, btn('동의하고 인증서 고르기', agree, 'sx-btn-primary', { disabled: !CONSENT_CHECKS.every(([k]) => s.checks[k]), 'data-bank-consent': '' }), btn('파일로만 쓸게요', upload, 'sx-btn-quiet'), btn('그만두기', () => load(), 'sx-btn-quiet')),
+          );
+        case 'bankConsent':
+          return h(
+            'div',
+            { class: 'sx-card', 'data-bank-auto': 'bank-consent', onkeydown: esc(() => load()) },
+            h('h3', { class: 'sx-card-title' }, '받을 돈 맞추기에 쓸 계좌 기록 동의'),
+            h('ul', { class: 'sx-body-sm' }, BANK_CONSENT_LINES.map((t) => h('li', {}, t))),
+            h('div', { class: 'sx-actions' }, btn('동의하고 이어서 연결', agreeBank, 'sx-btn-primary', { 'data-bank-consent-go': '' }), btn('그만두기', () => load(), 'sx-btn-quiet')),
           );
         case 'certs':
           return h(
