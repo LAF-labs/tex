@@ -127,9 +127,16 @@ export class IrLookupPort implements LookupPort {
       } catch {
         // 주소가 아니면 포털 응답이 아니다
       }
-      const f = r.frame();
-      if (!portal || f.page() === this.i.page) return;
-      this.i.policy.observeStatus(r.status(), r.request().resourceType() === 'document' && f.parentFrame() === null);
+      if (!portal) return;
+      // 팝업의 첫 문서 요청은 프레임이 생기기 전에 나가 r.frame()이 던진다(Playwright). 리스너에서 던지면 엔진이 죽으므로 그 응답은 문서 응답으로 본다.
+      let f: ReturnType<Response['frame']> | null = null;
+      try {
+        f = r.frame();
+      } catch {
+        f = null;
+      }
+      if (f?.page() === this.i.page) return;
+      this.i.policy.observeStatus(r.status(), r.request().resourceType() === 'document' && (f === null || f.parentFrame() === null));
     };
     ctx.on('response', onResponse);
     let popup: Page;

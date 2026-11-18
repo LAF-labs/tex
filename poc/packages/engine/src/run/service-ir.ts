@@ -749,7 +749,7 @@ export class IrRun {
           i.phase(p, 'now');
         }
         if (s.id === ir.steps[0]?.id) return { ok: true };
-        return enforcer.beforeStep();
+        return enforcer.beforeStep(s.type);
       },
       stepEvent: (name, d) => {
         if (name === 'step.started' && d.type === 'fill') this.formStarted = true;

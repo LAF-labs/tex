@@ -573,6 +573,48 @@
    "frame": "main",
    "lastVerified": "2026-11-10"
   },
+  "hometax.cert.confirm.root": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#mf_txppWframe_UTECAAA0A016"
+    }
+   ],
+   "role": "generic",
+   "namePattern": "^$",
+   "landmark": "hometax.cert.confirm.root",
+   "commits": false,
+   "frame": "main",
+   "lastVerified": "2026-11-10"
+  },
+  "hometax.cert.confirm.apply": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#mf_txppWframe_UTECAAA0A016_wframe_btn_sbms"
+    },
+    {
+     "kind": "role",
+     "role": "button",
+     "name": "신청하기"
+    }
+   ],
+   "expect": {
+    "visible": true,
+    "enabled": true
+   },
+   "role": "button",
+   "namePattern": "^신청하기$",
+   "landmark": "hometax.cert.confirm.root",
+   "commits": true,
+   "commitEffect": "issue_document",
+   "reviewNote": {
+    "by": "cert-docs",
+    "reason": "[작성완료]가 연 신청 확인 레이어(UTECAAA0A016)의 [신청하기]가 실제 신청이다(실화면 2026-11-18). submit 무장 구간에서만 누른다"
+   },
+   "frame": "main",
+   "lastVerified": "2026-11-10"
+  },
   "hometax.cert.alert": {
    "candidates": [
     {
