@@ -276,7 +276,10 @@ export class PhoneLink {
         await this.#o.deleteMailbox?.(fromB64(old.mbxId), t.write);
       })().catch((e) => this.#log('main.phone_link', { step: 'replace_mailbox', result: codeOf(e) }));
     }
+    // 아직 지키기 전(앱을 로그아웃 상태로 켜고 같은 실행에서 로그인한 뒤 바로 연결했다)이면 지금 시작한다.
+    // 2026-11-18 실기기: 기록만 저장되고 우편함에 붙지 않아 폰이 "PC 꺼짐"이었다(main.phone_link added 뒤 phone_live 기록 없음)
     if (this.#started) this.#run(rec);
+    else await this.start();
     this.#o.onChange?.();
   }
 

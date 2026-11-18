@@ -390,6 +390,24 @@ describe('PC 폰 수신(phone-link)', () => {
     assert.equal(await a.link.pushShareKeys(), 0, '멈춘 뒤에는 보내지 않는다');
   });
 
+  it('지키기 전에 연결을 더해도 바로 우편함을 지킨다(2026-11-18 실기기: 기록만 저장되고 폰에 "PC 꺼짐")', async () => {
+    const x = await world();
+    const link = x.mk(true);
+    // start() 없이 add(): 앱을 로그아웃 상태로 켜고 같은 실행에서 로그인한 뒤 바로 [폰 연결]을 끝낸 순서
+    await link.add(x.pc);
+    assert.equal(link.list().length, 1);
+    await new Promise((r) => setTimeout(r, 20));
+    const phLink = await x.relay.joinMailbox(fromB64(x.phone.mbxId), { read: fromB64(x.phone.tokRead), write: fromB64(x.phone.tokWrite) }, 'mobile');
+    const sess = await openMobileSession(phLink, {
+      pairId: x.phone.pairId, noise: x.w.phone.keys.noise, desktopStatic: x.phone.desktopStatic, nextTimestamp: monotonicClock(0),
+      hello: { appVersion: 'm', deviceListVersion: 2, capabilities: [CAP.receipt] },
+    });
+    assert.ok(sess, '연결 직후 PC가 세션을 받는다');
+    sess.channel.close();
+    phLink.close();
+    link.stop();
+  });
+
   it('같은 실행에서 로그아웃 → 다시 로그인하면 저장된 폰을 다시 지킨다(전에는 앱을 다시 켤 때까지 폰에 "PC 꺼짐")', async () => {
     const x = await world();
     // shell-app watchLink와 같은 순서: 로그인 → 수신 켜기, 로그아웃 → 멈추고 버리기, 다시 로그인 → 다시 켜기
