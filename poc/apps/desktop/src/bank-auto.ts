@@ -67,7 +67,8 @@ export function bankAutoHandlers(d: BankAutoDeps) {
     try {
       const r = await d.engine(m, p);
       const f = r as { ok?: unknown; code?: unknown; cf?: unknown } | null;
-      if (f && f.ok === false) d.log?.('main.bank_auto', { step: m, result: safeCode(f.code), ...(typeof f.cf === 'string' && /^CF-\d{5}$/.test(f.cf) ? { cf: f.cf } : {}) });
+      // 은행 코드(4자리 기관 코드, 값 아님)도 남긴다: 거래하지 않는 은행을 고른 채 연결했는지 가를 수 있게
+      if (f && f.ok === false) d.log?.('main.bank_auto', { step: m, result: safeCode(f.code), ...(typeof f.cf === 'string' && /^CF-\d{5}$/.test(f.cf) ? { cf: f.cf } : {}), ...(typeof p.bank === 'string' && /^\d{4}$/.test(p.bank) ? { bank: p.bank } : {}) });
       return r;
     } catch (e) {
       d.log?.('main.bank_auto', { step: m, result: 'threw', why: safeCode((e as { code?: unknown } | null)?.code ?? (e as Error | null)?.message) });

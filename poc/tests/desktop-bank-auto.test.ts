@@ -92,4 +92,14 @@ describe('계좌 자동조회 main', () => {
       ['main.bank_auto', { step: 'codef.disconnect', result: 'threw', why: 'other' }],
     ]);
   });
+  it('연결 실패 로그에 CODEF 코드와 고른 은행(기관 코드)을 남긴다(2026-11-18 실기기: CF-12831 본인인증 필요)', async () => {
+    const logs: Array<Record<string, string | number>> = [];
+    const b = bankAutoHandlers({
+      engine: async () => ({ ok: false, code: 'identity_required', cf: 'CF-12831' }),
+      certs: async () => [{ id: '0123456789abcdef', owner: '홍길동', usage: 'yessign', expiresOn: '2027-01-01', usable: true }],
+      log: (_n, d) => logs.push(d),
+    });
+    await b.handlers['bankAuto.connect']({ certId: '0123456789abcdef', bank: '0004' });
+    assert.deepEqual(logs, [{ step: 'codef.connect', result: 'identity_required', cf: 'CF-12831', bank: '0004' }]);
+  });
 });
