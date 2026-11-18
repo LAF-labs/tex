@@ -15,6 +15,13 @@ import { EXTRA_AUTH_FOR_SIGNAL, RateGuard, UNKNOWN_SCREEN_POSITIVE, type RatePol
 export type PaceProfile = 'interactive' | 'daemon';
 
 /**
+ * 스텝 지연을 두는 스텝 타입(포털에 요청이 나가거나 화면을 바꾸는 것). wait·assert·readback·branch·repeat·extract·end·save_pdf처럼
+ * 화면을 읽기만 하는 스텝은 사람 속도를 흉내 낼 요청이 없으니 지연을 두지 않는다(대표 실기기 피드백 2026-11-18 "단계 전환이 느림").
+ * 요청 간격은 그대로다: 동작 스텝의 지연·분당 네비게이션·네비게이션 뒤 안정 대기는 바뀌지 않는다.
+ */
+export const PACED_STEP_TYPES: ReadonlySet<string> = new Set(['goto', 'checkpoint', 'click', 'fill', 'select', 'press', 'pick', 'gate', 'submit', 'verify']);
+
+/**
  * 서명 정책 → 포털 하나의 RatePolicy. 포털 limits가 없으면 null(그 포털은 자동화하지 않는다).
  * policy는 clampPolicy를 거친 값이어야 한다(하한·상한은 거기서 집행된다).
  */
@@ -167,8 +174,12 @@ export class RunEnforcer implements ActionPolicy {
 
   // ---- 실행기·Actuator 지점 ----
 
-  /** 스텝마다(실행기 beforeStep): 스텝 지연(보수 모드면 slowFactor배). 자는 동안 걸쇠·정지를 본다. */
-  async beforeStep(): Promise<ActResult> {
+  /**
+   * 스텝마다(실행기 beforeStep): 스텝 지연(보수 모드면 slowFactor배). 자는 동안 걸쇠·정지를 본다.
+   * 스텝 타입을 주면 포털에 닿는 스텝(PACED_STEP_TYPES)에만 지연을 두고, 읽기만 하는 스텝은 걸쇠·정지만 본다(H01Runner PAGE_STEPS와 같은 뜻).
+   */
+  async beforeStep(type?: string): Promise<ActResult> {
+    if (type !== undefined && !PACED_STEP_TYPES.has(type)) return this.sleep(0);
     return this.sleep(this.delay(this.g.policy.pace.stepDelayMs));
   }
 
