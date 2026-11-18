@@ -36,13 +36,22 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
     const shared = (p: PackageFiles) => stepsOf(p).filter((s) => !/^s1[068][a-z]?$/.test(s.id) || s.id === 's10x').map((s) => {
       const c = structuredClone(s) as Record<string, unknown>;
       if (s.id === 's19a' || s.id === 's19b' || s.id === 's19f' || s.id === 's32') return { id: s.id, type: s.type };
+      // 신청 확인 레이어(H-03·H-09)의 [신청하기]는 submit.signFlow에만 있다. 레이어 없는 서류(H-08)와는 그것만 다르다(아래에서 따로 본다)
+      if (s.id === 's21') delete c.signFlow;
       return c;
     });
     for (const p of rest) assert.deepEqual(shared(p), shared(h03!));
+    const LAYER_KEYS = ['hometax.cert.confirm.apply', 'hometax.cert.confirm.root'];
+    const signFlowOf = (p: PackageFiles) => (stepsOf(p).find((s) => s.id === 's21') as { signFlow?: unknown }).signFlow;
+    for (const [i, p] of [h03!, ...rest].entries()) {
+      const layered = !!CERT_DOCS[i]!.confirmLayer;
+      assert.equal(LAYER_KEYS.every((k) => k in p.selectors.entries), layered, CERT_DOCS[i]!.code);
+      assert.deepEqual(signFlowOf(p), layered ? signFlowOf(h03!) : undefined, CERT_DOCS[i]!.code);
+    }
     const docKeys = (d: (typeof CERT_DOCS)[number]) => new Set(d.fields.map((f) => `hometax.cert.form.${f.input}`));
-    const base = new Set(Object.keys(h03!.selectors.entries));
+    const base = new Set(Object.keys(h03!.selectors.entries).filter((k) => !LAYER_KEYS.includes(k)));
     for (const [i, p] of rest.entries()) {
-      const keys = new Set(Object.keys(p.selectors.entries));
+      const keys = new Set(Object.keys(p.selectors.entries).filter((k) => !LAYER_KEYS.includes(k)));
       assert.deepEqual([...keys].filter((k) => !base.has(k)).sort(), [...docKeys(CERT_DOCS[i + 1]!)].sort());
       for (const k of base) {
         // 양식 제목(hometax.cert.form.title)은 서류마다 다르다(제목 자체가 시험 이름의 「양식 제목」)
@@ -57,7 +66,8 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
       const p = certPackage(d);
       assert.deepEqual(p.manifest.effects, ['issue_document']);
       const commits = Object.entries(p.selectors.entries).filter(([, e]) => e.commits).map(([k, e]) => [k, e.commitEffect]);
-      assert.deepEqual(commits, [['hometax.cert.form.issueButton', 'issue_document']]);
+      // 신청 확인 레이어가 있는 서류는 레이어의 [신청하기]도 같은 효과의 커밋 항목이다(submit.signFlow.openTargets, 같은 무장 구간에서만 누른다)
+      assert.deepEqual(commits, [['hometax.cert.form.issueButton', 'issue_document'], ...(d.confirmLayer ? [['hometax.cert.confirm.apply', 'issue_document']] : [])]);
       const pre = buildCfg(p.playbook);
       const irreversible = irreversibleSteps(p.selectors, pre.info);
       assert.deepEqual([...irreversible], ['s21']);
@@ -104,6 +114,17 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
     const btn = (p: PackageFiles) => p.selectors.entries['hometax.cert.form.issueButton']!;
     assert.deepEqual([btn(h03!).namePattern, btn(h03!).candidates[0]], ['^작성완료$', { kind: 'css', value: '#mf_txppWframe_btn_wrtCmpl' }]);
     assert.deepEqual([btn(h08!).namePattern, btn(h08!).candidates[0]], ['^신청하기$', { kind: 'css', value: '#mf_txppWframe_btn_apln' }]);
+    // 실화면 2026-11-18: H-03·H-09의 [작성완료]는 「신청하시겠습니까?」 레이어(UTECAAA0A016)를 열 뿐이다. 신청은 레이어의 [신청하기]를
+    // 같은 무장 구간에서 엔진이 한 번 누른다(전에는 누르지 않아 처리결과 조회만 되풀이했다, 대표 실기기 피드백 2026-11-18)
+    for (const p of [h03!, certPackage(CERT_DOCS.find((d) => d.code === 'H-09')!)]) {
+      const apply = p.selectors.entries['hometax.cert.confirm.apply']!;
+      assert.deepEqual([apply.namePattern, apply.candidates[0], apply.landmark, apply.commits], ['^신청하기$', { kind: 'css', value: '#mf_txppWframe_UTECAAA0A016_wframe_btn_sbms' }, 'hometax.cert.confirm.root', true]);
+      assert.deepEqual(p.selectors.entries['hometax.cert.confirm.root']!.candidates[0], { kind: 'css', value: '#mf_txppWframe_UTECAAA0A016' });
+      const s21 = stepsOf(p).find((x) => x.id === 's21') as { signFlow?: { openTargets?: string[]; steps?: unknown } };
+      assert.deepEqual(s21.signFlow?.openTargets, ['hometax.cert.confirm.apply']);
+      assert.equal(s21.signFlow?.steps, undefined, '사람 몫(인증서 비밀번호)은 없다');
+      assert.equal(p.manifest.version, '1.0.1');
+    }
     const inputs = h03!.playbook.inputs as Record<string, { values?: string[] }>;
     assert.ok(inputs.purpose!.values!.includes('금융기관제출용') && inputs.submitTo!.values!.includes('금융기관'));
     assert.deepEqual(h03!.selectors.entries['hometax.cert.form.receiveMethod']!.allowedConstants, ['인터넷발급(프린터출력)']);

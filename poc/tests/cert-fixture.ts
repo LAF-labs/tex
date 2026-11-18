@@ -113,7 +113,13 @@ function certForm(doc: Doc, k: CertKnobs): string {
       `<select id="mf_txppWframe_selectbox1" name="openDate" title="개업일자" hidden><option value="">-선택-</option></select>`,
     );
   }
-  const submit = doc === 'H-03' || doc === 'H-09' ? '<button type="submit" id="mf_txppWframe_btn_wrtCmpl">작성완료</button>' : doc === 'H-08' ? '<button type="submit" id="mf_txppWframe_btn_apln">신청하기</button>' : '<button type="submit">신청하기</button>';
+  // 실화면(2026-11-18): H-03·H-09의 [작성완료]는 신청하지 않고 「…작성이 완료되었어요. 신청하시겠습니까?」 레이어(UTECAAA0A016)를 연다. 신청은 레이어의 [신청하기]
+  const layer = '<div id="mf_txppWframe_UTECAAA0A016" class="w2window w2popup_window" hidden><p>' + esc(CERT_DOC_NAME[doc]) + '작성이 완료되었어요. 신청하시겠습니까?</p>'
+    + '<button type="button" id="mf_txppWframe_UTECAAA0A016_wframe_btn_cncl" onclick="this.parentElement.hidden = true">취소</button>'
+    + '<button type="submit" id="mf_txppWframe_UTECAAA0A016_wframe_btn_sbms">신청하기</button></div>';
+  const submit = doc === 'H-03' || doc === 'H-09'
+    ? '<button type="button" id="mf_txppWframe_btn_wrtCmpl" onclick="document.getElementById(\'mf_txppWframe_UTECAAA0A016\').hidden = false">작성완료</button>' + layer
+    : doc === 'H-08' ? '<button type="submit" id="mf_txppWframe_btn_apln">신청하기</button>' : '<button type="submit">신청하기</button>';
   // 수량은 수령방법을 고른 뒤에 켜진다(캡처)
   // 실화면처럼 본문 틀 #mf_txppWframe(역할 없음) 안에 양식 제목 h2(2026-11-14 예행 run-e838a762)
   return page(`<div id="mf_txppWframe"><h2>${esc(title)}</h2><form aria-label="${esc(title)}" method="post" action="/cert/issue"><input type="hidden" name="doc" value="${doc}">

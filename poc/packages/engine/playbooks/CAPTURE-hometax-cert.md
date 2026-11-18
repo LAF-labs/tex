@@ -16,6 +16,6 @@
 |---|---|---|
 | H-03 | `hometax.cert.menu.civil` | 상단 메뉴 「증명·등록·신청」 링크의 접근성 이름(R2 §4) |
 | H-03 | `hometax.cert.menu.issue` | 「민원증명(발급)」(또는 「즉시발급 증명」) 하위 메뉴 이름(02 §5.1·R2 §4 표기가 다르다) |
-| H-03 | `hometax.cert.form.issueButton` | [작성완료]을 유효한 값으로 누른 뒤: 확인창·전자서명 창이 뜨는지, wqAction actionId(HAR → commitEndpoints). 접수가 실제로 생기므로 사용자 승인 뒤 |
+| H-03 | `hometax.cert.confirm.apply` | [신청하기]을 누른 뒤: 전자서명 창이 뜨는지(뜨면 signFlow readyTarget·doneTarget을 더한다), wqAction actionId(HAR → commitEndpoints). 접수가 실제로 생기므로 사용자 승인 뒤 |
 | H-03 | `hometax.cert.alert` | 알림창(.w2window.w2popup_window.msg)의 접근성 역할·이름. 본문 「해당 화면은 개인사업자는 이용할 수 없습니다.」 |
 | H-08 | `hometax.cert.form.issueButton` | [신청하기]을 유효한 값으로 누른 뒤: 확인창·전자서명 창이 뜨는지, wqAction actionId(HAR → commitEndpoints). 접수가 실제로 생기므로 사용자 승인 뒤 |

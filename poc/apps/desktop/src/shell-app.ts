@@ -1354,7 +1354,19 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   });
   // 새 PC 연결 중(link_* 단계)에는 쓰던 PC의 답을 몇 초마다 본다. 단계가 바뀌면 화면에 알리고, 끝나면 멈춘다
   let linkTimer: ReturnType<typeof setInterval> | null = null;
+  // 로그인돼 있으면 계정 열쇠를 계정 서비스에 맡겨 둔다(ADR-050: 다음 새 PC가 쓰던 PC 없이 이메일 인증만으로 붙는다). 앱을 켤 때마다 한 번
+  let keyDeposited = false;
+  const depositKey = (v: AccountView): void => {
+    if (v.step === 'signed_out') keyDeposited = false;
+    if (keyDeposited || v.step !== 'signed_in') return;
+    keyDeposited = true;
+    void account.depositKey().then((r) => {
+      // 잠깐의 실패는 다음 로그인 화면 갱신 때 다시 해 본다
+      if (r !== 'stored' && r !== 'already' && r !== 'request.not_found' && r !== 'skipped') keyDeposited = false;
+    });
+  };
   const watchLink = <T extends AccountView>(v: T): T => {
+    depositKey(v);
     const linking = v.step.startsWith('link_');
     if (linking && !linkTimer) {
       linkTimer = setInterval(() => {
@@ -1372,7 +1384,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     return v;
   };
   let accountReady: Promise<unknown> | null = null;
-  const accountInit = () => (accountReady ??= account.init());
+  const accountInit = () => (accountReady ??= account.init().then((v) => (depositKey(v), v)));
   // 엔진 → 게이트웨이 인증(gateway-auth.ts): gateway 범위 기기 토큰으로 만든 헤더만 auth 포트로 간다. 로그인 전이면 account.signed_out.
   // 내준 헤더의 경로(활동 기록 근거). 번호를 붙여 최근 200개만 둔다.
   let gwSeq = 0;

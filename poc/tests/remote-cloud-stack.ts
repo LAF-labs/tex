@@ -77,7 +77,7 @@ export async function startCloudStack(): Promise<CloudStack> {
     {
       SAX_SQLITE_FILE: path.join(dir, 'account.db'), TOKEN_SIGNING_SEED: tokenSeed, CODE_MAC_KEY: hex(), ACCOUNT_PUBLIC_ORIGIN: origin, WEBAUTHN_RP_ID: 'localhost',
       WEBAUTHN_ORIGINS: origin, BILLING_RETURN_URL: `${origin}/done`, PG_PROVIDER: 'mock', MAIL_PROVIDER: 'mock', INTERNAL_CALL_KEY: internal,
-      ACCT_CLAIM_SIGNING_KEY: claimSeed, LIMIT_ID_KEY: limitIdKey, PORT: String(acctPort), HOST: '127.0.0.1',
+      ACCT_CLAIM_SIGNING_KEY: claimSeed, KEY_ESCROW_KEY: hex(), LIMIT_ID_KEY: limitIdKey, PORT: String(acctPort), HOST: '127.0.0.1',
       RELAY_INTERNAL_URL: `http://127.0.0.1:${relayPort}`, STOP_HOOK_URLS: `http://127.0.0.1:${relayPort}`,
     },
     { mail },

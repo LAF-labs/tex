@@ -287,11 +287,21 @@ describe('verify baseline:none·rowVerdict(D02 §4.4, 스키마 v1.3.4, 골든 s
     const h = mk([rows(mail('B-7', '알 수 없음'))]);
     h.scope.vars.set('approvalNo', 'B-7');
     assert.deepEqual(await judgeVerify(h.d, S33), { result: 'unknown' });
-    assert.equal(h.lookup.reqs.length, 3, 's33 maxMs 50초: 1·12·33초에 조회');
+    assert.equal(h.lookup.reqs.length, 2, 's33 maxMs 50초: 곧바로 보지 않고 약 17·34초에 조회(사후 확인 간격, 2026-11-18)');
     assert.equal(h.book.ref('s33'), undefined);
     const later = mk([rows(mail('B-7', '')), rows(mail('B-7', '발송완료'))]);
     later.scope.vars.set('approvalNo', 'B-7');
     assert.deepEqual(await judgeVerify(later.d, S33), { result: 'committed', ref: 'B-7' });
+  });
+
+  it('운영 간격(10초)·상한 120초의 사후 확인: 곧바로 보지 않고 30초마다, 상한까지 많아야 3번 조회한다(2026-11-18 "발급 뒤 확인이 5~10번")', async () => {
+    const at: number[] = [];
+    const h = mk([() => (at.push(h.clock.now()), rows(mail('B-7', '알 수 없음')))]);
+    h.scope.vars.set('approvalNo', 'B-7');
+    const t0 = h.clock.now();
+    const s = { ...S33, lookup: { ...S33.lookup, maxMs: 120_000 } } as StepOf<'verify'>;
+    assert.deepEqual(await judgeVerify({ ...h.d, intervals: { firstMs: 10_000, capMs: 10_000 } }, s), { result: 'unknown' });
+    assert.deepEqual(at.map((t) => t - t0), [31_000, 62_000, 93_000], '조회가 끝날 때(1초 걸림) 시각');
   });
 
   it('부정 우선: 같은 승인번호에 sent와 notSent 행이 같이 있으면 not_committed', async () => {

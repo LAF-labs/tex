@@ -133,10 +133,10 @@ describe('shared: 마이그레이션', () => {
   it('같은 마이그레이션을 두 번 돌려도 한 번만 적용된다', async () => {
     const { MIGRATIONS_DIR } = await import('../services/account/src/main.ts');
     const db = openSqlite();
-    assert.deepEqual(await migrate(db, 'account', MIGRATIONS_DIR), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert.deepEqual(await migrate(db, 'account', MIGRATIONS_DIR), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     assert.deepEqual(await migrate(db, 'account', MIGRATIONS_DIR), []);
     const r = await db.all<{ version: number }>("SELECT version FROM schema_migrations WHERE service = 'account' ORDER BY version");
-    assert.deepEqual(r.map((x) => Number(x.version)), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert.deepEqual(r.map((x) => Number(x.version)), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     await db.close();
   });
 });

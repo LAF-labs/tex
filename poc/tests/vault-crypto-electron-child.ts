@@ -3,7 +3,7 @@
 // 2026-11-17 새 PC 연결이 crypto.rkSeal의 createCipheriv('chacha20-poly1305')에서 "Unknown cipher"로 멈췄다(Node에서 도는 시험은 통과했다).
 import assert from 'node:assert/strict';
 import { FileEventLog } from '@sax/platform';
-import { hpkeOpenBase, hpkeSealBase, MemoryKeyStore, RK_LINK_INFO, VaultCrypto, x25519FromSeed } from '@sax/vault';
+import { hpkeOpenBase, hpkeSealBase, MemoryKeyStore, RK_ESCROW_INFO, RK_LINK_INFO, VaultCrypto, x25519FromSeed } from '@sax/vault';
 
 assert.ok(process.versions.electron, 'Electron 런타임이 아니다');
 const utf8 = (s: string) => new TextEncoder().encode(s);
@@ -24,6 +24,11 @@ const rk = await oldPc.rkSeal({ recipient: await newPc.linkKey(), info: RK_LINK_
 assert.deepEqual([rk.enc.length, rk.ct.length], [32, 48]);
 assert.deepEqual(await newPc.rkImport({ ...rk, info: RK_LINK_INFO, aad, aikPub: aikOld }), aikOld);
 assert.deepEqual((await newPc.publicKeys()).aik, aikOld);
+// 2-1) 계정 열쇠 맡기기(ADR-050): 같은 연산, info만 다르다. 세 번째 PC가 계정 서비스 대신 선 키로 봉인한 것을 받는다
+const thirdPc = pc();
+const esc = await oldPc.rkSeal({ recipient: await thirdPc.linkKey(), info: RK_ESCROW_INFO, aad });
+await assert.rejects(thirdPc.rkImport({ ...esc, info: RK_LINK_INFO, aad, aikPub: aikOld }), /open_failed/);
+assert.deepEqual(await thirdPc.rkImport({ ...esc, info: RK_ESCROW_INFO, aad, aikPub: aikOld }), aikOld);
 
 // 3) 우편함 큐 개봉(폰이 PC의 Q_D로 봉인한 것)
 const envAad = utf8('SAX-env-v1\u0001');
