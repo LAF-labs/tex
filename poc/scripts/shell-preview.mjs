@@ -314,6 +314,23 @@ const scenes = {
     ev(win, { type: 'run', run: mkRun('preparing', { done: 0, now: true, note: LOGIN_NOW }) });
     await shot(win, '36-login-now');
   },
+  // 앱 안 브라우저(실행 중): main이 보내는 browser·screen 이벤트를 흉내 낸다. 홈택스 화면 자리(.run-screen)는 실제로는 main의 보기가 덮는다.
+  async browser(win) {
+    await js(win, `(() => { const i = document.querySelector('#composer'); i.value = 'A상사에 330만원 세금계산서'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
+    await sleep(300);
+    ev(win, { type: 'browser', shown: false, available: true, embedded: true, width: Math.round((W - SHELL.rail) * SHELL.browserShare) });
+    ev(win, { type: 'run', run: mkRun('preparing', { done: 2, now: true, note: '품목 칸을 넣는 중' }) });
+    ev(win, { type: 'screen', runId: 'run-1', url: 'https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml' });
+    await sleep(200);
+    await js(win, `document.querySelector('[data-run] .sx-card-hd, [data-run]').click()`);
+    await sleep(200);
+    await shot(win, '37-browser-live');
+    ev(win, { type: 'run', run: { ...mkRun('issuing', { done: 6, now: true, confirmed: true }), verifyAttempt: 3 } });
+    await shot(win, '38-browser-checking');
+    ev(win, { type: 'run', run: { ...mkRun('turn', { done: 2, attentionAt: 2, note: '직접 해 주세요' }), handoff: { phase: 'input', afterGate: false }, turn: { text: `${HANDOFF_TEXT} · 이 단계는 직접 해 주세요: 입력`, note: HANDOFF_HINT } } });
+    await shot(win, '39-browser-handoff');
+    ev(win, { type: 'browser', shown: false, available: false, embedded: true, width: 0 });
+  },
   // EMPTY=1 ONLY=empty: 빈 화면 셋(거래처·문서함·활동 기록)
   async empty(win) {
     for (const v of ['cps', 'docs']) {
@@ -628,7 +645,7 @@ Object.assign(scenes, {
   },
 });
 
-const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'newPc', ...(EMPTY ? ['empty'] : [])];
+const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'browser', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'newPc', ...(EMPTY ? ['empty'] : [])];
 const agreed = { version: 'pv', choice: 'agreed', at: '' };
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {
