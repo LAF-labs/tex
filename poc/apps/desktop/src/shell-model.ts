@@ -485,7 +485,7 @@ export interface RunViewBase {
    * kind: 무엇을 하는 차례인가(#278 셸 계약). login = 홈택스 로그인 대기([이어서]), sign = 인증서 서명 차례(완료 창이 보이면 엔진이 스스로 넘어가 [다 했어요]는 보조,
    * [직접 발급함] 없음), other = 그 밖의 사람 차례([다 했어요]·[직접 발급함]).
    */
-  handoff?: { phase: string; afterGate: boolean; kind?: 'login' | 'sign' | 'other' } | null;
+  handoff?: { phase: string; afterGate: boolean; kind?: 'login' | 'sign' | 'other'; code?: string } | null;
   /**
    * InDoubt 증언(ADR-021 결정 5). ready: 엔진이 증언을 받을 수 있다(이 카드를 열면 승인 바 자리에 황토색 바가 뜬다).
    * sent: 보냈고 엔진이 받았다. refused: 엔진이 받지 않았거나 보내지 못했다. 문구는 main의 ATTEST_NOTE에서 고른 것.
