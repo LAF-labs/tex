@@ -1,8 +1,10 @@
 // 설정 > 기기 연결의 계정 기기 목록과 새 PC 연결 요청(ADR-048 결정 1·3·6). 쓰던 PC 쪽 화면이다(새 PC 쪽은 shell-account.js 로그인 화면).
-// - 목록: PC 묶음·폰 묶음(각 3대까지). 다른 기기는 [연결 끊기](확인 한 번), 이 PC는 [이 PC 연결 끊기](계정에 남은 마지막 PC면 안내만).
+// - 목록: PC 묶음·폰 묶음(각 3대까지). 다른 기기는 [연결 끊기], 이 PC는 [이 PC 연결 끊기](계정에 남은 마지막 PC면 안내만). 끊기·승인 끄기는 메인 창 안 모달(modal())로 한 번 묻는다.
+// - 끊은 폰은 목록에서 바로 빠진다(서버도 바로 폐기하고 자리를 비운다, ADR-048 결정 6 2026-11-19 개정). 서버가 아직 정지로 둔 폰도 보이지 않는다.
+// - 화면 문구에 가운뎃점을 쓰지 않는다(2026-11-19 대표). 상태는 줄을 나눠 보인다.
 // - 새 PC 요청: [연결] → 새 PC 화면의 6자리를 넣고 [확인]. 6자리는 이 렌더러에 미리 오지 않는다(사람이 새 PC 화면을 보고 넣는다).
 // - 이 PC가 다른 기기에서 끊겼거나 정지됐으면(account.device_suspended) 목록 대신 안내와 [다시 로그인].
-// - 폰 승인(ADR-052): 승인 키를 받은 폰은 [승인 끄기](같은 줄 안에서 확인 한 번), 꺼 둔 폰은 "폰 승인이 꺼져 있어요" + [다시 허용].
+// - 폰 승인(ADR-052): 승인 키를 받은 폰은 [승인 끄기](모달로 확인 한 번), 꺼 둔 폰은 "폰 승인이 꺼져 있어요" + [다시 허용].
 //   끄면 연결은 그대로 두고 승인 키만 지운다(phone-link revokePx). 다시 허용하면 폰이 청한 키를 바로 받는다(allowPx).
 // 문구는 폰 앱의 연결된 기기 화면(taxoff-mobile src/devices.ts)과 맞춘다. 값은 모두 textContent로 넣는다.
 import { btn, h, icon } from './shell-views.js';
@@ -41,12 +43,15 @@ const kindName = (d) => (d.role === 'desktop' ? (d.platform === 'macos' ? 'Mac' 
 export function deviceSub(d, now, linking = false) {
   if (d.state === 'pending' || linking) return '연결하는 중';
   if (d.state === 'suspended') {
-    if (d.deleteAfter === null) return '정지됨';
+    if (d.deleteAfter === null) return '쓸 수 없게 막아 뒀어요';
     const days = Math.ceil((d.deleteAfter - now) / DAY);
-    return days <= 0 ? '정지됨 · 곧 끊겨요' : `정지됨 · ${days}일 뒤 끊겨요`;
+    return days <= 0 ? '곧 목록에서 빠져요' : `연결을 끊었어요. ${days}일 뒤 목록에서 빠져요`;
   }
   return d.self ? '이 PC' : '쓰는 중';
 }
+
+/** 목록에 보일 기기: 끊었거나 막아 둔 폰은 바로 뺀다(PC는 새로 붙은 PC가 밀어내지 못하게 남는 날짜를 보인다). */
+export const shownDevices = (list) => list.filter((d) => !(d.role === 'mobile' && d.state === 'suspended'));
 
 /** ctx: { call, rerender, errText, toast, visible(), signedIn(), onAccount(view), relogin() } */
 export function createDevices(ctx) {
@@ -212,7 +217,7 @@ export function createDevices(ctx) {
     h(
       'div',
       { class: 'auth-row dev-row', ...attrs },
-      h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, name), h('span', { class: `sx-meta${attention ? ' is-attention' : ''}` }, sub)),
+      h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, name), ...[sub].flat().filter(Boolean).map((t, i) => h('span', { class: `sx-meta${attention && !i ? ' is-attention' : ''}` }, t))),
       ...acts,
     );
 
@@ -221,27 +226,9 @@ export function createDevices(ctx) {
     const linking = s.reqs.some((x) => x.deviceId === d.deviceId && x.stage !== 'done');
     const sub = deviceSub(d, Date.now(), linking);
     const attrs = { 'data-device': d.deviceId, 'data-device-state': linking ? 'linking' : d.state, ...(d.self ? { 'data-device-self': '' } : {}) };
-    const key = d.self ? 'self' : d.deviceId;
-    if (s.confirm === key) {
-      const ask = d.self ? '이 PC 연결을 끊을까요? 로그아웃되고, 다시 쓰려면 다른 PC에서 승인해야 해요.' : `${name} 연결을 끊을까요? 그 기기는 바로 계정을 쓸 수 없어요.`;
-      return h(
-        'div',
-        { class: 'dev-confirm', ...attrs, 'data-device-confirm': '' },
-        h('p', { class: 'sx-body-sm' }, ask),
-        h('div', { class: 'sx-actions' }, btn('끊기', () => (d.self ? leave() : unlink(d)), 'sx-btn-primary', { disabled: s.busy, 'data-act': d.self ? 'device-leave' : 'device-unlink' }), btn('그만두기', () => set({ confirm: null }), 'sx-btn-quiet', { 'data-act': 'device-confirm-back' })),
-      );
-    }
-    if (s.pxConfirm === d.deviceId) {
-      return h(
-        'div',
-        { class: 'dev-confirm', ...attrs, 'data-px-confirm': '' },
-        h('p', { class: 'sx-body-sm' }, `${name}의 발급 승인을 끌까요? 연결은 그대로 두고, 이 폰에서는 세금계산서 발급을 승인할 수 없게 돼요. 언제든 [다시 허용]으로 켤 수 있어요.`),
-        h('div', { class: 'sx-actions' }, btn('승인 끄기', () => setPx(d, false), 'sx-btn-primary', { disabled: s.busy, 'data-act': 'px-off' }), btn('그만두기', () => set({ pxConfirm: null }), 'sx-btn-quiet', { 'data-act': 'px-confirm-back' })),
-      );
-    }
     // 폰 승인 상태(이 PC와 연결한 폰만): 켜짐 → [승인 끄기], 꺼 둠 → [다시 허용]
     const px = d.role === 'mobile' && d.state === 'active' ? d.approval : undefined;
-    const pxSub = px === 'on' ? ' · 이 폰에서 발급을 승인해요' : px === 'paused' ? ' · 폰 승인이 꺼져 있어요' : px === 'asked' ? ' · 폰 승인이 꺼져 있어요 · 폰이 다시 켜 달라고 했어요' : '';
+    const pxSub = px === 'on' ? ['이 폰에서 발급을 승인해요'] : px === 'paused' ? ['폰 승인이 꺼져 있어요'] : px === 'asked' ? ['폰 승인이 꺼져 있어요', '폰에서 다시 켜 달라고 했어요'] : [];
     const pxAct =
       px === 'on'
         ? btn('승인 끄기', () => set({ pxConfirm: d.deviceId, confirm: null, msg: null }), 'sx-btn-quiet', { disabled: s.busy, 'data-act': 'px-off-open' })
@@ -255,7 +242,7 @@ export function createDevices(ctx) {
       act = btn('연결 끊기', () => set({ confirm: d.deviceId, pxConfirm: null, msg: null }), 'sx-btn-quiet', { 'data-act': 'device-unlink-open' });
     }
     if (px) attrs['data-px'] = px;
-    return row(attrs, name, d.self && activePcs <= 1 ? `${sub} · ${LAST_PC}` : sub + pxSub, d.state === 'suspended', pxAct, act);
+    return row(attrs, name, d.self && activePcs <= 1 ? [sub, LAST_PC] : [sub, ...pxSub], d.state === 'suspended', pxAct, act);
   }
 
   function group(title, list, activePcs, role) {
@@ -266,7 +253,7 @@ export function createDevices(ctx) {
     return h(
       'article',
       { class: 'sx-card dev-group', 'data-device-group': role, ...(full ? { 'data-device-full': '' } : {}) },
-      h('div', { class: 'sx-card-hd' }, h('h2', { class: 'sx-card-title' }, title), h('span', { class: 'sx-meta' }, `${list.length}대 · ${MAX_PER_ROLE}대까지`)),
+      h('div', { class: 'sx-card-hd' }, h('h2', { class: 'sx-card-title' }, title), h('span', { class: 'sx-meta', 'data-device-count': String(list.length) }, `${MAX_PER_ROLE}대 중 ${list.length}대`)),
       list.length ? h('div', { class: 'dev-rows' }, ...list.map((d) => deviceRow(d, activePcs, d.deviceId === firstPaused))) : h('p', { class: 'sx-body-sm is-muted' }, role === 'mobile' ? '아직 연결한 폰이 없어요. 위의 [폰 연결]로 연결해요.' : '연결한 PC가 없어요.'),
       full ? h('p', { class: 'sx-meta', 'data-device-full-note': '' }, FULL_NOTE) : null,
     );
@@ -305,7 +292,7 @@ export function createDevices(ctx) {
       );
     }
     if (r.stage === 'done')
-      return h('div', { class: 'dev-req', ...attrs }, h('div', { class: 'auth-row dev-row' }, h('span', { class: 'dev-done-mk', 'aria-hidden': 'true' }, icon('check')), h('span', { class: 'opt-main' }, h('span', { class: 'auth-name', 'data-pclink-done': '' }, '연결됐어요'), h('span', { class: 'sx-meta' }, `${name} · 새 PC에서 [네, 떴어요]를 누르면 끝나요`))));
+      return h('div', { class: 'dev-req', ...attrs }, h('div', { class: 'auth-row dev-row' }, h('span', { class: 'dev-done-mk', 'aria-hidden': 'true' }, icon('check')), h('span', { class: 'opt-main' }, h('span', { class: 'auth-name', 'data-pclink-done': '' }, '연결됐어요'), h('span', { class: 'sx-meta' }, name), h('span', { class: 'sx-meta' }, '새 PC에서 [네, 떴어요]를 누르면 끝나요'))));
     return h('div', { class: 'dev-req', ...attrs }, row({}, name, '다른 PC에서 연결을 받고 있어요', false));
   }
 
@@ -342,14 +329,59 @@ export function createDevices(ctx) {
         msg,
       ];
     const pcs = s.list.filter((d) => d.role === 'desktop');
-    const phones = s.list.filter((d) => d.role === 'mobile');
+    const phones = shownDevices(s.list).filter((d) => d.role === 'mobile');
     const activePcs = pcs.filter((d) => d.state === 'active').length;
     // 이 PC가 맨 위, 나머지는 연결한 순서(main이 등록 순으로 준다)
     pcs.sort((a, b) => (a.self === b.self ? 0 : a.self ? -1 : 1));
     return [requestsCard(), msg, group('PC', pcs, activePcs, 'desktop'), group('폰', phones, activePcs, 'mobile')];
   }
 
+  /**
+   * 끊기·승인 끄기 확인(메인 창 안 모달, 배경 흐림). 띄울 것이 없으면 null. Esc·[취소]는 close().
+   * 이 PC 끊기는 로그아웃되니 그 말을 같이 한다.
+   */
+  function modal() {
+    const d = s.pxConfirm ? s.list?.find((x) => x.deviceId === s.pxConfirm) : s.confirm ? s.list?.find((x) => (s.confirm === 'self' ? x.self : x.deviceId === s.confirm)) : null;
+    if (!d) return null;
+    const name = d.name || kindName(d);
+    const px = !!s.pxConfirm;
+    const kind = px ? 'px' : d.self ? 'self' : 'unlink';
+    const T = {
+      px: [`${name}의 발급 승인을 끌까요?`, '연결은 그대로 두고, 이 폰에서는 세금계산서 발급을 승인할 수 없게 돼요.', '언제든 [다시 허용]으로 켤 수 있어요.', '승인 끄기', 'px-off'],
+      self: ['이 PC 연결을 끊을까요?', '이 PC는 로그아웃되고 목록에서 빠져요.', '다시 쓰려면 로그인한 뒤 다른 PC에서 승인해야 해요.', '연결 끊기', 'device-leave'],
+      unlink: [`${name} 연결을 끊을까요?`, d.role === 'mobile' ? '이 폰은 바로 계정을 쓸 수 없고 목록에서 빠져요.' : '그 PC는 바로 계정을 쓸 수 없어요.', d.role === 'mobile' ? '다시 쓰려면 폰에서 [PC와 연결]로 QR을 다시 찍으면 돼요.' : '다시 쓰려면 그 PC에서 로그인한 뒤 이 PC에서 승인해 주세요.', '연결 끊기', 'device-unlink'],
+    }[kind];
+    const go = () => (px ? setPx(d, false) : d.self ? leave() : unlink(d));
+    const box = h(
+      'section',
+      { class: 'modal dev-modal', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'dev-m-title', 'aria-describedby': 'dev-m-body', 'data-device-confirm': kind, ...(px ? { 'data-px-confirm': '' } : {}) },
+      h('div', { class: 'modal-hd' }, h('div', { class: 'modal-title' }, h('h2', { class: 'title-screen', id: 'dev-m-title' }, T[0]), h('p', { class: 'sx-body-sm is-muted', id: 'dev-m-body' }, T[1], h('br'), T[2]))),
+      h('div', { class: 'modal-acts' }, btn('취소', close, 'sx-btn-lg', { 'data-act': px ? 'px-confirm-back' : 'device-confirm-back' }), btn(s.busy ? (px ? '끄는 중…' : '끊는 중…') : T[3], go, 'sx-btn-primary sx-btn-lg', { disabled: s.busy, 'data-act': T[4] })),
+    );
+    // Tab이 모달 밖으로 나가지 않게
+    box.addEventListener('keydown', (e) => {
+      if (e.key !== 'Tab') return;
+      const f = [...box.querySelectorAll('button')].filter((x) => !x.disabled);
+      if (!f.length) return;
+      const at = f.indexOf(document.activeElement);
+      const to = e.shiftKey ? (at <= 0 ? f[f.length - 1] : null) : at === f.length - 1 || at < 0 ? f[0] : null;
+      if (!to) return;
+      e.preventDefault();
+      to.focus();
+    });
+    return h('div', { class: 'modal-scrim is-blur' }, box);
+  }
+  /** 모달 닫기(Esc·[취소]). 끊는 중에는 닫지 않는다. */
+  function close() {
+    if (s.busy || (!s.confirm && !s.pxConfirm)) return false;
+    const back = s.pxConfirm ? `[data-device="${s.pxConfirm}"] [data-act=px-off-open]` : s.confirm === 'self' ? '[data-act=device-leave-open]' : `[data-device="${s.confirm}"] [data-act=device-unlink-open]`;
+    set({ confirm: null, pxConfirm: null });
+    // 연 단추로 초점을 돌려준다
+    document.querySelector(back)?.focus();
+    return true;
+  }
+
   /** 이 PC가 다른 기기에서 끊겼다(목록 대신 안내, 계정 카드도 숨긴다) */
   const gone = () => ctx.signedIn() && s.err === 'account.device_suspended';
-  return { load, view, gone, state: s };
+  return { load, view, gone, modal, close, state: s };
 }

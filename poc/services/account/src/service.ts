@@ -1354,8 +1354,6 @@ export class AccountService {
    */
   async updateDeviceList(requester: { accountId: string; deviceId: string }, l: DeviceList): Promise<{ listVersion: number }> {
     const stopped: string[] = [];
-    /** 유예 중이라 폐기는 아직이지만 바로 정지한 폰 */
-    const halted: string[] = [];
     await this.db.tx(async (q) => {
       const a = await q.one<AccountRow>(`SELECT * FROM accounts WHERE id = $1${q.forUpdate}`, [requester.accountId]);
       if (!a) return fail('account.unauthorized');
@@ -1396,15 +1394,13 @@ export class AccountService {
       for (const [id, r] of revoked) {
         const d = byId.get(id);
         if (!d || d.state === 'revoked') continue;
+        // 유예는 PC를 끊을 때만 건다: 새로 붙은 PC가 쓰던 PC를 즉시 멈추거나 밀어내지 못하게(PC는 정지도 하지 않는다).
+        // 폰은 유예 없이 바로 폐기하고 자리를 비운다(ADR-048 결정 6, 2026-11-19 개정). 폰은 예전에도 끊는 즉시 정지했으니
+        // 새 PC가 할 수 있는 일은 그대로이고, 잃는 것은 7일 안에 되살리기뿐이다(잘못 끊은 폰은 QR로 다시 연결한다).
+        // 예전 규칙으로 정지·유예 중인 폰도 다음 목록 갱신 때 같은 폐기 레코드로 여기서 폐기된다.
         // 유예는 처음 폐기 레코드가 들어온 때부터 센다(목록을 다시 올려도 다시 시작하지 않는다)
-        if (cooling) {
+        if (cooling && d.role === 'desktop') {
           await q.run('UPDATE devices SET delete_after = COALESCE(delete_after, $1), revoke_record = $2 WHERE device_id = $3', [now + ACCOUNT.deleteGraceDays * MS.D, jcs(r), id]);
-          // 폰은 유예 중에도 바로 정지한다(잃어버린 폰의 토큰·우편함·푸시가 7일 살아 있지 않게). 자리는 유예가 끝나야 빈다.
-          // PC는 정지하지 않는다: 새로 붙은 PC가 쓰던 PC를 즉시 멈출 수 없어야 한다
-          if (d.role === 'mobile' && (d.state === 'active' || d.state === 'pending')) {
-            await q.run("UPDATE devices SET state = 'suspended' WHERE device_id = $1", [id]);
-            halted.push(id);
-          }
         } else {
           await q.run("UPDATE devices SET state = 'revoked', revoke_record = $1, delete_after = NULL WHERE device_id = $2", [jcs(r), id]);
           await q.run("INSERT INTO device_events (account_id, role, kind, day) VALUES ($1, $2, 'remove', $3)", [requester.accountId, d.role, kstDay(now)]);
@@ -1413,9 +1409,8 @@ export class AccountService {
       }
       await q.run('UPDATE accounts SET device_list_version = $1, device_list_json = $2 WHERE id = $3', [l.listVersion, jcs(l), requester.accountId]);
     });
-    for (const id of [...stopped, ...halted]) await this.stopped(id);
+    for (const id of stopped) await this.stopped(id);
     if (stopped.length) await this.notify(requester.accountId, 'device_revoked');
-    if (halted.length) await this.notify(requester.accountId, 'device_suspended');
     return { listVersion: l.listVersion };
   }
 

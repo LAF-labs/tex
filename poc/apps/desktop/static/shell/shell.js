@@ -2522,12 +2522,18 @@ function renderModal() {
   if (loginGate() && !state.login) state.login = { screen: 'email', draft: { email: state.account?.email ?? '', password: '', code: '', show: false }, busy: false };
   const pw = state.view === 'docs' && !!state.docImport && !state.docBusy;
   const login = !pw && !!state.login;
-  const open = pw || login;
+  const dev = !pw && !login && state.view === 'settings' && state.setTab === 'devices' ? devices.modal() : null;
+  const open = pw || login || !!dev;
   // 처음 띄울 때와 창 안에 있던 포커스는 새 입력 칸으로 옮긴다(다시 그릴 때마다 칸을 새로 만든다)
   const a = document.activeElement;
   const focus = !root.firstChild || !a || a === document.body || root.contains(a);
-  root.replaceChildren(...(pw ? [passwordModal()] : login ? [loginScreen(loginCtx())] : []));
+  root.replaceChildren(...(pw ? [passwordModal()] : login ? [loginScreen(loginCtx())] : dev ? [dev] : []));
   $('#app').inert = open;
+  if (dev) {
+    // 처음 띄울 때는 [취소]에 둔다(끊기는 되돌릴 수 없어서 Enter 한 번으로 끊기지 않게)
+    if (focus) root.querySelector('[data-act=device-confirm-back], [data-act=px-confirm-back]')?.focus();
+    return;
+  }
   const i = open && focus ? root.querySelector(pw ? '.doc-pw' : '.acct-code, .acct-password, .acct-email, [data-act=account-reset-done]') : null;
   if (i) {
     i.focus();
@@ -2895,6 +2901,7 @@ window.sax.onEvent((ev) => {
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && $('#modal').firstChild) {
     if (state.login) closeLogin();
+    else if ($('#modal [data-device-confirm]')) devices.close();
     else cancelPassword();
     return;
   }

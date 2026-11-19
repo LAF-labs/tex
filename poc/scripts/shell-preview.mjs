@@ -676,6 +676,19 @@ Object.assign(scenes, {
     await sleep(250);
     await devScroll(win, '[data-device-group=mobile]');
     await shot(win, '74d-px-allowed');
+    // [연결 끊기] → 앱 안 모달로 한 번 묻는다 → 끊으면 목록에서 바로 빠진다
+    await js(win, `document.querySelectorAll('[data-device-group=mobile] [data-act=device-unlink-open]')[1].click()`);
+    await sleep(200);
+    await shot(win, '74e-unlink-confirm');
+    await js(win, `document.querySelector('[data-act=device-unlink]').click()`);
+    await sleep(250);
+    await devScroll(win, '[data-device-group=mobile]');
+    await shot(win, '74f-unlinked');
+    // 예전 규칙으로 정지돼 있던 폰은 목록에 보이지 않는다(PC는 남는 날짜를 보인다)
+    Object.assign(S, { devices: DEV.suspended() });
+    await devTab(win);
+    await devScroll(win, '[data-device-group=desktop]');
+    await shot(win, '74g-suspended-hidden');
   },
   // 폰 연결 칸(S-03): 쉬는 자리 → [폰 연결] → QR(남은 시간) → 폰이 찍음(6자리) → 틀림 → 연결됐어요 · 시간 지남([새 QR]) · 멈춤([다시 시도]) · QR 만드는 중
   async pair(win) {

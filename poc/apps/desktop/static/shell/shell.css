@@ -351,6 +351,7 @@ body.bar-active .rs-waiting { display: inline-flex; }
 
 /* 모달: scrim 위 surface-overlay, 그림자는 떠 있는 것에만. 토스트는 그 위에 보인다. */
 .modal-scrim { position: fixed; inset: 0; z-index: 9; background: var(--scrim); display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; }
+.modal-scrim.is-blur { backdrop-filter: blur(8px) saturate(0.9); -webkit-backdrop-filter: blur(8px) saturate(0.9); }
 .modal { width: 100%; max-width: 420px; box-sizing: border-box; background: var(--surface-overlay); border-radius: var(--radius-xl); box-shadow: var(--shadow-overlay); padding: 22px; display: flex; flex-direction: column; gap: var(--space-4); }
 @media (prefers-reduced-motion: no-preference) { .modal { animation: sx-pop var(--motion-slow) var(--ease-out); } }
 .modal-hd { display: flex; align-items: flex-start; gap: var(--space-3); }
@@ -366,6 +367,10 @@ body.bar-active .rs-waiting { display: inline-flex; }
 .modal-note { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--radius-md); background: var(--surface-tint); color: var(--ink-2); font-size: 13px; line-height: 20px; }
 .modal-note svg { flex: none; width: 16px; height: 16px; margin-top: 2px; }
 .modal-acts { display: flex; justify-content: flex-end; gap: 6px; }
+.dev-modal { max-width: 400px; }
+.dev-modal .modal-title .sx-body-sm { line-height: 22px; }
+.dev-modal .modal-acts { margin-top: 4px; }
+.dev-modal .modal-acts > .sx-btn { flex: 1; }
 .doc-review { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
 .doc-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-3); }
 .doc-hint { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
