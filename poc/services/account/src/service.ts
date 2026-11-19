@@ -113,6 +113,8 @@ interface DeviceRow {
   email_hold_until: number | null;
   delete_after: number | null;
   revoke_record: string | null;
+  /** 마지막으로 기기 토큰을 받은 시각(v11) */
+  last_seen_at: number | null;
 }
 
 export interface AccountDeps {
@@ -1340,6 +1342,7 @@ export class AccountService {
       Vx: d.vx,
       holdUntil: d.state === 'pending' ? d.email_hold_until : null,
       deleteAfter: d.delete_after,
+      lastSeenAt: d.last_seen_at == null ? null : Number(d.last_seen_at),
     }));
   }
 
@@ -1955,7 +1958,7 @@ export class AccountService {
    * `want`가 있으면 그 범위만 준다(ADR-040 결정 1: 엔진용 gateway 전용 토큰 등). 빈 배열·모르는 이름·중복은 요청 스키마가 먼저 거부하고,
    * 역할 범위의 부분집합이 아니면 여기서(검증된 기기 기록으로) 거부한다. 발급마다 이벤트 이름에 역할·범위를 남긴다(ID·토큰 없음).
    */
-  async issueDeviceToken(c: SignedCert, dpop: string | undefined, htu: string, onVerified?: () => void | Promise<void>, want?: readonly Scope[]): Promise<{ token: string; expiresAt: number; scopes: string[] }> {
+  async issueDeviceToken(c: SignedCert, dpop: string | undefined, htu: string, onVerified?: () => void | Promise<void>, want?: readonly Scope[], model?: string): Promise<{ token: string; expiresAt: number; scopes: string[] }> {
     const d = await this.db.one<DeviceRow & { aik_pub: string | null }>('SELECT d.*, a.aik_pub FROM devices d JOIN accounts a ON a.id = d.account_id WHERE d.device_id = $1 AND a.status = $2', [c.cert.device_id, 'active']);
     if (!d || !d.aik_pub) fail('account.cert_invalid');
     const now = this.now();
@@ -1981,9 +1984,21 @@ export class AccountService {
         this.d.onEvent?.('account.gateway_scope_withheld');
       } else tier = ent;
     }
+    await this.seen(d!, now, model);
     const { token, claims } = this.d.tokens.issue({ acc: d!.account_id, dev: d!.device_id, role: d!.role, scp: scopes, cnf: d!.vx, ...(tier ? { tier } : {}) }, now);
     this.d.onEvent?.(`account.device_token_issued.${d!.role}.${want && scopes.length < roleScopes.length ? scopes.join('-') : 'all'}`);
     return { token, expiresAt: claims.exp, scopes };
+  }
+
+  /**
+   * 기기 목록의 "마지막 접속"과 모델 이름(2026-11-19 대표: 목록에는 이름과 마지막 접속일만). 토큰을 받을 때 적는다.
+   * 10분 안에 다시 받으면 시각은 쓰지 않는다(날짜만 보인다). 모델 이름은 글자를 다듬어 달라졌을 때만 바꾼다(기기 이름을 사람이 바꾸는 기능은 없다).
+   */
+  private async seen(d: DeviceRow, now: number, model?: string): Promise<void> {
+    const m = model?.replace(/[\p{Cc}\p{Cf}]/gu, '').trim().slice(0, 40) || null;
+    const rename = m !== null && m !== d.name;
+    if (!rename && d.last_seen_at != null && now - Number(d.last_seen_at) < DEVICE.lastSeenWriteMs) return;
+    await this.db.run('UPDATE devices SET last_seen_at = $1, name = $2 WHERE device_id = $3', [now, rename ? m : d.name, d.device_id]);
   }
 
   // ---------- 프로필 슬롯·사업자 HMAC(B-28) ----------

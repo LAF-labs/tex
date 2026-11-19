@@ -60,6 +60,7 @@ export const ACCOUNT_VISIBILITY: Record<string, Record<string, string>> = {
     email_hold_until: '기기 추가 72시간 대기',
     delete_after: '삭제 유예(7일)',
     revoke_record: '기기 목록(AIK 서명 폐기 레코드)',
+    last_seen_at: '기기 목록(마지막 접속, 기기 토큰을 받은 시각)',
   },
   device_events: { account_id: '계정', role: '기기 교체 이력(역할)', kind: '기기 교체 이력(추가·해제)', day: '기기 교체 이력(KST 일, 30일)' },
   issue_locks: { account_id: '계정', device_id: 'ADR-048 결정 7: 발급 잠금을 잡은 데스크톱(잡고 있는 동안만)', hold_id: '발급 잠금 값(무작위, 잡을 때마다 새로)', expires_at: '발급 잠금 만료 시각(90초)' },

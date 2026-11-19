@@ -14,6 +14,7 @@ import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { findInstalledChrome, pageAddress, SESSION_IDLE_REPORT_MS } from '@sax/vault';
 import { execFile } from 'node:child_process';
 import { app, autoUpdater as nativeUpdater, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, ShareMenu, shell as desktop } from 'electron';
+import { deviceModel } from './device-model.ts';
 import { AccountantPack, isPackMonth, packAsk } from './accountant-pack.ts';
 import { ACTION_TEXT, actionText, issueLocalApproval, kstToday, verifyLocalApproval, verifyLocalAttestation, type LocalApproval } from './approval-gate.ts';
 import { CERT_DOCS_SHOWN, certDocByCode, certInputsFor, type CertDocDef } from './cert-docs.ts';
@@ -1407,6 +1408,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     pending: new PendingCodeFile(appPaths(root ?? defaultAppRoot()).userData),
     platform: process.platform === 'darwin' ? 'macos' : 'windows',
     deviceName: opts.remote?.deviceName ?? (process.platform === 'darwin' ? 'Mac PC' : 'Windows PC'),
+    // 계정 기기 목록의 이름은 모델 이름으로(예: "MacBook Pro", 2026-11-19 대표). 기기 토큰을 받을 때 알린다
+    model: deviceModel,
     pairing: opts.remote?.pairing !== false,
     // 새 PC 연결(ADR-048 결정 3): 금고의 계정 열쇠 넘기기. 넘겨받은 뒤에는 금고 공개키를 다시 읽는다(AIK가 바뀐다)
     linkVault: async () => linkVaultOf(await keysOf()),

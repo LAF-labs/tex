@@ -116,14 +116,14 @@ const bankDetail = (id) => {
 
 // 설정 > 기기 연결(ADR-048): 계정 기기 목록·새 PC 요청 목업. 모양은 remote-devices.ts DeviceView, remote-pclink.ts PcLinkRequestView와 같다.
 const DEV_DAY = 86_400_000;
-const devRow = (id, role, platform, name, o = {}) => ({ deviceId: `0000000${id}-0000-4000-8000-000000000000`, role, platform, name, state: 'active', registeredAt: Date.now() - (o.ago ?? 10) * DEV_DAY, deleteAfter: null, self: false, listed: true, ...o });
+const devRow = (id, role, platform, name, o = {}) => ({ deviceId: `0000000${id}-0000-4000-8000-000000000000`, role, platform, name, state: 'active', registeredAt: Date.now() - (o.ago ?? 10) * DEV_DAY, deleteAfter: null, lastSeenAt: Date.now() - Math.min(o.ago ?? 10, 3) * DEV_DAY, self: false, listed: true, ...o });
 const DEV = {
   normal: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(2, 'desktop', 'windows', '집 PC', { ago: 9 }), devRow(3, 'mobile', 'ios', 'iPhone', { ago: 12 }), devRow(4, 'mobile', 'android', '', { ago: 3 })],
   full: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(2, 'desktop', 'windows', '집 PC', { ago: 9 }), devRow(5, 'desktop', 'windows', '세무 담당 노트북', { ago: 2 }), devRow(3, 'mobile', 'ios', 'iPhone', { ago: 12 }), devRow(4, 'mobile', 'android', '', { ago: 3 }), devRow(6, 'mobile', 'ios', '직원 아이폰', { ago: 1, state: 'pending', listed: false })],
   suspended: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(2, 'desktop', 'windows', '집 PC', { ago: 9, state: 'suspended', deleteAfter: Date.now() + 5 * DEV_DAY + 3_600_000 }), devRow(3, 'mobile', 'ios', 'iPhone', { ago: 12 }), devRow(4, 'mobile', 'android', '잃어버린 폰', { ago: 30, state: 'suspended', deleteAfter: Date.now() + 1_800_000 })],
   alone: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(3, 'mobile', 'ios', 'iPhone', { ago: 12 })],
   /** 폰 승인(ADR-052): iPhone은 켜짐, Android는 꺼 두었고 다시 켜 달라고 청함 */
-  px: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(3, 'mobile', 'ios', '사장님 iPhone', { ago: 12, approval: 'on' }), devRow(4, 'mobile', 'android', '', { ago: 3, approval: 'asked' })],
+  px: () => [devRow(1, 'desktop', 'macos', 'MacBook Pro', { self: true, ago: 40 }), devRow(3, 'mobile', 'ios', 'iPhone 16 Pro', { ago: 12, approval: 'on', lastSeenAt: Date.now() }), devRow(4, 'mobile', 'android', 'Galaxy S25', { ago: 3, approval: 'asked' })],
 };
 const req = (stage, o = {}) => ({ deviceId: '00000009-0000-4000-8000-000000000000', name: '새 노트북', platform: 'windows', createdAt: Date.now() - 60_000, stage, triesLeft: stage === 'code' ? 3 : null, ...o });
 const signedIn = { step: 'signed_in', email: 'owner@ganada.example', codeExpiresAt: null, error: null, phones: 2 };

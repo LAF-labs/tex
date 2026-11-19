@@ -148,7 +148,8 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
       if (x.role !== 'desktop' && x.role !== 'mobile') shape();
       if (!['windows', 'macos', 'ios', 'android'].includes(x.platform as string) || !['pending', 'active', 'suspended', 'revoked'].includes(x.state as string)) shape();
       if (!(x.deleteAfter === null || x.deleteAfter === undefined || int(x.deleteAfter))) shape();
-      return { deviceId: x.deviceId as string, role: x.role as ServerDevice['role'], platform: x.platform as ServerDevice['platform'], name: x.name as string, state: x.state as ServerDevice['state'], registeredAt: x.registeredAt as number, Sx: x.Sx as string, Vx: x.Vx as string, deleteAfter: (x.deleteAfter as number | null | undefined) ?? null };
+      if (!(x.lastSeenAt === null || x.lastSeenAt === undefined || int(x.lastSeenAt))) shape();
+      return { deviceId: x.deviceId as string, role: x.role as ServerDevice['role'], platform: x.platform as ServerDevice['platform'], name: x.name as string, state: x.state as ServerDevice['state'], registeredAt: x.registeredAt as number, Sx: x.Sx as string, Vx: x.Vx as string, deleteAfter: (x.deleteAfter as number | null | undefined) ?? null, lastSeenAt: (x.lastSeenAt as number | null | undefined) ?? null };
     });
   };
   /** 새 PC 연결 우편함 경로. 기기 ID는 UUIDv4만(egress 허용 경로와 같은 모양) */
@@ -235,10 +236,11 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
       if (!isObj(b) || !str(b.deviceId, 64)) shape();
       return { deviceId: (b as { deviceId: string }).deviceId };
     },
-    async deviceToken(cert, dpop, scopes) {
+    async deviceToken(cert, dpop, scopes, model) {
       try {
-        // @sax/remote requestDeviceToken은 본문이 {cert}뿐이다. 범위를 줄일 때만 본문에 scopes를 더한다(DPoP는 인증서에 묶여 본문과 무관).
-        const http: HttpJson = scopes ? (req) => httpJson({ ...req, body: JSON.stringify({ ...(JSON.parse(req.body!) as object), scopes: [...scopes] }) }) : httpJson;
+        // @sax/remote requestDeviceToken은 본문이 {cert}뿐이다. 범위를 줄일 때 scopes를, 모델 이름을 알면 model을 본문에 더한다(DPoP는 인증서에 묶여 본문과 무관).
+        const extra = { ...(scopes ? { scopes: [...scopes] } : {}), ...(model ? { model: model.slice(0, 40) } : {}) };
+        const http: HttpJson = Object.keys(extra).length ? (req) => httpJson({ ...req, body: JSON.stringify({ ...(JSON.parse(req.body!) as object), ...extra }) }) : httpJson;
         return await requestDeviceToken(http, accountOrigin, cert, dpop);
       } catch (e) {
         const code = (e as { code?: unknown }).code;

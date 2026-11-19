@@ -21,6 +21,8 @@ export interface DeviceView {
   registeredAt: number;
   /** 정지된 기기가 완전히 끊기는 시각(ms). 없으면 null */
   deleteAfter: number | null;
+  /** 마지막 접속(ms). 이 PC는 지금, 서버가 모르면 null */
+  lastSeenAt: number | null;
   /** 이 PC */
   self: boolean;
   /** AIK 서명 목록에 같은 역할·키로 있다. false면 계정 웹에서 신청만 했거나 서버 기록과 목록이 다르다 */
@@ -173,6 +175,7 @@ export class DeviceManager {
           state: d.state as DeviceView['state'],
           registeredAt: d.registeredAt,
           deleteAfter: d.deleteAfter,
+          lastSeenAt: d.deviceId === s.deviceId ? Date.now() : d.lastSeenAt,
           self: d.deviceId === s.deviceId,
           listed: !!e && e.role === d.role && e.Sx === d.Sx && e.Vx === d.Vx,
         };

@@ -80,7 +80,8 @@ const V = {
   ),
   op: validator<{ op: AcctOp; aikSig: string }>(signedOpSchema),
   /** scopes(선택): 범위 축소(ADR-040 결정 1). 비어 있지 않고 중복 없는 알려진 범위 이름 */
-  deviceToken: validator<{ cert: SignedCert; scopes?: Scope[] }>(obj({ cert: signedCertSchema, scopes: { type: 'array', minItems: 1, maxItems: ALL_SCOPES.length, uniqueItems: true, items: { enum: [...ALL_SCOPES] } } }, ['cert'])),
+  // model: 기기가 알린 모델 이름(예: "iPhone 16 Pro", "MacBook Pro"). 있으면 목록의 기기 이름을 이것으로 고친다(2026-11-19 대표)
+  deviceToken: validator<{ cert: SignedCert; scopes?: Scope[]; model?: string }>(obj({ cert: signedCertSchema, scopes: { type: 'array', minItems: 1, maxItems: ALL_SCOPES.length, uniqueItems: true, items: { enum: [...ALL_SCOPES] } }, model: { type: 'string', minLength: 1, maxLength: 40 } }, ['cert'])),
   linkId: validator<{ id: string }>(obj({ id: S.uuid4 })),
   // 새 PC 연결 우편함(D08 §4.3). 모양과 크기만 본다. 약속·6자리·서명·봉인문의 진위는 두 PC가 본다
   pcLinkHello: validator<{ hello: { v: 1; device_id: string; Sx: string; Vx: string; Hx: string; commit: string } }>(
@@ -447,7 +448,7 @@ export function accountRouter(o: AccountAppOpts): Router {
     // 검증 전에는 IP 단위만(서명 검증 비용), 기기 단위는 검증 통과 뒤에 센다
     await limit(`devtok-ip:${await ipKey(ctx)}`, DEVICE.deviceTokenAttemptsPerIpHour, MS.H);
     const dpop = ctx.headers.dpop;
-    const out = await svc.issueDeviceToken(b.cert, Array.isArray(dpop) ? undefined : dpop, o.publicOrigin + ctx.path, async () => limit(`devtok:${await devSalt.hash(b.cert.cert.device_id)}`, DEVICE.deviceTokensPerHour, MS.H), b.scopes);
+    const out = await svc.issueDeviceToken(b.cert, Array.isArray(dpop) ? undefined : dpop, o.publicOrigin + ctx.path, async () => limit(`devtok:${await devSalt.hash(b.cert.cert.device_id)}`, DEVICE.deviceTokensPerHour, MS.H), b.scopes, b.model);
     return json(200, out);
   });
 

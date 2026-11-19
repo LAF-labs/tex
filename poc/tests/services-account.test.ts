@@ -522,6 +522,27 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     assert.equal((await state(p1.id)).deleteAfter, null);
   });
 
+  it('기기 토큰: 모델 이름을 알리면 기기 이름이 바뀌고 마지막 접속이 적힌다(10분 안에는 다시 쓰지 않는다, 2026-11-19 대표)', async () => {
+    const { pc, s, ps } = await fleet(e, 'seen@example.com', 1);
+    const p1 = ps[0]!;
+    const c1 = cert(pc.aik, p1, e.clock.now() + 90 * D);
+    const tok = (model?: string) => e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c1), p1.V, e.clock.now()) }, body: { cert: c1, ...(model ? { model } : {}) } });
+    const row = async () => ((await e.req('GET', '/v1/devices', { headers: bearer(s) })).json.devices as Array<Record<string, unknown>>).find((d) => d.deviceId === p1.id)!;
+    assert.equal((await row()).lastSeenAt, null);
+    const t0 = e.clock.now();
+    assert.equal((await tok('iPhone 16 Pro\u0007')).status, 200);
+    assert.equal((await row()).name, 'iPhone 16 Pro');
+    assert.equal((await row()).lastSeenAt, t0);
+    e.clock.advance(60_000);
+    assert.equal((await tok()).status, 200);
+    assert.equal((await row()).lastSeenAt, t0, '10분 안에는 시각을 다시 쓰지 않는다');
+    assert.equal((await row()).name, 'iPhone 16 Pro', '모델을 안 알리면 이름은 그대로');
+    e.clock.advance(11 * 60_000);
+    assert.equal((await tok()).status, 200);
+    assert.equal((await row()).lastSeenAt, e.clock.now());
+    assert.equal((await tok('x'.repeat(41))).status, 400);
+  });
+
   it('폐기: 계정의 첫 PC는 가입 첫 주에도 유예 없이 즉시 끊는다(ADR-048 결정 6)', async () => {
     const { pc, d2, ps, state } = await fleet(e, 'rev1@example.com', 1);
     const p1 = ps[0]!;

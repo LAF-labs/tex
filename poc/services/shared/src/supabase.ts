@@ -38,6 +38,7 @@ const svc = (name: string, from: number, to: number): ExportService => ({ name, 
  * - 2026111600: 계정 004 탈퇴 7일 유예(accounts.delete_after, F-06)
  * - 2026111601: 계정 005·006 카드 정기결제 빌링키·청약철회 환불 참조(토스페이먼츠 자동결제), 게이트웨이 003 하루 사용 금액(체험·유료 일 한도)
  * - 2026111800: 계정 010 계정 열쇠 보관(key_escrow, ADR-050)
+ * - 2026111900: 계정 011 기기 마지막 접속(devices.last_seen_at, 널 허용 칸 추가만)
  */
 export const SUPABASE_PHASES: readonly ExportPhase[] = [
   { prefix: '2026110600', rolesFile: '20261106000000_sax_roles.sql', limits: true, services: [svc('account', 1, 1), svc('gateway', 1, 1), svc('relay', 1, 1), svc('push', 1, 1)] },
@@ -50,6 +51,7 @@ export const SUPABASE_PHASES: readonly ExportPhase[] = [
   { prefix: '2026111700', rolesFile: null, limits: false, services: [svc('account', 7, 8)] },
   { prefix: '2026111701', rolesFile: null, limits: false, services: [svc('account', 9, 9)] },
   { prefix: '2026111800', rolesFile: null, limits: false, services: [svc('account', 10, 10)] },
+  { prefix: '2026111900', rolesFile: null, limits: false, services: [svc('account', 11, 11)] },
 ];
 
 /** 함수·룸 호스트로 올리는 서비스 전부(이름마다 하나, 처음 나온 단계 순서) */

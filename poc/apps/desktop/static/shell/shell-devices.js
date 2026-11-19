@@ -40,6 +40,14 @@ const kindName = (d) => (d.role === 'desktop' ? (d.platform === 'macos' ? 'Mac' 
  * 상태 한 줄(폰 앱과 같은 말). linking: 이 기기에 열린 새 PC 연결 요청이 있다(pclink.list에 같은 deviceId, 끝나지 않은 단계).
  * 새 PC는 로그인하면 목록에 먼저 오르고(active) 금고 키를 받기 전까지 요청이 열려 있다. 그동안 '쓰는 중'이 아니라 '연결하는 중'이다.
  */
+/** "2026.11.19 마지막 접속"(오늘이어도 날짜로). 모르면 null. */
+export const lastSeenText = (at) => {
+  if (!Number.isFinite(at)) return null;
+  const t = new Date(at);
+  return `${t.getFullYear()}.${String(t.getMonth() + 1).padStart(2, '0')}.${String(t.getDate()).padStart(2, '0')} 마지막 접속`;
+};
+
+/** 줄 아래 보조 글씨 하나(2026-11-19 대표: 기기 이름과 마지막 접속일만). 연결 중이거나 끊기 예약된 PC만 그 상태를 쓴다. */
 export function deviceSub(d, now, linking = false) {
   if (d.state === 'pending' || linking) return '연결하는 중';
   if (d.state === 'suspended') {
@@ -47,7 +55,7 @@ export function deviceSub(d, now, linking = false) {
     const days = Math.ceil((d.deleteAfter - now) / DAY);
     return days <= 0 ? '곧 목록에서 빠져요' : `연결을 끊었어요. ${days}일 뒤 목록에서 빠져요`;
   }
-  return d.self ? '이 PC' : '쓰는 중';
+  return lastSeenText(d.self ? now : d.lastSeenAt);
 }
 
 /** 목록에 보일 기기: 끊었거나 막아 둔 폰은 바로 뺀다(PC는 새로 붙은 PC가 밀어내지 못하게 남는 날짜를 보인다). */
@@ -226,9 +234,8 @@ export function createDevices(ctx) {
     const linking = s.reqs.some((x) => x.deviceId === d.deviceId && x.stage !== 'done');
     const sub = deviceSub(d, Date.now(), linking);
     const attrs = { 'data-device': d.deviceId, 'data-device-state': linking ? 'linking' : d.state, ...(d.self ? { 'data-device-self': '' } : {}) };
-    // 폰 승인 상태(이 PC와 연결한 폰만): 켜짐 → [승인 끄기], 꺼 둠 → [다시 허용]
+    // 폰 승인 상태(이 PC와 연결한 폰만): 켜짐 → [승인 끄기], 꺼 둠 → [다시 허용]. 상태 글은 두지 않는다(단추로만 드러난다)
     const px = d.role === 'mobile' && d.state === 'active' ? d.approval : undefined;
-    const pxSub = px === 'on' ? ['이 폰에서 발급을 승인해요'] : px === 'paused' ? ['폰 승인이 꺼져 있어요'] : px === 'asked' ? ['폰 승인이 꺼져 있어요', '폰에서 다시 켜 달라고 했어요'] : [];
     const pxAct =
       px === 'on'
         ? btn('승인 끄기', () => set({ pxConfirm: d.deviceId, confirm: null, msg: null }), 'sx-btn-quiet', { disabled: s.busy, 'data-act': 'px-off-open' })
@@ -242,7 +249,7 @@ export function createDevices(ctx) {
       act = btn('연결 끊기', () => set({ confirm: d.deviceId, pxConfirm: null, msg: null }), 'sx-btn-quiet', { 'data-act': 'device-unlink-open' });
     }
     if (px) attrs['data-px'] = px;
-    return row(attrs, name, d.self && activePcs <= 1 ? [sub, LAST_PC] : [sub, ...pxSub], d.state === 'suspended', pxAct, act);
+    return row(attrs, name, sub, d.state === 'suspended', pxAct, act);
   }
 
   function group(title, list, activePcs, role) {
@@ -253,7 +260,7 @@ export function createDevices(ctx) {
     return h(
       'article',
       { class: 'sx-card dev-group', 'data-device-group': role, ...(full ? { 'data-device-full': '' } : {}) },
-      h('div', { class: 'sx-card-hd' }, h('h2', { class: 'sx-card-title' }, title), h('span', { class: 'sx-meta', 'data-device-count': String(list.length) }, `${MAX_PER_ROLE}대 중 ${list.length}대`)),
+      h('div', { class: 'sx-card-hd', 'data-device-count': String(list.length) }, h('h2', { class: 'sx-card-title' }, title)),
       list.length ? h('div', { class: 'dev-rows' }, ...list.map((d) => deviceRow(d, activePcs, d.deviceId === firstPaused))) : h('p', { class: 'sx-body-sm is-muted' }, role === 'mobile' ? '아직 연결한 폰이 없어요. 위의 [폰 연결]로 연결해요.' : '연결한 PC가 없어요.'),
       full ? h('p', { class: 'sx-meta', 'data-device-full-note': '' }, FULL_NOTE) : null,
     );
