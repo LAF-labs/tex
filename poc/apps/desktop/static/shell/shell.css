@@ -115,6 +115,24 @@ body.bp-dragging, body.bp-dragging * { cursor: col-resize !important; user-selec
 .col { width: var(--col-w, min(var(--l-chat-max), calc(100% - 2 * var(--l-gutter)))); margin-left: auto; margin-right: auto; box-sizing: border-box; }
 .thread-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable both-edges; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 32px); mask-image: linear-gradient(to bottom, transparent 0, #000 32px); }
 .thread-scroll .sx-thread { padding: var(--space-4) 0 var(--space-6); max-width: none; }
+/* 읽던 자리 지키기(11-19): 위로 올려 읽는 중 새 답이 오면 대화 아래 가운데 작은 알약 하나. 누르면 맨 아래로. 대화를 밀지 않는다. */
+.thread-wrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.sx-new-reply { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px 0 12px; border: 0; border-radius: var(--radius-full); background: var(--surface-overlay); color: var(--ink); font: inherit; font-size: 13px; font-weight: 600; line-height: 20px; box-shadow: var(--shadow-overlay); cursor: pointer; z-index: 2; animation: new-reply-in var(--motion-fast) var(--ease-out); }
+.sx-new-reply[hidden] { display: none; }
+.sx-new-reply svg { width: 10px; height: 10px; }
+.sx-new-reply:hover { background: var(--surface-tint); }
+.sx-new-reply:active { transform: translateX(-50%) scale(0.97); }
+.sx-new-reply:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+@keyframes new-reply-in { from { opacity: 0; transform: translate(-50%, 4px); } }
+@media (prefers-reduced-motion: reduce) { .sx-new-reply { animation: none; } }
+/* 실행 카드 단계 목록(11-19): 닫힌 채로 시작. [단계 보기]는 글자만인 조용한 단추, 연 목록은 카드 아래 면 안에 둔다. */
+.sx-steps-toggle { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; height: 28px; margin: 2px 0 0 -6px; padding: 0 6px; border: 0; border-radius: var(--radius-sm, 6px); background: transparent; color: var(--ink-2); font: inherit; font-size: 13px; line-height: 20px; cursor: pointer; }
+.sx-steps-toggle:hover { color: var(--ink); background: var(--surface-tint); }
+.sx-steps-toggle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.sx-steps-toggle svg { width: 10px; height: 10px; transition: transform var(--motion-fast) var(--ease-out); }
+.sx-steps-toggle[aria-expanded=true] svg { transform: rotate(180deg); }
+.sx-run-steps { margin-top: 4px; }
+.sx-run-steps[hidden] { display: none; }
 
 /* 이번 달 할 일(08 M-02, ADR-033): 대화 열 맨 위 한 줄. 대화를 가리지 않는다. 누르면 작업 패널에 목록이 열린다. 승인 버튼은 없다. */
 .sx-board { flex: none; margin-top: var(--space-2); }
@@ -180,10 +198,14 @@ body.bp-dragging, body.bp-dragging * { cursor: col-resize !important; user-selec
 .sx-quick button.is-fill { background: transparent; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink-2); }
 .sx-quick button svg { width: 12px; height: 12px; flex: none; color: var(--ink-3); }
 /* 대화 말풍선·시간 줄·입력중 점: Muse 12.1 채팅 값 그대로(모서리 22, 여백 11/15, 글자 16/22, 묶음 간격 4, 묶음 사이 16). */
-.chat { --bubble-me: #cbe5ff; --bubble-app: #e9eaeb; --stamp-ink: #00040996; --dot-on: #0007115e; --dot-off: #00071117; }
+.chat { --bubble-me: #cbe5ff; --bubble-app: #e9eaeb; --stamp-ink: #00040996; --dot-on: #0007115e; --dot-off: #00071117; --chat-bg: var(--canvas); }
+/* 다크(11-19): 말풍선은 Muse 다크 값(내 말 #0074E8, 앱 말 #1F1F20), 내 말 글자는 흰색. 시각 줄·점 셋은 Muse 다크 값을 받지 못해 라이트 값을 흰색으로 뒤집었다(같은 투명도). */
+@media (prefers-color-scheme: dark) {
+  .chat { --bubble-me: #0074e8; --bubble-app: #1f1f20; --bubble-me-ink: #ffffff; --stamp-ink: #ffffff96; --dot-on: #ffffff5e; --dot-off: #ffffff17; }
+}
 .thread-scroll .sx-thread { gap: 16px; }
 .sx-thread > .sx-me, .sx-app:not(:has(> :not(p))), .sx-app:has(> :not(p)) > p:not([class]) { box-sizing: border-box; min-height: 44px; max-width: 90%; width: fit-content; padding: 11px 15px; border-radius: 22px; font-size: 16px; line-height: 22px; color: var(--ink); overflow-wrap: anywhere; white-space: pre-wrap; }
-.sx-thread > .sx-me { justify-self: end; background: var(--bubble-me); }
+.sx-thread > .sx-me { justify-self: end; background: var(--bubble-me); color: var(--bubble-me-ink, var(--ink)); }
 /* 말풍선은 양쪽 모두 글만큼, 맞은편 끝 전에 줄을 바꾼다(최대 90%, 폰과 같음). 카드만 대화 폭 전체(대표 결정 2026-11-19). */
 .sx-app:not(:has(> :not(p))) { justify-self: start; background: var(--bubble-app); }
 .sx-app:not(:has(> :not(p))) > p { margin: 0; }
@@ -196,6 +218,15 @@ body.bp-dragging, body.bp-dragging * { cursor: col-resize !important; user-selec
 /* 시간 줄: 가운데 12/16, 첫 줄은 위 40 아래 16, 나머지 위아래 16(대화 간격 16이 이미 위아래에 있다) */
 .sx-stamp { text-align: center; font-size: 12px; line-height: 16px; font-weight: 400; color: var(--stamp-ink); }
 .sx-thread > .sx-stamp:first-child { padding-top: 24px; }
+/* 말풍선 반응(ADR-057, Muse 12.1 s2n 값): 말풍선 아래 끝 귀퉁이(끝 4, 아래 -20)에 높이 28·최소 폭 38 알약.
+   바탕은 앱 말풍선 색, 테두리 2는 대화 바탕색이라 말풍선과 겹친 곳이 끊겨 보인다. 0.12초에 커지며 나온다. */
+.sx-thread > .sx-me.has-reaction { position: relative; margin-bottom: 12px; }
+.sx-react { position: absolute; inset-inline-end: 4px; bottom: -20px; z-index: 1; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; height: 28px; min-width: 38px; padding: 0 8.5px; border-radius: 999px; border: 2px solid var(--chat-bg); background: var(--bubble-app); font-size: 16px; line-height: 16px; white-space: nowrap; user-select: none; animation: sx-react-in 120ms ease-out both; }
+@keyframes sx-react-in { from { opacity: 0; transform: translateY(-4px) scale(.5); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .sx-react { animation: none; } }
+/* 반응이 달린 말 다음 말은 붙이지 않는다(알약이 다음 말풍선에 겹치지 않게) */
+.sx-me.has-reaction + .sx-me.is-joined-prev { margin-top: 0; border-top-right-radius: 22px; }
+.sx-me.has-reaction.is-joined-next { border-bottom-right-radius: 22px; }
 /* 입력중: 높이 44 앱 말풍선 안 지름 8 점 셋(사이 4). 1초마다 통통 튀고(점마다 150ms 늦게), 진한 점이 400ms마다 옆으로 넘어간다. */
 .sx-typing { justify-self: start; box-sizing: border-box; height: 44px; padding: 0 15px; border-radius: 22px; background: var(--bubble-app); display: flex; align-items: center; gap: 4px; animation: sx-typing-in 300ms ease both; }
 .sx-typing i { width: 8px; height: 8px; border-radius: 50%; background: var(--dot-off); animation: sx-dot-bounce 1s infinite, sx-dot-tone 1.2s linear infinite; }

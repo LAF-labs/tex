@@ -409,6 +409,10 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
     assert.throws(go, (e: Error & { code?: string }) => e.code === 'package.load_failed');
     assert.deepEqual(log.lines.slice(before).map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.code === 'run.package_refused').map((l) => l.code_), ['registry.signature_insufficient']);
     assert.equal(calls, 2);
+    // 앱 판이 패키지 minAppVersion보다 낮으면 검증 실패와 구분한다(사용자에게 "앱을 업데이트해 주세요"를 보이려고)
+    answer = { ok: false, code: 'registry.app_version_low' };
+    assert.throws(go, (e: Error & { code?: string }) => e.code === 'package.app_old');
+    assert.equal(calls, 3);
     assert.equal(opened, 0);
   });
 

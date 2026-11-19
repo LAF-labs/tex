@@ -298,7 +298,7 @@ export function answersPending(parsed: Parsed, runs: Drafts, text?: string): boo
 
 /** parsed가 없으면 정규식으로 뽑는다. 화면의 부가세 선택(vat)이 문장보다 먼저다. */
 /** 빈 요청·모르는 요청의 기본 안내. */
-export const EMPTY_REQUEST_TEXT = '세금계산서 발급이나 지난 발급·매출을 말해 주세요.';
+export const EMPTY_REQUEST_TEXT = '세금계산서 발급이나 지난 발급, 매출을 말해 주세요.';
 /** 이 앱이 떼지 않는 증명서(지방세 납세증명·4대보험 등). 떼는 것만 말한다. */
 export const CERT_OTHER_TEXT = `그 증명서는 이 앱에서 떼지 못해요. ${CERT_DOCS_SHOWN.map((d) => d.name).join('·')}은 바로 뗄 수 있어요.`;
 /** 받침에 맞춘 목적격 조사(을/를). */
@@ -413,6 +413,8 @@ export interface RunViewBase {
   itemGuessed: boolean;
   /** 승인·게이트 전에 실패·핸드오프로 끝났다(발급 없음): 카드에 [다시 준비](같은 값의 새 초안) */
   redo?: boolean;
+  /** 실패로 끝난 까닭 코드(폰에 알릴 것만: package.app_old). 없으면 다른 까닭이다. */
+  endCode?: string;
   /** 실행 Chrome(탭·프로세스)이 제출 전에 닫혀 멈췄다. 카드가 "브라우저가 닫혔어요 [다시 시작]"을 보인다. */
   browserClosed?: boolean;
   /** 끝난 시각(main 시계, 브라우저 닫힘과 엔진 끝이 같은 순간에 오는 경우를 맞춘다). 렌더러는 쓰지 않는다. */
@@ -437,6 +439,10 @@ export interface RunViewBase {
   batch?: { id: string; index: number; count: number; approved?: boolean; halted?: boolean; skipped?: boolean };
   /** 앱이 다시 켜지거나 맥이 깨어난 뒤 같은 값으로 다시 시작한 실행(앞 실행 id). 카드에 "이어서 해요" 한 줄. */
   resumedFrom?: string;
+  /** 공동인증서 로그인이 안 돼 같은 값으로 인증서 로그인을 다시 시도한 실행(앞 실행 id). 한 번 다시 했으면 다음 실패는 사람이 고른다(인증서로 다시·간편인증). */
+  certRetryOf?: string;
+  /** 폰에서 시작한 간편인증 요청을 보냈다(인증 앱 코드, 승인 마감 main 시계). 차례를 떠나면 의미 없다. */
+  simpleAuth?: { provider: string; deadline: number };
   writeDate: string;
   /** 대화·카드에서 작성일자를 정했다(ADR-049). 없으면 writeDate는 만든 날(KST 오늘)이다. */
   writeDateSet?: boolean;

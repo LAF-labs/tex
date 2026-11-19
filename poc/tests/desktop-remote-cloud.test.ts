@@ -61,7 +61,7 @@ import { ed25519Private, ed25519RawPublic } from '../services/shared/src/index.t
 
 const hex = () => randomBytes(32).toString('hex');
 
-/** 개발 스택 모양의 앞단(apps/mobile/dev/stack.ts와 같은 갈래): /v1/mailboxes·/v1/rooms(WSS 포함) → 릴레이, 나머지 → 계정 */
+/** 개발 스택 모양의 앞단(scripts/phone-stack/stack.ts와 같은 갈래): /v1/mailboxes·/v1/rooms(WSS 포함) → 릴레이, 나머지 → 계정 */
 async function stack() {
   const front = http.createServer();
   await new Promise<void>((r) => front.listen(0, '127.0.0.1', r));

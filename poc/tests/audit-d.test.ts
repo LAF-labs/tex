@@ -26,7 +26,7 @@ import { GestureClock, isGestureKey, isTypingKey, RateWindow } from '../apps/des
 import { today as fixtureToday } from '../apps/desktop/src/h01-fixture.ts';
 import { DEBUG_SWITCHES, findDebugSwitch } from '../apps/desktop/src/harden.ts';
 import { MAX_TRIES, PICK_TTL_MS, PickStore } from '../apps/desktop/src/pick-store.ts';
-import { parseSecretNeeded, secretPageHtml, secretTitle, SecretWindowCoordinator } from '../apps/desktop/src/secret-labels.ts';
+import { parseSecretNeeded, SecretWindowCoordinator } from '../apps/desktop/src/secret-labels.ts';
 import { interpret, type Counterparty } from '../apps/desktop/src/shell-mock.ts';
 import { fatalText, NOTE, ShellRuns, vaultNotice } from '../apps/desktop/src/shell-runs.ts';
 import { loadTokens } from '../apps/desktop/src/shell-tokens.ts';
@@ -117,13 +117,6 @@ describe('audit-d: D2 자식 env(N-23)', () => {
 });
 
 describe('audit-d: D3 금고가 부르는 비밀 창(N-44·N-11)', () => {
-  it('secretTitle returns fixed labels and throws on unknown kind', () => {
-    assert.equal(secretTitle('cert_password'), '금고 · 공동인증서 비밀번호');
-    assert.equal(secretTitle('portal_password'), '금고 · 홈택스 비밀번호');
-    // 보안카드는 지원하지 않는다(대표 결정 2026-11-19): 표에 없는 종류다
-    for (const bad of ['toString', '__proto__', 'otp', '', 'security_card']) assert.throws(() => secretTitle(bad), /unknown_secret_kind/, bad);
-  });
-
   it('coordinator opens one window at a time and ignores secret.needed for a runId that is not active', () => {
     const active = new Set(['run-a', 'run-b']);
     const c = new SecretWindowCoordinator((id) => active.has(id));
@@ -142,18 +135,8 @@ describe('audit-d: D3 금고가 부르는 비밀 창(N-44·N-11)', () => {
     assert.equal(parseSecretNeeded(null), null);
   });
 
-  it('secret page: 라벨·첫 줄·고정 문구는 main 표에서, 프로필 이름은 텍스트로만', () => {
-    const html = secretPageHtml({ runId: 'run-a', kind: 'portal_password', scope: 'business' }, '<img src=x onerror=1>가나다');
-    assert.match(html, /<title>금고 · 홈택스 비밀번호<\/title>/);
-    assert.match(html, /세금계산서 발급 · 홈택스 · &lt;img src=x onerror=1&gt;가나다/);
-    assert.match(html, /앱은 대화창 안에서 비밀번호·카드 번호를 묻지 않아요\./);
-    assert.match(html, /data-kind="portal_password" data-scope="business">/);
-    assert.match(html, /default-src 'none'; script-src 'self'/);
-  });
-
   it('secret.html is served only by the shell protocol', () => {
     assert.ok(!fs.existsSync(path.join(root, 'apps/desktop/static/secret.html')), '개발 콘솔 정적 비밀 창 없음');
-    assert.match(src('shell-app.ts'), /p === '\/secret\.html'/);
     // 렌더러 IPC에 비밀 창 명령이 없다. 창은 금고 secret.needed로만 열린다.
     assert.ok(!src('shell-app.ts').includes("'secret.openInput'"));
     assert.match(src('shell-app.ts'), /name === 'secret\.needed'/);

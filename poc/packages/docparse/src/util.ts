@@ -52,8 +52,6 @@ export function parseWon(raw: string | number | boolean | null | undefined): num
   return Number.isSafeInteger(n) ? (neg ? -n : n) : null;
 }
 
-export const ISO_DATE = /^(19|20)\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
-
 export function isoDate(y: number, m: number, d: number): string | null {
   if (y < 100) y += 2000;
   if (y < 2000 || y > 2099 || m < 1 || m > 12 || d < 1 || d > 31) return null;

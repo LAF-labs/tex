@@ -59,7 +59,7 @@
 | [ADR-053](ADR-053-push-wake-phone-approval.md) | 승인 요청이 오면 내용 없는 푸시로 폰을 깨운다: PC가 `POST /v1/wake`, 알림은 앱을 열라는 신호일 뿐(승인은 ADR-052 그대로), 글은 앱 안 현지화 키, iPhone 먼저, 확장(NSE)은 1단계에서 뺌, 운영 APNs 켜기는 대표 확인 뒤 | 방향 채택(2026-11-19 yulmu: 알림 글은 종류별), 구현 전 |
 | [ADR-054](ADR-054-chat-turn-events-streaming-principles.md) | 대화 한 턴을 이벤트로 감싼다: `turnId`, 시작과 끝(`completed`, `failed`, `cancelled`), 판정과 도구와 답을 턴 안 이벤트로, 점 셋은 턴 상태에서, 평가와 운영 신호가 같은 기록을 봄, 기기 밖으로 나가지 않음. 나중 스트리밍 원칙(검사 지난 문장 단위, 75ms 묶음, 서버에 이어 받기용 사본 없음) | 제안(2026-11-19), ADR-051 단계와 같이 구현 |
 | [ADR-055](ADR-055-new-pc-record-transfer-one-time-key.md) | 새 PC로 기록 옮기기: 새 PC가 한 번용 키로 청하고, 쓰던 PC가 다음에 켜질 때 잠근 묶음을 서버에 최대 7일 맡기고, 새 PC가 받아 푼다(두 PC가 같이 켜질 필요 없음). 통장과 카드 내역, 영수증, 서류, 급여, 꾸러미를 옮기고 금고는 옮기지 않음 | 방향 채택(2026-11-19 yulmu: 쓰던 PC는 묻지 않고 자동으로 보냄), 암호 검토 전, 구현은 0.1.36 뒤 |
-| [ADR-056](ADR-056-generation-provider-switch-anthropic.md) | 시험 기간에는 생성 호출만 Anthropic으로(`GW_RESPOND_PROVIDER=anthropic`, 기본 `claude-opus-5-5`): 판정(jev)과 결정 모델 고르기는 OpenRouter 그대로, PC와 폰은 바뀌지 않음, 실고객 전에 처리방침 6항을 고치거나 되돌림 | 채택(2026-11-19 yulmu), 시험 기간 한정 |
+| [ADR-056](ADR-056-generation-provider-switch-anthropic.md) | 시험 기간에는 생성 호출만 Anthropic으로(`GW_RESPOND_PROVIDER=anthropic`, 기본 `claude-haiku-5-5`): 판정(jev)과 결정 모델 고르기는 OpenRouter 그대로, PC와 폰은 바뀌지 않음, 실고객 전에 처리방침 6항을 고치거나 되돌림 | 채택(2026-11-19 yulmu), 시험 기간 한정 |
 | [ADR-057](ADR-057-chat-reaction-ack.md) | 말풍선 반응: 판정(jev, chat_route_v1)이 받는 방식을 고른다. 맞장구·끝내는 말은 이모지 하나(👍 👀 ✅ 🙏)로 닫고 대화 모델을 부르지 않는다, 일을 맡기면 👀 먼저 달고 결과만 말한다. 폰 토큰에 판정 번들 하나를 연다 | 제안(2026-11-19), 실측 전 |
 
 AUDIT-D(설계 v1.3 + PoC 코드) 확정 53건의 처리 배정은 [D19 §3.5](../19-attack-surface.md)에 있다. ADR-025~029가 48건, D19 등록만이 5건이다. AUDIT-D는 처음에 ADR-022~026으로 적었고, main의 ADR-022·023과 겹쳐 2026-11-03 병합 때 ADR-025~029로 옮겼다(022→025 … 026→029, 예약 027→030).

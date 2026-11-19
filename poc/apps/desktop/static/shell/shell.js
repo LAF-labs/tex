@@ -26,6 +26,8 @@ const state = {
   dockOpen: false,
   /** 작성 카드 [자세히]를 편 카드(다시 그려도 펼친 채) */
   draftMore: new Set(),
+  /** 단계 목록을 연 실행 카드(실행 id). 새 카드는 닫힌 채로 시작한다. */
+  stepsOpen: new Set(),
   boot: null,
   today: new Date(),
   view: 'chat',
@@ -46,6 +48,7 @@ const state = {
   fill: [], // 에이전트가 되물을 때 입력창 위에 띄우는 채우기 칩 { label, text, cp }
   composing: false, // 입력창에서 타이핑·클릭을 시작했다(칩을 숨긴다). 보내면 풀린다
   agentAsk: false, // 대화 에이전트가 되묻는 중(답 상자의 칩으로 답한다). 빠른 실행 칩을 숨긴다
+  lastMe: null, // 마지막에 보낸 내 말풍선(반응 알약이 붙는 곳, ADR-057)
   waitEl: null, // 답을 기다리는 줄(진행 단계 이벤트가 글자를 바꾼다)
   barActive: false,
   board: null, // 이번 달 판(main이 계산, board.ts). 판에는 승인 버튼이 없다(ADR-021·033)
@@ -270,6 +273,8 @@ const act = {
   },
   // 핸드오프 [다 했어요]·[직접 발급함]: 재개·확인으로만 간다(발급하지 않는다). main이 실제 입력 뒤 3초 안에만 받는다.
   resume: (id) => handoffCall('run.resume', id),
+  retryCert: (id) => handoffCall('run.retryCert', id),
+  simpleDone: (id) => handoffCall('run.simpleDone', id),
   manualDone: (id) => handoffCall('run.manualDone', id),
   // [홈택스 창 보기]: 실행 Chrome 창을 앞으로(main → 금고). 발급·재개와 무관하다.
   showBrowser: async (id) => {
@@ -453,10 +458,15 @@ const chat = {
 function buildChat() {
   chat.thread = h('div', { class: 'sx-thread' });
   chat.scroll = h('div', { class: 'thread-scroll' }, h('div', { class: 'col' }, chat.thread));
+  // 읽던 자리 지키기: 맨 아래에서 FOLLOW_PX 안이면 새 말을 따라 내리고, 위로 올려 읽는 중이면 [새 답]만 띄운다.
+  chat.newReply = h('button', { type: 'button', class: 'sx-new-reply', 'data-act': 'new-reply', hidden: '', onclick: () => scrollToEnd(true) }, icon('chevron'), '새 답');
+  chat.scroll.addEventListener('scroll', () => {
+    if (nearEnd()) chat.newReply.hidden = true;
+  }, { passive: true });
   chat.today = h('section', { class: 'col sx-board', 'aria-label': '이번 달 판', 'data-board': '' });
   chat.handoff = h('div', { class: 'col sx-handoff', role: 'status', 'data-handoff-band': '', hidden: '' });
   chat.quick = h('div', { class: 'sx-quick', id: 'quick' });
-  chat.input = h('textarea', { rows: '1', placeholder: '세금계산서 발급이나 지난 발급·매출을 말해 주세요', 'aria-label': '입력창', id: 'composer' });
+  chat.input = h('textarea', { rows: '1', placeholder: '세금계산서 발급이나 지난 발급, 매출을 말해 주세요', 'aria-label': '입력창', id: 'composer' });
   chat.input.addEventListener('input', () => {
     state.composing = true;
     autoGrow();
@@ -470,8 +480,10 @@ function buildChat() {
     renderQuick();
   });
   chat.input.addEventListener('keydown', (e) => {
-    // Enter는 보내기, Shift+Enter는 줄바꿈. 한글 조합 중 Enter는 보내지 않는다. 이 입력창의 Enter는 어떤 승인도 하지 않는다.
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    // Enter는 보내기, Shift+Enter(와 Alt+Enter)는 줄바꿈. 한글 조합 중 Enter는 보내지 않는다. 이 입력창의 Enter는 어떤 승인도 하지 않는다.
+    // 조합 판정은 Mattermost 웹(webapp/channels/src/utils/keyboard.ts isKeyPressed, utils/post_utils.ts postMessageOnKeyPress)을 따른다:
+    // isComposing만으로는 조합을 끝내는 Enter가 keyCode 229로 한 번 더 오는 브라우저가 있어 둘 다 본다.
+    if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.isComposing && e.keyCode !== 229) {
       e.preventDefault();
       send();
     }
@@ -486,7 +498,7 @@ function buildChat() {
     { class: 'chat', 'data-view': 'chat' },
     chat.handoff,
     chat.today,
-    chat.scroll,
+    h('div', { class: 'thread-wrap' }, chat.scroll, chat.newReply),
     h('div', { class: 'quick-zone col' }, chat.quick),
     h('div', { class: 'bar-slot', 'aria-hidden': 'true' }),
     h('div', { class: 'composer-zone' }, h('div', { class: 'col sx-composer' }, inputBox)),
@@ -560,7 +572,7 @@ function renderOnboarding() {
   old.replaceWith(onboardingView(state.onb, onbAct));
   const locked = !state.onb.consents.terms;
   chat.input.disabled = locked;
-  chat.input.placeholder = locked ? '약관에 동의하면 입력할 수 있어요' : '세금계산서 발급이나 지난 발급·매출을 말해 주세요';
+  chat.input.placeholder = locked ? '약관에 동의하면 입력할 수 있어요' : '세금계산서 발급이나 지난 발급, 매출을 말해 주세요';
   renderQuick();
   scrollToEnd();
 }
@@ -749,13 +761,35 @@ function stampFor(el, at) {
   Object.assign(clock, { at, day, side, el });
 }
 
-function appendThread(el, scroll = true) {
-  // 지난 기록(scroll=false)은 시각을 모르니 날짜 줄만 쓰고, 지금 오가는 말에만 시간 줄을 붙인다.
+/**
+ * 대화 줄 하나 붙이기. 지난 기록(scroll=false)은 시각을 모르니 날짜 줄만 쓰고, 지금 오가는 말에만 시간 줄을 붙인다.
+ * 내가 보낸 말(mine)은 늘 맨 아래로 내린다. 앱의 말은 붙이기 전에 맨 아래 근처였을 때만 따라 내리고, 아니면 [새 답]을 띄운다(읽던 자리를 지킨다).
+ */
+function appendThread(el, scroll = true, mine = false) {
   if (scroll) stampFor(el, Date.now());
+  const follow = mine || nearEnd();
   chat.thread.append(el);
-  if (scroll) scrollToEnd();
+  if (!scroll) return;
+  if (follow) scrollToEnd();
+  else showNewReply();
 }
-const scrollToEnd = () => requestAnimationFrame(() => (chat.scroll.scrollTop = chat.scroll.scrollHeight));
+/** 맨 아래에서 이 거리(px) 안이면 "끝에 있다"로 본다(새 말을 따라 내린다). */
+const FOLLOW_PX = 80;
+const nearEnd = () => !chat.scroll || chat.scroll.scrollHeight - chat.scroll.scrollTop - chat.scroll.clientHeight <= FOLLOW_PX;
+const showNewReply = () => chat.newReply && (chat.newReply.hidden = false);
+/** 맨 아래로. 단추로 내릴 때만 부드럽게(움직임 줄이기 설정이면 바로). */
+const scrollToEnd = (smooth = false) =>
+  requestAnimationFrame(() => {
+    if (chat.newReply) chat.newReply.hidden = true;
+    const top = chat.scroll.scrollHeight;
+    if (smooth && !matchMedia('(prefers-reduced-motion: reduce)').matches) chat.scroll.scrollTo({ top, behavior: 'smooth' });
+    else chat.scroll.scrollTop = top;
+  });
+/** 카드를 바꿔 그린 뒤: 그리기 전에 끝 근처였으면 따라 내리고, 아니면 [새 답]. */
+const followEnd = (wasNear) => {
+  if (wasNear) scrollToEnd();
+  else showNewReply();
+};
 
 function autoGrow() {
   const el = chat.input;
@@ -878,8 +912,22 @@ async function send() {
   for (const b of chat.thread.querySelectorAll('[data-act="intent-retry"], [data-agent-chip]')) b.disabled = true;
   autoGrow();
   renderQuick();
-  appendThread(h('div', { class: 'sx-me' }, text));
+  const me = h('div', { class: 'sx-me' }, text);
+  appendThread(me, true, true);
+  state.lastMe = me;
   await ask(text, vat);
+}
+
+/** 판정이 고른 반응 허용 목록(ADR-057, @sax/chat-core REACTIONS와 같다). 이름 밖의 값은 그리지 않는다. */
+const REACTION_EMOJI = { thumbs_up: '👍', eyes: '👀', check: '✅', pray: '🙏' };
+const REACTION_LABEL = { thumbs_up: '좋아요', eyes: '보고 있어요', check: '확인', pray: '감사해요' };
+/** 사용자 말풍선 아래 귀퉁이에 반응 알약을 단다. 같은 말에 또 오면 바꾼다(하나만). */
+function reactTo(el, reaction) {
+  if (!el?.isConnected || !Object.hasOwn(REACTION_EMOJI, reaction)) return;
+  el.querySelector(':scope > .sx-react')?.remove();
+  el.classList.add('has-reaction');
+  el.dataset.reaction = reaction;
+  el.append(h('span', { class: 'sx-react', role: 'img', 'aria-label': REACTION_LABEL[reaction] }, REACTION_EMOJI[reaction]));
 }
 
 /**
@@ -930,6 +978,8 @@ async function ask(text, vat) {
     return;
   }
   if (r.kind === 'agent') return renderAgent(r);
+  // 반응만(ADR-057): 답 말풍선 없이 내 말에 이모지 하나. 점 셋은 위 finally에서 이미 거뒀다.
+  if (r.kind === 'reaction') return void reactTo(state.lastMe, r.reaction);
   // 세무사 꾸러미 요청: main이 그 달 꾸러미를 만들었다. 카드의 [꾸러미 열기]는 같은 달 꾸러미 화면으로 간다.
   if (r.kind === 'pack') {
     appendThread(h('div', { class: 'sx-app', 'data-pack-reply': r.pack.month }, h('p', {}, `${r.pack.label} 세무사 꾸러미를 만들었어요.`), packUi.chatCard(r.pack, (m) => (packUi.select(m), go('bundle')))));
@@ -1037,6 +1087,8 @@ async function handoffCall(method, id) {
         ? '버튼을 직접 눌러 주세요.'
         : c === 'not_handed_off'
           ? '이미 이어서 진행하고 있어요'
+          : c === 'simple.no_complete_button' || c === 'simple.complete_failed'
+            ? '간편인증이 아직 끝나지 않았어요. 인증 앱에서 승인한 뒤 다시 눌러 주세요.'
           : c === 'sign.turn_resume_only'
             ? '서명 차례에는 [다 했어요]만 받아요. 홈택스 창에서 서명을 마쳐 주세요.'
             : c === 'refused' || /^[a-z_]+\.[a-z_.]+$/.test(c)
@@ -1096,7 +1148,8 @@ function putRun(run) {
 }
 
 function renderRun(run) {
-  const cardAct = { ...act, editing: state.editing, editingFields: state.editingFields, editingFocus: state.editingFocus, draftErr: state.draftErr, editingCp: state.editingCp, counterparties: state.cps, draftMore: state.draftMore, toggleDraftMore: (id, open) => (open ? state.draftMore.add(id) : state.draftMore.delete(id)) };
+  const wasNear = nearEnd();
+  const cardAct = { ...act, editing: state.editing, editingFields: state.editingFields, editingFocus: state.editingFocus, draftErr: state.draftErr, editingCp: state.editingCp, counterparties: state.cps, draftMore: state.draftMore, toggleDraftMore: (id, open) => (open ? state.draftMore.add(id) : state.draftMore.delete(id)), stepsOpen: state.stepsOpen, toggleSteps: (id, open) => (open ? state.stepsOpen.add(id) : state.stepsOpen.delete(id)) };
   // 여러 건 묶음은 한 카드(data-batch)로 그린다. 건은 지금 받은 값(run)과 들고 있는 나머지 건을 순번대로.
   if (run.batch) {
     const mates = [...state.runs.values()].filter((x) => x.batch?.id === run.batch.id && x.id !== run.id);
@@ -1105,14 +1158,14 @@ function renderRun(run) {
     const old = chat.thread.querySelector(`[data-batch="${run.batch.id}"]`) ?? chat.thread.querySelector(`[data-run="${run.id}"]`);
     if (old) old.replaceWith(el);
     else appendThread(el);
-    if (chat.thread.lastElementChild === el || run.status === 'waiting') scrollToEnd();
+    if (old && (chat.thread.lastElementChild === el || run.status === 'waiting')) followEnd(wasNear);
     return;
   }
   const el = taskCard(run, cardAct);
   const old = chat.thread.querySelector(`[data-run="${run.id}"]`);
   if (old) old.replaceWith(el);
   else appendThread(el);
-  if (chat.thread.lastElementChild === el || run.status === 'waiting') scrollToEnd();
+  if (old && (chat.thread.lastElementChild === el || run.status === 'waiting')) followEnd(wasNear);
   // 카드만 다시 그려도 띠가 새 카드를 본다(화면 밖 옛 카드에 관찰자가 남아 띠가 카드와 함께 보이던 것).
   renderHandoff();
 }
@@ -2804,6 +2857,8 @@ window.sax.onEvent((ev) => {
     return;
   }
   if (ev.type === 'open-screen' && typeof ev.screen === 'string') return void openScreen(ev.screen);
+  // 일을 맡긴 말에 먼저 붙는 접수 표시(👀). 점 셋은 그대로 돌고 답은 결과만 말한다.
+  if (ev.type === 'chat-reaction') return void reactTo(state.lastMe, ev.reaction);
   if (ev.type === 'chat-progress') {
     const el = state.waitEl;
     if (el && Object.hasOwn(PROGRESS_TEXT, ev.phase)) {

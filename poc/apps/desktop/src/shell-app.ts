@@ -15,6 +15,7 @@ import { findInstalledChrome, pageAddress, SESSION_IDLE_REPORT_MS } from '@sax/v
 import { execFile } from 'node:child_process';
 import { app, autoUpdater as nativeUpdater, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, ShareMenu, shell as desktop } from 'electron';
 import { deviceModel } from './device-model.ts';
+import { runVersion } from './run-version.ts';
 import { AccountantPack, isPackMonth, packAsk } from './accountant-pack.ts';
 import { ACTION_TEXT, actionText, issueLocalApproval, kstToday, verifyLocalApproval, verifyLocalAttestation, type LocalApproval } from './approval-gate.ts';
 import { CERT_DOCS_SHOWN, certDocByCode, certInputsFor, type CertDocDef } from './cert-docs.ts';
@@ -36,7 +37,7 @@ import type { FixtureMode } from './fixture-mode.ts';
 import { GestureClock, isGestureKey, isTypingKey, RateWindow } from './gesture.ts';
 import { appHeaders, assertNoDebugSwitches, hardenApp, hardenSession, hardenWindow, SECRET_CSP } from './harden.ts';
 import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.ts';
-import { secretPageHtml, SecretWindowCoordinator, type SecretInputBind as OneShotInputBind } from './secret-labels.ts';
+import { SECRET_LABELS, SecretWindowCoordinator, type SecretInputBind as OneShotInputBind } from './secret-labels.ts';
 import { openVaultInputWindow } from './secret-window.ts';
 import { bankAutoHandlers, CODEF_WINDOW_TITLE, codefPageHtml, parseCodefNeeded, type CodefNeeded } from './bank-auto.ts';
 import { barBounds, browserPanelWidth, SHELL } from './shell-layout.ts';
@@ -133,14 +134,11 @@ const FILES: Record<string, string> = {
   '/password-rules.js': 'text/javascript',
   '/common-passwords.js': 'text/javascript',
   '/shell-pair.js': 'text/javascript',
-  '/secret.js': 'text/javascript',
   '/secret.css': 'text/css',
   '/codef-secret.js': 'text/javascript',
   '/shell-bank-auto.js': 'text/javascript',
 };
 
-/** 지금 열린 비밀 창의 페이지(main이 만든다). 열린 창이 없으면 null(404). */
-let secretPage: () => string | null = () => null;
 /** 지금 열린 계좌 자동조회 인증서 비밀번호 창의 페이지(bank-auto.ts). 없으면 null(404). */
 let codefPage: () => string | null = () => null;
 
@@ -149,10 +147,6 @@ function serve(): void {
     const p = new URL(req.url).pathname;
     // 모든 응답에 CSP 헤더(D11 §4): 셸은 APP_CSP, main이 만든 비밀 창 페이지는 더 좁은 SECRET_CSP.
     if (p === '/tokens.css') return new Response(tokensCss(), { headers: appHeaders('text/css') });
-    if (p === '/secret.html') {
-      const html = secretPage();
-      return html ? new Response(html, { headers: appHeaders('text/html; charset=utf-8', SECRET_CSP) }) : new Response('', { status: 404 });
-    }
     if (p === '/codef-secret.html') {
       const html = codefPage();
       return html ? new Response(html, { headers: appHeaders('text/html; charset=utf-8', SECRET_CSP) }) : new Response('', { status: 404 });
@@ -235,7 +229,7 @@ export interface ShellOptions {
 }
 
 /** 말풍선 반응(ADR-057)을 켰는가. 반응 알약 화면(static/shell/shell.js reactTo)과 같은 커밋에서 켠다. */
-export const CHAT_REACTIONS_ON = false;
+export const CHAT_REACTIONS_ON = true;
 
 /** ShellOptions.remote. */
 export interface RemoteWiring {
@@ -369,7 +363,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const root = fixture?.root ?? opts.engine?.root;
   const log = new FileEventLog(appPaths(root ?? defaultAppRoot()).logs, 'main');
   const embedded = opts.externalChrome !== true;
-  const host = new EngineHost({ vault: fixture ? fixture.vault : 'process', root, portal: fixture?.portal ?? opts.engine!.portal, log, appVersion: app.getVersion(), embeddedBrowser: embedded });
+  const host = new EngineHost({ vault: fixture ? fixture.vault : 'process', root, portal: fixture?.portal ?? opts.engine!.portal, log, appVersion: runVersion(app.isPackaged, process.env, () => app.getVersion()), embeddedBrowser: embedded });
   made.host = host;
   let business: Profile | null = null;
   /** 사업자 프로필 DB id(대화 에이전트 세션 기준). 없으면 대화가 등록부터 안내한다. */
@@ -650,10 +644,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
 
   // 금고가 부르는 비밀 입력 창(ADR-025 결정 10). 열린 창은 하나, 활성 실행의 요청만, 라벨은 main 내장 표.
   const secrets = new SecretWindowCoordinator((runId) => runs.isActive(runId));
-  secretPage = () => {
-    const r = secrets.open;
-    return r ? secretPageHtml(r, profiles()[r.scope].name) : null;
-  };
   /**
    * 실행 Chrome은 어떤 경우에도 앱 앞에 오지 않는다(대표 지시 2026-11-14). 앱(비밀번호 창이 열려 있으면 그 창)을 앞으로 둔다.
    * Chrome이 스스로 앞으로 오는 때(기동·팝업 창·페이지의 창 포커스)는 금고 알림과 아래 앱 비활성 감시로 바로 되돌린다.
@@ -708,7 +698,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
    * 값은 main에서 바이트로 바꿔 넘기고 바로 0으로 덮는다. 로그·대화 기록·모델·렌더러 상태에 남기지 않는다(대화에는 "●●●● 입력함"만).
    */
   let secretAsk: { reqId: string; bind: OneShotInputBind } | null = null;
-  const SECRET_LABEL: Record<string, string> = { cert_password: '공동인증서 비밀번호', portal_password: '홈택스 비밀번호' };
   const closeSecret = () => {
     if (!secretAsk) return;
     send({ type: 'secretAsk', reqId: secretAsk.reqId, state: 'closed' });
@@ -721,7 +710,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (!r) return log.event(secrets.open ? 'main.secret_needed_queued' : 'main.secret_needed_ignored');
     const bind: OneShotInputBind = { runId: r.runId, kind: r.kind, scope: r.scope };
     secretAsk = { reqId: randomUUID().slice(0, 18), bind };
-    const label = SECRET_LABEL[r.kind] ?? '비밀번호';
+    const label = SECRET_LABELS[r.kind];
     const note = r.kind === 'cert_password' ? '처음 한 번만 넣으면 이 Mac 금고에 두고 다음부터 묻지 않아요.' : '이번 실행에서 한 번만 쓰고 저장하지 않아요.';
     send({ type: 'secretAsk', reqId: secretAsk.reqId, state: 'open', runId: r.runId, kind: r.kind, label, note });
     // 앱이 앞에 있어야 카드가 보인다(Chrome은 올리지 않는다)
@@ -1521,6 +1510,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       createDraft: (cp, supply, item) => runs.createDraft(cp, supply, 'separate', item),
       prepare: (id) => prepareNow(id),
       anyActive: () => runs.anyActive(),
+      retryCert: (id) => runs.retryCert(id),
+      simpleAuth: (id, op, d) => runs.simpleAuth(id, op, d),
       get: (id) => runs.get(id),
       onDraft: () => pushBoard(), // 초안은 update 이벤트 없이 생긴다
       cmds: new CmdLog(path.join(appPaths(root ?? defaultAppRoot()).userData, 'remote-cmds.json')),
@@ -1561,6 +1552,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     });
     return phoneGate;
   };
+  runs.on('restart', (x: { from: string; to: string }) => phoneIssue?.relink(x.from, x.to));
   runs.on('update', (run) => {
     phoneIssue?.update(run);
     // 승인 대기를 벗어난 실행의 게이트는 닫는다(끝·중지·다음 단계)
@@ -1613,7 +1605,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
           for (const k of keys) k.fill(0);
         }
       },
-      appVersion: app.getVersion(),
+      appVersion: runVersion(app.isPackaged, process.env, () => app.getVersion()),
       capabilities: () => [...DESKTOP_CAPS, ...SESSION_CAPS, ...APPROVE_CAPS],
       session: phoneSession({
         issue: phoneIssueOf(),
@@ -2227,6 +2219,16 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return prepareNow(id);
     },
     'run.stop': (p) => runs.stop(String(p.id)),
+    // [인증서로 다시 시도]: 공동인증서 로그인 실패 차례에서만(멈추고 같은 값으로 인증서 로그인부터 다시)
+    'run.retryCert': (p) => {
+      needGesture(3_000);
+      return runs.retryCert(String(p.id));
+    },
+    // 폰이 시작한 간편인증을 인증 앱에서 승인했다: [인증 완료]를 누르고 이어서
+    'run.simpleDone': (p) => {
+      needGesture(3_000);
+      return runs.simpleAuth(String(p.id), 'complete');
+    },
     'run.resume': (p) => {
       needGesture(3_000);
       return runs.resume(String(p.id));
