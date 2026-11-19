@@ -310,11 +310,11 @@ const scenes = {
     ev(win, { type: 'run', run: { ...mkRun('turn', { done: 2, attentionAt: 2, note: '직접 해 주세요' }), handoff: { phase: 'input', afterGate: false }, turn: handoffTurn('input') } });
     await shot(win, '30-handoff');
     // 공동인증서 로그인 실패: 처음은 같은 값으로 다시(안내 한 줄), 두 번째는 [인증서로 다시 시도]·[간편인증 마치고 이어서]
-    ev(win, { type: 'run', run: { ...mkRun('preparing', { done: 0, now: true, note: '공동인증서로 다시 로그인하는 중' }), notices: [CERT_RETRY_NOTE] } });
+    ev(win, { type: 'run', run: { ...mkRun('preparing', { done: 0, now: true, note: LOGIN_NOW }), notices: [CERT_RETRY_NOTE] } });
     await shot(win, '30b-cert-retry');
-    ev(win, { type: 'run', run: { ...mkRun('turn', { done: 0, attentionAt: 0, note: '직접 해 주세요' }), handoff: { phase: 'login', afterGate: false, kind: 'login', code: 'login.simple_auth' }, turn: CERT_FAILED_TWICE } });
+    ev(win, { type: 'run', run: { ...mkRun('turn', { done: 0, attentionAt: 0, note: '' }), handoff: { phase: 'login', afterGate: false, kind: 'login', code: 'login.simple_auth' }, turn: CERT_FAILED_TWICE } });
     await shot(win, '30c-cert-failed');
-    ev(win, { type: 'run', run: { ...mkRun('turn', { done: 0, attentionAt: 0, note: '직접 해 주세요' }), handoff: { phase: 'login', afterGate: false, kind: 'login', code: 'login.simple_sent' }, simpleAuth: { provider: 'kakao', deadline: Date.now() + 240_000 }, turn: { text: '카카오톡에서 간편인증을 승인해 주세요', note: '5분 안에 승인해 주세요.' } } });
+    ev(win, { type: 'run', run: { ...mkRun('turn', { done: 0, attentionAt: 0, note: '' }), handoff: { phase: 'login', afterGate: false, kind: 'login', code: 'login.simple_sent' }, simpleAuth: { provider: 'kakao', deadline: Date.now() + 240_000 }, turn: { text: '카카오톡에서 승인해 주세요', note: '5분 안에 승인하면 바로 이어서 발급해요.' } } });
     await shot(win, '30d-simple-sent');
     ev(win, { type: 'run', run: { ...mkRun('waiting', { done: 4, now: true, confirmed: true, note: '아래 [승인하고 발급]을 기다려요' }), regate: { reason: 'date_changed', note: REGATE_NOTE.date_changed } } });
     await shot(win, '31-regate');

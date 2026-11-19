@@ -310,7 +310,7 @@ const certLine = (run) => h('div', { class: 'sx-meta', 'data-cert-inputs': '' },
 /** [홈택스 창 보기]: 사람이 할 일이 홈택스 창에 있을 때(로그인·서명·사람 차례). 실행 Chrome 창을 앞으로 올리기만 한다. 다른 주요 단추가 없으면 이것이 주요 단추다. */
 const showBrowserBtn = (run, act, primary = false) => btn('홈택스 창 보기', () => act.showBrowser(run.id), primary ? 'sx-btn-primary' : '', { 'data-act': 'show-browser' });
 
-const INFO_NOTICE = /이 값으로 준비해요|이어서 준비해요/;
+const INFO_NOTICE = /이 값으로 준비해요|이어서 준비해요|한 번 더 로그인해 볼게요/;
 /** 발급 뒤 확인 중 한 줄(main shell-runs verifyNow와 같은 말). */
 const verifyLine = (n) => (n && n > 1 ? `발급 목록 다시 확인 중(${n}번째)` : '발급 목록 확인 중 · 1~2분 걸려요');
 /** 지금 단계 한 줄: 지금 하는 일 문장(main이 단계 메모로 준다)이 있으면 그 문장, 없으면 단계 이름. 할 일 줄이 같은 말을 하면 이름만(withNote false). */

@@ -473,7 +473,7 @@ interface Batch {
 }
 export const RESUMED_NOTE = '앱이 다시 켜져 멈췄던 건을 같은 내용으로 이어서 해요. 앞 시도는 승인 전이라 아무것도 발급하지 않았어요.';
 /** 공동인증서 로그인이 안 돼 같은 값으로 한 번 더 해 본다(2026-11-19 대표: "실패했을 경우 당연히 인증서로 다시 시도해 봐야지"). */
-export const CERT_RETRY_NOTE = '공동인증서 로그인이 안 돼 같은 내용으로 한 번 더 이어서 준비해요. 앞 시도는 로그인 단계라 아무것도 발급하지 않았어요.';
+export const CERT_RETRY_NOTE = '공동인증서로 한 번 더 로그인해 볼게요. 아직 발급 전이에요.';
 /** 공동인증서 로그인 실패 핸드오프 코드(H-01 s7e). 엔진이 간편인증 화면까지 열어 두고 기다린다. */
 export const CERT_LOGIN_FAILED = 'login.simple_auth';
 /** 폰이 시작한 간편인증 요청을 보냈고 인증 앱 승인을 기다린다(셸이 정한 차례 코드, 엔진은 여전히 login.simple_auth 차례). */
@@ -483,7 +483,7 @@ export const SIMPLE_AUTH_MS = 5 * 60_000;
 /** 인증 앱 코드 → 사람 말(엔진 run/simple-auth.ts OACX_PROVIDERS와 같은 코드) */
 export const SIMPLE_APP_LABEL: Readonly<Record<string, string>> = { kakao: '카카오톡', naver: '네이버', toss: '토스', pass: 'PASS 앱', kb: 'KB국민은행 앱', shinhan: '신한 앱', woori: '우리은행 앱', hana: '하나은행 앱', nh: 'NH 앱', ibk: 'IBK 앱', kakaobank: '카카오뱅크', samsung: '삼성패스', banksalad: '뱅크샐러드' };
 /** 다시 해도 공동인증서 로그인이 안 됐다: 인증서로 한 번 더, 또는 간편인증(아래 홈택스 화면이나 폰에서). */
-export const CERT_FAILED_TWICE = { text: '공동인증서로 두 번 로그인하지 못했어요', note: '간편인증은 아래 홈택스 화면에서 승인한 뒤 [간편인증 마치고 이어서]를 눌러 주세요.' };
+export const CERT_FAILED_TWICE = { text: '공동인증서 로그인이 두 번 안 됐어요', note: '인증서로 다시 하거나 간편인증으로 로그인해 주세요.' };
 export const WAKE_RESUMED_NOTE = '맥이 잠들었다 깨어나 멈춘 건을 같은 내용으로 다시 시작했어요. 앞 시도는 승인 전이라 아무것도 발급하지 않았어요.';
 /** 맥이 깨어난 뒤 이 안에 승인 전 단계에서 멈춘 실행은 같은 값으로 한 번 다시 시작한다. */
 const WAKE_RESUME_MS = 5 * 60_000;
@@ -1360,7 +1360,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     const app = d ? (SIMPLE_APP_LABEL[d.provider] ?? '인증 앱') : '인증 앱';
     r.handoff = { ...r.handoff!, code: SIMPLE_SENT };
     r.simpleAuth = { provider: d?.provider ?? '', deadline: this.clock() + SIMPLE_AUTH_MS };
-    r.turn = { text: `${app}에서 간편인증을 승인해 주세요`, note: '5분 안에 승인해 주세요.' };
+    r.turn = { text: `${app}에서 승인해 주세요`, note: '5분 안에 승인하면 바로 이어서 발급해요.' };
     this.emit('update', r);
     return r;
   }
@@ -1491,7 +1491,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
         // "한 번 더 해 봐요" 안내는 다시 하는 동안만(차례 카드에서 같은 말을 되풀이하지 않는다, 대표 지적 2026-11-19)
         if (r.notices) r.notices = r.notices.filter((x) => x !== CERT_RETRY_NOTE);
       }
-      this.step(r, e.phase, 'attention', t.kind === 'sign' ? '홈택스 창에서 서명 중' : '직접 해 주세요');
+      // 공동인증서 실패 차례는 할 일을 카드 한 줄과 단추가 말한다(단계 칸에 같은 말을 두지 않는다)
+      this.step(r, e.phase, 'attention', t.kind === 'sign' ? '홈택스 창에서 서명 중' : e.code === CERT_LOGIN_FAILED ? undefined : '직접 해 주세요');
       this.emit('update', r);
       return;
     }

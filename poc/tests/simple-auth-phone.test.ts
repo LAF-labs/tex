@@ -120,7 +120,7 @@ describe('셸 간편인증 차례', () => {
     const r = await runs.simpleAuth(a.run.id, 'request', { provider: 'kakao', name: '홍길동', birth: '19900101', phone: '01012345678' });
     assert.equal(r.handoff?.code, SIMPLE_SENT);
     assert.equal(r.simpleAuth?.provider, 'kakao');
-    assert.match(r.turn!.text, /카카오톡에서 간편인증을 승인해 주세요/);
+    assert.match(r.turn!.text, /카카오톡에서 승인해 주세요/);
     assert.ok(!JSON.stringify(r).includes('01012345678') && !JSON.stringify(r).includes('홍길동'));
     assert.deepEqual(host.calls.find(([m]) => m === 'run.simpleAuth')![1], { runId: a.run.id, op: 'request', provider: 'kakao', name: '홍길동', birth: '19900101', phone: '01012345678' });
     host.reply['run.simpleAuth'] = { ok: false, code: 'simple.no_complete_button' };
