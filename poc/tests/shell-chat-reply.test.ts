@@ -62,9 +62,9 @@ describe('engineChatResponder: 엔진 rpc 위', () => {
     assert.equal(CHAT_ERROR_TEXT['chat.bad_response'].text, INTENT_UNAVAILABLE_TEXT);
     assert.deepEqual(Object.entries(CHAT_ERROR_TEXT).filter(([, v]) => v.retry).map(([k]) => k), ['chat.unavailable', 'chat.bad_response', 'chat.budget_exceeded']);
     assert.match(CHAT_ERROR_TEXT['chat.budget_exceeded'].text, /잠시 뒤/);
-    assert.match(CHAT_ERROR_TEXT['chat.quota_exceeded'].text, /이번 달 대화 한도/);
-    assert.match(CHAT_ERROR_TEXT['chat.input_too_large'].text, /짧게/);
-    assert.match(CHAT_ERROR_TEXT['chat.secret_rejected'].text, /비밀번호.*대화창에 입력하지 마세요/);
+    assert.match(CHAT_ERROR_TEXT['chat.quota_exceeded'].text, /이번 달 대화를 다 썼어요/);
+    assert.match(CHAT_ERROR_TEXT['chat.input_too_large'].text, /나눠서/);
+    assert.match(CHAT_ERROR_TEXT['chat.secret_rejected'].text, /비밀번호.*대화창에 쓰지 말아 주세요/);
     for (const { text } of Object.values(CHAT_ERROR_TEXT)) for (const bad of ['데모', '절세', '세무대리', '대신 처리']) assert.ok(!text.includes(bad), `${bad}: ${text}`);
   });
 });
