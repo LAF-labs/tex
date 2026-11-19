@@ -37,10 +37,10 @@ pnpm demo
 pnpm demo:e2e
 ```
 
-개발 빌드로 실기기 시험(폰 연결 등)을 할 때는 설치된 앱과 데이터 폴더를 같이 쓰지 않는다. 개발 빌드(Electron)는 설치된 앱의 키체인 키를 열 수 없어서, 설치된 앱이 봉인한 폰 우편함 토큰을 못 연다(2026-11-19: 폰을 끊을 때 우편함을 지우지 못해 PC의 폰 자리가 막혔다). 홈 폴더를 따로 주면 데이터 폴더(`~/Library/Application Support/SovereignAX`)도 따로 생긴다. 이 폴더에서 로그인부터 새로 한다:
+개발 빌드로 실기기 시험(폰 연결 등)을 할 때는 설치된 앱과 데이터 폴더를 같이 쓰지 않는다. 개발 빌드(Electron)는 설치된 앱의 키체인 키를 열 수 없어서, 설치된 앱이 봉인한 폰 우편함 토큰을 못 연다(2026-11-19: 폰을 끊을 때 우편함을 지우지 못해 PC의 폰 자리가 막혔다). 홈 폴더를 따로 주면 데이터 폴더(`~/Library/Application Support/SovereignAX`)도 따로 생긴다. 이 폴더에서 로그인부터 새로 한다. 개발 빌드의 앱 판은 0.0.0이라 발급 패키지(minAppVersion)가 거부되니 `SAX_DEV_APP_VERSION`으로 설치본과 같은 판을 준다(패키지된 앱에서는 무시):
 
 ```bash
-mkdir -p ~/sax-dev-home && HOME=$HOME/sax-dev-home ./node_modules/.bin/electron apps/desktop
+mkdir -p ~/sax-dev-home && HOME=$HOME/sax-dev-home SAX_DEV_APP_VERSION=0.1.35 ./node_modules/.bin/electron apps/desktop
 ```
 
 실제 홈택스(PoC-3, ADR-025). 앱이 PoC 상한(하루 실행 20·실발급 1·PoC 전체 실발급 3)·단일 인스턴스·디버그 스위치 거부·자식 환경 변수 허용 목록을 집행하고, 비밀 입력 창은 금고가 요청할 때만 열린다. 차단·추가 인증 사전이 비어 있으면 시작 때 저널에 남기고, 모르는 화면은 "멈춤·확인 필요"로 끝난다:
