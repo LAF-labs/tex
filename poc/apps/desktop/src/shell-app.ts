@@ -893,6 +893,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
           await sendApproval(issueLocalApproval(key, req, 'remote+px'), REMOTE_APPROVED_NOTE);
         },
         deny: async () => {
+          phoneIssue?.deniedByPhone(runId);
           await runs.stop(runId).catch((e: Error) => log.event('main.phone_deny_stop_failed', { error: e.message.slice(0, 80) }));
         },
       })
