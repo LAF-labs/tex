@@ -88,6 +88,18 @@ export const dayLabel = (s) => {
   const d = parse(s);
   return `${d.getMonth() + 1}월 ${d.getDate()}일 ${WD[d.getDay()]}요일`;
 };
+/**
+ * 대화 시간 줄(Muse 방식): 오늘이면 "오후 2:05", 다른 날이면 "11월 18일 오후 2:05", 다른 해면 "2025년 11월 18일 오후 2:05".
+ * at은 ms. 시각을 모르는 지난 기록(날짜만)은 dateOnly로 날짜만 쓰고 오늘이면 "오늘".
+ */
+export function museStamp(at, now = new Date(), dateOnly = false) {
+  const d = new Date(at);
+  const sameDay = d.toDateString() === now.toDateString();
+  const date = sameDay ? null : { month: 'short', day: 'numeric', ...(d.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }) };
+  if (dateOnly) return date ? new Intl.DateTimeFormat('ko-KR', date).format(d) : '오늘';
+  return new Intl.DateTimeFormat('ko-KR', { ...date, hour: 'numeric', minute: '2-digit' }).format(d);
+}
+export const museDayStamp = (s, now) => museStamp(parse(s).getTime(), now, true);
 export function dday(s, today) {
   if (!s) return null;
   const t = new Date(today.getFullYear(), today.getMonth(), today.getDate());

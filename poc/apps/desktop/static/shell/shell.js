@@ -12,7 +12,7 @@ import { createBankScreen } from './shell-bank.js';
 import { createPackScreen } from './shell-pack.js';
 import { identityIn } from './password-rules.js';
 import { bizDigits, bizNoInput, checkFields, dateInput, emailInput, field, fieldError, keys, LIMITS, secretInput, selectInput, textInput } from './fields.js';
-import { agoText, batchCard, btn, CHIP, emptyState, noteGroup, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, replyOptions, runPanel, runSteps, runTitle, steps, browserPane, runDock, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
+import { agoText, batchCard, btn, CHIP, emptyState, noteGroup, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, museDayStamp, museStamp, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, replyOptions, runPanel, runSteps, runTitle, steps, browserPane, runDock, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -656,9 +656,9 @@ async function reopenSetup(item) {
 function timelineItem(it) {
   switch (it.type) {
     case 'day':
-      return h('div', { class: 'sx-day' }, dayLabel(it.date));
+      return h('div', { class: 'sx-stamp' }, museDayStamp(it.date, new Date()));
     case 'me':
-      return h('div', { class: 'sx-me' }, it.text, it.time ? h('span', { class: 'sx-meta me-time' }, it.time) : null);
+      return h('div', { class: 'sx-me' }, it.text);
     case 'app':
       return h('div', { class: 'sx-app' }, it.text);
     case 'summary':
@@ -725,7 +725,33 @@ function onSecretAsk(ev) {
   });
 }
 
+/**
+ * 대화 시간 줄과 말풍선 묶음(Muse 방식). 시간 줄은 말풍선마다 붙이지 않고 첫 말, 날짜가 바뀐 말,
+ * 앞 말과 30분 넘게 벌어진 말 앞에만 가운데 한 줄로 띄운다. 같은 쪽 말이 2분 안에 바로 이어지면 한 묶음(간격 4, 붙은 쪽 모서리 6).
+ */
+const STAMP_GAP_MS = 30 * 60 * 1000;
+const JOIN_MS = 2 * 60 * 1000;
+const clock = { at: null, day: null, side: null, el: null };
+const msgSide = (el) => (el.classList?.contains('sx-me') ? 'me' : el.classList?.contains('sx-app') && !el.dataset.agentProgress ? 'app' : null);
+function stampFor(el, at) {
+  const side = msgSide(el);
+  if (!side) return;
+  const day = new Date(at).toDateString();
+  if (clock.at == null || day !== clock.day || at - clock.at > STAMP_GAP_MS) {
+    // 바로 앞이 지난 기록의 날짜 줄("오늘")이면 줄을 하나 더 두지 않고 그 줄을 시각으로 바꾼다.
+    const prev = chat.thread.lastElementChild;
+    if (prev?.classList.contains('sx-stamp') && !prev.dataset.stamp && new Date().toDateString() === day) prev.remove();
+    chat.thread.append(h('div', { class: 'sx-stamp', 'data-stamp': String(at) }, museStamp(at)));
+  } else if (side === clock.side && at - clock.at < JOIN_MS && clock.el?.isConnected && chat.thread.lastElementChild === clock.el) {
+    clock.el.classList.add('is-joined-next');
+    el.classList.add('is-joined-prev');
+  }
+  Object.assign(clock, { at, day, side, el });
+}
+
 function appendThread(el, scroll = true) {
+  // 지난 기록(scroll=false)은 시각을 모르니 날짜 줄만 쓰고, 지금 오가는 말에만 시간 줄을 붙인다.
+  if (scroll) stampFor(el, Date.now());
   chat.thread.append(el);
   if (scroll) scrollToEnd();
 }
@@ -863,9 +889,10 @@ async function send() {
 async function ask(text, vat) {
   let r;
   state.sending = true;
-  const waitEl = h('div', { class: 'sx-app sx-meta', 'data-agent-progress': 'thinking' }, PROGRESS_TEXT.thinking);
+  // 답을 기다리는 동안 Muse처럼 앱 말풍선 안 점 세 개. 단계 문장은 화면 읽기 프로그램에만 읽힌다.
+  const waitEl = h('div', { class: 'sx-app sx-typing', role: 'status', 'aria-label': PROGRESS_TEXT.thinking, 'data-agent-progress': 'thinking' }, h('i'), h('i'), h('i'));
   state.waitEl = waitEl;
-  const waitTimer = setTimeout(() => waitEl.isConnected || appendThread(waitEl), 300);
+  const waitTimer = setTimeout(() => waitEl.isConnected || appendThread(waitEl), 180);
   try {
     r = await call('request.send', { text, vat });
   } catch (e) {
@@ -2756,7 +2783,7 @@ window.sax.onEvent((ev) => {
   if (ev.type === 'chat-progress') {
     const el = state.waitEl;
     if (el && Object.hasOwn(PROGRESS_TEXT, ev.phase)) {
-      el.textContent = PROGRESS_TEXT[ev.phase];
+      el.setAttribute('aria-label', PROGRESS_TEXT[ev.phase]);
       el.dataset.agentProgress = ev.phase;
       if (!el.isConnected) appendThread(el);
     }

@@ -104,7 +104,7 @@ const agentStep = async (p: StepParams): Promise<StepResult> => {
 };
 
 const snapshot = () =>
-  js<string[]>(`[...document.querySelector('.sx-thread').children].map((e) => (e.dataset.run ? '[카드] ' : e.matches('[data-chat-reply]') ? '[모델 답] ' : e.matches('[data-agent-reply]') ? '[에이전트 답·대역] ' : '') + e.innerText.replace(/\\s+/g, ' ').trim()).filter(Boolean)`);
+  js<string[]>(`[...document.querySelector('.sx-thread').children].filter((e) => !e.matches('.sx-stamp')).map((e) => (e.dataset.run ? '[카드] ' : e.matches('[data-chat-reply]') ? '[모델 답] ' : e.matches('[data-agent-reply]') ? '[에이전트 답·대역] ' : '') + e.innerText.replace(/\\s+/g, ' ').trim()).filter(Boolean)`);
 
 async function turn(text: string) {
   const before = await snapshot();
