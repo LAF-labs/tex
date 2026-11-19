@@ -149,6 +149,8 @@
 - **머지 기준(출시 주간 표준, 11-16):** 최신 main을 받은 head에서 build·lint 녹색, 바꾼 영역의 시험 녹색이면 합친다. 알려진 불안정 시험만 실패하면 한 번 다시 돌린다. 다시 돌려도 빨가면 원인을 고친다. 문서만 바꾼 PR은 build·lint와 리뷰 봇만 본다. 인계 문서 4절의 옛 기준을 대신한다.
 - **알려진 불안정 시험:** `발급 사다리(가짜 홈택스 + 가짜 API)` › "홈택스 발급 실패(verify not_committed)면 다음 길로…"가 Windows에서 65초 걸리며 실패한 적이 있다(main 런 43811842223). 시험을 끄거나 건너뛰지 않고 원인을 고칠 후보로 둔다.
 
+- **GitHub CI는 Windows만(대표 결정 11-19):** PR·main push에서는 Windows 잡 6개만 돈다(파일별 실측 시간으로 나눔, `poc/tests/test-durations.json`). macOS·Linux 검사는 맥북에서 PR 전에 한 줄로 돈다: `bash poc/scripts/check-local.sh` (설치, 빌드, 린트, 시험, 보안 스위트, 폰 앱, 폰 릴레이 스모크, 작업 트리 확인. Linux에서는 xvfb로 감싼다). 출시 전처럼 세 OS를 다 보고 싶으면 Actions › ci › Run workflow에서 `all_os`를 켠다. 시험 시간이 크게 바뀌면 `node poc/scripts/test-durations.mjs <Windows 잡 로그…>`로 표를 다시 만든다.
+
 ## 6. 매일 점검이 하는 일
 
 - 매일 08:47 KST. 지난 24시간 스레드에서 **대표가 개입하거나 지적한 메시지**를 찾는다(되묻기, 정정, "왜", "~해야지", 같은 요청 반복, 대표가 직접 손을 쓴 일).

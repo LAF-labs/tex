@@ -1,14 +1,34 @@
 # CI(D14 M1-1, ADR-035 결정 1 (나)·W-11, RETRO B-01). 비밀·실계정·실 홈택스 접속 없음.
-# 공개 저장소라 GitHub 호스트 러너(Linux·macOS·Windows)가 무료다. 세 잡 모두 PR·main push·수동 실행에서 돈다.
+# 공개 저장소라 GitHub 호스트 러너(Linux·macOS·Windows)가 무료다.
+# PR·main push에서는 Windows만 돈다(2026-11-19 대표 결정): macOS·Linux는 맥북에서 같은 검사를 돌린다
+# (sovereign-ax/handover/working-notes.md "맥북 로컬 검사"). Linux·macOS 잡은 수동 실행(all_os)에서만 돈다.
 # 보안: 권한은 contents: read뿐이고, pull_request_target은 쓰지 않는다(fork PR 코드가 쓰기 토큰·비밀과 함께 돌지 않게).
 # 워크플로가 secrets.*를 읽지 않으며, fork PR에는 GitHub이 비밀을 넘기지 않는다. self-hosted 러너는 쓰지 않는다(.github/RUNNER-WINDOWS.md).
 name: ci
 
 on:
   pull_request:
+    # 시험이 읽지 않는 문서만 바뀐 PR은 돌지 않는다(시험은 sovereign-ax/design·design-system·install-guide를 읽는다).
+    paths-ignore:
+      - 'sovereign-ax/*.md'
+      - 'sovereign-ax/handover/**'
+      - 'sovereign-ax/research/**'
+      - 'sovereign-ax/outreach/**'
+      - 'sovereign-ax/legal/**'
   push:
     branches: [main]
+    paths-ignore:
+      - 'sovereign-ax/*.md'
+      - 'sovereign-ax/handover/**'
+      - 'sovereign-ax/research/**'
+      - 'sovereign-ax/outreach/**'
+      - 'sovereign-ax/legal/**'
   workflow_dispatch:
+    inputs:
+      all_os:
+        description: 'Linux·macOS 잡도 돌린다'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -28,6 +48,7 @@ env:
 jobs:
   linux:
     name: Linux build·lint·test (${{ matrix.shard }}/2)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.all_os }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # 시험 파일을 두 잡으로 나누고(node --test-shard), 잡 안에서는 파일 3개씩 함께 돈다(scripts/run-tests.mjs).
@@ -124,6 +145,7 @@ jobs:
   macos:
     name: macOS build·lint·test (${{ matrix.shard }}/2)
     # PR에서도 전체를 돈다. 시험이 늘어 한 잡으로는 45분을 넘겨 두 잡으로 나눈다(macos-15 러너는 3코어라 파일 2개씩).
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.all_os }}
     runs-on: macos-15
     timeout-minutes: 45
     strategy:
@@ -185,18 +207,21 @@ jobs:
           if-no-files-found: ignore
 
   windows:
-    name: Windows build·lint·test (${{ matrix.shard }}/2)
+    name: Windows build·lint·test (${{ matrix.shard }}/6)
     # ADR-035 결정 1 (나): 두 OS. GitHub 호스트 러너(windows-latest). 공개 저장소에 self-hosted 러너는 붙이지 않는다
     # (fork PR 코드가 사용자 노트북에서 돈다). 실물 인증서·Hello·TPM 확인은 .github/RUNNER-WINDOWS.md의 수동 절차로.
+    # 잡 6개는 파일별 실측 시간(tests/test-durations.json)으로 고르게 나눈다(scripts/run-tests.mjs). 잡마다 파일 2개씩 함께 돈다:
+    # 4코어 러너에 3개씩 돌리면 Chrome·가짜 서버가 서로 밀려 시간 문제로 흔들렸다(merge-queue/flaky-tests.md).
+    # 2026-11-19 전: Linux·macOS·Windows 각 2잡, PR 한 번 약 16분(macOS 14~17분이 가장 김).
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4, 5, 6]
     env:
-      SAX_TEST_SHARD: ${{ matrix.shard }}/2
-      SAX_TEST_CONCURRENCY: '3'
+      SAX_TEST_SHARD: ${{ matrix.shard }}/6
+      SAX_TEST_CONCURRENCY: '2'
     defaults:
       run:
         working-directory: poc
@@ -212,7 +237,9 @@ jobs:
         with:
           node-version-file: poc/.nvmrc
           cache: pnpm
-          cache-dependency-path: poc/pnpm-lock.yaml
+          cache-dependency-path: |
+            poc/pnpm-lock.yaml
+            poc/apps/mobile/pnpm-lock.yaml
       - name: 출력 폴더(저장소 밖)
         run: |
           "CI_OUT=$env:RUNNER_TEMP/ci-out" >> $env:GITHUB_ENV
@@ -231,6 +258,22 @@ jobs:
         if: ${{ matrix.shard == 1 && hashFiles('poc/tests/security/**') != '' }}
         run: |
           pnpm test:security 2>&1 | Tee-Object "$env:CI_OUT/test-security.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # 폰 앱은 루트 작업공간에서 빠져 있다(apps/mobile/pnpm-workspace.yaml, 자체 잠금 파일). 예전 Linux 잡에서 옮겼다(M5-1·M7).
+      - name: 폰 앱 의존성(lockfile 고정)
+        if: ${{ matrix.shard == 2 }}
+        run: pnpm --dir apps/mobile install --frozen-lockfile
+      - name: 폰 앱 형식 검사·시험
+        if: ${{ matrix.shard == 2 }}
+        run: |
+          pnpm --dir apps/mobile typecheck
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --dir apps/mobile test 2>&1 | Tee-Object "$env:CI_OUT/test-mobile.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: 폰 릴레이 경로 스모크(더미 PC, 라이브·HTTPS 큐)
+        if: ${{ matrix.shard == 2 }}
+        run: |
+          node scripts/ci-phone-relay.mjs 2>&1 | Tee-Object "$env:CI_OUT/phone-relay.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: 작업 트리 깨끗함
         if: ${{ !cancelled() }}
