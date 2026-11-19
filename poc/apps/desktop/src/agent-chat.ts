@@ -3,7 +3,7 @@
 // - 모델에 돌려주는 도구 결과는 ref·status·fields·needs뿐이다(C-10). 값·행·개수·이름은 화면 쪽 결과(AgentTurnResult)에만 실린다.
 // - 초안 포트에는 준비·발급 메서드가 없다. 어떤 모델 출력으로도 run.prepare가 시작되지 않는다(발급은 카드 버튼 IPC 하나뿐).
 // - 문장·토큰·값을 로그에 남기지 않는다.
-import { cleanItem, fillWithJosa, finalOf, fixJosa, koDate, splitVat, won } from '@sax/chat-core';
+import { cleanItem, fillWithJosa, finalOf, fixJosa, koDate, SLOT_FIELDS, SLOT_PATHS, splitVat, won, type CashField } from '@sax/chat-core';
 import { draftDate, issueDateRule, lineSupply, parseQuantity } from '@sax/engine';
 import { TurnRecorder } from '@sax/engine';
 import type { AgentReply, DomainCall, DraftExtra, ReactionId, RouteStep, ScreenFrame, ShownReply, StepParams, StepResult, ToolOutput, TurnEvent, Vat } from '@sax/engine';
@@ -12,25 +12,11 @@ import { CHAT_ERROR_TEXT } from './chat-reply.ts';
 /** 대화가 열 수 있는 앱 안 화면(@sax/chat-core OPEN_SCREENS) */
 export type OpenScreen = Extract<DomainCall, { tool: 'open_screen' }>['screen'];
 
-type SlotField = NonNullable<ToolOutput['fields']>[number];
 type ToolNeed = NonNullable<ToolOutput['needs']>[number];
 export type AgentAsk = NonNullable<AgentReply['ask']>;
 export type AgentPhase = 'thinking' | 'reading' | 'drafting';
 
-// 데스크톱은 @sax/model·@sax/redaction에 의존하지 않아 값을 옮겨 둔다. 시험(agent-chat-main)이 원본과 대조한다.
-export const SLOT_FIELDS = ['date', 'supply', 'total', 'counterparty', 'approvalNo'] as const satisfies readonly SlotField[];
-export const SLOT_POSITIONS = ['first', 'last'] as const;
-export const SLOT_SUM_FIELDS = ['supply', 'total'] as const;
-/** 돈 흐름 결과의 칸({r#.cash.*}). @sax/model CASH_FIELDS와 같다(시험이 대조). */
-export const CASH_FIELDS = ['in', 'out', 'net', 'balance', 'next_in', 'next_out'] as const;
-export type CashField = (typeof CASH_FIELDS)[number];
-/** 슬롯 경로: 행 값(first·last × 칸), 집계(sum.supply·sum.total·count), 돈 흐름(cash.*). @sax/model SLOT_PATHS와 같다(시험이 대조). */
-export const SLOT_PATHS: readonly string[] = [
-  ...SLOT_POSITIONS.flatMap((p) => SLOT_FIELDS.map((f) => `${p}.${f}`)),
-  ...SLOT_SUM_FIELDS.map((f) => `sum.${f}`),
-  'count',
-  ...CASH_FIELDS.map((f) => `cash.${f}`),
-];
+// 데스크톱은 @sax/redaction에 의존하지 않아 값을 옮겨 둔다. 시험(agent-chat-main)이 원본과 대조한다.
 export const CHAT_MAP_IDLE_MS = 15 * 60 * 1000;
 /** 엔진 토큰([NAME_1] 등). @sax/redaction TOKEN_RE와 같은 꼴이다. */
 const TOKEN_RE = /\[[A-Z]+_\d+\]/;
