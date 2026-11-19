@@ -73,7 +73,7 @@ export const PHONE_ASK_TEXT: Record<AgentAsk, string> = {
   counterparty: '어느 거래처예요? 거래처 목록에 있는 이름으로 골라 주세요.',
   vat: '부가세는 별도예요, 포함이에요?',
   which_card: '어느 카드를 말씀하시는지 골라 주세요.',
-  date: '작성일자를 정하는 카드는 PC에서 만들 수 있어요. PC가 켜지면 PC 대화에서 말씀해 주세요.',
+  date: '작성일자를 정하는 카드는 폰에서 만들 수 없어요. PC를 켜면 이어서 할게요.',
 };
 export const PHONE_SLOT_MISSING_TEXT = '정확한 값은 아래 표에 있어요.';
 export const PHONE_UNAVAILABLE_TEXT = '답을 받지 못했어요. 잠시 뒤 [다시 시도]를 눌러 주세요.';
