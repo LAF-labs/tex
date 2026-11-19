@@ -314,6 +314,8 @@ const scenes = {
     await shot(win, '30b-cert-retry');
     ev(win, { type: 'run', run: { ...mkRun('turn', { done: 0, attentionAt: 0, note: '직접 해 주세요' }), notices: [CERT_RETRY_NOTE], handoff: { phase: 'login', afterGate: false, kind: 'login', code: 'login.simple_auth' }, turn: CERT_FAILED_TWICE } });
     await shot(win, '30c-cert-failed');
+    ev(win, { type: 'run', run: { ...mkRun('turn', { done: 0, attentionAt: 0, note: '직접 해 주세요' }), handoff: { phase: 'login', afterGate: false, kind: 'login', code: 'login.simple_sent' }, simpleAuth: { provider: 'kakao', deadline: Date.now() + 240_000 }, turn: { text: '카카오톡에서 간편인증을 승인해 주세요', note: '승인하면 폰이나 이 카드에서 [승인했어요]를 눌러 주세요. 5분 안에 승인하지 않으면 다시 요청해야 해요.' } } });
+    await shot(win, '30d-simple-sent');
     ev(win, { type: 'run', run: { ...mkRun('waiting', { done: 4, now: true, confirmed: true, note: '아래 [승인하고 발급]을 기다려요' }), regate: { reason: 'date_changed', note: REGATE_NOTE.date_changed } } });
     await shot(win, '31-regate');
     ev(win, { type: 'run', run: { ...mkRun('issuing', { done: 6, now: true, confirmed: true }), verifyAttempt: 3 } });
