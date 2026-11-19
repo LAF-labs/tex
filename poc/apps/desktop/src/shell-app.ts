@@ -1577,7 +1577,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       },
       joinMailbox: opts.remote?.relayClient ? undefined : (id, tok) => live.joinMailbox(id, tok, 'desktop'),
       queue: (id, tok) => cloud.mailboxQueue!(id, tok, auth),
-      deleteMailbox: (id, w) => cloud.relay.deleteMailbox(auth, id, w),
+      deleteMailbox: (id, w, peer) => cloud.relay.deleteMailbox(auth, id, w, peer),
       receiver: () =>
         phoneReceiver((m, p) => host.rpc(m, p), {
           onReceipt: () => pushBoard(),
