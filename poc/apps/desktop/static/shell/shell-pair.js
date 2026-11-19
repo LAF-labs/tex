@@ -35,7 +35,8 @@ function qrImg(src) {
   return i;
 }
 
-const STEPS = ['폰에서 택스오프를 열고', '[PC와 연결]을 눌러', '이 QR을 찍어 주세요'];
+// 폰은 첫 실행이면 온보딩 마지막 단계(PC와 연결)가, 그 뒤에는 홈의 [PC와 연결]이 같은 QR 찍기 화면을 연다. 둘 다 맞게 화면 이름으로 쓴다.
+const STEPS = ['폰에서 택스오프를 열고', 'PC와 연결 화면에서', '이 QR을 찍어 주세요'];
 const steps = () => h('ol', { class: 'pair-steps' }, ...STEPS.map((t, i) => h('li', {}, h('span', { class: 'pair-step-n', 'aria-hidden': 'true' }, String(i + 1)), h('span', {}, t))));
 
 /** 왼쪽 QR 자리: QR · 만드는 중 · 시간이 지남(그 자리에 [새 QR]). 자리 크기는 같아서 단계가 바뀌어도 칸이 흔들리지 않는다. */
