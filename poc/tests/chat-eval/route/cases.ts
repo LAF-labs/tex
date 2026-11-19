@@ -527,6 +527,19 @@ g('smalltalk', 'none', { reply: 'answer', style: 'ack_repeat' }, [
   ['감사합니다', { ctx: THX2 }],
   ['고마워요 ㅎㅎ', { ctx: { ...THX1, device: 'phone' } }],
 ]);
+// 따로 둔 말투(held_out): 번들 머리말·선택지 설명에 없는 맞장구 말. 문구를 고칠 때 여기에 맞춰 적지 않는다(점수가 부풀지 않게).
+g('smalltalk', 'none', { reply: 'reaction_only', style: 'held_out' }, [
+  ['땡큐', { ctx: DONE }],
+  ['넵', { ctx: SHOWN }],
+  ['오키', { ctx: CARD_OPEN }],
+  ['ㄱㅅㄱㅅ', { ctx: DONE }],
+  ['감사요~', { ctx: { ...DONE, device: 'phone' } }],
+  ['넵 알겠습니다', { ctx: SHOWN }],
+]);
+g('smalltalk', 'none', { reply: 'answer', style: 'held_out_repeat' }, [
+  ['땡큐', { ctx: THX1 }],
+  ['넵', { ctx: { reacted: 1, prev: [['지난달 매출 얼마야', '지난달 발급은 4건, 합계 520만원이에요.'], ['확인', '(반응 👍)']] } }],
+]);
 // 대조: 앞 맞장구에 앱이 말로 답했으면 다음 맞장구는 다시 반응만
 g('smalltalk', 'none', { reply: 'reaction_only', style: 'ack_repeat' }, [
   ['고마워', { ctx: { prev: [['고마워', '(반응 🙏)'], ['고마워', '별말씀을요. 또 필요하면 불러 주세요.']] } }],

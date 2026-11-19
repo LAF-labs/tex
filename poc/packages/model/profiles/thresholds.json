@@ -25,7 +25,7 @@
   },
   {
     "bundle": "chat_route_v1",
-    "bundleDigest": "c81cab9b3a0e1046e7e4367d9b774d1367bf7eb8da09f9f99796e8f450be55b9",
+    "bundleDigest": "57e81c6d6b2892830cc672d91eeb588d493b38687c6c9fdbbee136c3b91211e5",
     "provider": "openai",
     "model": "gpt-6-luna",
     "status": "initial",
@@ -33,7 +33,7 @@
   },
   {
     "bundle": "chat_route_v1",
-    "bundleDigest": "c81cab9b3a0e1046e7e4367d9b774d1367bf7eb8da09f9f99796e8f450be55b9",
+    "bundleDigest": "57e81c6d6b2892830cc672d91eeb588d493b38687c6c9fdbbee136c3b91211e5",
     "provider": "upstage",
     "model": "solar-decide",
     "status": "uncalibrated",
@@ -41,7 +41,7 @@
   },
   {
     "bundle": "chat_route_v1",
-    "bundleDigest": "c81cab9b3a0e1046e7e4367d9b774d1367bf7eb8da09f9f99796e8f450be55b9",
+    "bundleDigest": "57e81c6d6b2892830cc672d91eeb588d493b38687c6c9fdbbee136c3b91211e5",
     "provider": "openai_compat",
     "model": "typesafe/jev-",
     "status": "initial",
