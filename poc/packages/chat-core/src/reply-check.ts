@@ -42,7 +42,11 @@ export function chatAdviceMentioned(text: string): boolean {
  */
 export function unsafeText(text: string): boolean {
   const n = normalizeForRedaction(text);
-  if (/비밀번호|비번|패스워드|암호|인증서|보안카드|입력하세요|OTP/i.test(n.replace(/\s+/g, ''))) return true;
+  const flat = n.replace(/\s+/g, '');
+  if (/비밀번호|비번|패스워드|암호|입력하세요|OTP/i.test(flat)) return true;
+  // 인증서·보안카드는 이름만 말하는 것("공동인증서나 간편인증을 쓰면 돼요", "발급 인증 화면을 열었어요")은 괜찮다. 번호·비밀 값을 대화로 달라는 말과 같이 오면 막는다
+  // (대표 실사용 2026-11-19: "보안카드 등록할래"의 답이 이름 때문에 걸려 할 수 있는 일 목록으로 바뀌었다).
+  if (/인증서|보안카드/.test(flat) && /번호|비밀|입력|알려|보내|적어|불러|말해|말씀/.test(flat)) return true;
   if (numericSpans(n).length) return true;
   if (new RegExp(EMAIL_RE.source, 'u').test(n)) return true;
   return /https?:|www\.|\.(com|kr|net|org|io)\b/i.test(n);
