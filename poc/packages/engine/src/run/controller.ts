@@ -16,8 +16,7 @@ import { compileRe2 } from '../core/re2.ts';
 import { decideGate, reenterCheckpoint } from '../core/runtime.ts';
 import { waitTarget, type Handler, type Handlers, type Outcome, type StepEnv } from '../core/steps.ts';
 import type { GateToken, GateTokens, TokenDiscardTrigger } from '../core/token.ts';
-import type { PlaybookIR, SignFlow, SignMethod, Step, StepOf } from '../core/types.ts';
-import type { CardPress } from '../driver/card-secret.ts';
+import type { PlaybookIR, SignMethod, Step, StepOf } from '../core/types.ts';
 import { failSignalKeys, verifyOfIrreversible, type VerifyBook, type VerifyJudgement } from '../core/verify.ts';
 import { readField } from '../core/readback.ts';
 import { savePdf, type PdfPort } from '../core/savepdf.ts';
@@ -48,8 +47,11 @@ export const CONTROL_STOPS: ReadonlyMap<string, 'handoff' | 'abort'> = new Map([
  */
 export const NOT_COMMITTED_RETRIES = 1;
 
-/** sign 방식마다 엔진이 할 then[] 동작(null = 엔진 입력 없음). */
-const SIGN_ACTION: Readonly<Record<string, 'human:secret' | 'secret_fill:security_card' | null>> = { cert: 'human:secret', security_card: 'secret_fill:security_card', simple_auth: null };
+/**
+ * sign 방식마다 엔진이 할 then[] 동작(null = 엔진 입력 없음). 보안카드는 지원하지 않는다(대표 결정 2026-11-19):
+ * IR에 security_card 갈래가 있어도(게시본 H-01 2.3.8) 이 표에 없어 sign.method_unknown으로 사람에게 넘긴다.
+ */
+const SIGN_ACTION: Readonly<Record<string, 'human:secret' | null>> = { cert: 'human:secret', simple_auth: null };
 
 /**
  * 클릭 결과 코드 중 "요청이 나가지 않았음"이 확실한 것(가드·R-A1·동작 가능성 사전 확인·정책 거부, D03 §5.3).
@@ -100,8 +102,7 @@ export const CONFIRM_GRACE_MS = 2_000;
  * kind push = 간편인증 폰 승인을 기다림, secret = 금고 비밀 창(human.secret)이 TTL로 끝남. 셸은 phase sign 핸드오프로 보인다.
  */
 export interface SignTurnPort {
-  /** code: 서명 차례가 된 까닭(보안카드 sign.card_*). 없으면 일반 서명 차례. */
-  opened(r: { runId: string; stepId: string; kind: 'push' | 'secret'; code?: string }): void;
+  opened(r: { runId: string; stepId: string; kind: 'push' | 'secret' }): void;
   closed(r: { runId: string; stepId: string; why: SignTurnEnd }): void;
 }
 
@@ -128,12 +129,6 @@ export interface HumanPort {
    * 'wrong'이면 금고가 확인 대기 값을 버리고 기억값을 지웠다(다음 secret은 대화 카드로 다시 묻는다). 'ok'면 이번에 받은 값을 기억한다.
    */
   afterSignConfirm?(r: { runId: string; stepId: string }): Promise<'ok' | 'wrong'>;
-  /**
-   * secret_fill:security_card(대표 지시 2026-11-14): 금고가 보안카드 창의 요청 칸을 읽고 저장값을 친 뒤 그 창의 [확인]을 누른다.
-   * 'done'은 포털이 성공 알림을 보였다. { code }면 사람 차례로 넘긴다(틀림 sign.card_wrong은 같은 값으로 다시 치지 않는다, 카드 5회 오류 폐기).
-   * 셀렉터는 css 후보 원문, window는 새 창 주소 정규식 원문이다. 칸 번호·값은 엔진에 오지 않는다.
-   */
-  card?(r: { runId: string; stepId: string; ttlMs: number; window: string; fields: Array<{ element: string; label: string }>; confirmKey: string; press: CardPress }): Promise<'done' | { code: string }>;
 }
 
 /** 취소할 수 있는 타이머(게이트 waitMs·사람 TTL·핸드오프 상한). 시험은 손으로 돌리는 것을 넣는다. */
@@ -957,17 +952,17 @@ export class RunController {
     const env = this.i.env;
     const deadline = this.i.clock.now() + f.maxWaitMs;
     const left = () => Math.max(0, deadline - this.i.clock.now());
-    const method = f.method === '$profile.signMethod' ? env.scope.profile.signMethod : f.method;
+    const m: unknown = f.method === '$profile.signMethod' ? env.scope.profile.signMethod : f.method;
+    // 엔진이 아는 방식만 고른다(SIGN_ACTION). 보안카드처럼 지원하지 않는 방식은 방식 선택을 누르지 않고 사람 차례로 간다.
+    const method = typeof m === 'string' && Object.hasOwn(SIGN_ACTION, m) ? m : null;
     // IR rev v1.3.5 앞머리: 열기(openTargets) → 방식 선택(methodTargets) → 서명 화면 표지(readyTarget). 실패하면 verify, 방식을 못 고르면 사람 차례.
     const head = await this.signOpen(s, f, method, left);
     if (head === 'verify') return;
     if (head === 'human') return void (await this.signTurnWait(s, f, 'secret'));
     // steps를 선언했으면 그 방식의 동작이 있어야 한다. 모르는 방식은 서명하지 않고(확인 버튼도 누르지 않고) verify로.
-    const actions = typeof method !== 'string' ? null : f.steps ? f.steps[method as keyof typeof f.steps] : [];
+    const actions = method === null ? null : f.steps ? f.steps[method as keyof typeof f.steps] : [];
     if (!actions) return this.i.journal('signflow.method_unknown', { stepId: s.id });
-    // 보안카드는 인증서 창(readyTarget)이 아니라 새 창에서 한다: 인증서 창 표지·[확인]을 보지 않는다.
-    const card = actions.includes('secret_fill:security_card');
-    const readyKey = card ? undefined : f.readyTarget;
+    const readyKey = f.readyTarget;
     const ready = readyKey ? (await waitTarget(env, readyKey, Math.min(left(), SIGN_READY_WAIT_MS))).ok : false;
     if (readyKey && !ready) this.i.journal('signflow.ready_missing', { stepId: s.id });
     // IR rev v1.3.6: 인증서 창의 인증서 고르기(하나면 그것, 여럿이면 프로필 이름). 못 고르면 추측하지 않고 서명 차례(사람이 고르고 넣는다).
@@ -996,16 +991,11 @@ export class RunController {
           return void (await this.signTurnWait(s, f, 'push'));
         }
       } else {
-        // 보안카드 창 정의·포트가 없으면(옛 패키지) 예전처럼 치지 않고 verify로. 치려다 못 했거나 틀렸으면 서명 차례(사람), 다시 치지 않는다.
-        const r = await this.cardFill(s.id, f.card, left(), true);
-        if (r === 'unsupported') return this.i.journal('signflow.unsupported', { stepId: s.id, action: a });
-        if (r !== 'done') {
-          this.i.journal('signflow.card_failed', { stepId: s.id, action: a, code: r.code });
-          return void (await this.signTurnWait(s, f, 'secret', r.code));
-        }
+        // 엔진이 하지 않는 동작(secret_fill:security_card, 대표 결정 2026-11-19 지원 안 함)은 치지 않고 verify로.
+        return this.i.journal('signflow.unsupported', { stepId: s.id, action: a });
       }
     }
-    if (!f.confirmTarget || card) {
+    if (!f.confirmTarget) {
       // 끝 표지(IR rev v1.3.5): 사람이 홈택스 서명 창에 직접 넣는 길이 기본이다. 표지가 보이면 [다 했어요] 없이 verify로 간다.
       if (f.doneTarget && !doneSeen && (await this.signDoneWait(s, f, ready, left)) === 'timeout') await this.signTurnWait(s, f, 'secret');
       return;
@@ -1015,42 +1005,6 @@ export class RunController {
     if (!t.ok) return this.i.journal('signflow.confirm_missing', { stepId: s.id, code: t.code });
     await this.clickConfirm(s, f.confirmTarget, t.t);
     if (actions.includes('human:secret')) await this.signWrongRetry(s, f, left);
-  }
-
-  /**
-   * 보안카드 칸 채우기(signFlow·sign 공통): 패키지의 보안카드 창 정의를 css 원문으로 풀어 HumanPort.card에 넘긴다.
-   * 정의·포트·css 후보가 없으면 'unsupported'(엔진이 아무것도 치지 않는다).
-   */
-  private async cardFill(stepId: string, def: SignFlow['card'] | undefined, ttlMs: number, inCommit: boolean): Promise<'done' | 'unsupported' | { code: string }> {
-    const env = this.i.env;
-    const css = (k: string): string | null => {
-      const c = env.dict.entries[k]?.candidates.find((x) => x.kind === 'css');
-      return c && c.kind === 'css' ? c.value : null;
-    };
-    const win = def ? env.strings[def.window] : undefined;
-    const fields = def?.fields.map((x) => ({ element: css(x.target), label: css(x.rowFrom) })) ?? [];
-    if (!this.i.human.card || !def || !win || !env.dict.entries[def.confirmTarget] || !fields.length || fields.some((x) => !x.element || !x.label)) return 'unsupported';
-    const key = def.confirmTarget;
-    // [확인하기]: 커밋 구간(발급 서명)이면 공동인증서 [확인]과 같은 규칙(이 무장에서 한 번, 승인 토큰 기한 안, armedKey로 GuardedActuator가 허락).
-    const press: CardPress = async (click) => {
-      if (!inCommit) return (await click()).ok ? 'clicked' : 'failed';
-      if (this.confirmClicked) {
-        this.i.journal('signflow.confirm_once', { stepId });
-        return 'once';
-      }
-      if (this.i.clock.now() > this.armedExp) {
-        this.i.journal('signflow.confirm_expired', { stepId });
-        return 'expired';
-      }
-      this.confirmClicked = true;
-      this.armedKey = key;
-      const c = await click();
-      if (!c.ok) this.i.journal('signflow.confirm_failed', { stepId, code: c.code });
-      return c.ok ? 'clicked' : 'failed';
-    };
-    return this.i.human
-      .card({ runId: this.i.runId, stepId, ttlMs, window: win, fields: fields as Array<{ element: string; label: string }>, confirmKey: key, press })
-      .catch(() => ({ code: 'sign.card_port_error' }));
   }
 
   /**
@@ -1084,7 +1038,7 @@ export class RunController {
    * - methodTargets: 프로필 발급 인증 값의 항목을 한 번. 값이 없거나 그 항목이 안 보이면 추측해서 다른 것을 누르지 않고 'human'(서명 차례).
    *   홈택스는 이 클릭 때 첫 커밋 요청(ATEETBAA002C04)이 나간다.
    */
-  private async signOpen(s: StepOf<'submit'>, f: NonNullable<StepOf<'submit'>['signFlow']>, method: unknown, left: () => number): Promise<'ok' | 'verify' | 'human'> {
+  private async signOpen(s: StepOf<'submit'>, f: NonNullable<StepOf<'submit'>['signFlow']>, method: string | null, left: () => number): Promise<'ok' | 'verify' | 'human'> {
     for (const k of f.openTargets ?? []) {
       const r = await this.clickSignOnce(s, k, left());
       if (r !== 'clicked' && r !== 'already') {
@@ -1093,7 +1047,7 @@ export class RunController {
       }
     }
     if (!f.methodTargets) return 'ok';
-    const k = typeof method === 'string' && Object.hasOwn(f.methodTargets, method) ? f.methodTargets[method as SignMethod] : undefined;
+    const k = method !== null && Object.hasOwn(f.methodTargets, method) ? f.methodTargets[method as SignMethod] : undefined;
     if (!k) {
       this.i.journal('signflow.method_choice_missing', { stepId: s.id });
       return 'human';
@@ -1166,7 +1120,7 @@ export class RunController {
    * - push: 기다리는 동안 확인 버튼이 뜨면 (이 무장에서 아직 안 눌렀을 때만) 한 번 누르고 끝낸다.
    * - [다 했어요](finishSignTurn)·[중지](abort)·상한(cap): 아무 버튼도 누르지 않고 끝낸다. 무장 토큰은 새로 만들지 않는다.
    */
-  private async signTurnWait(s: StepOf<'submit'>, f: NonNullable<StepOf<'submit'>['signFlow']>, kind: 'push' | 'secret', code?: string): Promise<SignTurnEnd> {
+  private async signTurnWait(s: StepOf<'submit'>, f: NonNullable<StepOf<'submit'>['signFlow']>, kind: 'push' | 'secret'): Promise<SignTurnEnd> {
     const env = this.i.env;
     let woke: Exclude<SignTurnEnd, 'clicked'> | null = null;
     let wakeUp: () => void = () => {};
@@ -1180,7 +1134,7 @@ export class RunController {
     const cancel = this.timers.after(Math.max(0, this.i.signTurnMs?.() ?? SIGN_TURN_MS), () => wake('cap'));
     this.signWake = wake;
     this.i.journal('sign.turn_opened', { stepId: s.id, kind });
-    this.i.signTurn?.opened({ runId: this.i.runId, stepId: s.id, kind, ...(code ? { code } : {}) });
+    this.i.signTurn?.opened({ runId: this.i.runId, stepId: s.id, kind });
     let clicked = false;
     let doneSeen = false;
     // 끝 표지(sign.waiting 중 주기적으로 본다): 보이면 사람이 [다 했어요]를 누르지 않아도 verify로 간다. 필드가 없으면 지금처럼 명령·상한만 기다린다.
@@ -1268,10 +1222,10 @@ export class RunController {
    * - 커밋 구간 W(X) 안(승인한 토큰을 들고 X를 기다리는 동안, 토큰 소비 ~ verify)이면 아무것도 하지 않고 거부한다(V-03c의 실행 시 방어).
    *   토큰을 든 동안이면 중단(sign.refused_in_commit). 토큰을 쓴 뒤(눌렀을 수 있음)면 판정할 verify가 없으니 InDoubt(사람 확인).
    * - 방식(method, $profile.signMethod)마다 포털 서명 모듈이 하는 일이 다르다. 엔진은 then[] 가운데 그 방식의 동작만 한다:
-   *   cert → human:secret(인증서 암호는 사용자가 금고 비밀 창에 직접, ADR-020 결정 2), security_card → secret_fill:security_card,
+   *   cert → human:secret(인증서 암호는 사용자가 금고 비밀 창에 직접, ADR-020 결정 2),
    *   simple_auth → 입력 없음(PUSH 승인 대기는 뒤따르는 결정적 wait 스텝, D02 §8 예 s5).
-   * - 그 방식의 동작이 then[]에 없으면 sign.no_path, 모르는 방식이면 sign.method_unknown, 보안카드는 스텝 card 정의가 없으면 sign.unsupported.
-   *   셋 다 재시도 없이 핸드오프다(사람이 로그인을 마저 한다).
+   * - 그 방식의 동작이 then[]에 없으면 sign.no_path, 모르는 방식(지원하지 않는 보안카드 포함)이면 sign.method_unknown.
+   *   둘 다 재시도 없이 핸드오프다(사람이 로그인을 마저 한다).
    */
   private readonly signStep: Handler<'sign'> = async (s) => {
     if (this.st.commit || this.tokensByGate.size > 0) {
@@ -1293,13 +1247,6 @@ export class RunController {
     if (!(s.then ?? []).includes(need)) {
       this.i.journal('sign.no_path', { stepId: s.id, method });
       return fail('sign.no_path');
-    }
-    if (need === 'secret_fill:security_card') {
-      // 로그인 보안카드(구간 밖): 금고가 창의 두 칸을 채우고 [확인]까지. 정의가 없거나 끝이 성공이 아니면 재시도 없이 핸드오프(같은 값을 다시 치지 않는다).
-      const r = await this.cardFill(s.id, s.card, this.i.secretTtlMs ?? 120_000, false);
-      if (r === 'done') return NEXT;
-      this.i.journal(r === 'unsupported' ? 'sign.unsupported' : 'sign.card_failed', { stepId: s.id, ...(r === 'unsupported' ? { action: need } : { code: r.code }) });
-      return fail(r === 'unsupported' ? 'sign.unsupported' : r.code);
     }
     if (!this.fire({ t: 'human_reached' }, s.id, null)) return fail('run.state_stop');
     return this.secretTurn(s.id, { ttlMs: this.i.secretTtlMs ?? 120_000 });

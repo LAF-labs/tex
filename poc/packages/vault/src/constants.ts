@@ -69,7 +69,6 @@ export const PORTAL_ETLD1 = ['hometax.go.kr'];
 export const SECRET_ORIGINS: Record<string, string[]> = {
   cert_password: ['hometax.go.kr'],
   portal_password: ['hometax.go.kr'],
-  security_card: ['hometax.go.kr'],
 };
 
 /**
@@ -181,10 +180,12 @@ export type VaultEvent =
   // 사람 비밀 세션 결박(ADR-026): 값·칸 번호 없이 종류·등급·건수만
   | 'vault.credential_suspect' | 'vault.locked' | 'vault.secret_stored' | 'vault.secret_forgotten' | 'vault.kek_unwrap_failed'
   | 'vault.item_corrupt' | 'vault.index_corrupt' | 'vault.restore_failed'
+  // 옛 판의 보안카드 슬롯을 기동 때 지움(대표 결정 2026-11-19 지원 안 함): 칸 수만
+  | 'vault.card_purged' | 'vault.card_purge_failed'
   // run에 고정된 프로필과 다른 scope의 입력 요청(Q-2)
   | 'vault.profile_mismatch'
   // 종류별 입력 규칙(ADR-020 결정 2·ADR-025 결정 10·D05 §4): 값·칸 번호 없이
-  | 'vault.typist_kind_refused' | 'vault.card_row_mismatch' | 'vault.secret_input_unrequested'
+  | 'vault.typist_kind_refused' | 'vault.secret_input_unrequested'
   // R-C1 커밋 본문 대조(D05 §3.3): 결과·필드 수·사유만(본문·값 없음)
   | 'vault.commit_armed' | 'vault.commit_arm_refused' | 'vault.commit_compared' | 'vault.commit_block_failed'
   // 장기 키 연산(D05 §5.1): 연산·용도·건수만(키·입력·출력 없음)

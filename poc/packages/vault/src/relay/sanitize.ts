@@ -188,7 +188,7 @@ export function scrubDomSnapshot(result: Json, secrets: SecretNodes): number {
 
 /**
  * 알려진 비밀 값(금고가 입력했거나 활성 창 종료 시 읽은 값)의 직렬화 변형을 엔진행 문자열에서 지운다.
- * 짧은 값(보안카드 2~4자리 등)은 정상 텍스트를 깨뜨리므로 대상에서 뺀다(구조 정리에 맡김).
+ * 짧은 값(6자 미만)은 정상 텍스트를 깨뜨리므로 대상에서 뺀다(구조 정리에 맡김).
  */
 export const KNOWN_VALUE_MIN_LEN = 6;
 
@@ -203,7 +203,7 @@ export function knownValueVariants(secret: string): string[] {
   return [...v].filter((s) => s.length >= KNOWN_VALUE_MIN_LEN);
 }
 
-/** 접두사 상한: 이보다 긴 값은 전체 값 변형만 둔다(비밀번호·보안카드 칸은 훨씬 짧다). */
+/** 접두사 상한: 이보다 긴 값은 전체 값 변형만 둔다(비밀번호 칸은 훨씬 짧다). */
 export const KNOWN_PREFIX_MAX_LEN = 64;
 
 /**

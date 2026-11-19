@@ -34,8 +34,19 @@ describe('카드 전 검사: 무엇이 빠졌는지', () => {
   it('사업자번호·발급 인증', () => {
     assert.deepEqual(setupMissing({ kind: 'business', name: '내 사업장', email: '', auth: '' }), ['biz', 'auth']);
     assert.deepEqual(setupMissing({ kind: 'business', name: 'A', bizNo: '1234567891', email: '', auth: '발급 인증 미설정' }), ['auth']);
-    assert.deepEqual(setupMissing({ kind: 'business', name: 'A', email: '', auth: '보안카드' }), ['biz']);
+    assert.deepEqual(setupMissing({ kind: 'business', name: 'A', email: '', auth: '공동·금융인증서' }), ['biz']);
     assert.deepEqual(setupMissing({ kind: 'business', name: 'A', bizNo: '1234567891', email: '', auth: '사업자 간편인증(카카오뱅크)' }), []);
+  });
+  it('발급 인증이 비어 있는 프로필(되돌린 보안카드 포함)은 "고르지 않음"으로 보이고 다시 고르게 한다(대표 결정 2026-11-19)', () => {
+    const app = fs.readFileSync(new URL('../apps/desktop/src/shell-app.ts', import.meta.url), 'utf8');
+    assert.match(app, /auth: p\.signMethod \? SIGN_LABEL\[p\.signMethod\] : NO_AUTH \}/);
+    assert.deepEqual(setupMissing({ kind: 'business', name: 'A', bizNo: '1234567891', email: '', auth: '발급 인증 미설정' }), ['auth']);
+    assert.match(setupText('invoice', ['auth']), /공동인증서·간편인증/);
+    assert.doesNotMatch(setupText('invoice', ['auth']), /보안카드/);
+    const ui = fs.readFileSync(new URL('../apps/desktop/static/shell/shell.js', import.meta.url), 'utf8');
+    const desc = ui.slice(ui.indexOf('const AUTH_DESC = {'), ui.indexOf('};', ui.indexOf('const AUTH_DESC = {')));
+    assert.ok(!desc.includes('보안카드') && !desc.includes('발급 인증 미설정'), '설명 표에 없는 값이면 고르지 않은 것으로 그린다');
+    assert.match(ui, /desc \? auth : '발급 인증을 아직 고르지 않았어요'/);
   });
   it('안내 문장은 빠진 것을 말한다, 버튼 이름', () => {
     assert.match(setupText('invoice', ['biz']), /^세금계산서를 발급하려면 먼저 사업자 정보\(사업자번호\)를 등록해 주세요/);
@@ -124,11 +135,12 @@ describe('건너뛴 사업자·인증 다시 열기(reopen)', () => {
     // 저장된 상태도 다시 읽힌다
     assert.ok(parseOnbState(JSON.parse(JSON.stringify(flow.state))));
   });
-  it('인증만: O-03 → 보안카드도 바로 끝(① 위임 없음)', async () => {
+  it('인증만: O-03 → 금융인증서도 바로 끝(① 위임 없음), 보안카드는 고를 수 없다(대표 결정 2026-11-19)', async () => {
     const { flow } = await skippedBoth();
     await flow.reopen('auth');
     assert.equal(flow.state.step, 'auth');
-    await flow.answer({ step: 'auth', choice: 'card' });
+    await assert.rejects(flow.answer({ step: 'auth', choice: 'card' as never }), /bad_choice/);
+    await flow.answer({ step: 'auth', choice: 'fincert' });
     assert.equal(flow.state.step, 'done');
   });
   it('다시 연 단계에서 또 [나중에]면 끝으로 돌아간다(할 일은 남는다)', async () => {

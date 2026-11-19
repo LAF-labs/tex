@@ -64,7 +64,7 @@ const PDF: PdfPort = {
 export interface Scenario {
   knobs?: Partial<FakeKnobs>;
   loggedIn?: boolean;
-  signMethod?: 'cert' | 'simple_auth' | 'security_card';
+  signMethod?: 'cert' | 'simple_auth';
   /** 거래처 등록번호(가짜 registry 키). */
   bizNo?: string;
   email?: string | null;

@@ -39,7 +39,7 @@ export async function startFixtureMode(opts: { headful?: boolean } = {}): Promis
     keyStore: new MemoryKeyStore(),
     policy: {
       allowedHosts: ['127.0.0.1'],
-      secretHosts: { cert_password: ['127.0.0.1'], portal_password: ['127.0.0.1'], security_card: ['127.0.0.1'] },
+      secretHosts: { cert_password: ['127.0.0.1'], portal_password: ['127.0.0.1'] },
       domainMethods: RELAY_DOMAIN_METHOD_ALLOWLIST,
       deniedMethods: RELAY_DENIED_METHODS,
       keyDelayMs: 5,

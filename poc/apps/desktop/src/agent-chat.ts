@@ -399,7 +399,7 @@ export class AgentChat {
         return out('card_shown', this.cardRef(s, r.runId));
       }
       case 'open_screen': {
-        // 앱 안 화면을 연다(보안카드 등록·계좌 연결·기기 연결 등). 값은 사장님이 그 화면에 넣는다. 열 곳이 없으면(시험 대역) 그래도 opened로 닫는다.
+        // 앱 안 화면을 연다(발급 인증·계좌 연결·기기 연결 등). 값은 사장님이 그 화면에 넣는다. 열 곳이 없으면(시험 대역) 그래도 opened로 닫는다.
         this.ports.openScreen?.(call.screen);
         return out('opened');
       }

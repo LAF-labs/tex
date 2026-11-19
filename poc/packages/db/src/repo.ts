@@ -3,7 +3,13 @@ import { isValidBizNo, normalizeBizNo } from './bizno.ts';
 import type { Db } from './open.ts';
 
 export type ProfileKind = 'personal' | 'business';
-export type SignMethod = 'cert' | 'simple_auth' | 'security_card' | null;
+/**
+ * 발급 인증. 보안카드는 지원 안 함(대표 결정 2026-11-19). v1 DDL의 CHECK에는 옛 값 'security_card'가 남아 있지만(배포한 판의 SQL은 고치지 않는다)
+ * 그 값의 프로필은 엔진 기동 때 resetRetiredSignMethod가 "고르지 않음"(NULL)으로 되돌린다.
+ */
+export type SignMethod = 'cert' | 'simple_auth' | null;
+/** 지원을 끝낸 발급 인증 값(DB에 남았을 수 있는 옛 값). */
+export const RETIRED_SIGN_METHOD = 'security_card';
 
 export interface Profile {
   id: string;
@@ -18,7 +24,7 @@ export interface Profile {
   email: string | null;
   signMethod: SignMethod;
   keepSession: boolean;
-  /** 홈택스 아이디 로그인(보안카드 경로)의 아이디. 비밀이 아니라 프로필 정보다(팀장 결정 2026-11-05). 비밀번호·보안카드는 금고만 */
+  /** 홈택스 아이디 로그인의 아이디. 비밀이 아니라 프로필 정보다(팀장 결정 2026-11-05). 비밀번호는 금고만 */
   portalLoginId: string | null;
   /** 홈택스 인증서 창에서 고를 인증서 이름(인증서 소유자 글, 공개 정보). 실행이 사람이 고른 행에서 저장한다(H-01 2.3.0). 비밀 아님 */
   certName: string | null;
@@ -97,7 +103,8 @@ const toProfile = (r: Row): Omit<Profile, 'fromPortal'> => ({
   bizItem: (r.biz_item as string) ?? null,
   address: (r.address as string) ?? null,
   email: (r.email as string) ?? null,
-  signMethod: (r.sign_method as SignMethod) ?? null,
+  // 옛 값(보안카드)은 되돌리기 전에도 "고르지 않음"으로 읽는다
+  signMethod: r.sign_method === 'cert' || r.sign_method === 'simple_auth' ? r.sign_method : null,
   keepSession: r.keep_session === 1,
   portalLoginId: (r.portal_login_id as string) ?? null,
   certName: (r.cert_name as string) ?? null,
@@ -224,6 +231,14 @@ export class ProfileRepo {
       }
       return filled;
     })();
+  }
+
+  /**
+   * 발급 인증이 옛 값(보안카드, RETIRED_SIGN_METHOD)인 프로필을 "고르지 않음"(NULL)으로 되돌린다(대표 결정 2026-11-19).
+   * 기동마다 불러도 된다: 되돌린 뒤에는 바꿀 행이 없다. 바꾼 프로필 수를 돌려준다.
+   */
+  resetRetiredSignMethod(): number {
+    return this.db.prepare('UPDATE profiles SET sign_method = NULL, updated_at = ? WHERE sign_method = ?').run(now(), RETIRED_SIGN_METHOD).changes;
   }
 
   /** 종류별 1개: 같은 종류가 있으면 갱신, 없으면 만든다. */

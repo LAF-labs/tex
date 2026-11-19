@@ -436,7 +436,6 @@ const scenes = {
     await press('[data-onb=confirm]');
     await shot(win, '24-onb-auth');
     await press('[data-onb=other]');
-    await press('[data-onb=card]');
     await shot(win, '25-onb-auth-other');
     // 고른 줄이 굳는 순간(main 답을 기다리는 동안): 실선 + 체크, 나머지는 흐림
     S.onbDelay = 1200;
