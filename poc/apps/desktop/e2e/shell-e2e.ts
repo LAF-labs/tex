@@ -487,7 +487,7 @@ async function flow(): Promise<void> {
   S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T1', kind: 'portal_password', scope: 'business' });
   await until('secret ask', () => !!S.secretAsk(), 5000);
   const a1 = S.secretAsk()!;
-  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T2', kind: 'security_card', scope: 'business', row: 7 });
+  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T2', kind: 'cert_password', scope: 'business' });
   await sleep(200);
   const c1 = await cardOf(a1.reqId);
   check('비밀 입력: 활성 실행 요청만, 대화 안 카드 하나(가려진 칸), 따로 뜨는 창 없음', noAsk && a1.kind === 'portal_password' && c1?.type === 'password' && c1.text.includes('홈택스 비밀번호를 입력해 주세요') && winCount() === childBefore && S.secretAsk()!.reqId === a1.reqId, { noAsk, a1, c1, childBefore, after: winCount() });
@@ -510,11 +510,11 @@ async function flow(): Promise<void> {
   await until('secret answered', () => got.length === 1 && S.secretAsk()?.reqId !== a1.reqId, 5000).catch(() => {});
   const c1done = await cardOf(a1.reqId);
   check('비밀 입력 답: 금고 포트로 secret.provide 한 번(값은 포트로만), 카드는 "●●●● 입력함"', got.length === 1 && got[0]!.method === 'secret.provide' && got[0]!.kind === 'portal_password' && got[0]!.len === 13 && !!c1done && c1done.text.includes('●●●● 입력함') && c1done.type === null, { got, c1done });
-  // 열려 있을 때 온 요청(보안카드 7번 칸)은 버리지 않고 앞 카드가 끝나면 이어서 묻는다.
-  await until('queued secret ask', () => S.secretAsk()?.kind === 'security_card', 5000).catch(() => {});
+  // 열려 있을 때 온 요청(공동인증서 비밀번호)은 버리지 않고 앞 카드가 끝나면 이어서 묻는다.
+  await until('queued secret ask', () => S.secretAsk()?.kind === 'cert_password', 5000).catch(() => {});
   const a2 = S.secretAsk();
   const c2 = a2 ? await cardOf(a2.reqId) : null;
-  check('앞 카드가 끝나면 들고 있던 요청(보안카드 7번 칸)을 이어서 묻는다', !!a2 && a2.kind === 'security_card' && !!c2 && c2.text.includes('보안카드 번호 7번') && c2.type === 'password', { a2, c2 });
+  check('앞 카드가 끝나면 들고 있던 요청(공동인증서 비밀번호)을 이어서 묻는다', !!a2 && a2.kind === 'cert_password' && !!c2 && c2.text.includes('공동인증서 비밀번호') && c2.type === 'password', { a2, c2 });
   // 금고가 받지 않으면 카드가 남아 다시 넣게 한다
   S.host.secretInputPort = (() => {
     const ch = new MessageChannelMain();
@@ -540,7 +540,7 @@ async function flow(): Promise<void> {
   S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T3', kind: 'portal_password', scope: 'business' });
   await until('secret ask 3', () => !!S.secretAsk(), 5000);
   const a3 = S.secretAsk()!;
-  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T4', kind: 'security_card', scope: 'business', row: 9 });
+  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T4', kind: 'cert_password', scope: 'business' });
   // 확장 감지 거절: 진행 중에는 문장만, 발급 없이 끝나면 [다시 시도](입력창 채우기만)
   S.host.emit('vault-event', 'secret_window.refused', { reason: 'extension_not_allowed', count: 1 });
   await sleep(300);

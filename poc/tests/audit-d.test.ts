@@ -120,8 +120,8 @@ describe('audit-d: D3 금고가 부르는 비밀 창(N-44·N-11)', () => {
   it('secretTitle returns fixed labels and throws on unknown kind', () => {
     assert.equal(secretTitle('cert_password'), '금고 · 공동인증서 비밀번호');
     assert.equal(secretTitle('portal_password'), '금고 · 홈택스 비밀번호');
-    assert.equal(secretTitle('security_card'), '금고 · 보안카드 번호');
-    for (const bad of ['toString', '__proto__', 'otp', '']) assert.throws(() => secretTitle(bad), /unknown_secret_kind/, bad);
+    // 보안카드는 지원하지 않는다(대표 결정 2026-11-19): 표에 없는 종류다
+    for (const bad of ['toString', '__proto__', 'otp', '', 'security_card']) assert.throws(() => secretTitle(bad), /unknown_secret_kind/, bad);
   });
 
   it('coordinator opens one window at a time and ignores secret.needed for a runId that is not active', () => {
@@ -131,23 +131,23 @@ describe('audit-d: D3 금고가 부르는 비밀 창(N-44·N-11)', () => {
     assert.equal(c.request(need({ runId: 'run-x' })), null, '활성 실행이 아니면 열지 않는다');
     assert.equal(c.request(need({ kind: 'otp' })), null, '표에 없는 종류');
     assert.equal(c.request(need({ scope: 'all' })), null);
-    assert.equal(c.request(need({ kind: 'security_card', row: 36 })), null, '보안카드 칸은 1~35');
+    assert.equal(c.request(need({ kind: 'security_card' })), null, '보안카드는 지원하지 않는다');
     assert.deepEqual(c.request(need()), { runId: 'run-a', targetId: 'T1', kind: 'cert_password', scope: 'business' });
     assert.equal(c.request(need({ runId: 'run-b' })), null, '열린 창이 있으면 두 번째는 지금 열지 않는다');
-    assert.equal(c.request(need({ kind: 'security_card', row: 7 })), null, '대신 마지막 요청을 든다');
+    assert.equal(c.request(need({ kind: 'portal_password', targetId: 'T7' })), null, '대신 마지막 요청을 든다');
     const next = c.closed();
-    assert.equal(next?.row, 7, '창이 닫히면 든 요청을 넘긴다');
+    assert.equal(next?.targetId, 'T7', '창이 닫히면 든 요청을 넘긴다');
     assert.equal(c.closed(), null, '한 번만');
-    assert.deepEqual(c.request(next)?.row, 7);
+    assert.deepEqual(c.request(next)?.targetId, 'T7');
     assert.equal(parseSecretNeeded(null), null);
   });
 
   it('secret page: 라벨·첫 줄·고정 문구는 main 표에서, 프로필 이름은 텍스트로만', () => {
-    const html = secretPageHtml({ runId: 'run-a', kind: 'security_card', scope: 'business', row: 12 }, '<img src=x onerror=1>가나다');
-    assert.match(html, /<title>금고 · 보안카드 번호<\/title>/);
+    const html = secretPageHtml({ runId: 'run-a', kind: 'portal_password', scope: 'business' }, '<img src=x onerror=1>가나다');
+    assert.match(html, /<title>금고 · 홈택스 비밀번호<\/title>/);
     assert.match(html, /세금계산서 발급 · 홈택스 · &lt;img src=x onerror=1&gt;가나다/);
     assert.match(html, /앱은 대화창 안에서 비밀번호·카드 번호를 묻지 않아요\./);
-    assert.match(html, /data-kind="security_card" data-scope="business" data-row="12"/);
+    assert.match(html, /data-kind="portal_password" data-scope="business">/);
     assert.match(html, /default-src 'none'; script-src 'self'/);
   });
 

@@ -47,6 +47,9 @@ export type CodefFailure =
   | 'cert_kind'
   | 'two_way_required'
   | 'identity_required'
+  | 'withdraw_account_required'
+  | 'banking_kind'
+  | 'not_enrolled'
   | 'bank_error'
   | 'bank_busy'
   | 'session_lost'
@@ -64,6 +67,7 @@ export type CodefFailure =
   | 'daily_limit'
   | 'too_soon'
   | 'password_retry_limit'
+  | 'sms_wrong'
   | 'busy';
 
 const MAP: Record<string, CodefFailure> = {
@@ -82,6 +86,10 @@ const MAP: Record<string, CodefFailure> = {
   'CF-03002': 'two_way_required',
   // 2026-11-18 실기기: 인증서 비밀번호까지 맞았는데 계정 등록이 이 코드로 거절됐다(CODEF 오류코드 표: 본인인증 후 서비스 이용 가능)
   'CF-12831': 'identity_required',
+  // 뱅킹 종류 오류(2026-11-19 03:57 우리은행·개인): 이 인증서·계좌는 다른 뱅킹(기업)에 묶여 있다. 다른 뱅킹으로 넘어간다
+  'CF-12811': 'banking_kind',
+  // 인터넷뱅킹 미가입: 웹 로그인 전에 은행(지점·앱)에서 가입이 먼저다
+  'CF-12812': 'not_enrolled',
   'CF-04008': 'session_lost',
   'CF-04019': 'session_lost',
   'CF-04014': 'session_lost',
@@ -111,10 +119,21 @@ export class CodefError extends Error {
   readonly cf: string | null;
   /** too_soon: 다시 할 수 있는 시각(ISO) */
   readonly retryAt: string | null;
-  constructor(code: CodefFailure, cf: string | null = null, retryAt: string | null = null) {
+  /** CF-12401: CODEF가 빠졌다고 한 계정 등록 키 이름(값 없음, 로그·진단용) */
+  readonly param: string | null;
+  /** 모르는 거절의 단서: CODEF 안내문 단어(숫자 없음, 로그 전용, 화면에 내지 않는다) */
+  hint: string | null = null;
+  /** 어느 뱅킹(B 기업·P 개인)에서 난 실패인가(둘 다 해 봤을 때 화면 문구용) */
+  clientType: CodefClientType | null = null;
+  withClientType(t: CodefClientType): this {
+    this.clientType = t;
+    return this;
+  }
+  constructor(code: CodefFailure, cf: string | null = null, retryAt: string | null = null, param: string | null = null) {
     super(`codef.${code}`);
     this.code = code;
     this.cf = cf && /^CF-\d{5}$/.test(cf) ? cf : null;
     this.retryAt = retryAt;
+    this.param = param && /^[A-Za-z_]{1,120}$/.test(param) ? param : null;
   }
 }

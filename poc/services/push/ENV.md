@@ -1,6 +1,6 @@
 # 푸시 디스패처 환경 변수
 
-비밀(⚿)은 클라우드 KMS가 주입하고 저장소·이미지·CI에 두지 않는다(절대 규칙 ⑥). Phase 1에는 실제 푸시를 보내지 않는다: 기본 `PUSH_PROVIDER=mock`, 실기기 시험은 `sandbox`(APNs 샌드박스 주소만 허용)로만.
+비밀(⚿)은 클라우드 KMS가 주입하고 저장소·이미지·CI에 두지 않는다(절대 규칙 ⑥). 기본은 `PUSH_PROVIDER=mock`(보내지 않음). 개발 빌드 실기기 시험은 `sandbox`(APNs 샌드박스, `apns_dev` 토큰만), 운영은 `apns`(ADR-053 결정 5, 대표 확인 뒤 켠다).
 
 | 이름 | 필수 | 형식 | 설명 |
 |---|---|---|---|
@@ -13,12 +13,12 @@
 | `TOKEN_PUBLIC_KEYS` | 예 | `kid:base64(32B)[,…]` | 계정 서비스 기기 범위 토큰 공개키 |
 | `ACCOUNT_INTERNAL_URL` | 상시 서버만 | 내부 URL | 기기 상태 조회(깨울 폰이 같은 계정의 활성 폰인지, 서명 호출). 함수 배포는 계정 서비스를 함수로 부르므로 쓰지 않는다 |
 | `INTERNAL_CALL_KEY` ⚿ | 예 | hex 64자 | 내부 호출 서명 키(HMAC-SHA256: 메서드·경로·본문 SHA-256·시각 ±60초·1회용 nonce, 상수 시간 비교, 팀장 결정 2026-11-06 #135). 서비스·룸 호스트가 같은 값. 받는 쪽: 정지 훅 |
-| `PUSH_PROVIDER` | 아니오(`mock`) | `mock` \| `sandbox` | |
-| `APNS_TEAM_ID` / `APNS_KEY_ID` / `APNS_TOPIC` | sandbox | | APNs 제공자 토큰·번들 ID |
-| `APNS_P8` ⚿ | sandbox | PEM | APNs 인증 키(.p8) |
-| `APNS_ORIGIN` | 아니오 | `https://api.sandbox.push.apple.com`만 | Phase 1은 운영 주소로 기동 거부 |
-| `FCM_PROJECT_ID` | sandbox | | |
-| `FCM_SERVICE_ACCOUNT_JSON` ⚿ | sandbox | JSON | 서비스 계정(`client_email`·`private_key`·`token_uri`) |
+| `PUSH_PROVIDER` | 아니오(`mock`) | `mock` \| `sandbox` \| `apns` | `sandbox`: `apns_dev` 토큰만 샌드박스로. `apns`: `apns`는 운영 주소, `apns_dev`는 샌드박스 |
+| `APNS_TEAM_ID` / `APNS_KEY_ID` / `APNS_TOPIC` | sandbox, apns | | APNs 제공자 토큰, 번들 ID(`com.lafco.tex`) |
+| `APNS_P8` ⚿ | sandbox, apns | PEM | APNs 인증 키(.p8). 샌드박스와 운영에 같은 키 |
+| `APNS_ORIGIN` | 쓰지 않음 | | 있으면 기동 거부. 주소는 토큰 플랫폼으로 정해진다 |
+| `FCM_PROJECT_ID` | 아니오 | | 있을 때만 FCM을 붙인다(Android 깨우기는 다음 단계) |
+| `FCM_SERVICE_ACCOUNT_JSON` ⚿ | `FCM_PROJECT_ID`가 있으면 | JSON | 서비스 계정(`client_email`·`private_key`·`token_uri`) |
 | `TRUST_PROXY` | 아니오 | `1` | |
 | `PORT` / `HOST` | 아니오(`8084` / `0.0.0.0`) | | |
 

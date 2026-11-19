@@ -34,7 +34,7 @@ const SAMPLES: Record<string, { from: 'desktop' | 'mobile'; body: object; bad: o
   'cmd.run': { from: 'mobile', body: { cmdId: ulid(), playbookId: 'hometax.issue_tax_invoice', inputs: {} }, bad: { cmdId: ulid(), playbookId: 'Bad Id', inputs: {} } },
   'cmd.abort': { from: 'mobile', body: { runId: ulid() }, bad: { runId: 'nope' } },
   'cmd.resume': { from: 'mobile', body: { runId: ulid() }, bad: {} },
-  'run.event': { from: 'desktop', body: { runId: ulid(), event: 'run.done', at: 1, cmdId: ulid(), phase: 'done', result: { approvalNo: '20261116-41000000-12345678', total: 1353000, emailSent: true, docId: uuid4() } }, bad: { runId: ulid(), event: 'Run Started!', at: 1 } },
+  'run.event': { from: 'desktop', body: { runId: ulid(), event: 'run.done', at: 1, cmdId: ulid(), phase: 'done', result: { approvalNo: '20261116-41000000-12345678', total: 1353000, emailSent: true, docId: uuid4() }, rev: 7 }, bad: { runId: ulid(), event: 'Run Started!', at: 1 } },
   'gate.request': {
     from: 'desktop',
     body: { runId: ulid(), stepId: 's3', reqId: ulid(), cardId: 'c1', gateKind: 'commit', effects: ['issue_document'], fields: [{ key: 'totalAmount', value: '550000' }], cardHashInputs: { readbackHash: H, packageDigest: H, authorizes: ['s4'], intentId: ulid() }, actionHash: H, requiredSigAlg: 'p256', challenge: k32(), exp: 1 },
@@ -100,6 +100,12 @@ const SAMPLES: Record<string, { from: 'desktop' | 'mobile'; body: object; bad: o
     body: { runId: '01JD0000000000000000000000', reqId: '01JD0000000000000000000001' },
     bad: { runId: '01JD0000000000000000000000' },
   },
+  // v1.11(sync.v1): 다른 곳에서 닫힌 승인 알리기
+  'gate.resolved': {
+    from: 'desktop',
+    body: { runId: '01JD0000000000000000000000', reqId: '01JD0000000000000000000001', by: 'expired' },
+    bad: { runId: '01JD0000000000000000000000', reqId: '01JD0000000000000000000001', by: 'pc', why: 'x' },
+  },
 };
 
 function env(type: string, from: 'desktop' | 'mobile', body: object): Envelope {
@@ -136,7 +142,7 @@ describe('메시지 종류마다 왕복·거부', () => {
       assert.equal(validateEnvelope(env(t, s.from, s.bad)), false, `${t} bad should fail`);
       assert.throws(() => encodeEnvelope(env(t, s.from, s.bad)));
       // 방향이 정해진 종류는 반대 방향을 거부한다(Phase 1 새 종류)
-      if (t.startsWith('receipt.') || t.startsWith('cash.') || t === 'share.key' || t.startsWith('px.') || t === 'gate.refresh') assert.equal(validateEnvelope(env(t, s.from === 'mobile' ? 'desktop' : 'mobile', s.body)), false);
+      if (t.startsWith('receipt.') || t.startsWith('cash.') || t === 'share.key' || t.startsWith('px.') || t === 'gate.refresh' || t === 'gate.resolved') assert.equal(validateEnvelope(env(t, s.from === 'mobile' ? 'desktop' : 'mobile', s.body)), false);
     });
   }
 });

@@ -1,6 +1,6 @@
 // 비밀 종류별 입력 규칙과 1회용 비밀 창 결속(ADR-020 결정 2, ADR-025 결정 10, D05 §3.5·§4).
-// - 타이피스트는 포털 비밀번호·보안카드만 넣는다. 인증서 비밀번호는 정책이 호스트를 허용해도 넣지 않는다.
-// - 보안카드는 칸 하나씩, 화면에 보인 칸 번호가 요청 칸과 같을 때만 넣는다.
+// - 타이피스트는 포털 비밀번호만 넣는다. 인증서 비밀번호는 정책이 호스트를 허용해도 넣지 않는다.
+// - 보안카드는 지원하지 않는다(대표 결정 2026-11-19): 타이피스트·1회용 창 어디에서도 받지 않는다.
 // - 1회용 입력 창(secretInput oneshot)은 금고가 secret.needed로 부른 것만 붙는다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -10,7 +10,7 @@ import { describe, it } from 'node:test';
 import { MessageChannel } from 'node:worker_threads';
 import { VaultClient } from '@sax/engine';
 import { appPaths, FileEventLog, wrapPort } from '@sax/platform';
-import { MemoryKeyStore, parseCardRow, Vault, type FillRequest, type SecretInputBind } from '@sax/vault';
+import { MemoryKeyStore, parseSecretInputBind, RPC_BY_PORT, Vault, type FillRequest, type SecretInputBind } from '@sax/vault';
 import { fakeRelay, tick } from './fake-relay.ts';
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -21,13 +21,11 @@ const req = (over: Partial<FillRequest> = {}): FillRequest => ({
   runId: 'r1', targetId: 'RUN', frame: 'main', element: '#pw',
   secret: { kind: 'portal_password', scope: 'business' }, slot: { secretKind: 'portal_password', purpose: 'login' }, ...over,
 });
-const card = (row: number, rowLabel: string | undefined = '#row') =>
-  req({ secret: { kind: 'security_card', scope: 'business', row }, slot: { secretKind: 'security_card', purpose: 'sign' }, rowLabel });
 const count = (log: FileEventLog, ev: string) => log.lines.filter((l) => l.includes(`"${ev}"`)).length;
 
 describe('타이피스트 종류 규칙(ADR-020 결정 2·ADR-025 결정 10)', () => {
   it('인증서 비밀번호는 정책이 호스트를 허용하고 1회용 값이 있어도 넣지 않는다', async () => {
-    const f = await fakeRelay({ policy: { secretHosts: { cert_password: ['127.0.0.1'], portal_password: ['127.0.0.1'], security_card: ['127.0.0.1'] } } });
+    const f = await fakeRelay({ policy: { secretHosts: { cert_password: ['127.0.0.1'], portal_password: ['127.0.0.1'] } } });
     f.ops.secrets.provide({ runId: 'r1', kind: 'cert_password', scope: 'business' } as SecretInputBind, enc('TEST-CERT-rule0001'));
     const before = f.ops.secrets.size;
     const r = await f.ops.fill(req({ secret: { kind: 'cert_password', scope: 'business' }, slot: { secretKind: 'cert_password', purpose: 'login' } }));
@@ -47,76 +45,18 @@ describe('타이피스트 종류 규칙(ADR-020 결정 2·ADR-025 결정 10)', (
     assert.equal(count(f.log, 'vault.typist_kind_refused'), 3);
   });
 
-  it('보안카드는 row 필수(1~35), 포털 비밀번호는 row가 없다', async () => {
+  it('보안카드는 지원하지 않는다(대표 결정 2026-11-19): 타이피스트는 넣지 않고, 결속·엔진 RPC도 없다', async () => {
     const f = await fakeRelay();
-    f.page.rowLabel = '3';
-    for (const row of [undefined, 0, 36, 1.5]) {
-      assert.deepEqual(await f.ops.fill(req({ secret: { kind: 'security_card', scope: 'business', row } as never, slot: { secretKind: 'security_card', purpose: 'sign' }, rowLabel: '#row' })), { ok: false, reason: 'denied' }, String(row));
-    }
-    assert.deepEqual(await f.ops.fill(req({ secret: { kind: 'portal_password', scope: 'business', row: 3 } })), { ok: false, reason: 'denied' });
+    f.ops.secrets.provide({ runId: 'r1', kind: 'security_card', scope: 'business' } as never, enc('1011'));
+    assert.deepEqual(await f.ops.fill(req({ secret: { kind: 'security_card', scope: 'business' }, slot: { secretKind: 'security_card' as never, purpose: 'sign' } })), { ok: false, reason: 'denied' });
+    assert.equal(f.page.value, '');
+    assert.equal(count(f.log, 'vault.typist_kind_refused'), 1);
     assert.ok(!f.events.some((e) => e.name === 'secret.needed'));
-  });
-});
-
-describe('보안카드 칸 번호 확인(D05 §4)', () => {
-  const provided = async (label: string | null) => {
-    const f = await fakeRelay();
-    f.page.rowLabel = label;
-    f.ops.secrets.provide({ runId: 'r1', kind: 'security_card', scope: 'business', row: 12 }, enc('1011'));
-    return f;
-  };
-
-  it('화면 칸 번호가 요청 칸과 같으면 넣는다(괄호·전각·"번" 허용)', async () => {
-    for (const label of ['12', ' [12] ', '１２', '12번', 'No.12']) {
-      const f = await provided(label);
-      assert.deepEqual(await f.ops.fill(card(12)), { ok: true }, label);
-      assert.equal(f.page.value, '1011');
-    }
-  });
-
-  it('칸 번호가 다르거나 읽을 수 없으면 row_mismatch, 값을 꺼내지도 창을 부르지도 않는다', async () => {
-    const cases: Array<[string | null, string | undefined, boolean]> = [
-      // readable: 칸 번호를 하나로 읽었나(로그에는 이것만 남는다)
-      ['13', '#row', true], // 다른 칸
-      ['12번 앞 2자리', '#row', false], // 숫자 둘
-      ['', '#row', false], // 숫자 없음
-      [null, '#row', false], // 요소 없음
-      ['12', undefined, false], // 셀렉터 없음
-      ['12', '', false],
-      ['12', 'x'.repeat(257), false], // 셀렉터 너무 김
-      ['1'.repeat(65), '#row', false], // 글자 너무 김
-    ];
-    for (const [label, sel, readable] of cases) {
-      const f = await provided(label);
-      const r = sel === undefined ? { ...card(12), rowLabel: undefined } : card(12, sel);
-      assert.deepEqual(await f.ops.fill(r), { ok: false, reason: 'row_mismatch' }, `${label}/${sel?.length}`);
-      assert.equal(f.page.value, '');
-      assert.equal(f.ops.secrets.size, 1, '값은 남아 있다(꺼내지 않음)');
-      assert.ok(!f.events.some((e) => e.name === 'secret.needed'));
-      const line = f.log.lines.find((l) => l.includes('vault.card_row_mismatch'));
-      assert.ok(line);
-      assert.ok(line.includes(`"readable":${readable}`), line);
-      assert.ok(!line.includes('1011') && !line.includes('"12"'), '로그에 값·칸 번호가 없다');
-    }
-  });
-
-  it('칸 번호는 금고의 격리 세계에서 셀렉터 문자열로만 읽는다(식 주입 불가)', async () => {
-    const f = await provided('12');
-    const sel = `#row'); alert(1); ('`;
-    await f.ops.fill(card(12, sel));
-    const ev = f.conn.sent.find((m) => m.method === 'Runtime.evaluate' && String(m.params.expression).includes('textContent'));
-    assert.ok(ev);
-    const p = ev.params as { expression: string; contextId: number; returnByValue: boolean };
-    assert.ok(p.expression.includes(JSON.stringify(sel)), '셀렉터는 JSON 문자열로 들어간다');
-    assert.equal(p.returnByValue, true);
-    assert.equal(p.contextId, 1, '격리 세계에서');
-    assert.equal(ev.sessionId, 'V-RUN', '금고 세션에서');
-  });
-
-  it('parseCardRow', () => {
-    const ok: Array<[unknown, number]> = [['1', 1], ['35', 35], ['07', 7], ['３５', 35], ['[ 3 ]', 3], ['제 12 번', 12]];
-    for (const [t, n] of ok) assert.equal(parseCardRow(t), n, String(t));
-    for (const t of ['0', '36', '', 'abc', '1 2', '12-13', '1'.repeat(65), 12, null, undefined, {}]) assert.equal(parseCardRow(t), null, String(t));
+    // 1회용·등록 결속은 받지 않는다(포트를 붙이지 않는다)
+    assert.equal(parseSecretInputBind({ runId: 'r1', kind: 'security_card', scope: 'business' }), null);
+    assert.equal(parseSecretInputBind({ mode: 'store', kind: 'security_card', scope: 'business', notice: { version: 'v1' } }), null);
+    // 보안카드 창 입력 RPC는 어느 포트에도 없다
+    assert.ok(!Object.values(RPC_BY_PORT).flat().some((m) => m.includes('Card')));
   });
 });
 
@@ -137,7 +77,7 @@ async function bareVault() {
     return new VaultClient(wrapPort(ch.port2, 'node'));
   };
   const needs = (vault as unknown as { needs: Map<string, number> }).needs;
-  const need = (b: { runId: string; kind: string; scope: string; row?: number }, ttlMs = 60_000) => needs.set(`${b.runId}|${b.kind}|${b.scope}|${b.row ?? ''}`, Date.now() + ttlMs);
+  const need = (b: { runId: string; kind: string; scope: string }, ttlMs = 60_000) => needs.set(`${b.runId}|${b.kind}|${b.scope}`, Date.now() + ttlMs);
   const close = async () => {
     await vault.shutdown();
     for (const c of channels) {
@@ -158,14 +98,12 @@ describe('1회용 비밀 창은 금고가 부른 것만(ADR-025 결정 10)', () 
       assert.equal(await noAnswer(b.port(bind).rpc('secret.provide', { bytes: enc('TEST-PW-unreq001') })), 'silent');
       assert.equal(count(b.log, 'vault.secret_input_unrequested'), 1);
       assert.equal(b.f.ops.secrets.size, 0);
-      // 다른 run·scope·row의 요청으로는 열리지 않는다
+      // 다른 run·scope·종류의 요청으로는 열리지 않는다
       b.need({ ...bind, runId: 'r2' });
       b.need({ ...bind, scope: 'personal' });
-      b.need({ runId: 'r1', kind: 'security_card', scope: 'business', row: 4 });
-      for (const other of [bind, { runId: 'r1', kind: 'security_card', scope: 'business', row: 5 }]) {
-        assert.equal(await noAnswer(b.port(other).rpc('secret.provide', { bytes: enc('1234') })), 'silent');
-      }
-      assert.equal(count(b.log, 'vault.secret_input_unrequested'), 3);
+      b.need({ runId: 'r1', kind: 'cert_password', scope: 'business' });
+      assert.equal(await noAnswer(b.port(bind).rpc('secret.provide', { bytes: enc('TEST-PW-unreq002') })), 'silent');
+      assert.equal(count(b.log, 'vault.secret_input_unrequested'), 2);
       assert.ok(!b.log.lines.some((l) => l.includes('TEST-PW')));
     } finally {
       await b.close();
@@ -207,7 +145,7 @@ describe('1회용 비밀 창은 금고가 부른 것만(ADR-025 결정 10)', () 
       b.need(bind);
       b.need({ ...bind, runId: 'r10' });
       await b.control.rpc('run.end', { runId: 'r1' });
-      assert.deepEqual([...b.needs.keys()], ['r10|portal_password|business|'], 'r1로 시작하는 다른 run은 남는다');
+      assert.deepEqual([...b.needs.keys()], ['r10|portal_password|business'], 'r1로 시작하는 다른 run은 남는다');
       assert.equal(await noAnswer(b.port(bind).rpc('secret.provide', { bytes: enc('TEST-PW-ended001') })), 'silent');
     } finally {
       await b.close();

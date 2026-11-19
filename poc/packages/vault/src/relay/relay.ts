@@ -802,7 +802,7 @@ export class Relay {
     } else if (p.method === 'Runtime.getProperties' && tainted) {
       // 오염 상태(D05 §3.5, D-17(N-12)): 엔진의 objectId가 비밀 노드에서 왔는지 금고는 모른다(세션마다 다른 객체 ID).
       // 그래서 이 동안은 모든 응답에서 입력 값 속성(value·defaultValue)의 문자열을 지운다. 창은 다음 문서 커밋까지라 짧다.
-      // RemoteObject는 문자열을 description에도 복사하므로 함께 지운다(보안카드 숫자는 짧아 알려진 값 치환에 안 걸린다).
+      // RemoteObject는 문자열을 description에도 복사하므로 함께 지운다(짧은 값은 알려진 값 치환에 안 걸린다).
       for (const prop of (result.result as Json[] | undefined) ?? []) {
         const v = prop?.value as Json | undefined;
         if (VALUE_PROPS.has(String(prop?.name)) && v && v.type === 'string') {

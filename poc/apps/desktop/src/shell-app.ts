@@ -14,6 +14,7 @@ import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { findInstalledChrome, pageAddress, SESSION_IDLE_REPORT_MS } from '@sax/vault';
 import { execFile } from 'node:child_process';
 import { app, autoUpdater as nativeUpdater, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, ShareMenu, shell as desktop } from 'electron';
+import { deviceModel } from './device-model.ts';
 import { AccountantPack, isPackMonth, packAsk } from './accountant-pack.ts';
 import { ACTION_TEXT, actionText, issueLocalApproval, kstToday, verifyLocalApproval, verifyLocalAttestation, type LocalApproval } from './approval-gate.ts';
 import { CERT_DOCS_SHOWN, certDocByCode, certInputsFor, type CertDocDef } from './cert-docs.ts';
@@ -37,13 +38,12 @@ import { appHeaders, assertNoDebugSwitches, hardenApp, hardenSession, hardenWind
 import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.ts';
 import { secretPageHtml, SecretWindowCoordinator, type SecretInputBind as OneShotInputBind } from './secret-labels.ts';
 import { openVaultInputWindow } from './secret-window.ts';
-import { CARD_WINDOW_TITLE, cardSecretPageHtml } from './secret-labels.ts';
 import { bankAutoHandlers, CODEF_WINDOW_TITLE, codefPageHtml, parseCodefNeeded, type CodefNeeded } from './bank-auto.ts';
 import { barBounds, browserPanelWidth, SHELL } from './shell-layout.ts';
 import { EmbeddedBrowser, keepDrawingWhenHidden } from './embedded-browser.ts';
 import { engineIntentResolver, INTENT_UNAVAILABLE_TEXT, MODEL_CONSENT_FIRST_TEXT, routed, type IntentResolver } from './intent-route.ts';
 import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder } from './chat-reply.ts';
-import { answersPending, emptyDocStore, SETUP_LABEL, setupMissing, setupText, type SetupItem, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, type VatMode, EMPTY_REQUEST_TEXT } from './shell-model.ts';
+import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, type SetupItem, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, type VatMode, EMPTY_REQUEST_TEXT } from './shell-model.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { readPastRuns, type PastRun } from './run-history.ts';
 import { pendingWork, RunResumeStore } from './run-resume.ts';
@@ -63,10 +63,11 @@ import type { AccountClient, BillingView, CloudPorts, DeviceAuth, PcLinkVault, V
 import { PairingHost, type PairView } from './remote-pairing.ts';
 import { buildPhoneCopy } from './phone-copy.ts';
 import { ApprovalLog, PhoneGate } from './phone-gate.ts';
+import { PhoneWaker } from './phone-wake.ts';
 import { CmdLog, PhoneIssue } from './phone-issue.ts';
-import { DESKTOP_CAPS, PhoneLink, PhoneStore, type TokenSeal } from './phone-link.ts';
+import { DESKTOP_CAPS, PhoneLink, PhoneStore, type PhoneView, type TokenSeal } from './phone-link.ts';
 import { APPROVE_CAPS, phoneSession, SESSION_CAPS } from './phone-session.ts';
-import { DeviceManager } from './remote-devices.ts';
+import { DeviceManager, type DeviceView } from './remote-devices.ts';
 import { engineShareStore, ShareSync } from './share-sync.ts';
 import { PcLinkHost } from './remote-pclink.ts';
 import { phoneReceiver } from './phone-receive.ts';
@@ -136,8 +137,6 @@ const FILES: Record<string, string> = {
   '/secret.css': 'text/css',
   '/codef-secret.js': 'text/javascript',
   '/shell-bank-auto.js': 'text/javascript',
-  '/shell-card.js': 'text/javascript',
-  '/card-secret.js': 'text/javascript',
 };
 
 /** 지금 열린 비밀 창의 페이지(main이 만든다). 열린 창이 없으면 null(404). */
@@ -154,7 +153,6 @@ function serve(): void {
       const html = secretPage();
       return html ? new Response(html, { headers: appHeaders('text/html; charset=utf-8', SECRET_CSP) }) : new Response('', { status: 404 });
     }
-    if (p === '/card-secret.html') return new Response(cardSecretPageHtml(), { headers: appHeaders('text/html; charset=utf-8', SECRET_CSP) });
     if (p === '/codef-secret.html') {
       const html = codefPage();
       return html ? new Response(html, { headers: appHeaders('text/html; charset=utf-8', SECRET_CSP) }) : new Response('', { status: 404 });
@@ -305,11 +303,14 @@ export interface Shell {
 /** DB 프로필 칸 → 내 사업장 화면 칸 이름(shell-biz.js FIELDS). */
 const SHELL_BIZ_KEY: Record<PortalProfileKey, NonNullable<Profile['fromHometax']>[number]> = { displayName: 'name', repName: 'rep', bizType: 'bizType', bizItem: 'bizItem', address: 'address', email: 'email' };
 
-/** 발급 인증이 비어 있는 옛 프로필도 공동인증서로 보인다(엔진도 그 값으로 서명한다, 대표 지시 2026-11-14). */
+/**
+ * 발급 인증이 비어 있으면(고르지 않음) NO_AUTH로 보여 다시 고르게 한다. 보안카드였던 프로필은 엔진 기동 때 비운다(대표 결정 2026-11-19 지원 안 함,
+ * resetRetiredAuth). 새로 저장하는 프로필은 고르지 않아도 공동인증서다(DB upsert 기본값, 대표 지시 2026-11-14).
+ */
 function profileView(p: DbProfile): Profile {
   const unnamed = p.kind === 'business' && nameMissing(p);
   const fromHometax = p.fromPortal.map((k) => SHELL_BIZ_KEY[k]);
-  return { kind: p.kind, name: unnamed ? NO_BUSINESS.name : p.displayName, ...(unnamed ? { nameMissing: true } : {}), ...(fromHometax.length ? { fromHometax } : {}), bizNo: p.bizNo ?? undefined, rep: p.repName ?? undefined, bizType: p.bizType ?? undefined, bizItem: p.bizItem ?? undefined, address: p.address ?? undefined, email: p.email ?? '', auth: p.signMethod && Object.hasOwn(SIGN_LABEL, p.signMethod) ? SIGN_LABEL[p.signMethod as keyof typeof SIGN_LABEL] : SIGN_LABEL.cert };
+  return { kind: p.kind, name: unnamed ? NO_BUSINESS.name : p.displayName, ...(unnamed ? { nameMissing: true } : {}), ...(fromHometax.length ? { fromHometax } : {}), bizNo: p.bizNo ?? undefined, rep: p.repName ?? undefined, bizType: p.bizType ?? undefined, bizItem: p.bizItem ?? undefined, address: p.address ?? undefined, email: p.email ?? '', auth: p.signMethod ? SIGN_LABEL[p.signMethod] : NO_AUTH };
 }
 
 /** DB 거래처 → 셸 화면 모델. 품목은 저장 품목(counterparty.getItems)의 첫 이름, 없으면 fixture 시연 값(itemHints). */
@@ -637,7 +638,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     void refresh().catch(() => {});
   });
   runs.on('gate-closed', (runId: string, reqId: string, reason: string) => {
-    phoneGate?.close(runId, reqId);
+    // 엔진이 닫은 게이트(승인은 여기로 오지 않는다): 대기 만료만 expired, 나머지(중지·신호·실행 끝)는 stopped
+    phoneGate?.close(runId, reqId, reason === 'expired' ? 'expired' : 'stopped');
     bar.close(reason, reqId);
   });
 
@@ -701,7 +703,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
    * 값은 main에서 바이트로 바꿔 넘기고 바로 0으로 덮는다. 로그·대화 기록·모델·렌더러 상태에 남기지 않는다(대화에는 "●●●● 입력함"만).
    */
   let secretAsk: { reqId: string; bind: OneShotInputBind } | null = null;
-  const SECRET_LABEL: Record<string, string> = { cert_password: '공동인증서 비밀번호', portal_password: '홈택스 비밀번호', security_card: '보안카드 번호' };
+  const SECRET_LABEL: Record<string, string> = { cert_password: '공동인증서 비밀번호', portal_password: '홈택스 비밀번호' };
   const closeSecret = () => {
     if (!secretAsk) return;
     send({ type: 'secretAsk', reqId: secretAsk.reqId, state: 'closed' });
@@ -712,9 +714,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (mainClosing || win.isDestroyed()) return log.event('main.secret_needed_ignored');
     const r = secrets.request(data);
     if (!r) return log.event(secrets.open ? 'main.secret_needed_queued' : 'main.secret_needed_ignored');
-    const bind: OneShotInputBind = { runId: r.runId, kind: r.kind, scope: r.scope, ...(r.row !== undefined ? { row: r.row } : {}) };
+    const bind: OneShotInputBind = { runId: r.runId, kind: r.kind, scope: r.scope };
     secretAsk = { reqId: randomUUID().slice(0, 18), bind };
-    const label = r.kind === 'security_card' && r.row ? `${SECRET_LABEL[r.kind]} ${r.row}번` : (SECRET_LABEL[r.kind] ?? '비밀번호');
+    const label = SECRET_LABEL[r.kind] ?? '비밀번호';
     const note = r.kind === 'cert_password' ? '처음 한 번만 넣으면 이 Mac 금고에 두고 다음부터 묻지 않아요.' : '이번 실행에서 한 번만 쓰고 저장하지 않아요.';
     send({ type: 'secretAsk', reqId: secretAsk.reqId, state: 'open', runId: r.runId, kind: r.kind, label, note });
     // 앱이 앞에 있어야 카드가 보인다(Chrome은 올리지 않는다)
@@ -760,70 +762,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (!r.ok) throw new Error('vault_refused');
     return { remembered: true };
   };
-  /**
-   * 보안카드 등록 창(부장 판정 2026-11-14: 사진·칸 값은 main·셸 렌더러를 지나지 않는다). 금고 직결 입력 창(preload-secret, D05 §3.8)을 열고
-   * 그 창이 금고 store 결속 포트로 사진과 애매한 칸을 바로 보낸다. main은 금고 control 알림(secret.stored: 칸 수만)과 창 닫힘만 안다.
-   */
-  const CARD_BIND = { mode: 'store', kind: 'security_card', scope: 'business', notice: { version: 'card-scan-2026-11-14' } } as const;
-  let cardWin: { win: BrowserWindow; stored: number } | null = null;
-  /** 마지막 보안카드 저장 알림(창이 닫힌 뒤 늦게 와도 반영한다). */
-  let cardStoredAt: { at: number; items: number } | null = null;
-  const openCardWindow = (): Promise<number> =>
-    new Promise((resolve) => {
-      if (cardWin && !cardWin.win.isDestroyed()) {
-        cardWin.win.focus();
-        return resolve(-1);
-      }
-      let port: ReturnType<typeof host.secretInputPort> | null = null;
-      try {
-        port = host.secretInputPort(CARD_BIND);
-        const w = openVaultInputWindow(win, port, `${SHELL_SCHEME}://shell/card-secret.html`, CARD_WINDOW_TITLE, 520);
-        const me = { win: w, stored: 0 };
-        const openedAt = Date.now();
-        cardWin = me;
-        w.on('closed', () => {
-          if (cardWin === me) cardWin = null;
-          // 금고 알림이 창 닫힘보다 늦게 올 수 있다: 잠깐 더 기다려 이 창이 열린 뒤의 저장이면 반영한다
-          const settle = (left: number) => {
-            const late = cardStoredAt && cardStoredAt.at >= openedAt ? cardStoredAt.items : 0;
-            const n = me.stored || late;
-            if (n > 0 || left <= 0) {
-              log.event('main.card_window_closed', { stored: n, late: !me.stored && n > 0 });
-              return resolve(n);
-            }
-            setTimeout(() => settle(left - 250), 250);
-          };
-          settle(3_000);
-        });
-      } catch (e) {
-        port?.close();
-        log.event('main.card_window_failed', { error: (e as Error).message.slice(0, 120) });
-        resolve(0);
-      }
-    });
-  host.on('vault-event', (name: string, data: unknown) => {
-    if (name !== 'secret.stored') return;
-    const d = (data ?? {}) as { kind?: unknown; items?: unknown };
-    if (d.kind !== 'security_card') return;
-    const items = typeof d.items === 'number' ? d.items : 0;
-    cardStoredAt = { at: Date.now(), items };
-    if (!cardWin) return;
-    cardWin.stored = items;
-    // 창이 "등록했어요"를 잠깐 보인 뒤 스스로 닫는다. 닫지 못했으면 main이 닫는다
-    const w = cardWin.win;
-    setTimeout(() => (w.isDestroyed() ? undefined : w.close()), 2_000);
-  });
-  /** 등록 창을 열고 닫힐 때까지 기다린다. 온보딩에서 열었으면 저장된 뒤 main이 발급 인증을 보안카드로 정한다(렌더러 제스처를 다시 요구하지 않는다). */
-  const cardRegister = async (p: { onboarding?: boolean }) => {
-    const stored = await openCardWindow();
-    if (stored === -1) return { stored: 0, busy: true };
-    if (stored > 0 && p.onboarding && onb && !onb.done) {
-      await onb.answer({ step: 'auth', choice: 'card' } as Parameters<OnboardingFlow['answer']>[0]).catch((e: Error) => log.event('main.card_onboarding_failed', { error: e.message.slice(0, 80) }));
-      if (onb.done) pushBoard();
-      return { stored, onboarding: await onbView(), profiles: profiles() };
-    }
-    return { stored };
-  };
   /** 대화 카드의 답(secret.answer). 넣었으면 금고로, 취소면 카드만 닫는다(금고 칸은 실행 TTL까지 기다린다). */
   const answerSecret = async (p: { reqId?: unknown; value?: unknown; cancel?: unknown }): Promise<{ ok: true }> => {
     const ask = secretAsk;
@@ -838,8 +776,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     }
     if (typeof p.value !== 'string' || !p.value) throw new Error('bad_value');
     const bytes = new TextEncoder().encode(p.value);
-    const params: Record<string, unknown> = { kind: ask.bind.kind, scope: ask.bind.scope, bytes, ...(ask.bind.row !== undefined ? { row: ask.bind.row } : {}) };
-    const r = await vaultSecretSend(ask.bind, 'secret.provide', params);
+    const r = await vaultSecretSend(ask.bind, 'secret.provide', { kind: ask.bind.kind, scope: ask.bind.scope, bytes });
     bytes.fill(0);
     log.event('main.secret_ask_answered', { kind: ask.bind.kind, ok: r.ok, ...(r.error ? { error: r.error } : {}) });
     if (!r.ok) throw new Error('vault_refused');
@@ -851,7 +788,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   // 계좌 자동조회 인증서 비밀번호 창(금고 codef.seal이 부른다). 하나만. 값 없이 닫히면 금고에 알려 기다림을 끝낸다.
   let codefWin: { win: BrowserWindow; req: CodefNeeded } | null = null;
-  codefPage = () => (codefWin ? codefPageHtml(codefWin.req, { profileName: profiles()[codefWin.req.scope].name, certLabel: bankAuto.chosenLabel() }) : null);
+  codefPage = () => {
+    // 기다리는 요청이 없을 때 창이 이 페이지를 부르면 빈 창이 된다: 남긴다
+    if (!codefWin) log.event('main.secret_window_blank', { step: 'no_request' });
+    return codefWin ? codefPageHtml(codefWin.req, { profileName: profiles()[codefWin.req.scope].name, certLabel: bankAuto.chosenLabel(), bankName: bankAuto.chosenBank() }) : null;
+  };
   const openCodef = (req: CodefNeeded): void => {
     if (mainClosing || win.isDestroyed() || codefWin) {
       void host.control('codef.windowClosed', { reqId: req.reqId }).catch(() => {});
@@ -860,7 +801,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     let port: ReturnType<typeof host.secretInputPort> | null = null;
     try {
       port = host.secretInputPort(req);
-      const w = openVaultInputWindow(win, port, `${SHELL_SCHEME}://shell/codef-secret.html`, CODEF_WINDOW_TITLE, 340);
+      const w = openVaultInputWindow(win, port, `${SHELL_SCHEME}://shell/codef-secret.html`, CODEF_WINDOW_TITLE, 340, (n, d) => log.event(n, d));
       codefWin = { win: w, req };
       w.on('closed', () => {
         if (codefWin?.win === w) codefWin = null;
@@ -936,7 +877,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 보내기 전에 표시한다. 보낸 뒤 엔진이 끝나면 발급됐는지 모르는 쪽(in_doubt)으로 다룬다.
     const sendApproval = async (approval: LocalApproval, note?: string) => {
       // 이 게이트는 여기서 답했다. 뒤에 오는 폰의 답은 받지 않는다(ADR-052 결정 5).
-      phoneGate?.close(runId, req.reqId);
+      phoneGate?.close(runId, req.reqId, 'pc');
       runs.approved(runId, note);
       // 이 건이 "다시 시작할 일"에서 빠진 것이 DB에 닿은 뒤 보낸다(보낸 뒤 꺼지면 다시 시작하지 않고 안내만).
       await saveResume().catch(() => {});
@@ -1189,8 +1130,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         recognizeBizCert: () => readBizCert(bizCertPorts),
         // 진위확인은 클라우드 프록시(M4-6)가 아직 없다. 견본 결과(계속사업자) 대신 "조회하지 못함"으로 둔다(온보딩은 그대로 이어 간다).
         checkBizNo: async () => ({ status: 'unknown', label: '조회하지 못했어요', taxType: null, source: '국세청 조회' }),
-        // 금고 등록 창(T-06)이 main에 아직 없다. 견본 등록 대신 "지금은 등록할 수 없음"으로 끝내 다른 인증으로 바꾸게 한다.
-        registerSecrets: async () => ({ ok: false, reason: 'unavailable' }),
         consentConfig: async () => structuredClone(CONSENT_CONFIG),
         findCerts: () => listNpkiCerts((m, p) => host.control(m, p), (der) => certInfoInSandbox(der), { today: kstToday(Date.now()), log: (n, d) => log.event(n, d), names: certNames }),
         // 고른 인증서의 CN. 이번 기동에 목록을 본 적이 없으면(이어 하기) 한 번 다시 연다
@@ -1407,6 +1346,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     pending: new PendingCodeFile(appPaths(root ?? defaultAppRoot()).userData),
     platform: process.platform === 'darwin' ? 'macos' : 'windows',
     deviceName: opts.remote?.deviceName ?? (process.platform === 'darwin' ? 'Mac PC' : 'Windows PC'),
+    // 계정 기기 목록의 이름은 모델 이름으로(예: "MacBook Pro", 2026-11-19 대표). 기기 토큰을 받을 때 알린다
+    model: deviceModel,
     pairing: opts.remote?.pairing !== false,
     // 새 PC 연결(ADR-048 결정 3): 금고의 계정 열쇠 넘기기. 넘겨받은 뒤에는 금고 공개키를 다시 읽는다(AIK가 바뀐다)
     linkVault: async () => linkVaultOf(await keysOf()),
@@ -1490,7 +1431,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   // 엔진이 죽으면 놓으라는 말을 못 했을 수 있다: main이 대신 놓는다(못 놓아도 서버 잠금은 90초 뒤 풀린다)
   host.on('exit', () => void issueLock.release());
   // 폰 연결(S-03, remote-pairing.ts). 로그인(첫 PC 등록)을 마치고 클라우드 포트·QR 인코더가 있을 때만.
-  // 따로 창을 띄우지 않고 설정 > 기기 연결의 연결 칸(shell-pair.js)에 그린다. 렌더러가 받는 값은 PairView뿐이고 QR은 main이 만든 이미지(data URL)다.
+  // 따로 창을 띄우지 않고 설정 > 기기 연결의 연결 칸(QR)과 메인 창 안 모달(6자리부터, shell-pair.js)에 그린다. 렌더러가 받는 값은 PairView뿐이고 QR은 main이 만든 이미지(data URL)다.
   // QR·6자리가 화면에 있는 동안은 메인 창을 화면 캡처에서 가린다(setContentProtection, ADR-016). 끝나면 푼다.
   // 우편함 토큰·채널이 든 결과는 지금은 이 실행의 메모리에만 둔다(수신 배선 PR에서 금고 보관).
   let pairHost: PairingHost | null = null;
@@ -1577,15 +1518,37 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       onDraft: () => pushBoard(), // 초안은 update 이벤트 없이 생긴다
       cmds: new CmdLog(path.join(appPaths(root ?? defaultAppRoot()).userData, 'remote-cmds.json')),
       log: (n, d) => log.event(n, d ?? {}),
+      wake: (pairId, kind) => void phoneWaker.wake(pairId, kind),
     });
     return phoneIssue;
   };
+  // 폰 깨우기(ADR-053, phone-wake.ts): 폰 앱이 뒤에 있을 때 내용 없는 알림(종류만). 클라우드 연결이 없으면 부르지 않는다.
+  const wakeClient = opts.remote?.keys ? (opts.remote.cloud?.account ?? null) : null;
+  const phoneWaker = new PhoneWaker({
+    deviceOf: (pairId) => phoneLink?.deviceOf(pairId) ?? null,
+    call: wakeClient
+      ? async (deviceId, kind) => {
+          const d = account.device();
+          if (!d) throw Object.assign(new Error('account'), { code: 'account.signed_out' });
+          try {
+            return await wakeClient.wakePhone(d.auth, deviceId, kind);
+          } catch (e) {
+            if ((e as { code?: unknown }).code !== 'account.unauthorized' && (e as { code?: unknown }).code !== 'push.unauthorized') throw e;
+            d.clearToken();
+            return wakeClient.wakePhone(d.auth, deviceId, kind);
+          }
+        }
+      : null,
+    log: (n, d) => log.event(n, d),
+  });
   // 폰 승인(ADR-052): 폰이 맡긴 발급의 커밋 게이트를 그 폰에 보내고, 답의 서명을 연결 기록의 승인 키로 검증한다.
   const phoneGateOf = (): PhoneGate => {
     phoneGate ??= new PhoneGate({
       px: (pairId) => phoneLink?.px(pairId) ?? null,
       tracked: (id) => phoneIssue?.trackedOf(id) ?? null,
       poke: (id) => phoneIssue?.poke(id),
+      wake: (pairId, kind) => void phoneWaker.wake(pairId, kind),
+      attached: (pairId) => phoneWaker.forget(pairId),
       approvals: new ApprovalLog(path.join(appPaths(root ?? defaultAppRoot()).userData, 'remote-approvals.json')),
       log: (n, d) => log.event(n, d ?? {}),
     });
@@ -1595,7 +1558,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   runs.on('update', (run) => {
     phoneIssue?.update(run);
     // 승인 대기를 벗어난 실행의 게이트는 닫는다(끝·중지·다음 단계)
-    if (run.status !== 'waiting') phoneGate?.close(run.id);
+    if (run.status !== 'waiting') phoneGate?.close(run.id, undefined, run.status === 'issuing' || run.status === 'done' ? 'pc' : 'stopped');
   });
   const phones = (): PhoneLink | null => {
     if (phoneLink) return phoneLink;
@@ -1617,7 +1580,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       },
       joinMailbox: opts.remote?.relayClient ? undefined : (id, tok) => live.joinMailbox(id, tok, 'desktop'),
       queue: (id, tok) => cloud.mailboxQueue!(id, tok, auth),
-      deleteMailbox: (id, w) => cloud.relay.deleteMailbox(auth, id, w),
+      deleteMailbox: (id, w, peer) => cloud.relay.deleteMailbox(auth, id, w, peer),
       receiver: () =>
         phoneReceiver((m, p) => host.rpc(m, p), {
           onReceipt: () => pushBoard(),
@@ -1668,6 +1631,15 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   // 기기 관리(remote-devices.ts, ADR-048 결정 6): 계정의 PC·폰을 보고 끊는다. 끊은 폰의 연결 기록·우편함도 같이 지운다.
   let deviceMgr: DeviceManager | null = null;
+  /** 기기 목록의 폰 줄에 이 PC에서 본 폰 승인 상태를 붙인다(같은 폰과 연결한 기록이 없으면 붙이지 않는다) */
+  const withApproval = (devices: DeviceView[]): Array<DeviceView & { approval?: PhoneView['approver'] }> => {
+    const phones = phoneLink?.list() ?? [];
+    return devices.map((d) => {
+      if (d.role !== 'mobile') return d;
+      const x = phones.find((ph) => ph.deviceId === d.deviceId);
+      return x ? { ...d, approval: x.approver } : d;
+    });
+  };
   const devicesOf = (): DeviceManager => {
     const client = opts.remote?.cloud?.account;
     if (!client || !account.device()) throw new Error('account_required');
@@ -2035,7 +2007,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       chromeSpot.delete(r.id);
       return;
     }
-    // 사람 차례: 핸드오프(로그인·서명·기타) 또는 승인 뒤 서명 단계(인증서 비밀번호·간편인증·보안카드). 승인 자체는 앱의 승인 바에서 한다.
+    // 사람 차례: 핸드오프(로그인·서명·기타) 또는 승인 뒤 서명 단계(인증서 비밀번호·간편인증). 승인 자체는 앱의 승인 바에서 한다.
     const turn = r.status === 'turn' ? `turn:${r.handoff?.phase ?? ''}` : r.status === 'issuing' && !r.cert && r.steps[5]?.state === 'now' ? 'sign' : null;
     const want = turn ?? 'back';
     if (chromeSpot.get(r.id) === want) return;
@@ -2074,14 +2046,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   host.on('run', (e: { type?: string; code?: string }) => {
     if ((e.type === 'handoff' || e.type === 'end') && (e.code === 'sign.password_wrong' || e.code === 'sign.password_retry_limit')) void certMemory.forget(e.code);
   });
-  /** 보안카드 금고 칸(대표 지시 2026-11-14). 렌더러 처리기 표는 엔진 control을 직접 부르지 않고 이 고정 칸만 쓴다(h01-guards). */
-  const CARD_SLOT = { kind: 'security_card', scope: 'business' } as const;
-  const cardSlot = {
-    has: async () => (await host.control('secret.has', CARD_SLOT).catch(() => false)) === true,
-    /** 지웠으면 true. 실패를 성공처럼 보이지 않게 그대로 돌려준다 */
-    forget: () => host.control('secret.forget', CARD_SLOT).then(() => true, () => false),
-  };
-
   const handlers: ShellHandlers = {
     // 계좌 자동조회(CODEF 공동인증서, bank-auto.ts). 연결·고르기·[최신화]·[연결 해제]는 실제 입력 뒤에만.
     'bankAuto.status': () => bankAutoH['bankAuto.status'](),
@@ -2098,6 +2062,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'bankAuto.choose': (p) => {
       needGesture(3_000);
       return bankAutoH['bankAuto.choose'](p);
+    },
+    'bankAuto.sms': (p) => {
+      needGesture(3_000);
+      return bankAutoH['bankAuto.sms'](p);
     },
     'bankAuto.refresh': async () => {
       needGesture(3_000);
@@ -2492,7 +2460,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     },
     'pair.view': async () => pairHost?.view() ?? { step: 'idle', qr: null, expiresAt: null, phoneName: null, triesLeft: null, error: null },
     'pair.submit': async (p) => {
-      needGesture(3_000);
+      // 6칸이 다 차면 렌더러가 바로 부른다(account.verify와 같다): 숫자 키·붙여 넣기도 main이 본 입력으로 친다.
+      needTyping(3_000);
       return pairing().submitSas(String(p.code).slice(0, 6));
     },
     'pair.retry': async () => {
@@ -2508,7 +2477,17 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 설정 > 기기 연결(ADR-048 결정 6). 목록은 읽기만(보기 전에 서버와 목록을 맞춘다), 끊기·나가기는 실제 입력 뒤에만.
     'devices.list': async () => {
       await accountInit();
-      return { devices: await devicesOf().list() };
+      return { devices: withApproval(await devicesOf().list()) };
+    },
+    // 폰 승인 끄기·다시 허용(ADR-052). 연결은 그대로 두고 승인 키만 지우거나 다시 받는다. 실제 입력 뒤에만
+    'devices.px': async (p) => {
+      needGesture(3_000);
+      await accountInit();
+      const id = String(p.deviceId);
+      const pairs = (phoneLink?.list() ?? []).filter((x) => x.deviceId === id);
+      if (!pairs.length) throw new Error('device.not_phone');
+      for (const x of pairs) await (p.on === true ? phoneLink!.allowPx(x.pairId) : phoneLink!.revokePx(x.pairId));
+      return { devices: withApproval(await devicesOf().list()) };
     },
     'devices.unlink': async (p) => {
       needGesture(3_000);
@@ -2581,20 +2560,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return { onboarding: await onbView(), fill: r.fill ?? null, profiles: profiles() };
     },
     'certMemory.status': async () => ({ remembered: await certMemory.has() }),
-    // 보안카드 등록(대표 지시 2026-11-14): 사진은 금고로만, 렌더러에는 다시 물을 칸 번호·저장 칸 수만
-    'card.status': async () => ({ stored: await cardSlot.has() }),
-    'card.register': async (p) => {
-      needGesture(3_000);
-      // 온보딩 답(onboarding.reply)과 같은 조건: 약관 뒤에는 계정 로그인이 먼저다
-      if ((p as { onboarding?: boolean }).onboarding) await needLogin();
-      return cardRegister(p as { onboarding?: boolean });
-    },
-    'card.forget': async () => {
-      needGesture(3_000);
-      // 지우지 못했으면 실패로 돌려준다(성공처럼 보이지 않게)
-      if (!(await cardSlot.forget())) throw new Error('card_forget_failed');
-      return { stored: await cardSlot.has() };
-    },
     // 기억한 홈택스 인증서 이름(profiles.cert_name, CN). 렌더러에는 이름 부분만(뒤의 식별 번호 없이) 보인다
     'certName.status': () => certNameStatus(),
     'certName.clear': async () => {

@@ -1,4 +1,5 @@
 // 계좌 자동조회(CODEF) 엔진 모듈: 클라이언트·연결 서비스·원천 어댑터와 엔진 안 연결부(설정 저장·금고 봉인·돈 맞추기).
+import { CODEF_BANKS } from './codes.ts';
 import { ProfileRepo, type Db } from '@sax/db';
 import { CodefError } from './codes.ts';
 import type { VaultClient } from '../vault-client.ts';
@@ -11,7 +12,7 @@ export * from './link.ts';
 export * from './source.ts';
 
 /** 엔진 RPC 이름(main → 엔진). 값(번호·비밀번호)은 오가지 않는다 */
-export const CODEF_COMMANDS = ['codef.status', 'codef.connect', 'codef.choose', 'codef.refresh', 'codef.cancel', 'codef.disconnect'] as const;
+export const CODEF_COMMANDS = ['codef.status', 'codef.connect', 'codef.choose', 'codef.sms', 'codef.refresh', 'codef.cancel', 'codef.disconnect'] as const;
 
 const KEY = 'codef.link';
 
@@ -61,6 +62,18 @@ export function bankServicePort(bank: BankService, db: Db): CodefBankPort {
       const p = pid();
       if (!p) return 'bank_not_ready';
       return bank.consentOf(p) ? null : 'bank_consent_required';
+    },
+    withdrawAccount(code) {
+      const profileId = pid();
+      if (!profileId) return null;
+      const name = CODEF_BANKS[code];
+      // 계좌의 은행 칸은 기관 코드(자동 연결)이거나 사람이 고른 이름(국민·우리은행 등)이다
+      const hit = bank.repo.accounts(profileId).find((x) => x.bank === code || (!!x.bank && name.startsWith(String(x.bank).replace(/은행$/, ''))));
+      const n = hit ? (bank.repo.revealAccount(hit.id) ?? '').replace(/\D/g, '') : '';
+      return /^\d{10,16}$/.test(n) ? n : null;
+    },
+    corporate() {
+      return !!new ProfileRepo(db).list().find((p) => p.kind === 'business')?.corpNo;
     },
     async link(a) {
       const profileId = pid();

@@ -56,27 +56,28 @@ describe('금고 IPC 계약: 포트별 RPC', () => {
 describe('secretInput 결속 검사', () => {
   it('oneshot: mode 없음·oneshot 허용, 필요한 필드만 복사', () => {
     assert.deepEqual(parseSecretInputBind({ runId: 'r1', kind: 'portal_password', scope: 'business', extra: 'x' }), { runId: 'r1', kind: 'portal_password', scope: 'business' });
-    assert.deepEqual(parseSecretInputBind({ mode: 'oneshot', runId: 'r1', kind: 'security_card', scope: 'personal', row: 35 }), { runId: 'r1', kind: 'security_card', scope: 'personal', row: 35 });
+    // 칸 번호(row)는 보안카드 것이었다(대표 결정 2026-11-19 지원 안 함): 붙어 와도 복사하지 않는다
+    assert.deepEqual(parseSecretInputBind({ mode: 'oneshot', runId: 'r1', kind: 'cert_password', scope: 'personal', row: 35 }), { runId: 'r1', kind: 'cert_password', scope: 'personal' });
   });
 
-  it('oneshot: 잘못된 runId·kind·scope·row·mode는 거부', () => {
+  it('oneshot: 잘못된 runId·kind·scope·mode, 보안카드는 거부', () => {
     const base = { runId: 'r1', kind: 'portal_password', scope: 'business' };
     for (const bad of [
       { ...base, runId: '../x' }, { ...base, runId: 'a'.repeat(65) }, { ...base, kind: 'toString' }, { ...base, kind: 'byok' },
-      { ...base, scope: 'p1' }, { ...base, scope: '' }, { ...base, row: 0 }, { ...base, row: 36 }, { ...base, row: 1.5 },
+      { ...base, scope: 'p1' }, { ...base, scope: '' }, { ...base, kind: 'security_card' }, { ...base, kind: 'security_card', row: 12 },
       { ...base, mode: 'other' }, null, 'x', 1,
     ]) assert.equal(parseSecretInputBind(bad), null, JSON.stringify(bad));
   });
 
-  it('store: 저장 가능 종류·고지 판이 있을 때만, runId·row는 받지 않는다', () => {
-    assert.deepEqual(parseSecretInputBind({ mode: 'store', kind: 'security_card', scope: 'business', notice: { version: 't06-v1', extra: 1 } }), {
-      mode: 'store', kind: 'security_card', scope: 'business', notice: { version: 't06-v1' },
+  it('store: 저장 가능 종류·고지 판이 있을 때만, runId는 받지 않는다. 보안카드는 저장 종류가 아니다', () => {
+    assert.deepEqual(parseSecretInputBind({ mode: 'store', kind: 'portal_password', scope: 'business', notice: { version: 't06-v1', extra: 1 } }), {
+      mode: 'store', kind: 'portal_password', scope: 'business', notice: { version: 't06-v1' },
     });
     const base = { mode: 'store', kind: 'portal_password', scope: 'business', notice: { version: 't06-v1' } };
     for (const bad of [
       // cert_password 저장 결속은 받는다(설정 > 발급 인증 저장, 대표 지시 2026-11-14). 저장 못 하는 종류는 아니다.
-      { ...base, kind: 'not_a_kind' }, { ...base, notice: undefined }, { ...base, notice: { version: '' } }, { ...base, notice: { version: 'a b' } },
-      { ...base, runId: 'r1' }, { ...base, row: 1 }, { ...base, scope: '../x' },
+      { ...base, kind: 'not_a_kind' }, { ...base, kind: 'security_card' }, { ...base, notice: undefined }, { ...base, notice: { version: '' } }, { ...base, notice: { version: 'a b' } },
+      { ...base, runId: 'r1' }, { ...base, scope: '../x' },
     ]) assert.equal(parseSecretInputBind(bad), null, JSON.stringify(bad));
   });
 });
@@ -92,14 +93,14 @@ describe('secretInput 포트: 결속 모드가 메서드를 정한다', () => {
 
   it('store 결속 포트에서 secret.provide는 거부한다', async () => {
     const bytes = new TextEncoder().encode('TEST-STORE-1234');
-    const port = h.secretPort({ mode: 'store', kind: 'security_card', scope: 'business', notice: { version: 't06-v1' } });
+    const port = h.secretPort({ mode: 'store', kind: 'portal_password', scope: 'business', notice: { version: 't06-v1' } });
     await assert.rejects(port.rpc('secret.provide', { bytes }), /denied/);
     assert.ok(h.log.lines.some((l) => l.includes('"vault.rpc_denied"') && l.includes('secret.provide')));
   });
 
   it('oneshot 결속 포트에서 secret.store는 거부한다', async () => {
     // 금고가 secret.needed를 보낸 결속만 붙는다(요청 기록을 직접 넣는다).
-    (h.vault as unknown as { needs: Map<string, number> }).needs.set('r1|portal_password|business|', Date.now() + 60_000);
+    (h.vault as unknown as { needs: Map<string, number> }).needs.set('r1|portal_password|business',Date.now() + 60_000);
     const port = h.secretPort({ runId: 'r1', kind: 'portal_password', scope: 'business' });
     await assert.rejects(port.rpc('secret.store', { entries: [{ field: 'pw', bytes: new Uint8Array([1, 2, 3]) }] }), /denied/);
   });

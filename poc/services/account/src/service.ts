@@ -113,6 +113,8 @@ interface DeviceRow {
   email_hold_until: number | null;
   delete_after: number | null;
   revoke_record: string | null;
+  /** 마지막으로 기기 토큰을 받은 시각(v11) */
+  last_seen_at: number | null;
 }
 
 export interface AccountDeps {
@@ -1137,13 +1139,19 @@ export class AccountService {
   // ---------- 기기: 첫 데스크톱·등록 신청·AIK 서명 기기 목록·긴급 정지·삭제 유예 ----------
 
   private async churnOk(q: Sql, accountId: string, role: 'desktop' | 'mobile'): Promise<boolean> {
+    // 폰은 30일 추가 횟수를 세지 않는다(2026-11-19 대표: "30일 5번 제한 삭제"). 폰 3대 한도만 지킨다. PC는 그대로 5회
+    if (role === 'mobile') return true;
     const since = kstDay(this.now() - DEVICE.churnWindowDays * MS.D);
     const r = await q.one<{ n: number }>("SELECT COUNT(*) AS n FROM device_events WHERE account_id = $1 AND role = $2 AND kind = 'add' AND day >= $3", [accountId, role, since]);
-    return Number(r?.n ?? 0) < (role === 'desktop' ? DEVICE.churnDesktop : DEVICE.churnMobile);
+    return Number(r?.n ?? 0) < DEVICE.churnDesktop;
   }
 
   private async countOk(q: Sql, accountId: string, role: 'desktop' | 'mobile', extra = 1): Promise<boolean> {
-    const r = await q.one<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE account_id = $1 AND role = $2 AND state <> 'revoked'", [accountId, role]);
+    // 폰 자리는 쓰는 폰(활성·연결 중)만 센다. 정지된 폰은 목록에 보이지 않고 끊을 수도 없으니 자리를 막지 않는다(2026-11-19,
+    // 예전 규칙으로 정지·유예 중인 폰 3대가 보이지 않는 채로 새 폰을 막았다). 정지된 폰을 되살릴 때 자리를 다시 본다(reactivate).
+    // PC는 그대로 폐기 전까지 센다(새로 붙은 PC가 쓰던 PC를 밀어내지 못하게 하는 7일 유예, ADR-048 결정 6).
+    const states = role === 'mobile' ? "state IN ('active', 'pending')" : "state <> 'revoked'";
+    const r = await q.one<{ n: number }>(`SELECT COUNT(*) AS n FROM devices WHERE account_id = $1 AND role = $2 AND ${states}`, [accountId, role]);
     return Number(r?.n ?? 0) + extra <= (role === 'desktop' ? DEVICE.maxDesktops : DEVICE.maxMobiles);
   }
 
@@ -1340,6 +1348,7 @@ export class AccountService {
       Vx: d.vx,
       holdUntil: d.state === 'pending' ? d.email_hold_until : null,
       deleteAfter: d.delete_after,
+      lastSeenAt: d.last_seen_at == null ? null : Number(d.last_seen_at),
     }));
   }
 
@@ -1354,8 +1363,6 @@ export class AccountService {
    */
   async updateDeviceList(requester: { accountId: string; deviceId: string }, l: DeviceList): Promise<{ listVersion: number }> {
     const stopped: string[] = [];
-    /** 유예 중이라 폐기는 아직이지만 바로 정지한 폰 */
-    const halted: string[] = [];
     await this.db.tx(async (q) => {
       const a = await q.one<AccountRow>(`SELECT * FROM accounts WHERE id = $1${q.forUpdate}`, [requester.accountId]);
       if (!a) return fail('account.unauthorized');
@@ -1396,15 +1403,13 @@ export class AccountService {
       for (const [id, r] of revoked) {
         const d = byId.get(id);
         if (!d || d.state === 'revoked') continue;
+        // 유예는 PC를 끊을 때만 건다: 새로 붙은 PC가 쓰던 PC를 즉시 멈추거나 밀어내지 못하게(PC는 정지도 하지 않는다).
+        // 폰은 유예 없이 바로 폐기하고 자리를 비운다(ADR-048 결정 6, 2026-11-19 개정). 폰은 예전에도 끊는 즉시 정지했으니
+        // 새 PC가 할 수 있는 일은 그대로이고, 잃는 것은 7일 안에 되살리기뿐이다(잘못 끊은 폰은 QR로 다시 연결한다).
+        // 예전 규칙으로 정지·유예 중인 폰도 다음 목록 갱신 때 같은 폐기 레코드로 여기서 폐기된다.
         // 유예는 처음 폐기 레코드가 들어온 때부터 센다(목록을 다시 올려도 다시 시작하지 않는다)
-        if (cooling) {
+        if (cooling && d.role === 'desktop') {
           await q.run('UPDATE devices SET delete_after = COALESCE(delete_after, $1), revoke_record = $2 WHERE device_id = $3', [now + ACCOUNT.deleteGraceDays * MS.D, jcs(r), id]);
-          // 폰은 유예 중에도 바로 정지한다(잃어버린 폰의 토큰·우편함·푸시가 7일 살아 있지 않게). 자리는 유예가 끝나야 빈다.
-          // PC는 정지하지 않는다: 새로 붙은 PC가 쓰던 PC를 즉시 멈출 수 없어야 한다
-          if (d.role === 'mobile' && (d.state === 'active' || d.state === 'pending')) {
-            await q.run("UPDATE devices SET state = 'suspended' WHERE device_id = $1", [id]);
-            halted.push(id);
-          }
         } else {
           await q.run("UPDATE devices SET state = 'revoked', revoke_record = $1, delete_after = NULL WHERE device_id = $2", [jcs(r), id]);
           await q.run("INSERT INTO device_events (account_id, role, kind, day) VALUES ($1, $2, 'remove', $3)", [requester.accountId, d.role, kstDay(now)]);
@@ -1413,9 +1418,8 @@ export class AccountService {
       }
       await q.run('UPDATE accounts SET device_list_version = $1, device_list_json = $2 WHERE id = $3', [l.listVersion, jcs(l), requester.accountId]);
     });
-    for (const id of [...stopped, ...halted]) await this.stopped(id);
+    for (const id of stopped) await this.stopped(id);
     if (stopped.length) await this.notify(requester.accountId, 'device_revoked');
-    if (halted.length) await this.notify(requester.accountId, 'device_suspended');
     return { listVersion: l.listVersion };
   }
 
@@ -1931,10 +1935,14 @@ export class AccountService {
     const a = await this.account(requester.accountId);
     if (!a.aik_pub || op.op.op !== 'device.reactivate' || !opSigOk(fromB64(a.aik_pub, 32)!, op, a.id, deviceId, this.now())) fail('account.aik_signature_invalid');
     // 폐기 레코드 없이 예약된 삭제(기기 토큰 정지·세션 삭제 요청)는 재활성화로 같이 취소한다. AIK 폐기 유예(revoke_record 있음)는 그대로 둔다
-    const n = await this.db.run(
-      "UPDATE devices SET state = 'active', delete_after = CASE WHEN revoke_record IS NULL THEN NULL ELSE delete_after END WHERE device_id = $1 AND account_id = $2 AND state = 'suspended'",
-      [deviceId, a.id],
-    );
+    const n = await this.db.tx(async (q) => {
+      await q.one(`SELECT id FROM accounts WHERE id = $1${q.forUpdate}`, [a.id]);
+      const d = await q.one<DeviceRow>("SELECT * FROM devices WHERE device_id = $1 AND account_id = $2 AND state = 'suspended'", [deviceId, a.id]);
+      if (!d) return 0;
+      // 정지된 폰은 자리를 세지 않으므로 되살릴 때 자리가 있어야 한다
+      if (d.role === 'mobile' && !(await this.countOk(q, a.id, 'mobile'))) fail('account.device_limit');
+      return q.run("UPDATE devices SET state = 'active', delete_after = CASE WHEN revoke_record IS NULL THEN NULL ELSE delete_after END WHERE device_id = $1 AND account_id = $2 AND state = 'suspended'", [deviceId, a.id]);
+    });
     if (!n) fail('account.device_not_found');
   }
 
@@ -1960,7 +1968,7 @@ export class AccountService {
    * `want`가 있으면 그 범위만 준다(ADR-040 결정 1: 엔진용 gateway 전용 토큰 등). 빈 배열·모르는 이름·중복은 요청 스키마가 먼저 거부하고,
    * 역할 범위의 부분집합이 아니면 여기서(검증된 기기 기록으로) 거부한다. 발급마다 이벤트 이름에 역할·범위를 남긴다(ID·토큰 없음).
    */
-  async issueDeviceToken(c: SignedCert, dpop: string | undefined, htu: string, onVerified?: () => void | Promise<void>, want?: readonly Scope[]): Promise<{ token: string; expiresAt: number; scopes: string[] }> {
+  async issueDeviceToken(c: SignedCert, dpop: string | undefined, htu: string, onVerified?: () => void | Promise<void>, want?: readonly Scope[], model?: string): Promise<{ token: string; expiresAt: number; scopes: string[] }> {
     const d = await this.db.one<DeviceRow & { aik_pub: string | null }>('SELECT d.*, a.aik_pub FROM devices d JOIN accounts a ON a.id = d.account_id WHERE d.device_id = $1 AND a.status = $2', [c.cert.device_id, 'active']);
     if (!d || !d.aik_pub) fail('account.cert_invalid');
     const now = this.now();
@@ -1986,9 +1994,21 @@ export class AccountService {
         this.d.onEvent?.('account.gateway_scope_withheld');
       } else tier = ent;
     }
+    await this.seen(d!, now, model);
     const { token, claims } = this.d.tokens.issue({ acc: d!.account_id, dev: d!.device_id, role: d!.role, scp: scopes, cnf: d!.vx, ...(tier ? { tier } : {}) }, now);
     this.d.onEvent?.(`account.device_token_issued.${d!.role}.${want && scopes.length < roleScopes.length ? scopes.join('-') : 'all'}`);
     return { token, expiresAt: claims.exp, scopes };
+  }
+
+  /**
+   * 기기 목록의 "마지막 접속"과 모델 이름(2026-11-19 대표: 목록에는 이름과 마지막 접속일만). 토큰을 받을 때 적는다.
+   * 10분 안에 다시 받으면 시각은 쓰지 않는다(날짜만 보인다). 모델 이름은 글자를 다듬어 달라졌을 때만 바꾼다(기기 이름을 사람이 바꾸는 기능은 없다).
+   */
+  private async seen(d: DeviceRow, now: number, model?: string): Promise<void> {
+    const m = model?.replace(/[\p{Cc}\p{Cf}]/gu, '').trim().slice(0, 40) || null;
+    const rename = m !== null && m !== d.name;
+    if (!rename && d.last_seen_at != null && now - Number(d.last_seen_at) < DEVICE.lastSeenWriteMs) return;
+    await this.db.run('UPDATE devices SET last_seen_at = $1, name = $2 WHERE device_id = $3', [now, rename ? m : d.name, d.device_id]);
   }
 
   // ---------- 프로필 슬롯·사업자 HMAC(B-28) ----------

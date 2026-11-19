@@ -105,9 +105,9 @@ export class PairingHost {
             await o.account.putDeviceList(dev.auth, list);
             await dev.setDeviceList(list);
           }),
-        registerMailbox: (id, r, w) =>
+        registerMailbox: (id, r, w, peer) =>
           this.#step('mailbox', async () => {
-            await o.relayHttp.registerMailbox(dev.auth, id, r, w);
+            await o.relayHttp.registerMailbox(dev.auth, id, r, w, peer);
             this.#mbx = { id, tokWrite: w };
           }),
         accountClaim: () => this.#step('acct_claim', () => dev.acctClaimField()),

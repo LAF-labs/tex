@@ -163,6 +163,8 @@ describe('셸 실행 → 폰 단계', () => {
     x.p.update(turn);
     x.p.update({ ...r, status: 'preparing', steps: run({ at: 0 }).steps, handoff: null });
     assert.deepEqual(sink.events.map((e) => [e.event, e.phase, e.code ?? '']), [['phase', 'login', ''], ['turn', 'login', 'login.simple_auth'], ['phase', 'login', '']]);
+    // v1.11: 보낼 때마다 판 번호가 하나씩 오른다(폰이 늦게 온 옛 이벤트를 버리는 기준)
+    assert.deepEqual(sink.events.map((e) => e.rev), [1, 2, 3]);
   });
 });
 
@@ -262,6 +264,8 @@ describe('PhoneIssue', () => {
     const s = new Sink();
     x.p.attach('p', s);
     assert.deepEqual(s.events.map((e) => [e.runId, e.phase]), [[ack.runId, 'done']]);
+    // 못 보낸 것도 번호를 썼다: 다시 보낸 끝 소식은 그보다 크다
+    assert.equal(s.events[0]!.rev, 2);
   });
 
   it('준비가 막혀도(상한) 초안은 PC에 남고, 폰에는 준비 단계로 보인다', async () => {
@@ -385,6 +389,8 @@ describe('라이브 세션(phone-link + phone-session)', () => {
     const ev = await sess.channel.recv(3000);
     assert.equal(ev?.type, 'run.event');
     assert.deepEqual([(ev!.body as RunEventBody).runId, (ev!.body as RunEventBody).phase], [runId, 'login']);
+    // sync.v1을 알리지 않은 폰에는 판 번호를 싣지 않는다(옛 폰 스키마는 모르는 칸을 받지 않는다)
+    assert.equal('rev' in (ev!.body as RunEventBody), false);
     sess.channel.close();
     phLink.close();
     link.stop();

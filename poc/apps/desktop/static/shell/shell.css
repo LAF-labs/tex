@@ -115,6 +115,24 @@ body.bp-dragging, body.bp-dragging * { cursor: col-resize !important; user-selec
 .col { width: var(--col-w, min(var(--l-chat-max), calc(100% - 2 * var(--l-gutter)))); margin-left: auto; margin-right: auto; box-sizing: border-box; }
 .thread-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable both-edges; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 32px); mask-image: linear-gradient(to bottom, transparent 0, #000 32px); }
 .thread-scroll .sx-thread { padding: var(--space-4) 0 var(--space-6); max-width: none; }
+/* 읽던 자리 지키기(11-19): 위로 올려 읽는 중 새 답이 오면 대화 아래 가운데 작은 알약 하나. 누르면 맨 아래로. 대화를 밀지 않는다. */
+.thread-wrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.sx-new-reply { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px 0 12px; border: 0; border-radius: var(--radius-full); background: var(--surface-overlay); color: var(--ink); font: inherit; font-size: 13px; font-weight: 600; line-height: 20px; box-shadow: var(--shadow-overlay); cursor: pointer; z-index: 2; animation: new-reply-in var(--motion-fast) var(--ease-out); }
+.sx-new-reply[hidden] { display: none; }
+.sx-new-reply svg { width: 10px; height: 10px; }
+.sx-new-reply:hover { background: var(--surface-tint); }
+.sx-new-reply:active { transform: translateX(-50%) scale(0.97); }
+.sx-new-reply:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+@keyframes new-reply-in { from { opacity: 0; transform: translate(-50%, 4px); } }
+@media (prefers-reduced-motion: reduce) { .sx-new-reply { animation: none; } }
+/* 실행 카드 단계 목록(11-19): 닫힌 채로 시작. [단계 보기]는 글자만인 조용한 단추, 연 목록은 카드 아래 면 안에 둔다. */
+.sx-steps-toggle { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; height: 28px; margin: 2px 0 0 -6px; padding: 0 6px; border: 0; border-radius: var(--radius-sm, 6px); background: transparent; color: var(--ink-2); font: inherit; font-size: 13px; line-height: 20px; cursor: pointer; }
+.sx-steps-toggle:hover { color: var(--ink); background: var(--surface-tint); }
+.sx-steps-toggle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.sx-steps-toggle svg { width: 10px; height: 10px; transition: transform var(--motion-fast) var(--ease-out); }
+.sx-steps-toggle[aria-expanded=true] svg { transform: rotate(180deg); }
+.sx-run-steps { margin-top: 4px; }
+.sx-run-steps[hidden] { display: none; }
 
 /* 이번 달 할 일(08 M-02, ADR-033): 대화 열 맨 위 한 줄. 대화를 가리지 않는다. 누르면 작업 패널에 목록이 열린다. 승인 버튼은 없다. */
 .sx-board { flex: none; margin-top: var(--space-2); }
@@ -179,7 +197,36 @@ body.bp-dragging, body.bp-dragging * { cursor: col-resize !important; user-selec
 .sx-quick button.is-prompt, .sx-quick button.is-fill { display: inline-flex; align-items: center; gap: 6px; }
 .sx-quick button.is-fill { background: transparent; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink-2); }
 .sx-quick button svg { width: 12px; height: 12px; flex: none; color: var(--ink-3); }
-.me-time { display: block; text-align: right; margin-top: 4px; }
+/* 대화 말풍선·시간 줄·입력중 점: Muse 12.1 채팅 값 그대로(모서리 22, 여백 11/15, 글자 16/22, 묶음 간격 4, 묶음 사이 16). */
+.chat { --bubble-me: #cbe5ff; --bubble-app: #e9eaeb; --stamp-ink: #00040996; --dot-on: #0007115e; --dot-off: #00071117; }
+/* 다크(11-19): 말풍선은 Muse 다크 값(내 말 #0074E8, 앱 말 #1F1F20), 내 말 글자는 흰색. 시각 줄·점 셋은 Muse 다크 값을 받지 못해 라이트 값을 흰색으로 뒤집었다(같은 투명도). */
+@media (prefers-color-scheme: dark) {
+  .chat { --bubble-me: #0074e8; --bubble-app: #1f1f20; --bubble-me-ink: #ffffff; --stamp-ink: #ffffff96; --dot-on: #ffffff5e; --dot-off: #ffffff17; }
+}
+.thread-scroll .sx-thread { gap: 16px; }
+.sx-thread > .sx-me, .sx-app:not(:has(> :not(p))), .sx-app:has(> :not(p)) > p:not([class]) { box-sizing: border-box; min-height: 44px; max-width: 90%; width: fit-content; padding: 11px 15px; border-radius: 22px; font-size: 16px; line-height: 22px; color: var(--ink); overflow-wrap: anywhere; white-space: pre-wrap; }
+.sx-thread > .sx-me { justify-self: end; background: var(--bubble-me); color: var(--bubble-me-ink, var(--ink)); }
+/* 말풍선은 양쪽 모두 글만큼, 맞은편 끝 전에 줄을 바꾼다(최대 90%, 폰과 같음). 카드만 대화 폭 전체(대표 결정 2026-11-19). */
+.sx-app:not(:has(> :not(p))) { justify-self: start; background: var(--bubble-app); }
+.sx-app:not(:has(> :not(p))) > p { margin: 0; }
+.sx-app:not(:has(> :not(p))) > p + p { margin-top: 8px; }
+.sx-app:has(> :not(p)) > p:not([class]) { margin: 0 0 8px; background: var(--bubble-app); }
+.sx-me.is-joined-prev { margin-top: -12px; border-top-right-radius: 6px; }
+.sx-me.is-joined-next { border-bottom-right-radius: 6px; }
+.sx-app.is-joined-prev { margin-top: -12px; border-top-left-radius: 6px; }
+.sx-app.is-joined-next { border-bottom-left-radius: 6px; }
+/* 시간 줄: 가운데 12/16, 첫 줄은 위 40 아래 16, 나머지 위아래 16(대화 간격 16이 이미 위아래에 있다) */
+.sx-stamp { text-align: center; font-size: 12px; line-height: 16px; font-weight: 400; color: var(--stamp-ink); }
+.sx-thread > .sx-stamp:first-child { padding-top: 24px; }
+/* 입력중: 높이 44 앱 말풍선 안 지름 8 점 셋(사이 4). 1초마다 통통 튀고(점마다 150ms 늦게), 진한 점이 400ms마다 옆으로 넘어간다. */
+.sx-typing { justify-self: start; box-sizing: border-box; height: 44px; padding: 0 15px; border-radius: 22px; background: var(--bubble-app); display: flex; align-items: center; gap: 4px; animation: sx-typing-in 300ms ease both; }
+.sx-typing i { width: 8px; height: 8px; border-radius: 50%; background: var(--dot-off); animation: sx-dot-bounce 1s infinite, sx-dot-tone 1.2s linear infinite; }
+.sx-typing i:nth-child(2) { animation-delay: 150ms, 400ms; }
+.sx-typing i:nth-child(3) { animation-delay: 300ms, 800ms; }
+@keyframes sx-dot-bounce { 0%, 100% { transform: translateY(-25%); animation-timing-function: cubic-bezier(.8, 0, 1, 1); } 50% { transform: none; animation-timing-function: cubic-bezier(0, 0, .2, 1); } }
+@keyframes sx-dot-tone { 0% { background: var(--dot-off); } 16.67%, 33.33% { background: var(--dot-on); } 50%, 100% { background: var(--dot-off); } }
+@keyframes sx-typing-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .sx-typing, .sx-typing i { animation: none; } .sx-typing i:first-child { background: var(--dot-on); } }
 
 /* 승인 바 자리(ADR-021): 승인 대기 중에만 비운다. 바는 main이 이 위에 따로 그린다. */
 .bar-slot { flex: none; height: 0; }
@@ -366,6 +413,10 @@ body.bar-active .rs-waiting { display: inline-flex; }
 .modal-note { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--radius-md); background: var(--surface-tint); color: var(--ink-2); font-size: 13px; line-height: 20px; }
 .modal-note svg { flex: none; width: 16px; height: 16px; margin-top: 2px; }
 .modal-acts { display: flex; justify-content: flex-end; gap: 6px; }
+.dev-modal { max-width: 400px; }
+.dev-modal .modal-title .sx-body-sm { line-height: 22px; }
+.dev-modal .modal-acts { margin-top: 4px; }
+.dev-modal .modal-acts > .sx-btn { flex: 1; }
 .doc-review { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
 .doc-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-3); }
 .doc-hint { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -558,19 +609,6 @@ section[data-view="bundle"] .rs-col { max-width: 920px; }
 .sx-batch-list .sx-card .sx-btn:not(.sx-btn-primary):not(.sx-btn-quiet) { background: var(--surface-tint); }
 .sx-batch-list .sx-card .sx-btn:not(.sx-btn-primary):not(.sx-btn-quiet):hover { background: var(--surface-sunken); }
 
-/* 보안카드 등록 안내: 셸에서는 [등록 창 열기] 면이다(사진을 끌어 놓는 칸은 따로 뜨는 금고 창 secret.css에만 있고, 점선은 거기에만 쓴다) */
-.card-reg { display: grid; gap: var(--space-2); margin-top: var(--space-2); width: 100%; }
-.card-drop { display: grid; gap: var(--space-1); justify-items: start; padding: var(--space-3); border: 0; border-radius: var(--radius-md); background: var(--canvas); }
-.card-drop.is-over { border-color: var(--ink); background: var(--surface-tint); }
-.card-drop.is-busy { opacity: 0.7; }
-.card-ask { display: grid; gap: var(--space-2); }
-.card-ask-grid { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.card-ask-row { display: flex; align-items: center; gap: 6px; }
-.card-ask-no { font-weight: 600; color: var(--ink-2); }
-.card-ask-input { width: 84px; height: 40px; padding: 0 10px; border: 0; box-shadow: inset 0 0 0 1px var(--line-strong); border-radius: var(--radius-md); background: var(--canvas); color: var(--ink); font: inherit; letter-spacing: 0.2em; }
-.card-ask-input:focus { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
-[data-card-register] .opt-main { width: 100%; }
-
 /* 설정 > 기기 연결: 계정 기기 목록·새 PC 연결 요청(shell-devices.js). 줄은 발급 인증 줄(auth-row)과 같은 모양, 줄 사이는 안쪽 선 */
 .dev-group .sx-card-hd { justify-content: flex-start; gap: var(--space-2); }
 .dev-group .sx-card-hd .sx-card-title { margin: 0; }
@@ -643,3 +681,28 @@ section[data-view="bundle"] .rs-col { max-width: 920px; }
 .sx-run-id { align-items: center; }
 .sx-run-id .sx-copy { margin-left: -4px; }
 body:not(.browser-embedded) .bp-dock-now { display: none; }
+
+/* 폰 연결 모달(shell-pair.js pairModal): 메인 창 안, 배경 흐림. 6칸 입력은 칸마다 한 자리. */
+.modal-scrim.is-blur { backdrop-filter: blur(8px) saturate(0.9); -webkit-backdrop-filter: blur(8px) saturate(0.9); }
+.pair-modal { max-width: 440px; padding: 28px 28px 22px; gap: var(--space-4); text-align: center; }
+.pair-m-hd { display: grid; justify-items: center; gap: 8px; }
+.pair-m-hd .pair-mk { width: 44px; height: 44px; margin-bottom: 4px; }
+.pair-m-hd .pair-mk svg { width: 22px; height: 22px; }
+.pair-m-title { margin: 0; font-size: 18px; line-height: 26px; font-weight: 700; color: var(--ink); letter-spacing: -0.01em; }
+.pair-m-sub { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-2); max-width: 340px; }
+.pair-m-sub [data-pair-phone] { font-weight: 600; color: var(--ink); }
+.sas-boxes { display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 6px; }
+.sas-gap { width: 10px; height: 2px; border-radius: 1px; background: var(--line-strong); }
+.sas-box { width: 48px; height: 58px; box-sizing: border-box; padding: 0; border: 0; border-radius: var(--radius-md); background: var(--canvas); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--ink); font-family: var(--font-mono); font-size: 26px; font-weight: 600; line-height: 58px; text-align: center; caret-color: var(--ink); font-variant-numeric: tabular-nums; transition: box-shadow var(--motion-fast) var(--ease-out); }
+.sas-box:focus { outline: none; box-shadow: inset 0 0 0 2px var(--ink); }
+.sas-box:disabled { color: var(--ink-3); background: var(--surface-tint); }
+.sas-box[aria-invalid='true'] { box-shadow: inset 0 0 0 2px var(--attention); }
+.sas-boxes.is-shake { animation: sas-shake 360ms var(--ease-out); }
+@keyframes sas-shake { 20% { transform: translateX(-6px); } 40% { transform: translateX(5px); } 60% { transform: translateX(-3px); } 80% { transform: translateX(2px); } }
+@media (prefers-reduced-motion: reduce) { .sas-boxes.is-shake { animation: none; } }
+.pair-m-line { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-3); min-height: 20px; }
+.pair-m-line.is-err { color: var(--attention); font-weight: 500; }
+.pair-m-ttl { margin: -8px 0 0; font-size: 12px; line-height: 18px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.pair-modal .modal-acts { justify-content: stretch; margin-top: 4px; }
+.pair-modal .modal-acts > .sx-btn { flex: 1; }
+@media (max-width: 480px) { .sas-box { width: 40px; height: 50px; font-size: 22px; line-height: 50px; } .sas-boxes { gap: 6px; } }

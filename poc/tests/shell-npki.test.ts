@@ -97,9 +97,10 @@ describe('공동인증서 목록: 금고 열거 → 샌드박스 해석 → 표�
     const infos: Record<number, CertInfo> = { 1: info('가나다컴퍼니()0012345678901234'), 2: info('김가나()0099'), 3: info('옛인증서()01', '2026-10-01T14:59:59Z', '') };
     const rows = await listNpkiCerts(control, async (d) => infos[d[2]!]!, { today: TODAY, log: (n, d) => void logs.push([n, d]) });
     assert.deepEqual(rows, [
-      { id: '0000000000000001', owner: '가나다컴퍼니', usage: 'yessign', expiresOn: '2027-03-01', usable: true },
-      { id: '0000000000000002', owner: '김가나', usage: 'yessign', expiresOn: '2027-03-01', usable: false, why: 'no_key' },
-      { id: '0000000000000003', owner: '옛인증서', usage: 'yessign', expiresOn: '2026-10-01', usable: false, why: 'expired' },
+      // kind: 주체 OU로 본 종류만(개인용·법인용). OU 원문은 행에 없다(은행 자동 연결의 뱅킹 순서용)
+      { id: '0000000000000001', owner: '가나다컴퍼니', usage: 'yessign', expiresOn: '2027-03-01', usable: true, kind: 'personal' },
+      { id: '0000000000000002', owner: '김가나', usage: 'yessign', expiresOn: '2027-03-01', usable: false, why: 'no_key', kind: 'personal' },
+      { id: '0000000000000003', owner: '옛인증서', usage: 'yessign', expiresOn: '2026-10-01', usable: false, why: 'expired', kind: 'personal' },
     ]);
     const text = JSON.stringify(rows) + JSON.stringify(logs);
     for (const leak of ['비밀경로', 'AppData', 'OU=', 'personal4IB', '0012345678901234']) assert.ok(!text.includes(leak), leak);

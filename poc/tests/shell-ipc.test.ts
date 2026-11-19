@@ -113,6 +113,11 @@ describe('렌더러 요청 표(SHELL_METHODS)', () => {
   it('대화 비밀 입력(secret.answer)·설정 인증서 비밀번호 저장(certMemory.save)은 실제 사용자 입력 뒤에만, 답은 지금 열린 금고 요청에만', () => {
     assert.equal(USER_ACTION_METHODS['secret.answer'], 3_000);
     assert.equal(USER_ACTION_METHODS['certMemory.save'], 3_000);
+    // 폰 승인 끄기·다시 허용은 실제 입력 뒤에만(ADR-052)
+    assert.equal(USER_ACTION_METHODS['devices.px'], 3_000);
+    assert.ok(checkParams(SHELL_METHODS['devices.px'], { deviceId: 'd1', on: true }));
+    assert.ok(!checkParams(SHELL_METHODS['devices.px'], { deviceId: 'd1' }));
+    assert.ok(!checkParams(SHELL_METHODS['devices.px'], { deviceId: 'd1', on: 'yes' }));
     const src = read('apps/desktop/src/shell-app.ts');
     // 답은 main이 띄운 카드의 reqId와 같을 때만 금고로(다르면 not_requested). 금고는 secret.needed로 부른 결속만 받는다(hasNeed).
     const answer = src.slice(src.indexOf('const answerSecret = async'), src.indexOf('const answerSecret = async') + 1600);
@@ -129,8 +134,8 @@ describe('렌더러 요청 표(SHELL_METHODS)', () => {
       const next = table.slice(start + 3).search(/\n {4}'[a-z0-9.]+': /);
       const body = table.slice(start, next < 0 ? undefined : start + 3 + next);
       const t = ms.toLocaleString('en-US').replace(',', '_');
-      // 코드 확인 둘(account.verify·finishReset)은 키 입력도 main이 본 입력으로 치는 needTyping(같은 시간)이다(0.1.5 실사용)
-      const fn = m === 'account.verify' || m === 'account.finishReset' ? 'needTyping' : 'needGesture';
+      // 코드 확인 셋(account.verify·finishReset·pair.submit)은 다 차면 바로 확인하니 키 입력도 main이 본 입력으로 치는 needTyping(같은 시간)이다(0.1.5 실사용)
+      const fn = m === 'account.verify' || m === 'account.finishReset' || m === 'pair.submit' ? 'needTyping' : 'needGesture';
       assert.ok(body.includes(`${fn}(${t})`), `${m}: ${fn}(${ms})`);
     }
   });

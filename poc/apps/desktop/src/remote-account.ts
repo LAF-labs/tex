@@ -194,6 +194,8 @@ export interface DesktopAccountOptions {
   platform: 'windows' | 'macos';
   /** 계정 기기 목록에 보이는 이름(40자). 사람 이름이 들어가지 않게 진입점이 고른다. */
   deviceName: string;
+  /** 이 PC의 모델 이름(예: "MacBook Pro"). 기기 토큰을 받을 때 알려 계정 기기 목록의 이름으로 쓴다(2026-11-19 대표). 없으면 알리지 않는다. */
+  model?: () => Promise<string | undefined>;
   /** false면 폰 연결을 닫는다(운영 룸 호스트·폰 앱 출시 전, remote-wiring.ts PROD_PHONE_PAIRING). 기본 true. */
   pairing?: boolean;
   /** 새 PC 연결의 금고 연산(ADR-048 결정 3). 없으면 다른 PC가 이미 있는 계정에는 붙지 못한다(account.aik_already_pinned). */
@@ -598,7 +600,7 @@ export class DesktopAccount {
   /** 기기 범위 호출(토큰·DPoP). 등록 전이면 null. */
   device(): DeviceSession | null {
     if (!this.#id || !this.#o.client) return null;
-    if (!this.#device) this.#device = new DeviceSession(this.#o.client, this.#o.keys, this.#o.identity, this.#id, this.#now, (id) => (this.#id = id));
+    if (!this.#device) this.#device = new DeviceSession(this.#o.client, this.#o.keys, this.#o.identity, this.#id, this.#now, (id) => (this.#id = id), this.#o.model);
     return this.#device;
   }
 
@@ -822,14 +824,15 @@ export class DeviceSession {
   #gwInflight: Promise<string> | null = null;
   #onChange: (id: RemoteIdentity) => void;
 
-  constructor(client: AccountClient, keys: () => Promise<DesktopKeys>, file: RemoteIdentityFile, id: RemoteIdentity, now: () => number, onChange: (id: RemoteIdentity) => void = () => {}) {
+  constructor(client: AccountClient, keys: () => Promise<DesktopKeys>, file: RemoteIdentityFile, id: RemoteIdentity, now: () => number, onChange: (id: RemoteIdentity) => void = () => {}, model: () => Promise<string | undefined> = async () => undefined) {
     this.#onChange = onChange;
     this.#client = client;
     this.#keys = keys;
     this.#file = file;
     this.#id = id;
     this.#now = now;
-    this.#cache = new DeviceTokenCache(async () => this.#client.deviceToken(await this.#cert(), (await this.#keys()).vd), now);
+    // 모델 이름은 기본 토큰에만 싣는다(기기 목록의 이름, 2026-11-19 대표)
+    this.#cache = new DeviceTokenCache(async () => this.#client.deviceToken(await this.#cert(), (await this.#keys()).vd, undefined, await model()), now);
     this.#gwCache = new DeviceTokenCache(async () => {
       const t = await this.#client.deviceToken(await this.#cert(), (await this.#keys()).vd, GATEWAY_SCOPES);
       // 엔진이 받는 Authorization에는 토큰 원문이 든다. 서버가 범위를 줄이지 않았으면(구 서버 등) 그 토큰을 쓰지 않는다.

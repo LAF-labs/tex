@@ -1,10 +1,9 @@
 // PoC-9 데모 셸 렌더러: 메인 대화(단일 세션) · 작업 패널 · 문서함 · 거래처 · 정부24 목업.
 // 승인 카드는 main이 대화 열 하단(입력창 위)에 따로 그린다. 렌더러는 main이 알린 높이만큼 그 자리를 비우기만 한다(ADR-021 결정 7).
 import { g24Card, g24Panel } from './shell-g24.js';
-import { cardRegister } from './shell-card.js';
 import { onboardingView, showOnbError } from './shell-onboarding.js';
 import { accountCard, accountErrText, loginScreen } from './shell-account.js';
-import { pairErrText, pairSection, pairTtlText } from './shell-pair.js';
+import { pairErrText, pairInModal, pairLeftText, pairModal, pairSection, pairTtlText } from './shell-pair.js';
 import { bizEditStart, bizProfileCard } from './shell-biz.js';
 import { createBankAuto } from './shell-bank-auto.js';
 import { createBilling } from './shell-billing.js';
@@ -13,7 +12,7 @@ import { createBankScreen } from './shell-bank.js';
 import { createPackScreen } from './shell-pack.js';
 import { identityIn } from './password-rules.js';
 import { bizDigits, bizNoInput, checkFields, dateInput, emailInput, field, fieldError, keys, LIMITS, secretInput, selectInput, textInput } from './fields.js';
-import { agoText, batchCard, btn, CHIP, emptyState, noteGroup, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, replyOptions, runPanel, runSteps, runTitle, steps, browserPane, runDock, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
+import { agoText, batchCard, btn, CHIP, emptyState, noteGroup, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, museDayStamp, museStamp, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, replyOptions, runPanel, runSteps, runTitle, steps, browserPane, runDock, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -27,6 +26,8 @@ const state = {
   dockOpen: false,
   /** 작성 카드 [자세히]를 편 카드(다시 그려도 펼친 채) */
   draftMore: new Set(),
+  /** 단계 목록을 연 실행 카드(실행 id). 새 카드는 닫힌 채로 시작한다. */
+  stepsOpen: new Set(),
   boot: null,
   today: new Date(),
   view: 'chat',
@@ -456,10 +457,15 @@ const chat = {
 function buildChat() {
   chat.thread = h('div', { class: 'sx-thread' });
   chat.scroll = h('div', { class: 'thread-scroll' }, h('div', { class: 'col' }, chat.thread));
+  // 읽던 자리 지키기: 맨 아래에서 FOLLOW_PX 안이면 새 말을 따라 내리고, 위로 올려 읽는 중이면 [새 답]만 띄운다.
+  chat.newReply = h('button', { type: 'button', class: 'sx-new-reply', 'data-act': 'new-reply', hidden: '', onclick: () => scrollToEnd(true) }, icon('chevron'), '새 답');
+  chat.scroll.addEventListener('scroll', () => {
+    if (nearEnd()) chat.newReply.hidden = true;
+  }, { passive: true });
   chat.today = h('section', { class: 'col sx-board', 'aria-label': '이번 달 판', 'data-board': '' });
   chat.handoff = h('div', { class: 'col sx-handoff', role: 'status', 'data-handoff-band': '', hidden: '' });
   chat.quick = h('div', { class: 'sx-quick', id: 'quick' });
-  chat.input = h('textarea', { rows: '1', placeholder: '세금계산서 발급이나 지난 발급·매출을 말해 주세요', 'aria-label': '입력창', id: 'composer' });
+  chat.input = h('textarea', { rows: '1', placeholder: '세금계산서 발급이나 지난 발급, 매출을 말해 주세요', 'aria-label': '입력창', id: 'composer' });
   chat.input.addEventListener('input', () => {
     state.composing = true;
     autoGrow();
@@ -473,8 +479,10 @@ function buildChat() {
     renderQuick();
   });
   chat.input.addEventListener('keydown', (e) => {
-    // Enter는 보내기, Shift+Enter는 줄바꿈. 한글 조합 중 Enter는 보내지 않는다. 이 입력창의 Enter는 어떤 승인도 하지 않는다.
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    // Enter는 보내기, Shift+Enter(와 Alt+Enter)는 줄바꿈. 한글 조합 중 Enter는 보내지 않는다. 이 입력창의 Enter는 어떤 승인도 하지 않는다.
+    // 조합 판정은 Mattermost 웹(webapp/channels/src/utils/keyboard.ts isKeyPressed, utils/post_utils.ts postMessageOnKeyPress)을 따른다:
+    // isComposing만으로는 조합을 끝내는 Enter가 keyCode 229로 한 번 더 오는 브라우저가 있어 둘 다 본다.
+    if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.isComposing && e.keyCode !== 229) {
       e.preventDefault();
       send();
     }
@@ -489,7 +497,7 @@ function buildChat() {
     { class: 'chat', 'data-view': 'chat' },
     chat.handoff,
     chat.today,
-    chat.scroll,
+    h('div', { class: 'thread-wrap' }, chat.scroll, chat.newReply),
     h('div', { class: 'quick-zone col' }, chat.quick),
     h('div', { class: 'bar-slot', 'aria-hidden': 'true' }),
     h('div', { class: 'composer-zone' }, h('div', { class: 'col sx-composer' }, inputBox)),
@@ -516,7 +524,7 @@ const ONB_ERR = {
   gesture_required: '버튼을 직접 눌러 주세요.',
   account_required: '먼저 로그인해 주세요.',
 };
-/** main이 돌려준 온보딩 답(onboarding.reply·card.register)을 화면에 반영한다. */
+/** main이 돌려준 온보딩 답(onboarding.reply)을 화면에 반영한다. */
 function applyOnb(r) {
   if (r.onboarding !== undefined) state.onb = r.onboarding;
   if (r.profiles) state.boot.profiles = r.profiles;
@@ -528,8 +536,6 @@ function applyOnb(r) {
   if (loginGate()) renderModal();
 }
 const onbAct = {
-  call,
-  applied: (r) => applyOnb(r),
   reply: async (step, choice, extra = {}) => {
     try {
       applyOnb(await call('onboarding.reply', { step, choice, ...extra }));
@@ -565,7 +571,7 @@ function renderOnboarding() {
   old.replaceWith(onboardingView(state.onb, onbAct));
   const locked = !state.onb.consents.terms;
   chat.input.disabled = locked;
-  chat.input.placeholder = locked ? '약관에 동의하면 입력할 수 있어요' : '세금계산서 발급이나 지난 발급·매출을 말해 주세요';
+  chat.input.placeholder = locked ? '약관에 동의하면 입력할 수 있어요' : '세금계산서 발급이나 지난 발급, 매출을 말해 주세요';
   renderQuick();
   scrollToEnd();
 }
@@ -661,9 +667,9 @@ async function reopenSetup(item) {
 function timelineItem(it) {
   switch (it.type) {
     case 'day':
-      return h('div', { class: 'sx-day' }, dayLabel(it.date));
+      return h('div', { class: 'sx-stamp' }, museDayStamp(it.date, new Date()));
     case 'me':
-      return h('div', { class: 'sx-me' }, it.text, it.time ? h('span', { class: 'sx-meta me-time' }, it.time) : null);
+      return h('div', { class: 'sx-me' }, it.text);
     case 'app':
       return h('div', { class: 'sx-app' }, it.text);
     case 'summary':
@@ -730,11 +736,59 @@ function onSecretAsk(ev) {
   });
 }
 
-function appendThread(el, scroll = true) {
-  chat.thread.append(el);
-  if (scroll) scrollToEnd();
+/**
+ * 대화 시간 줄과 말풍선 묶음(Muse 방식). 시간 줄은 말풍선마다 붙이지 않고 첫 말, 날짜가 바뀐 말,
+ * 앞 말과 30분 넘게 벌어진 말 앞에만 가운데 한 줄로 띄운다. 같은 쪽 말이 2분 안에 바로 이어지면 한 묶음(간격 4, 붙은 쪽 모서리 6).
+ */
+const STAMP_GAP_MS = 30 * 60 * 1000;
+const JOIN_MS = 2 * 60 * 1000;
+const clock = { at: null, day: null, side: null, el: null };
+const msgSide = (el) => (el.classList?.contains('sx-me') ? 'me' : el.classList?.contains('sx-app') && !el.dataset.agentProgress ? 'app' : null);
+function stampFor(el, at) {
+  const side = msgSide(el);
+  if (!side) return;
+  const day = new Date(at).toDateString();
+  if (clock.at == null || day !== clock.day || at - clock.at > STAMP_GAP_MS) {
+    // 바로 앞이 지난 기록의 날짜 줄("오늘")이면 줄을 하나 더 두지 않고 그 줄을 시각으로 바꾼다.
+    const prev = chat.thread.lastElementChild;
+    if (prev?.classList.contains('sx-stamp') && !prev.dataset.stamp && new Date().toDateString() === day) prev.remove();
+    chat.thread.append(h('div', { class: 'sx-stamp', 'data-stamp': String(at) }, museStamp(at)));
+  } else if (side === clock.side && at - clock.at < JOIN_MS && clock.el?.isConnected && chat.thread.lastElementChild === clock.el) {
+    clock.el.classList.add('is-joined-next');
+    el.classList.add('is-joined-prev');
+  }
+  Object.assign(clock, { at, day, side, el });
 }
-const scrollToEnd = () => requestAnimationFrame(() => (chat.scroll.scrollTop = chat.scroll.scrollHeight));
+
+/**
+ * 대화 줄 하나 붙이기. 지난 기록(scroll=false)은 시각을 모르니 날짜 줄만 쓰고, 지금 오가는 말에만 시간 줄을 붙인다.
+ * 내가 보낸 말(mine)은 늘 맨 아래로 내린다. 앱의 말은 붙이기 전에 맨 아래 근처였을 때만 따라 내리고, 아니면 [새 답]을 띄운다(읽던 자리를 지킨다).
+ */
+function appendThread(el, scroll = true, mine = false) {
+  if (scroll) stampFor(el, Date.now());
+  const follow = mine || nearEnd();
+  chat.thread.append(el);
+  if (!scroll) return;
+  if (follow) scrollToEnd();
+  else showNewReply();
+}
+/** 맨 아래에서 이 거리(px) 안이면 "끝에 있다"로 본다(새 말을 따라 내린다). */
+const FOLLOW_PX = 80;
+const nearEnd = () => !chat.scroll || chat.scroll.scrollHeight - chat.scroll.scrollTop - chat.scroll.clientHeight <= FOLLOW_PX;
+const showNewReply = () => chat.newReply && (chat.newReply.hidden = false);
+/** 맨 아래로. 단추로 내릴 때만 부드럽게(움직임 줄이기 설정이면 바로). */
+const scrollToEnd = (smooth = false) =>
+  requestAnimationFrame(() => {
+    if (chat.newReply) chat.newReply.hidden = true;
+    const top = chat.scroll.scrollHeight;
+    if (smooth && !matchMedia('(prefers-reduced-motion: reduce)').matches) chat.scroll.scrollTo({ top, behavior: 'smooth' });
+    else chat.scroll.scrollTop = top;
+  });
+/** 카드를 바꿔 그린 뒤: 그리기 전에 끝 근처였으면 따라 내리고, 아니면 [새 답]. */
+const followEnd = (wasNear) => {
+  if (wasNear) scrollToEnd();
+  else showNewReply();
+};
 
 function autoGrow() {
   const el = chat.input;
@@ -857,7 +911,7 @@ async function send() {
   for (const b of chat.thread.querySelectorAll('[data-act="intent-retry"], [data-agent-chip]')) b.disabled = true;
   autoGrow();
   renderQuick();
-  appendThread(h('div', { class: 'sx-me' }, text));
+  appendThread(h('div', { class: 'sx-me' }, text), true, true);
   await ask(text, vat);
 }
 
@@ -868,9 +922,10 @@ async function send() {
 async function ask(text, vat) {
   let r;
   state.sending = true;
-  const waitEl = h('div', { class: 'sx-app sx-meta', 'data-agent-progress': 'thinking' }, PROGRESS_TEXT.thinking);
+  // 답을 기다리는 동안 Muse처럼 앱 말풍선 안 점 세 개. 단계 문장은 화면 읽기 프로그램에만 읽힌다.
+  const waitEl = h('div', { class: 'sx-app sx-typing', role: 'status', 'aria-label': PROGRESS_TEXT.thinking, 'data-agent-progress': 'thinking' }, h('i'), h('i'), h('i'));
   state.waitEl = waitEl;
-  const waitTimer = setTimeout(() => waitEl.isConnected || appendThread(waitEl), 300);
+  const waitTimer = setTimeout(() => waitEl.isConnected || appendThread(waitEl), 180);
   try {
     r = await call('request.send', { text, vat });
   } catch (e) {
@@ -1076,7 +1131,8 @@ function putRun(run) {
 }
 
 function renderRun(run) {
-  const cardAct = { ...act, editing: state.editing, editingFields: state.editingFields, editingFocus: state.editingFocus, draftErr: state.draftErr, editingCp: state.editingCp, counterparties: state.cps, draftMore: state.draftMore, toggleDraftMore: (id, open) => (open ? state.draftMore.add(id) : state.draftMore.delete(id)) };
+  const wasNear = nearEnd();
+  const cardAct = { ...act, editing: state.editing, editingFields: state.editingFields, editingFocus: state.editingFocus, draftErr: state.draftErr, editingCp: state.editingCp, counterparties: state.cps, draftMore: state.draftMore, toggleDraftMore: (id, open) => (open ? state.draftMore.add(id) : state.draftMore.delete(id)), stepsOpen: state.stepsOpen, toggleSteps: (id, open) => (open ? state.stepsOpen.add(id) : state.stepsOpen.delete(id)) };
   // 여러 건 묶음은 한 카드(data-batch)로 그린다. 건은 지금 받은 값(run)과 들고 있는 나머지 건을 순번대로.
   if (run.batch) {
     const mates = [...state.runs.values()].filter((x) => x.batch?.id === run.batch.id && x.id !== run.id);
@@ -1085,14 +1141,14 @@ function renderRun(run) {
     const old = chat.thread.querySelector(`[data-batch="${run.batch.id}"]`) ?? chat.thread.querySelector(`[data-run="${run.id}"]`);
     if (old) old.replaceWith(el);
     else appendThread(el);
-    if (chat.thread.lastElementChild === el || run.status === 'waiting') scrollToEnd();
+    if (old && (chat.thread.lastElementChild === el || run.status === 'waiting')) followEnd(wasNear);
     return;
   }
   const el = taskCard(run, cardAct);
   const old = chat.thread.querySelector(`[data-run="${run.id}"]`);
   if (old) old.replaceWith(el);
   else appendThread(el);
-  if (chat.thread.lastElementChild === el || run.status === 'waiting') scrollToEnd();
+  if (old && (chat.thread.lastElementChild === el || run.status === 'waiting')) followEnd(wasNear);
   // 카드만 다시 그려도 띠가 새 카드를 본다(화면 밖 옛 카드에 관찰자가 남아 띠가 카드와 함께 보이던 것).
   renderHandoff();
 }
@@ -1948,45 +2004,7 @@ async function loadCertMemory() {
   } catch {
     state.certName = null;
   }
-  try {
-    state.card = { stored: (await call('card.status', {})).stored === true, redo: false };
-  } catch {
-    state.card = null;
-  }
   if (state.view === 'settings') render();
-}
-/** 설정 > 발급 인증의 보안카드 줄. 등록 카드는 다시 그려도 같은 요소를 쓴다(읽는 중·다시 물을 칸 상태 유지). */
-let cardEl = null;
-function cardRow() {
-  if (state.card.stored && !state.card.redo) {
-    return h(
-      'div',
-      { class: 'sx-card auth-row', 'data-card-stored': '' },
-      h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, '보안카드 등록함'), h('span', { class: 'sx-meta' }, '발급할 때 홈택스 보안카드 창에 앱이 번호를 넣어요. 홈택스가 틀렸다고 하면 다시 넣지 않고 멈춰요.')),
-      btn('다시 등록', () => ((state.card.redo = true), (cardEl = null), render()), '', { 'data-act': 'card-redo' }),
-      btn('지우기', forgetCard, '', { 'data-act': 'card-forget' }),
-    );
-  }
-  cardEl ??= cardRegister({
-    call,
-    onStored: (r) => {
-      state.card = { stored: true, redo: false };
-      cardEl = null;
-      toast(`보안카드 ${r.stored}칸을 이 PC 금고에 등록했어요. 다음 발급부터 앱이 번호를 넣어요.`);
-      render();
-    },
-  });
-  return h('div', { class: 'sx-card auth-row', 'data-card-register': '' }, h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, '보안카드 등록'), cardEl));
-}
-async function forgetCard() {
-  try {
-    const stored = (await call('card.forget', {})).stored === true;
-    state.card = { stored, redo: false };
-    toast(stored ? '지우지 못했어요. 다시 해 주세요' : '보안카드를 금고에서 지웠어요');
-  } catch {
-    toast('지우지 못했어요. 다시 해 주세요');
-  }
-  render();
 }
 /** 설정 > 발급 인증 [인증서 비밀번호 저장](대표 지시 2026-11-14): 가려진 칸 값은 금고로만 간다. 칸은 보내자마자 비운다. */
 function certMemorySaveRow() {
@@ -2132,9 +2150,16 @@ async function signOut() {
   }
 }
 
-/** 폰 연결 칸(shell-pair.js): main이 준 PairView로 계정 카드 안에서 그 자리에 그린다(따로 창 없음). */
+/** 폰 연결 칸(shell-pair.js): QR은 계정 카드 안에서 그 자리에, 6자리부터는 메인 창 안 모달로 그린다(따로 창 없음). */
 function pairRow() {
-  return pairSection(state.pair, PAIR_ACT, state.pairBusy);
+  return pairSection(state.pair, PAIR_ACT, state.pairBusy, Date.now(), pairModalOpen());
+}
+/** 6자리 단계부터 끝까지 모달. 이번 연결에서 6자리 단계에 들어왔는지(pairSas)는 QR 단계·쉬는 자리로 돌아가면 지운다. */
+function pairModalOpen() {
+  const step = state.pair?.step;
+  if (step === 'awaiting_sas' || step === 'checking') state.pairSas = true;
+  else if (step !== 'paired' && step !== 'failed') state.pairSas = false;
+  return state.view === 'settings' && state.setTab === 'devices' && pairInModal(state.pair, state.pairSas);
 }
 /** 폰 연결 요청 하나. 답(PairView)으로 다시 그린다. 못 보냈으면(실제 입력 없음·로그인 전) 알림 한 줄. */
 async function pairCall(method, params = {}) {
@@ -2144,7 +2169,10 @@ async function pairCall(method, params = {}) {
   pairRender(prev);
   try {
     state.pair = await call(method, params);
-    if (state.pair?.error === 'pair.sas_wrong') state.pairCode = '';
+    if (method === 'pair.submit' && state.pair?.error) {
+      state.pairCode = '';
+      state.pairShake = true;
+    }
   } catch (err) {
     toast(pairErrText(errText(err)));
   } finally {
@@ -2163,16 +2191,16 @@ const PAIR_ACT = {
 /** 설정 > 기기 연결에 있을 때만 다시 그린다. 6자리 칸에 있던 초점은 그대로 두고, 6자리 단계로 막 넘어왔으면 칸에 둔다. */
 function pairRender(prevStep) {
   if (state.view !== 'settings' || state.setTab !== 'devices') return;
-  const had = document.activeElement?.id === 'pair-sas';
   render();
   const step = state.pair?.step;
-  if (step === 'awaiting_sas' && (had || prevStep !== 'awaiting_sas')) $('#pair-sas')?.focus();
-  else if (prevStep && prevStep !== step && (step === 'idle' || !step)) $('[data-act=pair-open]')?.focus();
+  if (prevStep && prevStep !== step && (step === 'idle' || !step)) $('[data-act=pair-open]')?.focus();
 }
 // QR 남은 시간(1초마다 글자만 고친다). 0이 되면 main이 '시간이 지났어요'로 바꿔 보낸다
 setInterval(() => {
   const t = document.querySelector('[data-pair-ttl]');
   if (t) t.textContent = pairTtlText(Number(t.dataset.pairTtl));
+  const l = document.querySelector('[data-pair-left]');
+  if (l) l.textContent = pairLeftText(Number(l.dataset.pairLeft));
 }, 1000);
 
 function closeLogin() {
@@ -2298,7 +2326,6 @@ setInterval(() => {
 const AUTH_DESC = {
   '사업자 간편인증': '발급할 때마다 휴대폰에서 승인해요',
   '공동·금융인증서': '홈택스 로그인에 쓰는 그 인증서예요. 첫 발급 때 비밀번호를 한 번 넣으면 다음부터는 앱이 넣어요',
-  보안카드: '카드 사진을 한 번 넣으면 발급할 때 앱이 번호를 넣어요',
 };
 
 /** 발급 인증(캔버스 S-02): 사업자 프로필의 인증 하나. 바꾸기는 내 사업장과 같은 온보딩 다시 열기. */
@@ -2333,8 +2360,6 @@ function authCard() {
       : state.certMemory === false
         ? certMemorySaveRow()
         : null,
-    // 보안카드(대표 지시 2026-11-14): 카드 사진을 넣으면 금고가 읽어 저장한다. 등록했으면 [다시 등록]·[지우기].
-    auth === '보안카드' && state.card ? cardRow() : null,
     // 진행 중 실행은 시작 때 인증 그대로 끝난다(#295 결정, 엔진 run.start 스냅숏).
     canChange && desc ? h('p', { class: 'sx-meta', 'data-auth-note': '' }, '바꾸면 다음 발급부터 적용돼요. 진행 중인 작업은 원래 인증으로 끝내요.') : null,
   ];
@@ -2526,12 +2551,26 @@ function renderModal() {
   if (loginGate() && !state.login) state.login = { screen: 'email', draft: { email: state.account?.email ?? '', password: '', code: '', show: false }, busy: false };
   const pw = state.view === 'docs' && !!state.docImport && !state.docBusy;
   const login = !pw && !!state.login;
-  const open = pw || login;
+  const pair = !pw && !login && pairModalOpen();
+  const dev = !pw && !login && !pair && state.view === 'settings' && state.setTab === 'devices' ? devices.modal() : null;
+  const open = pw || login || pair || !!dev;
   // 처음 띄울 때와 창 안에 있던 포커스는 새 입력 칸으로 옮긴다(다시 그릴 때마다 칸을 새로 만든다)
   const a = document.activeElement;
   const focus = !root.firstChild || !a || a === document.body || root.contains(a);
-  root.replaceChildren(...(pw ? [passwordModal()] : login ? [loginScreen(loginCtx())] : []));
+  const shake = pair && !!state.pairShake;
+  state.pairShake = false;
+  root.replaceChildren(...(pw ? [passwordModal()] : login ? [loginScreen(loginCtx())] : pair ? [pairModal(state.pair, PAIR_ACT, state.pairBusy, Date.now(), shake)] : dev ? [dev] : []));
   $('#app').inert = open;
+  if (dev) {
+    // 처음 띄울 때는 [취소]에 둔다(끊기는 되돌릴 수 없어서 Enter 한 번으로 끊기지 않게)
+    if (focus) root.querySelector('[data-act=device-confirm-back], [data-act=px-confirm-back]')?.focus();
+    return;
+  }
+  if (pair) {
+    // 6자리 칸: 처음 띄울 때·틀린 뒤는 첫 빈 칸에. 끝 화면은 주 단추에.
+    if (focus || shake) (root.querySelector('.sas-box:not(:disabled)') ? root.querySelectorAll('.sas-box')[Math.min(state.pairCode.length, 5)] : root.querySelector('.modal-acts .sx-btn-primary:not(:disabled)'))?.focus();
+    return;
+  }
   const i = open && focus ? root.querySelector(pw ? '.doc-pw' : '.acct-code, .acct-password, .acct-email, [data-act=account-reset-done]') : null;
   if (i) {
     i.focus();
@@ -2792,7 +2831,7 @@ window.sax.onEvent((ev) => {
   if (ev.type === 'pair') {
     const prev = state.pair?.step;
     state.pair = ev.pair;
-    if (state.pair?.step !== 'awaiting_sas') state.pairCode = '';
+    if (state.pair?.step !== 'awaiting_sas' && state.pair?.step !== 'checking') state.pairCode = '';
     return void pairRender(prev);
   }
   if (ev.type === 'account') {
@@ -2804,7 +2843,7 @@ window.sax.onEvent((ev) => {
   if (ev.type === 'chat-progress') {
     const el = state.waitEl;
     if (el && Object.hasOwn(PROGRESS_TEXT, ev.phase)) {
-      el.textContent = PROGRESS_TEXT[ev.phase];
+      el.setAttribute('aria-label', PROGRESS_TEXT[ev.phase]);
       el.dataset.agentProgress = ev.phase;
       if (!el.isConnected) appendThread(el);
     }
@@ -2899,6 +2938,8 @@ window.sax.onEvent((ev) => {
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && $('#modal').firstChild) {
     if (state.login) closeLogin();
+    else if ($('#modal [data-pair-modal]')) PAIR_ACT.cancel();
+    else if ($('#modal [data-device-confirm]')) devices.close();
     else cancelPassword();
     return;
   }

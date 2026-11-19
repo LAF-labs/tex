@@ -155,6 +155,17 @@ export interface PhoneIssuePorts {
   approveCode?: (shellRunId: string) => string | undefined;
   now?: () => number;
   log?: (name: string, data?: Record<string, string | number | boolean>) => void;
+  /** 폰 깨우기(phone-wake PhoneWaker.wake, ADR-053 결정 2). 그 폰 세션이 없을 때 끝·멈춤·사람 차례·PC 승인이 되면 update로 부른다. */
+  wake?: (pairId: string, kind: 'update') => unknown;
+}
+
+/**
+ * 폰이 없을 때 알릴 만한 소식인가(ADR-053 결정 2 update): 발급 끝남, 멈춤, 사람 손이 필요함(핸드오프), PC에서 승인해야 함(pc_*).
+ * 폰 승인으로 가는 승인 단계는 phone-gate가 approve로 깨운다.
+ */
+export function wakeWorthy(ev: RunEventBody): boolean {
+  if (ev.event === 'end' || ev.event === 'turn') return true;
+  return ev.phase === 'approve' && typeof ev.code === 'string' && ev.code.startsWith('pc_');
 }
 
 /** 진행을 받을 곳(그 폰의 라이브 세션 채널) */
@@ -170,6 +181,8 @@ interface Tracked {
   last: string;
   /** 간편인증 답을 받을 요청(human.request reqId). 공동인증서 실패 차례에서 한 번 만든다. */
   simpleReq?: string;
+  /** v1.11 run.event.rev: 이 실행에 보낸 run.event 수(보낼 때마다 1씩 올린다) */
+  rev: number;
 }
 
 /** PC 하나에 하나. 폰마다 지금 세션(sink)을 붙였다 뗀다. */
@@ -237,7 +250,13 @@ export class PhoneIssue {
     if (!force && key === t.last) return;
     t.last = key;
     const sink = this.#sinks.get(t.pairId);
-    if (!sink) return;
+    if (!sink) {
+      // 바뀐 소식인데 폰이 앱을 닫아 두었다: 깨운다(같은 소식은 key가 같아 한 번만)
+      if (!force && wakeWorthy(ev)) this.#o.wake?.(t.pairId, 'update');
+      return;
+    }
+    // 폰은 적용한 것보다 크지 않은 rev를 버린다(늦게 온 옛 이벤트가 새 상태를 덮지 않게). sync.v1을 모르는 폰에는 phone-session이 뺀다.
+    ev.rev = ++t.rev;
     try {
       sink.send('run.event', ev);
       // 공동인증서 실패 차례: 폰이 간편인증 값을 보낼 자리(human.request manual)를 연다. 같은 차례에서는 같은 reqId.
@@ -342,7 +361,7 @@ export class PhoneIssue {
     // 시작보다 먼저 디스크에 적는다(같은 cmdId 재전송이 두 번 시작하지 않게)
     await this.#o.cmds.put(body.cmdId, runId, this.#now());
     const draft = this.#o.createDraft(cp, req.supply, req.item.trim());
-    const t: Tracked = { pairId, cmdId: body.cmdId, runId, last: '' };
+    const t: Tracked = { pairId, cmdId: body.cmdId, runId, last: '', rev: 0 };
     this.#runs.set(draft.id, t);
     this.#o.onDraft?.(draft);
     setImmediate(() => {

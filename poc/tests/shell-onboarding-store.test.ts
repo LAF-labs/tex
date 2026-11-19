@@ -84,8 +84,8 @@ describe('온보딩 저장소: 엔진 명령으로 DB에', () => {
     // 다른 인증으로 바꾸면 인증서 이름을 지운다(옛 이름으로 고르지 않게)
     await flow.answer({ step: 'first', choice: 'later' });
     await flow.reopen('auth');
-    await flow.answer({ step: 'auth', choice: 'card' });
-    assert.deepEqual([(await list()).signMethod, (await list()).certName], ['security_card', null]);
+    await flow.answer({ step: 'auth', choice: 'simple' });
+    assert.deepEqual([(await list()).signMethod, (await list()).certName], ['simple_auth', null]);
   });
 
   it('이어 하기: 껐다 켜면(새 저장소) 멈춘 질문부터, 앞의 동의는 다시 묻지 않는다', async () => {
@@ -107,8 +107,8 @@ describe('온보딩 저장소: 엔진 명령으로 DB에', () => {
     const a = flowOn(new EngineOnboardingStore(rpc));
     await walk(a, UPTO_AUTH.slice(0, 3));
     assert.equal(a.state.step, 'auth');
-    // 옛 빌드가 남긴 행: 보안카드를 골라 ①에서 멈춤
-    await new EngineOnboardingStore(rpc).save({ ...a.state, step: 'delegation', auth: 'card' });
+    // 옛 빌드가 남긴 행: 보안카드를 골라 ①에서 멈춤(①·보안카드는 이제 없다, 대표 결정 2026-11-19)
+    await new EngineOnboardingStore(rpc).save({ ...a.state, step: 'delegation', auth: 'card' } as never);
     const loaded = await new EngineOnboardingStore(rpc).load();
     assert.equal(loaded?.step, 'auth');
     assert.equal(loaded?.auth, null);

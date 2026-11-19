@@ -9,8 +9,8 @@ import { hasGoogleSignin, listInstalledExtensions, removeCrashDumps, removeProfi
 import type { KeyStore } from './keystore.ts';
 import type { PortLike } from '@sax/platform';
 import {
-  PORTAL_LOGIN_ID_MAX, RPC_BY_PORT, RUN_TRIGGERS, isProfileScope, isTypistKind, SECURITY_CARD_ROWS, STORABLE_KINDS,
-  SESSION_EVENTS, CODEF_REQ_ID_RE, type CodefSealParams, type InboundMessage, type ProfileScope, type SecretStoreResult, type SecretStoreReply, type OneShotBind, type PortalField, type SessionEventKind, type OutboundMessage, type PortKind, type RunTrigger, type SecretInputBind, type SecretKind, type StorableKind, type VaultEventName,
+  PORTAL_LOGIN_ID_MAX, RPC_BY_PORT, RUN_TRIGGERS, isProfileScope, isTypistKind, STORABLE_KINDS,
+  SESSION_EVENTS, CODEF_REQ_ID_RE, type CodefSealParams, type InboundMessage, type ProfileScope, type SecretStoreResult, type OneShotBind, type PortalField, type SessionEventKind, type OutboundMessage, type PortKind, type RunTrigger, type SecretInputBind, type SecretKind, type StorableKind, type VaultEventName,
 } from './protocol.ts';
 import { defaultRelayPolicy, type RelayPolicy } from './relay/policy.ts';
 import { VaultCrypto } from './crypto/ops.ts';
@@ -20,8 +20,6 @@ import { CommitGuard } from './relay/commit-guard.ts';
 import { PdfSaver, sweepStagingDir } from './pdf/save.ts';
 import { Relay, type TargetState } from './relay/relay.ts';
 import { SecretOps, type StoredRead } from './secret/ops.ts';
-import { scanCardImage } from './secret/card-scan.ts';
-import { randomUUID } from 'node:crypto';
 import { HumanSecretVault } from './keychain/human.ts';
 import { MemoryItemStore, MemoryWrapper, UnavailableHello } from './keychain/backend.ts';
 
@@ -44,17 +42,6 @@ const SCREEN_MOD_MAX = 15;
 const SCREEN_COMMANDS: Record<string, string> = { a: 'selectAll', z: 'undo', x: 'cut', c: 'copy' };
 
 const RUN_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
-/** 보안카드 사진 인식 뒤 애매한 칸을 기다리는 초안의 수명. */
-const CARD_DRAFT_TTL_MS = 10 * 60_000;
-/** 보안카드 등록 창 포트 하나가 받는 사진·칸 답 횟수. */
-const CARD_PORT_TRIES = 8;
-interface CardDraft {
-  scope: ProfileScope;
-  size: 30 | 35;
-  rows: Map<number, Uint8Array>;
-  ask: number[];
-  timer: NodeJS.Timeout | undefined;
-}
 const NOTICE_VERSION_RE = /^[A-Za-z0-9._-]{1,32}$/;
 
 /**
@@ -73,7 +60,6 @@ interface NeedLike {
   runId: unknown;
   kind: unknown;
   scope: unknown;
-  row?: unknown;
 }
 /**
  * 로그에 남길 RPC 실패 사유. 금고가 스스로 던진 코드 모양(bad_params, vault.keystore_mismatch 등)은 그대로,
@@ -86,9 +72,7 @@ export const rpcErrorCode = (e: unknown): string => {
   return typeof c === 'string' && /^[A-Z][A-Z0-9_]{1,59}$/.test(c) ? c : 'error';
 };
 
-const needKey = (n: NeedLike): string => `${String(n.runId)}|${String(n.kind)}|${String(n.scope)}|${n.row ?? ''}`;
-
-const isRow = (r: unknown): r is number => Number.isInteger(r) && (r as number) >= SECURITY_CARD_ROWS.min && (r as number) <= SECURITY_CARD_ROWS.max;
+const needKey = (n: NeedLike): string => `${String(n.runId)}|${String(n.kind)}|${String(n.scope)}`;
 
 /** secretInput 결속 검사(I-1). 맞으면 필요한 필드만 복사해 돌려준다. mode가 없으면 oneshot(PoC 호환). */
 export function parseSecretInputBind(b: unknown): SecretInputBind | null {
@@ -96,16 +80,16 @@ export function parseSecretInputBind(b: unknown): SecretInputBind | null {
   const x = b as Record<string, unknown>;
   if (!isProfileScope(x.scope)) return null;
   if (x.mode === 'store') {
-    // 등록(T-06): 보안카드·포털 비밀번호, 그리고 설정 > 발급 인증의 인증서 비밀번호 저장(대표 지시 2026-11-14). 인증서 비밀번호는 처음 쓸 때도 금고가 기억한다.
+    // 등록(T-06): 포털 비밀번호, 그리고 설정 > 발급 인증의 인증서 비밀번호 저장(대표 지시 2026-11-14). 인증서 비밀번호는 처음 쓸 때도 금고가 기억한다.
     if (typeof x.kind !== 'string' || !(STORABLE_KINDS as readonly string[]).includes(x.kind)) return null;
     const notice = x.notice as Record<string, unknown> | undefined;
     if (!notice || typeof notice.version !== 'string' || !NOTICE_VERSION_RE.test(notice.version)) return null;
-    if (x.runId !== undefined || x.row !== undefined) return null;
+    if (x.runId !== undefined) return null;
     return { mode: 'store', kind: x.kind as StorableKind, scope: x.scope, notice: { version: notice.version } };
   }
   if (x.mode === 'codef') {
     // 계좌 자동조회 인증서 비밀번호 창(codef-seal.ts). 금고가 연 요청 id만.
-    if (typeof x.reqId !== 'string' || !CODEF_REQ_ID_RE.test(x.reqId) || x.kind !== undefined || x.runId !== undefined || x.row !== undefined) return null;
+    if (typeof x.reqId !== 'string' || !CODEF_REQ_ID_RE.test(x.reqId) || x.kind !== undefined || x.runId !== undefined) return null;
     return { mode: 'codef', reqId: x.reqId, scope: x.scope };
   }
   if (x.mode !== undefined && x.mode !== 'oneshot') return null;
@@ -113,12 +97,7 @@ export function parseSecretInputBind(b: unknown): SecretInputBind | null {
   // 1회용 입력 창은 타이피스트가 넣는 종류와, 인증서 비밀번호(금고가 칸을 잡고 앱 창으로 받는다, 부장 지시 2026-11-13 (b)).
   // 어느 쪽이든 금고가 먼저 secret.needed로 부른 결속만 붙는다(attachPort의 hasNeed).
   if (!(isTypistKind(x.kind) || x.kind === 'cert_password') || !Object.hasOwn(SECRET_ORIGINS, x.kind)) return null;
-  if (x.kind === 'cert_password' && x.row !== undefined) return null;
-  // 보안카드는 칸 하나씩(row 필수), 포털 비밀번호는 칸 번호가 없다(D05 §4).
-  if (x.kind === 'security_card' ? !isRow(x.row) : x.row !== undefined) return null;
-  const out: OneShotBind = { runId: x.runId, kind: x.kind as SecretKind, scope: x.scope };
-  if (x.row !== undefined) out.row = x.row as number;
-  return out;
+  return { runId: x.runId, kind: x.kind as SecretKind, scope: x.scope };
 }
 
 export interface VaultOptions {
@@ -219,13 +198,12 @@ export class Vault {
   private dbKeyIssued = false;
   private profileProblems: string[] | null = null;
   private readonly pendingTriggers = new Map<string, RunTrigger>();
-  /** 금고가 보낸 secret.needed(runId|kind|scope|row → 만료 시각). 1회용 입력 창은 여기에 있는 결속만 받는다. Chrome을 다시 띄워도 남는다. */
+  /** 금고가 보낸 secret.needed(runId|kind|scope → 만료 시각). 1회용 입력 창은 여기에 있는 결속만 받는다. Chrome을 다시 띄워도 남는다. */
   private readonly needs = new Map<string, number>();
   /** run별 활성 프로필(Q-2). run.begin에서 고정하고 run.end까지 바꾸지 않는다. */
   private readonly runProfiles = new Map<string, ProfileScope>();
   /** 넣었지만 로그인 확인 전인 인증서 비밀번호(실행별, 메모리만). authOk면 저장, authFailed·run.end면 지운다. */
   private readonly pendingCert = new Map<string, { scope: string; bytes: Uint8Array }>();
-  private readonly cardDrafts = new Map<string, CardDraft>();
   /** 실행당 종류별 1회 기록(N-46). Chrome을 다시 띄워도 남는다(엔진이 재기동으로 지우지 못하게). */
   private readonly usedSlots = new Set<string>();
   readonly human: HumanSecretVault;
@@ -254,11 +232,10 @@ export class Vault {
     };
   }
 
-  /** 타이피스트가 1회용 값이 없을 때 부른다. 보안카드는 row, 포털은 pw 칸(포털 아이디는 금고에 없다, ADR-035). */
-  private readStored(kind: string, scope: string, row?: number): Promise<StoredRead> {
+  /** 타이피스트가 1회용 값이 없을 때 부른다. 포털은 pw 칸(포털 아이디는 금고에 없다, ADR-035). */
+  private readStored(kind: string, scope: string): Promise<StoredRead> {
     if (!(STORABLE_KINDS as readonly string[]).includes(kind) || !isProfileScope(scope)) return Promise.resolve({ ok: false, reason: 'secret_missing' });
-    const cell: { row?: number; field?: PortalField } = kind === 'security_card' ? { row } : { field: 'pw' };
-    return this.human.readOne(kind as StorableKind, scope, cell);
+    return this.human.readOne(kind as StorableKind, scope, { field: 'pw' });
   }
 
   attachPort(kind: PortKind, port: PortLike, bind?: unknown): void {
@@ -278,7 +255,7 @@ export class Vault {
         this.opts.log.event('vault.secret_input_unrequested', { kind: b.kind });
         return;
       }
-      const state: { used: boolean; cardTries?: number; cardBusy?: boolean } = { used: false };
+      const state = { used: false };
       port.onMessage((raw) => this.onSecretInput(port, b, state, raw as InboundMessage));
       return;
     }
@@ -334,7 +311,7 @@ export class Vault {
   }
 
   /** 결속된 포트는 secret.provide를 한 번만 받는다. 그 뒤 메시지는 거부하고 실린 값은 0으로 덮는다. */
-  private onSecretInput(port: PortLike, bind: SecretInputBind, state: { used: boolean; cardTries?: number; cardBusy?: boolean }, msg: InboundMessage): void {
+  private onSecretInput(port: PortLike, bind: SecretInputBind, state: { used: boolean }, msg: InboundMessage): void {
     if (msg?.t !== 'rpc') return;
     const p = msg.params ?? {};
     const bytes = p.bytes instanceof Uint8Array ? p.bytes : null;
@@ -343,33 +320,6 @@ export class Vault {
       bytes?.fill(0);
       for (const b of entryBytes) b?.fill(0);
     };
-    // 보안카드 등록 창(금고 직결, 부장 판정 2026-11-14): 한 포트로 사진 → 애매한 칸을 이어 받는다. 저장을 마치면 그 포트는 끝난다.
-    // 사진을 다시 넣는 일(못 읽음)까지 포트당 CARD_PORT_TRIES번.
-    if (bind.mode === 'store' && bind.kind === 'security_card' && msg.method === 'secret.store' && (p.image instanceof Uint8Array || typeof p.draftId === 'string')) {
-      const image = p.image instanceof Uint8Array ? p.image : null;
-      if (state.used || state.cardBusy || (state.cardTries = (state.cardTries ?? 0) + 1) > CARD_PORT_TRIES) {
-        wipe();
-        image?.fill(0);
-        this.post(port, { t: 'rpc', id: msg.id, error: 'denied' });
-        return;
-      }
-      state.cardBusy = true;
-      void this.cardStore(bind, p, entryBytes).then(
-        (result) => {
-          if ('consent' in result) {
-            state.used = true;
-            // main에는 저장했다는 것과 칸 수만(값·칸 번호 없음)
-            this.emit(['control'], 'secret.stored', { kind: 'security_card', scope: bind.scope, items: result.consent.items });
-          }
-          this.post(port, { t: 'rpc', id: msg.id, result });
-        },
-        (e: Error) => {
-          wipe();
-          this.post(port, { t: 'rpc', id: msg.id, error: e.message.slice(0, 80) });
-        },
-      ).finally(() => (state.cardBusy = false));
-      return;
-    }
     // 결속 모드가 메서드를 정한다: oneshot은 secret.provide, store(T-06)는 secret.store. 한 포트에서 한 번만.
     const expected = bind.mode === 'store' ? 'secret.store' : 'secret.provide';
     if (msg.method !== expected || state.used) {
@@ -381,7 +331,7 @@ export class Vault {
     state.used = true;
     if (bind.mode === 'store') {
       const entries = Array.isArray(p.entries) ? (p.entries as Array<Record<string, unknown>>) : [];
-      const parsed = entries.map((e, i) => ({ row: e?.row as number | undefined, field: e?.field as PortalField | undefined, bytes: entryBytes[i] ?? new Uint8Array() }));
+      const parsed = entries.map((e, i) => ({ field: e?.field as PortalField | undefined, bytes: entryBytes[i] ?? new Uint8Array() }));
       // 포털 아이디는 비밀이 아니다. 포털 결속에서만 받고, 저장하지 않고 결과로 돌려준다(D05 §2·§4, ADR-035).
       const loginId = parsePortalLoginId(p.portalLoginId);
       if (loginId === null || (loginId !== undefined && bind.kind !== 'portal_password')) {
@@ -389,7 +339,7 @@ export class Vault {
         this.post(port, { t: 'rpc', id: msg.id, error: 'bad_login_id' });
         return;
       }
-      // 결속 kind가 칸 모양을 정한다: 보안카드는 row만, 포털은 field: 'pw'만(human.store가 다시 검사한다).
+      // 칸은 field: 'pw' 하나다(human.store가 다시 검사한다).
       void this.human.store(bind.kind, bind.scope, parsed, bind.notice).then(
         (consent) => {
           const result: SecretStoreResult = { handle: { kind: bind.kind, scope: bind.scope }, tier: consent.tier, consent };
@@ -418,8 +368,8 @@ export class Vault {
     }
     try {
       if (!bytes) throw new Error('bytes required');
-      const same = (k: 'kind' | 'scope' | 'row') => p[k] === undefined || p[k] === bind[k];
-      if (!same('kind') || !same('scope') || !same('row')) throw new Error('bind_mismatch');
+      const same = (k: 'kind' | 'scope') => p[k] === undefined || p[k] === bind[k];
+      if (!same('kind') || !same('scope')) throw new Error('bind_mismatch');
       // 포트를 붙인 뒤 요청이 만료·소비됐으면(같은 요청에 창이 둘 등) 받지 않는다.
       if (!this.hasNeed(bind)) throw new Error('not_requested');
       const ops = this.requireOps();
@@ -455,69 +405,6 @@ export class Vault {
     }
   }
 
-  /**
-   * 보안카드 등록(대표 지시 2026-11-14): 사진이면 금고 안에서 인식하고, 애매한 칸이 남으면 초안으로 들고 그 칸 번호만 돌려준다.
-   * draftId면 사람이 다시 넣은 칸(4자리)을 합친다. 칸이 다 차면 한 번에 저장한다(슬롯 통째 교체, human.store).
-   * 칸 값은 이 프로세스 밖으로 나가지 않는다. 사진·초안 바이트는 쓰고 나면 0으로 덮는다.
-   */
-  private async cardStore(bind: Extract<SecretInputBind, { mode: 'store' }>, p: Record<string, unknown>, entryBytes: Array<Uint8Array | null>): Promise<SecretStoreReply> {
-    let id: string;
-    let draft: CardDraft;
-    if (p.image instanceof Uint8Array) {
-      const image = p.image;
-      const r = await scanCardImage(image, { tmpRoot: this.opts.paths.staging }).finally(() => image.fill(0));
-      if ('error' in r) {
-        this.opts.log.event('vault.card_scan_failed', { error: r.error });
-        throw new Error(`card.${r.error}`);
-      }
-      this.opts.log.event('vault.card_scanned', { size: r.size, unsure: r.unsure.length });
-      id = randomUUID();
-      const enc = new TextEncoder();
-      draft = { scope: bind.scope, size: r.size, rows: new Map([...r.rows].map(([k, v]) => [k, enc.encode(v)])), ask: r.unsure, timer: undefined };
-      r.rows.clear();
-    } else {
-      id = String(p.draftId);
-      const d = this.cardDrafts.get(id);
-      if (!d || d.scope !== bind.scope) {
-        for (const b of entryBytes) b?.fill(0);
-        throw new Error('card.draft_expired');
-      }
-      draft = d;
-      const entries = Array.isArray(p.entries) ? (p.entries as Array<Record<string, unknown>>) : [];
-      const dec = new TextDecoder();
-      entries.forEach((e, i) => {
-        const b = entryBytes[i];
-        const row = e?.row as number;
-        if (b && draft.ask.includes(row) && /^\d{4}$/.test(dec.decode(b))) {
-          draft.rows.get(row)?.fill(0);
-          draft.rows.set(row, b.slice());
-          draft.ask = draft.ask.filter((x) => x !== row);
-        }
-        b?.fill(0);
-      });
-    }
-    if (draft.timer) clearTimeout(draft.timer);
-    this.cardDrafts.delete(id);
-    if (draft.ask.length) {
-      draft.timer = setTimeout(() => this.dropCardDraft(id), CARD_DRAFT_TTL_MS);
-      draft.timer.unref?.();
-      this.cardDrafts.set(id, draft);
-      return { pending: { draftId: id, ask: [...draft.ask], size: draft.size } };
-    }
-    const cells = [...draft.rows].sort((a, b) => a[0] - b[0]).map(([row, bytes]) => ({ row, bytes }));
-    draft.rows.clear();
-    const consent = await this.human.store('security_card', bind.scope, cells, bind.notice);
-    return { handle: { kind: 'security_card', scope: bind.scope }, tier: consent.tier, consent };
-  }
-
-  private dropCardDraft(id: string): void {
-    const d = this.cardDrafts.get(id);
-    if (!d) return;
-    if (d.timer) clearTimeout(d.timer);
-    for (const b of d.rows.values()) b.fill(0);
-    this.cardDrafts.delete(id);
-  }
-
   private async dispatch(method: string, p: Record<string, unknown>): Promise<unknown> {
     switch (method) {
       case 'browser.launch':
@@ -533,15 +420,6 @@ export class Vault {
           return { ok: false, reason: 'denied' };
         }
         return this.requireOps().fill(p as never);
-      }
-      case 'typist.fillCard': {
-        const pinned = this.runProfiles.get(String(p.runId));
-        if (pinned !== undefined && p.scope !== pinned) {
-          this.opts.log.event('vault.profile_mismatch', { runId: String(p.runId).slice(0, 64) });
-          return { ok: false, reason: 'denied' };
-        }
-        if (!isProfileScope(p.scope)) return { ok: false, reason: 'denied' };
-        return this.requireOps().fillCard(p as never);
       }
       case 'secretWindow.openForHuman':
         return this.requireOps().openForHuman(p as never);
@@ -1058,7 +936,7 @@ export class Vault {
       selfScan: VAULT_SELF_SCAN ? { roots: [this.opts.paths.logs, this.opts.paths.staging] } : undefined,
       emit,
       usedSlots: this.usedSlots,
-      stored: (kind, scope, row) => this.readStored(kind, scope, row),
+      stored: (kind, scope) => this.readStored(kind, scope),
       askApp: () => this.opts.certFromApp !== false,
       // 인증서 비밀번호 기억(대표 지시 2026-11-13). 데스크톱은 run.begin에 프로필을 주지 않으니 사업자로 본다(Phase 1).
       certMemory: {

@@ -34,7 +34,7 @@ app.on('window-all-closed', () => {});
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** 장면이 바꾸는 하네스 상태(보관함 서류를 목록에 넣을지, 승인 바 페이지 HTML). */
-const S = { withVault: false, barHtml: '', onb: null, onbDelay: 0, g24Empty: false, bank: 'full', mode: {}, emptyBoot: false, security: 'ok' };
+const S = { bankAuto: 'sms', withVault: false, barHtml: '', onb: null, onbDelay: 0, g24Empty: false, bank: 'full', mode: {}, emptyBoot: false, security: 'ok' };
 /** 불러오는 중·오류 장면: S.mode[메서드] = 'hang'(답이 오지 않음) | 'fail'(거절) */
 const HANG = () => new Promise(() => {});
 const store = new MockStore();
@@ -116,12 +116,14 @@ const bankDetail = (id) => {
 
 // 설정 > 기기 연결(ADR-048): 계정 기기 목록·새 PC 요청 목업. 모양은 remote-devices.ts DeviceView, remote-pclink.ts PcLinkRequestView와 같다.
 const DEV_DAY = 86_400_000;
-const devRow = (id, role, platform, name, o = {}) => ({ deviceId: `0000000${id}-0000-4000-8000-000000000000`, role, platform, name, state: 'active', registeredAt: Date.now() - (o.ago ?? 10) * DEV_DAY, deleteAfter: null, self: false, listed: true, ...o });
+const devRow = (id, role, platform, name, o = {}) => ({ deviceId: `0000000${id}-0000-4000-8000-000000000000`, role, platform, name, state: 'active', registeredAt: Date.now() - (o.ago ?? 10) * DEV_DAY, deleteAfter: null, lastSeenAt: Date.now() - Math.min(o.ago ?? 10, 3) * DEV_DAY, self: false, listed: true, ...o });
 const DEV = {
   normal: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(2, 'desktop', 'windows', '집 PC', { ago: 9 }), devRow(3, 'mobile', 'ios', 'iPhone', { ago: 12 }), devRow(4, 'mobile', 'android', '', { ago: 3 })],
   full: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(2, 'desktop', 'windows', '집 PC', { ago: 9 }), devRow(5, 'desktop', 'windows', '세무 담당 노트북', { ago: 2 }), devRow(3, 'mobile', 'ios', 'iPhone', { ago: 12 }), devRow(4, 'mobile', 'android', '', { ago: 3 }), devRow(6, 'mobile', 'ios', '직원 아이폰', { ago: 1, state: 'pending', listed: false })],
   suspended: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(2, 'desktop', 'windows', '집 PC', { ago: 9, state: 'suspended', deleteAfter: Date.now() + 5 * DEV_DAY + 3_600_000 }), devRow(3, 'mobile', 'ios', 'iPhone', { ago: 12 }), devRow(4, 'mobile', 'android', '잃어버린 폰', { ago: 30, state: 'suspended', deleteAfter: Date.now() + 1_800_000 })],
   alone: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(3, 'mobile', 'ios', 'iPhone', { ago: 12 })],
+  /** 폰 승인(ADR-052): iPhone은 켜짐, Android는 꺼 두었고 다시 켜 달라고 청함 */
+  px: () => [devRow(1, 'desktop', 'macos', 'MacBook Pro', { self: true, ago: 40 }), devRow(3, 'mobile', 'ios', 'iPhone 16 Pro', { ago: 12, approval: 'on', lastSeenAt: Date.now() }), devRow(4, 'mobile', 'android', 'Galaxy S25', { ago: 3, approval: 'asked' })],
 };
 const req = (stage, o = {}) => ({ deviceId: '00000009-0000-4000-8000-000000000000', name: '새 노트북', platform: 'windows', createdAt: Date.now() - 60_000, stage, triesLeft: stage === 'code' ? 3 : null, ...o });
 const signedIn = { step: 'signed_in', email: 'owner@ganada.example', codeExpiresAt: null, error: null, phones: 2 };
@@ -143,6 +145,7 @@ const handlers = {
   'devices.list': () => (S.devErr ? devFail(S.devErr) : { devices: S.devices }),
   'devices.unlink': (p) => ({ devices: (S.devices = S.devices.filter((d) => d.deviceId !== p.deviceId)) }),
   'devices.leave': () => devFail('account.last_desktop'),
+  'devices.px': (p) => ({ devices: (S.devices = S.devices.map((d) => (d.deviceId === p.deviceId ? { ...d, approval: p.on ? 'on' : 'paused' } : d))) }),
   'pair.view': () => S.pair,
   'pair.open': () => (S.pair = pairQr()),
   'pair.retry': () => (S.pair = pairQr()),
@@ -169,7 +172,7 @@ const handlers = {
     const r = await S.onb.answer(p);
     return { onboarding: await S.onb.view(), fill: r.fill ?? null, profiles: PROFILES };
   },
-  'request.send': (p) => S.agentReply ? { kind: 'agent', text: S.agentReply, show: [], filtered: null } : (/등본/.test(p.text) ? { kind: 'g24', doc: '주민등록표 등본' } : { kind: 'draft', run: S.sendSeq ? { ...mkRun('draft'), id: `run-${++S.sendSeq}` } : mkRun('draft') }),
+  'request.send': async (p) => (S.replyDelay && (await sleep(S.replyDelay)), S.agentReply) ? { kind: 'agent', text: S.agentReply, show: [], filtered: null } : (/등본/.test(p.text) ? { kind: 'g24', doc: '주민등록표 등본' } : { kind: 'draft', run: S.sendSeq ? { ...mkRun('draft'), id: `run-${++S.sendSeq}` } : mkRun('draft') }),
   'counterparties.list': () => (EMPTY ? [] : cps),
   'docs.list': () => (EMPTY ? [] : S.withVault ? [vaultDoc, ...store.docs] : [...store.docs]),
   'issued.list': () => [],
@@ -177,6 +180,14 @@ const handlers = {
   'bank.receivable': (p) => bankDetail(p.id),
   'bank.refreshStatus': () => ({ state: 'done', result: { newCount: 0 } }),
   'bankAuto.status': () => ({ ok: true, connected: false }),
+  // 자동 연결 장면(bankAuto): 동의 → 인증서 → (은행이 SMS 인증번호 요구) → 보유계좌. S.bankAuto = 'sms' | 'identity'
+  'bankAuto.consent': () => ({ ok: true }),
+  'bankAuto.certs': () => ({ certs: [{ id: '0123456789abcdef', owner: '김하늘', usage: 'yessign 범용', expiresOn: '2027-03-01', usable: true, issuance: true }] }),
+  'bankAuto.connect': (p) => (S.bankAuto === 'withdraw' && !p.withdrawAccount ? { ok: false, code: 'withdraw_account_required', cf: 'CF-12401', clientType: 'P' } : S.bankAuto === 'identity' ? { ok: false, code: 'identity_required', cf: 'CF-12831', clientType: 'B' } : { ok: true, sessionId: 'cs1', bankName: '우리은행', step: 'sms', accounts: [] }),
+  'bankAuto.sms': (p) =>
+    p.code === '000000'
+      ? { ok: true, sessionId: 'cs2', bankName: '우리은행', step: 'sms', accounts: [] }
+      : { ok: true, sessionId: 'cs3', bankName: '우리은행', accounts: [{ key: 'a0', last4: '6789', name: '우리 사업자통장', balance: 5067000, usable: true }, { key: 'a1', last4: '8777', name: '정기예금', balance: 1000000, usable: false }] },
   'g24.candidates': () =>
     S.g24Empty
       ? []
@@ -247,6 +258,40 @@ async function shot(win, name, bar) {
   }
   await fs.writeFile(path.join(OUT, `${name}.png`), nativeImage.createFromBitmap(buf, { width: cw, height: ch }).toPNG());
   console.log('shot', name);
+}
+
+
+/**
+ * 녹화(스크롤 밀림 재기): 사건 앞 0.3초부터 뒤 1.2초까지 그려진 프레임을 모두 PNG로 받아 scroll-shift.mjs로 잰다.
+ * 결과는 OUT/<name>/shift.json·sheet.png. 잰 곳은 대화 목록(.thread-scroll)만이다.
+ */
+async function record(win, name, act) {
+  const dir = path.join(OUT, name, 'frames');
+  await fs.rm(path.join(OUT, name), { recursive: true, force: true });
+  await fs.mkdir(dir, { recursive: true });
+  const frames = [];
+  const grab = (img) => frames.push(img.toPNG());
+  const off = !!process.env.OFFSCREEN;
+  if (off) win.webContents.on('paint', (_e, _d, img) => grab(img));
+  else win.webContents.beginFrameSubscription(false, grab);
+  // 아무것도 안 움직이는 동안에도 프레임이 오게 화면 구석 1px을 계속 바꾼다(잰 곳 밖)
+  await js(win, `window.__tick = setInterval(() => { let t = document.getElementById('__tick'); if (!t) { t = document.createElement('i'); t.id = '__tick'; t.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;z-index:99999'; document.body.append(t); } t.style.background = t.style.background === 'red' ? 'blue' : 'red'; }, 16)`);
+  await sleep(300);
+  const event = frames.length;
+  const top0 = await js(win, `document.querySelector('.thread-scroll').scrollTop`);
+  await act();
+  await sleep(1200);
+  if (off) win.webContents.removeAllListeners('paint');
+  else win.webContents.endFrameSubscription();
+  await js(win, 'clearInterval(window.__tick); document.getElementById("__tick")?.remove()');
+  for (const [i, b] of frames.entries()) await fs.writeFile(path.join(dir, `${String(i).padStart(4, '0')}.png`), b);
+  const r = await js(win, `(() => { const b = document.querySelector('.thread-scroll').getBoundingClientRect(); return [b.x, b.y, b.width, b.height, devicePixelRatio]; })()`);
+  const k = r[4];
+  const crop = r.slice(0, 4).map((v) => Math.round(v * k)).join(',');
+  const { spawnSync } = await import('node:child_process');
+  const res = spawnSync(process.env.NODE_BIN ?? 'node', [path.join(import.meta.dirname, 'scroll-shift.mjs'), '--frames', dir, '--fps', '30', '--crop', crop, '--scale', String(k), '--event', `#${Math.max(0, event - 1)}`, '--label', name, '--out', path.join(OUT, name)], { encoding: 'utf8' });
+  const top1 = await js(win, `document.querySelector('.thread-scroll').scrollTop`);
+  console.log('record', name, res.stdout.trim() || res.stderr.trim(), 'dom scrollTop delta', Math.round(top1 - top0));
 }
 
 const barFields = [
@@ -380,6 +425,63 @@ const scenes = {
     await shot(win, '44-open-bank-screen');
     S.agentReply = null;
   },
+  // 스크롤(2026-11-19): 위로 올려 읽는 중 새 답이 와도 읽던 자리를 지키고 [새 답]을 띄운다. 내가 보낸 말은 늘 내린다. 녹화로 밀린 거리를 잰다.
+  async scroll(win) {
+    const say = (t) => js(win, `(() => { const i = document.querySelector('#composer'); i.value = ${JSON.stringify(t)}; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
+    const Q = ['이번 달 세금계산서 몇 건 끊었어?', 'B상사 미수금 얼마야?', '부가세 신고는 언제까지야?', '지난달 매출 합계 알려 줘', 'C테크 이메일 바뀌었어?', '세무사 꾸러미 만들어 줘', '현금영수증도 모아 줘?', '다음 주 할 일 있어?'];
+    const A = ['이번 달 발급은 3건이에요. A상사 363만원, B상사 60만 5천원, C테크 110만원이에요.', 'B상사에서 아직 60만 5천원을 받지 못했어요. 지난 3일이 약속한 날이었어요.', '2기 확정 신고는 1월 25일까지예요. 꾸러미는 1월 초에 만들어 둘게요.', '지난달 매출은 1,280만원이에요. 그중 세금계산서로 끊은 것이 1,100만원이에요.', '네, 지난주에 bill@ctech.example로 바뀌었어요. 다음 발급부터 새 주소로 보내요.', '11월 꾸러미를 만들었어요. 문서함에서 열어 볼 수 있어요.', '현금영수증 7건을 모았어요. 합계 23만 4천원이에요.', '다음 주에는 A상사 정기 발급 하나가 있어요. 금요일에 알려 드릴게요.'];
+    for (const [k, q] of Q.entries()) {
+      S.agentReply = A[k];
+      await say(q);
+      await sleep(260);
+    }
+    S.agentReply = null;
+    await js(win, `(() => { const s = document.querySelector('.thread-scroll'); s.scrollTop = Math.max(0, s.scrollHeight - s.clientHeight - 520); s.dispatchEvent(new Event('scroll')); })()`);
+    await sleep(300);
+    await record(win, 'rec-new-reply', () => ev(win, { type: 'say', text: '참고로 B상사는 지난달에도 입금이 열흘 늦었어요. 이번에도 늦으면 알려 드릴게요.' }));
+    await shot(win, '47-scroll-new-reply');
+    await js(win, `document.querySelector('[data-act=new-reply]')?.click()`);
+    await sleep(600);
+    await shot(win, '48-scroll-after-button');
+    await js(win, `(() => { const s = document.querySelector('.thread-scroll'); s.scrollTop = Math.max(0, s.scrollHeight - s.clientHeight - 520); s.dispatchEvent(new Event('scroll')); })()`);
+    await sleep(300);
+    S.agentReply = '네, 알겠어요.';
+    await say('고마워');
+    await sleep(500);
+    await shot(win, '49-scroll-sent');
+    S.agentReply = null;
+  },
+  // 실행 카드 단계 목록(11-19): 새 카드는 닫힌 채로, 연 카드는 상태가 바뀌어도 열린 채로
+  async steps(win) {
+    await js(win, `(() => { const i = document.querySelector('#composer'); i.value = 'A상사에 330만원 세금계산서'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
+    await sleep(300);
+    ev(win, { type: 'run', run: mkRun('preparing', { done: 2, now: true }) });
+    await shot(win, '50-steps-closed');
+    await js(win, `document.querySelector('[data-act=steps-toggle]').click()`);
+    await shot(win, '51-steps-open');
+    ev(win, { type: 'run', run: mkRun('preparing', { done: 3, now: true }) });
+    await sleep(100);
+    console.log('steps still open after update:', await js(win, `document.querySelector('[data-act=steps-toggle]').getAttribute('aria-expanded')`));
+    await shot(win, '52-steps-kept');
+  },
+  // Muse 방식 대화(2026-11-19): 말풍선 둘, 시간 줄, 묶음(2분 안 같은 쪽 말), 답 기다리는 점 세 개
+  async muse(win) {
+    const say = (t) => js(win, `(() => { const i = document.querySelector('#composer'); i.value = ${JSON.stringify('')} + ${'`'}${'${'}t${'}'}${'`'}; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`.replace('${t}', t));
+    S.agentReply = '이번 달 발급은 3건이에요. A상사 363만원, B상사 60만 5천원, C테크 110만원이에요.';
+    await say('이번 달 세금계산서 몇 건 끊었어?');
+    await sleep(400);
+    ev(win, { type: 'say', text: '합계는 533만 5천원이에요.' });
+    await sleep(200);
+    S.replyDelay = 3000;
+    await say('B상사 건 다시 보여 줘');
+    await sleep(700);
+    console.log('dbg', await js(win, `JSON.stringify({t: !!document.querySelector('.sx-typing'), toast: document.querySelector('.toast, [role=alert]')?.textContent, last: document.querySelector('.sx-thread').lastElementChild.outerHTML.slice(0,200)})`));
+    await shot(win, '45-muse-chat');
+    await sleep(2600);
+    await shot(win, '46-muse-after-typing');
+    S.replyDelay = 0;
+    S.agentReply = null;
+  },
   // EMPTY=1 ONLY=empty: 빈 화면 셋(거래처·문서함·활동 기록)
   async empty(win) {
     for (const v of ['cps', 'docs']) {
@@ -435,7 +537,6 @@ const scenes = {
     await press('[data-onb=confirm]');
     await shot(win, '24-onb-auth');
     await press('[data-onb=other]');
-    await press('[data-onb=card]');
     await shot(win, '25-onb-auth-other');
     // 고른 줄이 굳는 순간(main 답을 기다리는 동안): 실선 + 체크, 나머지는 흐림
     S.onbDelay = 1200;
@@ -582,6 +683,46 @@ const scenes = {
   },
 };
 
+// 설정 > 계좌 연결 > 자동 연결: 사장님은 인증서·비밀번호만, 은행이 SMS를 요구하면 카드 안 칸 하나(대표 2026-11-19)
+scenes.bankAuto = async (win) => {
+  const start = async () => {
+    await js(win, `document.querySelector('#rail [data-view=settings]').click()`);
+    await sleep(100);
+    await js(win, `document.querySelector('[data-set-tab=bank]').click()`);
+    await sleep(300);
+    await js(win, `document.querySelector('[data-bank-connect]').click()`);
+    await sleep(100);
+    await js(win, `document.querySelectorAll('[data-bank-check]').forEach((c) => { c.checked = true; c.dispatchEvent(new Event('change')); })`);
+    await sleep(100);
+    await js(win, `document.querySelector('[data-bank-consent]').click()`);
+    await sleep(300);
+  };
+  S.bankAuto = 'sms';
+  await start();
+  await shot(win, '70-bankauto-certs');
+  await js(win, `document.querySelector('[data-bank-next]').click()`);
+  await sleep(300);
+  await shot(win, '71-bankauto-sms');
+  const type = (v) => js(win, `(() => { const i = document.querySelector('[data-bank-sms]'); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event('input')); document.querySelector('[data-bank-sms-go]').click(); })()`);
+  await type('000000');
+  await sleep(300);
+  await shot(win, '72-bankauto-sms-wrong');
+  await type('482913');
+  await sleep(300);
+  await shot(win, '73-bankauto-accounts');
+  S.bankAuto = 'identity';
+  await start();
+  await js(win, `document.querySelector('[data-bank-next]').click()`);
+  await sleep(300);
+  await shot(win, '74-bankauto-identity');
+  S.bankAuto = 'withdraw';
+  await start();
+  await js(win, `document.querySelector('[data-bank-next]').click()`);
+  await sleep(300);
+  await shot(win, '75-bankauto-withdraw');
+  S.bankAuto = 'sms';
+};
+
 // 설정 > 기기 연결 장면들(쓰던 PC 쪽 목록·새 PC 요청, 새 PC 쪽 로그인 세 단계, 끊긴 PC)
 const devTab = async (win) => {
   await js(win, `document.querySelector('#rail [data-view=settings]').click()`);
@@ -620,6 +761,7 @@ Object.assign(scenes, {
     await devTab(win);
     await devScroll(win, '[data-device-group=desktop]');
     await shot(win, '73-devices-last-pc');
+
     // 새 PC 요청: 들어옴 → [연결] → 새 PC의 응답 기다림 → 6자리 칸 → 틀림 → 맞음(연결됐어요)
     reset(DEV.normal(), [req('new')]);
     await devTab(win);
@@ -662,6 +804,37 @@ Object.assign(scenes, {
     await devTab(win);
     await shot(win, '82-device-gone');
   },
+  /** 폰 승인 끄기·다시 허용(ADR-052): 켜짐·다시 켜 달라고 청함 → [승인 끄기] 확인 → 꺼짐 → [다시 허용] */
+  async px(win) {
+    Object.assign(S, { acct: signedIn, devices: DEV.px(), reqs: [], devErr: null, pcMode: 'ok' });
+    await devTab(win);
+    await devScroll(win, '[data-device-group=mobile]');
+    await shot(win, '74-px-states');
+    await js(win, `document.querySelector('[data-act=px-off-open]').click()`);
+    await sleep(150);
+    await shot(win, '74b-px-off-confirm');
+    await js(win, `document.querySelector('[data-act=px-off]').click()`);
+    await sleep(250);
+    await devScroll(win, '[data-device-group=mobile]');
+    await shot(win, '74c-px-paused');
+    await js(win, `document.querySelector('[data-act=px-on]').click()`);
+    await sleep(250);
+    await devScroll(win, '[data-device-group=mobile]');
+    await shot(win, '74d-px-allowed');
+    // [연결 끊기] → 앱 안 모달로 한 번 묻는다 → 끊으면 목록에서 바로 빠진다
+    await js(win, `document.querySelectorAll('[data-device-group=mobile] [data-act=device-unlink-open]')[1].click()`);
+    await sleep(200);
+    await shot(win, '74e-unlink-confirm');
+    await js(win, `document.querySelector('[data-act=device-unlink]').click()`);
+    await sleep(250);
+    await devScroll(win, '[data-device-group=mobile]');
+    await shot(win, '74f-unlinked');
+    // 예전 규칙으로 정지돼 있던 폰은 목록에 보이지 않는다(PC는 남는 날짜를 보인다)
+    Object.assign(S, { devices: DEV.suspended() });
+    await devTab(win);
+    await devScroll(win, '[data-device-group=desktop]');
+    await shot(win, '74g-suspended-hidden');
+  },
   // 폰 연결 칸(S-03): 쉬는 자리 → [폰 연결] → QR(남은 시간) → 폰이 찍음(6자리) → 틀림 → 연결됐어요 · 시간 지남([새 QR]) · 멈춤([다시 시도]) · QR 만드는 중
   async pair(win) {
     Object.assign(S, { acct: signedIn, devices: DEV.normal(), reqs: [], devErr: null, pair: PAIR_IDLE });
@@ -676,12 +849,17 @@ Object.assign(scenes, {
     await sleep(200);
     await shot(win, '91-pair-qr');
     await push({ ...S.pair, step: 'awaiting_sas', qr: null, phoneName: '사장님 폰', triesLeft: 3 });
+    await sleep(250);
     await shot(win, '92-pair-sas');
-    await js(win, `(() => { const i = document.querySelector('#pair-sas'); i.value = '482916'; i.dispatchEvent(new Event('input')); document.querySelector('[data-act=pair-submit]').click(); })()`);
-    await sleep(200);
+    const typeSas = (d) => `(() => { const b = document.querySelector('.sas-box'); b.focus(); b.value = '${d}'; b.dispatchEvent(new Event('input')); })()`;
+    await js(win, typeSas('482'));
+    await sleep(150);
+    await shot(win, '92b-pair-sas-typing');
+    await js(win, `document.querySelectorAll('.sas-box')[3].value = '916'; document.querySelectorAll('.sas-box')[3].dispatchEvent(new Event('input'))`);
+    await sleep(120);
     await shot(win, '93-pair-sas-wrong');
-    await js(win, `(() => { const i = document.querySelector('#pair-sas'); i.value = '482915'; i.dispatchEvent(new Event('input')); document.querySelector('[data-act=pair-submit]').click(); })()`);
-    await sleep(200);
+    await js(win, typeSas('482915'));
+    await sleep(250);
     await shot(win, '94-pair-done');
     await js(win, `document.querySelector('[data-act=pair-close]').click()`);
     await sleep(150);
@@ -692,6 +870,10 @@ Object.assign(scenes, {
     await shot(win, '97-pair-failed');
     await push({ ...PAIR_IDLE, step: 'opening' });
     await shot(win, '98-pair-opening');
+    // 6자리 단계에서 3번 틀려 멈춤(모달에 이어서)
+    await push({ ...PAIR_IDLE, step: 'awaiting_sas', phoneName: '사장님 폰', triesLeft: 1, expiresAt: Date.now() + 61_000 });
+    await push({ ...PAIR_IDLE, step: 'failed', error: 'pair.sas_locked', phoneName: '사장님 폰' });
+    await shot(win, '99-pair-sas-locked');
     await push(PAIR_IDLE);
   },
   // 새 PC 쪽: 로그인 뒤 쓰던 PC의 승인을 기다림 → 6자리 → '연결됐어요'가 떴나요? · PC 3대가 찬 계정
@@ -731,7 +913,7 @@ Object.assign(scenes, {
   },
 });
 
-const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'browser', 'replace', 'openBank', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'pair', 'newPc', ...(EMPTY ? ['empty'] : [])];
+const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'browser', 'replace', 'openBank', 'muse', 'scroll', 'steps', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'px', 'pair', 'newPc', 'bankAuto', ...(EMPTY ? ['empty'] : [])];
 const agreed = { version: 'pv', choice: 'agreed', at: '' };
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {
