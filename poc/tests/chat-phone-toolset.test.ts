@@ -96,6 +96,8 @@ describe('chat_phone 머리말', () => {
     assert.match(p, /PC: 꺼짐/);
     assert.match(p, /PC: 켜짐/);
     assert.match(p, /앱 판단: 세금계산서 발급 요청/);
+    assert.match(p, /# 일상 말/);
+    assert.match(p, /점심/);
     assert.match(p, /발급·전송 도구는 없다/);
     assert.match(p, /kind defer/);
     assert.match(p, /# 세무 판단/);
