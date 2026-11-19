@@ -11,7 +11,7 @@
 // - [연결 해제]: 남은 connectedId 삭제 + 기억해 둔 비밀번호 삭제 + 연결 상태 삭제. 가져온 거래 줄은 사장님 데이터라 그대로 둔다.
 //   그날 비밀번호 틀림 상한(하루 3회·은행 잠김)은 풀지 않는다(해제→재연결로 더 보내지 않게).
 // 화면·로그·이벤트에는 계좌번호 끝 4자리·이름·건수만 간다(전체 번호·비밀번호·인증서·토큰·connectedId 없음).
-import type { CodefClient, CodefAccount, CodefTxn } from './client.ts';
+import type { CodefClient, CodefAccount, CodefTwoWay, CodefTxn } from './client.ts';
 import { CODEF_BANKS, CodefError, isCodefBank, type CodefBankCode, type CodefClientType, type CodefFailure } from './codes.ts';
 
 /** 금고 codef.seal 결과(vault protocol CodefSealResult와 같은 모양) */
@@ -20,7 +20,8 @@ export type SealResult =
   | { ok: false; reason: string };
 
 export interface CodefSealPort {
-  seal(p: { certId: string; publicKey: string; mode: 'ask' | 'auto' }): Promise<SealResult>;
+  /** field 'account' = 출금계좌 비밀번호 4자리만 감싼다(derFile·keyFile 빈 칸) */
+  seal(p: { certId: string; publicKey: string; mode: 'ask' | 'auto'; field?: 'account' }): Promise<SealResult>;
   cancel(): Promise<void>;
   forget(certId: string): Promise<void>;
 }
@@ -32,6 +33,10 @@ export interface CodefSealPort {
 export interface CodefBankPort {
   /** CODEF를 부르기 전에: 사업장이나 돈 맞추기 동의가 없으면 그 이유 */
   ready(): 'bank_not_ready' | 'bank_consent_required' | null;
+  /** 사업장이 법인인가(법인등록번호가 있다). 법인 계좌는 기업 뱅킹에만 있다 */
+  corporate?(): boolean;
+  /** 받을 돈에 넣어 둔 이 은행 계좌번호(숫자만). 은행이 출금계좌번호를 요구할 때 사람에게 묻기 전에 쓴다 */
+  withdrawAccount?(bank: CodefBankCode): string | null;
   /** 같은 번호의 내 계좌가 있으면 그것, 없으면 추가하고 연결 상태를 자동 연결됨(provider codef)으로 */
   link(a: { bank: string; number: string; alias: string | null }): Promise<{ accountId: string; profileId: string }>;
   /** 받을 돈 최신화 시작(원천 → 넣기 → 맞추기). 시작만 하고 돌아온다 */
@@ -86,11 +91,19 @@ export const CODEF_REFRESH_COOLDOWN_MS = 15 * 60_000;
 /** 같은 인증서 비밀번호가 하루 이만큼 틀리면 그날은 더 보내지 않는다(호출 아낌 + 은행 잠금 전) */
 export const CODEF_PW_FAIL_MAX = 3;
 
-export type CodefPhase = 'password' | 'connecting' | 'accounts' | 'fetching' | 'done' | 'error';
+export type CodefPhase = 'password' | 'connecting' | 'accounts' | 'sms' | 'fetching' | 'done' | 'error' | 'next_banking' | 'order';
 export interface CodefEvent {
   phase: CodefPhase;
   code?: CodefFailure;
   cf?: string;
+  /** CF-12401에서 빠진 계정 등록 키 이름 */
+  param?: string;
+  /** next_banking: 이 뱅킹(P 개인·B 기업)이 안 돼서 다음 뱅킹으로 넘어간다 */
+  clientType?: CodefClientType;
+  /** order: 해 볼 뱅킹 순서('PB' 등) */
+  order?: string;
+  /** 모르는 거절의 단서(CODEF 안내문 단어, 로그 전용) */
+  hint?: string;
 }
 
 export interface CodefLinkOptions {
@@ -124,9 +137,45 @@ export interface AccountChoice {
  */
 type Held =
   | { kind: 'choosing'; id: string; connectedId: string; certId: string; bank: CodefBankCode; clientType: CodefClientType; accounts: CodefAccount[]; timer: ReturnType<typeof setTimeout> }
+  | { kind: 'sms'; id: string; connectedId: string; certId: string; bank: CodefBankCode; clientType: CodefClientType; twoWay: CodefTwoWay; tries: number; timer: ReturnType<typeof setTimeout> }
   | { kind: 'warm'; accountId: string; connectedId: string; bank: CodefBankCode; clientType: CodefClientType; timer: ReturnType<typeof setTimeout> };
 
 const CERT_ID_RE = /^[0-9a-f]{16}$/;
+
+/** 연결 결과: 보유계좌 고르기, 또는 SMS 인증번호 받기(step 'sms', accounts 비어 있음) */
+export interface ConnectResult {
+  sessionId: string;
+  bankName: string;
+  accounts: AccountChoice[];
+  step?: 'sms';
+}
+
+/**
+ * 해 볼 뱅킹 순서. 법인 사업장은 기업 뱅킹만(법인 계좌는 개인 뱅킹에 없다).
+ * 개인사업자는 인증서 종류로: 법인·사업자용이면 기업 먼저, 개인용·모름이면 개인 먼저(1인 사업자는 개인 뱅킹으로 사업자 계좌를 보는 경우가 많다).
+ */
+export function bankingOrder(o: { explicit?: unknown; corporate: boolean; prefer?: unknown }): CodefClientType[] {
+  if (o.explicit === 'P' || o.explicit === 'B') return [o.explicit];
+  if (o.corporate) return ['B'];
+  return o.prefer === 'B' ? ['B', 'P'] : ['P', 'B'];
+}
+
+/** SMS 인증번호를 다시 넣을 수 있는 횟수 */
+export const SMS_TRIES = 3;
+
+/** 이 뱅킹만의 사정이라 같은 인증서로 다른 뱅킹을 해 볼 실패 */
+const TRY_OTHER: ReadonlySet<CodefFailure> = new Set(['identity_required', 'withdraw_account_required', 'banking_kind', 'not_enrolled', 'cert_not_registered', 'cert_kind', 'rejected']);
+/** 둘 다 안 되면 사람이 할 일이 분명한 쪽을 알린다 */
+// 계좌번호 한 칸이면 끝나는 쪽을 먼저 묻는다(은행에서 본인인증을 하는 것보다 쉽다)
+const RANK: readonly CodefFailure[] = ['withdraw_account_required', 'identity_required', 'not_enrolled', 'banking_kind', 'cert_not_registered', 'cert_kind'];
+function worst(f: { e: CodefError; clientType: CodefClientType }[]): CodefError {
+  for (const c of RANK) {
+    const hit = f.find((x) => x.e.code === c);
+    if (hit) return hit.e.withClientType(hit.clientType);
+  }
+  const last = f[f.length - 1]!;
+  return last.e.withClientType(last.clientType);
+}
 
 const ymd = (d: Date): string => d.toISOString().slice(0, 10);
 const compact = (s: string): string => s.replace(/-/g, '');
@@ -199,7 +248,7 @@ export class CodefLink {
       return await fn();
     } catch (e) {
       const err = e instanceof CodefError ? e : new CodefError('unavailable');
-      this.emit({ phase: 'error', code: err.code, ...(err.cf ? { cf: err.cf } : {}) });
+      this.emit({ phase: 'error', code: err.code, ...(err.cf ? { cf: err.cf } : {}), ...(err.param ? { param: err.param } : {}), ...(err.hint ? { hint: err.hint } : {}) });
       throw err;
     } finally {
       this.busy = false;
@@ -207,7 +256,7 @@ export class CodefLink {
   }
 
   /** 금고 창으로 비밀번호를 받아 감싼 로그인 → 계정 등록. 비밀번호가 틀렸으면 기억해 둔 것을 지운다 */
-  private async register(certId: string, bank: CodefBankCode, clientType: CodefClientType, mode: 'ask' | 'auto'): Promise<string> {
+  private async register(certId: string, bank: CodefBankCode, types: readonly CodefClientType[], mode: 'ask' | 'auto', withdraw: string | null = null): Promise<{ connectedId: string; clientType: CodefClientType }> {
     if ((this.budget().pwFails[certId] ?? 0) >= CODEF_PW_FAIL_MAX) throw new CodefError('password_retry_limit');
     const publicKey = await this.o.client.publicKey();
     this.emit({ phase: 'password' });
@@ -219,16 +268,42 @@ export class CodefLink {
       throw new CodefError('unavailable');
     }
     this.emit({ phase: 'connecting' });
+    // 같은 인증서·같은 비밀번호(한 번 받은 것)로 뱅킹을 차례로 해 본다. 사장님은 기업/개인 뱅킹을 고르지 않는다(대표 2026-11-19).
+    // 다른 뱅킹으로 넘어가는 것은 그 뱅킹만의 사정(본인인증 요구·인증서 미등록·용도·모르는 거절)일 때뿐이고, 비밀번호 틀림은 바로 멈춘다(잠김 방지).
+    const failures: { e: CodefError; clientType: CodefClientType }[] = [];
     try {
-      const id = await this.o.client.createAccount(bank, clientType, { derFile: s.derFile, keyFile: s.keyFile, password: s.password });
-      // 쓰기 전에 PC DB에 먼저 적는다. 지우면 빠지고, 앱이 그 사이 꺼지면 다음 실행의 sweep이 지운다
-      this.save({ orphans: [...this.o.store.get().orphans, { connectedId: id, bank, clientType }] });
-      const b = this.budget();
-      if (b.pwFails[certId]) {
-        delete b.pwFails[certId];
-        this.save({ budget: b });
+      for (const clientType of types) {
+        let id: string;
+        const login = { derFile: s.derFile, keyFile: s.keyFile, password: s.password };
+        try {
+          try {
+            id = await this.o.client.createAccount(bank, clientType, login);
+          } catch (e0) {
+            // 그 은행 계좌번호를 요구하면: 알고 있으면 같은 비밀번호로 한 번 더, 모르면 사람에게 계좌번호 한 칸
+            if (!(e0 instanceof CodefError && e0.cf === 'CF-12401' && /withdrawaccount/i.test(`${e0.param ?? ''} ${e0.hint ?? ''}`))) throw e0;
+            if (!withdraw) throw new CodefError('withdraw_account_required', e0.cf);
+            id = await this.withWithdraw(certId, bank, clientType, login, withdraw, mode, publicKey);
+          }
+        } catch (e) {
+          if (e instanceof CodefError && TRY_OTHER.has(e.code) && clientType !== types[types.length - 1]) {
+            failures.push({ e, clientType });
+            // 넘어간 뱅킹의 거절도 원인이 로그에 남아야 한다(화면에는 하나만 보인다)
+            this.emit({ phase: 'next_banking', clientType, code: e.code, ...(e.cf ? { cf: e.cf } : {}), ...(e.param ? { param: e.param } : {}), ...(e.hint ? { hint: e.hint } : {}) });
+            continue;
+          }
+          if (e instanceof CodefError) failures.push({ e, clientType });
+          throw failures.length ? worst(failures) : e;
+        }
+        // 쓰기 전에 PC DB에 먼저 적는다. 지우면 빠지고, 앱이 그 사이 꺼지면 다음 실행의 sweep이 지운다
+        this.save({ orphans: [...this.o.store.get().orphans, { connectedId: id, bank, clientType }] });
+        const b = this.budget();
+        if (b.pwFails[certId]) {
+          delete b.pwFails[certId];
+          this.save({ budget: b });
+        }
+        return { connectedId: id, clientType };
       }
-      return id;
+      throw new CodefError('rejected');
     } catch (e) {
       if (e instanceof CodefError && (e.code === 'password_wrong' || e.code === 'password_locked')) {
         if (s.remembered) await this.o.seal.forget(certId).catch(() => undefined);
@@ -237,6 +312,33 @@ export class CodefLink {
         this.save({ budget: b });
       }
       throw e;
+    }
+  }
+
+  /**
+   * 출금계좌번호를 넣어 다시 등록한다. 은행이 그 계좌 비밀번호도 요구하면(CF-12401 reqWithdrawAccountPass, 2026-11-19 03:45)
+   * 금고 창('account' 모드)에서 4자리를 받아 감싸고 한 번 더. 그래도 같은 요구면 사람이 줄 수 있는 것이 남았다고 알린다.
+   */
+  private async withWithdraw(certId: string, bank: CodefBankCode, clientType: CodefClientType, login: { derFile: string; keyFile: string; password: string }, withdraw: string, mode: 'ask' | 'auto', publicKey: string): Promise<string> {
+    const needs = (e: unknown, re: RegExp) => e instanceof CodefError && e.cf === 'CF-12401' && re.test(`${e.param ?? ''} ${e.hint ?? ''}`);
+    try {
+      return await this.o.client.createAccount(bank, clientType, login, withdraw);
+    } catch (e1) {
+      if (needs(e1, /withdrawaccountpass/i)) {
+        this.emit({ phase: 'password' });
+        const a = await this.o.seal.seal({ certId, publicKey, mode, field: 'account' });
+        if (!a.ok) throw new CodefError(a.reason === 'cancelled' || a.reason === 'timeout' ? 'cancelled' : 'unavailable');
+        this.emit({ phase: 'connecting' });
+        try {
+          return await this.o.client.createAccount(bank, clientType, login, withdraw, a.password);
+        } catch (e2) {
+          if (needs(e2, /withdrawaccount/i)) throw new CodefError('withdraw_account_required', 'CF-12401', null, 'retried');
+          throw e2;
+        }
+      }
+      // 넣은 번호로도 같은 요구면 사람이 줄 수 있는 것(계좌번호)이 여전히 남았다: 기업 뱅킹 본인인증 안내보다 먼저 보인다(2026-11-19 03:40)
+      if (needs(e1, /withdrawaccount/i)) throw new CodefError('withdraw_account_required', 'CF-12401', null, 'retried');
+      throw e1;
     }
   }
 
@@ -298,38 +400,73 @@ export class CodefLink {
   }
 
   /** [자동 연결] → 동의 → 인증서 → 비밀번호(금고 창) → 보유계좌. 비밀번호는 매번 창에서 묻는다(기억은 창의 선택) */
-  connect(p: { certId?: unknown; bank?: unknown; clientType?: unknown }): Promise<{ sessionId: string; bankName: string; accounts: AccountChoice[] }> {
+  connect(p: { certId?: unknown; bank?: unknown; clientType?: unknown; prefer?: unknown; withdrawAccount?: unknown }): Promise<ConnectResult> {
     const certId = String(p.certId ?? '');
     const bank = (p.bank ?? '0020') as CodefBankCode;
-    const clientType: CodefClientType = p.clientType === 'P' ? 'P' : 'B';
     if (!CERT_ID_RE.test(certId) || !isCodefBank(bank)) return Promise.reject(new Error('bad_params'));
     return this.exclusive(async () => {
       const port = this.o.bank();
       const notReady = port ? port.ready() : 'bank_not_ready';
       if (notReady) throw new CodefError(notReady);
+      // 어느 뱅킹을 어떤 순서로: 사람에게 묻지 않고 고객 데이터로(대표 2026-11-19). 화면이 하나를 정해 보내면 그것만
+      const types = bankingOrder({ explicit: p.clientType, corporate: port?.corporate?.() ?? false, prefer: p.prefer });
+      this.emit({ phase: 'order', order: types.join('') });
       await this.releaseHeld(this.dropPending());
       await this.releaseOrphans();
-      const connectedId = await this.register(certId, bank, clientType, 'ask');
-      let accounts: CodefAccount[];
-      try {
-        this.emit({ phase: 'accounts' });
-        accounts = await this.o.client.accounts(connectedId, bank, clientType);
-      } catch (e) {
-        await this.release([{ connectedId, bank, clientType }]);
-        throw e;
+      const typed = typeof p.withdrawAccount === 'string' ? p.withdrawAccount.replace(/\D/g, '') : '';
+      const withdraw = /^\d{10,16}$/.test(typed) ? typed : (port?.withdrawAccount?.(bank) ?? null);
+      const { connectedId, clientType } = await this.register(certId, bank, types, 'ask', withdraw);
+      return this.listAccounts({ connectedId, certId, bank, clientType });
+    });
+  }
+
+  /** 보유계좌를 불러 고르기로. 은행이 SMS 인증번호를 요구하면 고르기 대신 { sms } 단계로 멈춘다(connectedId는 그동안 붙잡아 둔다) */
+  private async listAccounts(a: { connectedId: string; certId: string; bank: CodefBankCode; clientType: CodefClientType }, answer?: { twoWay: CodefTwoWay; smsAuthNo: string }, tries = 0): Promise<ConnectResult> {
+    const { connectedId, certId, bank, clientType } = a;
+    let got: Awaited<ReturnType<CodefClient['accounts']>>;
+    try {
+      this.emit({ phase: 'accounts' });
+      got = await this.o.client.accounts(connectedId, bank, clientType, answer);
+    } catch (e) {
+      await this.release([{ connectedId, bank, clientType }]);
+      throw e;
+    }
+    const id = `cs${Date.now().toString(36)}${(++this.seq).toString(36)}`;
+    if (!Array.isArray(got)) {
+      this.hold({ kind: 'sms', id, connectedId, certId, bank, clientType, twoWay: got.twoWay, tries, timer: this.expire(connectedId) });
+      this.emit({ phase: 'sms' });
+      return { sessionId: id, bankName: CODEF_BANKS[bank], step: 'sms', accounts: [] };
+    }
+    if (!got.length) {
+      await this.release([{ connectedId, bank, clientType }]);
+      throw new CodefError('no_account');
+    }
+    this.hold({ kind: 'choosing', id, connectedId, certId, bank, clientType, accounts: got, timer: this.expire(connectedId) });
+    this.emit({ phase: 'done' });
+    return {
+      sessionId: id,
+      bankName: CODEF_BANKS[bank],
+      accounts: got.map((x, i) => ({ key: `a${i}`, last4: x.number.slice(-4), name: x.name, balance: x.balance, usable: x.depositKind === '' || x.depositKind === '11' })),
+    };
+  }
+
+  /**
+   * 은행이 보낸 SMS 인증번호로 이어 간다(CODEF 2-way 2차 요청). 인증번호는 이 호출 동안만 들고 저장·로그하지 않는다.
+   * 틀리면 은행이 다시 요구하는 대로 같은 sms 단계에 남는다(3번까지).
+   */
+  sms(p: { sessionId?: unknown; code?: unknown }): Promise<ConnectResult> {
+    const code = String(p.code ?? '').replace(/\s/g, '');
+    return this.exclusive(async () => {
+      const h = this.pending;
+      if (!h || h.kind !== 'sms' || h.id !== p.sessionId) throw new CodefError('session_lost');
+      if (!/^\d{4,8}$/.test(code)) throw new CodefError('sms_wrong');
+      if (h.tries >= SMS_TRIES) {
+        await this.releaseHeld(this.dropPending());
+        throw new CodefError('sms_wrong');
       }
-      if (!accounts.length) {
-        await this.release([{ connectedId, bank, clientType }]);
-        throw new CodefError('no_account');
-      }
-      const id = `cs${Date.now().toString(36)}${(++this.seq).toString(36)}`;
-      this.hold({ kind: 'choosing', id, connectedId, certId, bank, clientType, accounts, timer: this.expire(connectedId) });
-      this.emit({ phase: 'done' });
-      return {
-        sessionId: id,
-        bankName: CODEF_BANKS[bank],
-        accounts: accounts.map((a, i) => ({ key: `a${i}`, last4: a.number.slice(-4), name: a.name, balance: a.balance, usable: a.depositKind === '' || a.depositKind === '11' })),
-      };
+      clearTimeout(h.timer);
+      this.pending = null;
+      return this.listAccounts(h, { twoWay: h.twoWay, smsAuthNo: code }, h.tries + 1);
     });
   }
 
@@ -399,7 +536,7 @@ export class CodefLink {
         // 오늘 상한이면 비밀번호를 묻기 전에 멈춘다
         if (this.budget().calls >= (this.o.dailyCalls ?? CODEF_DAILY_CALLS)) throw new CodefError('daily_limit');
         onPhase?.('password');
-        connectedId = await this.register(link.certId, link.bank, link.clientType, 'auto');
+        connectedId = (await this.register(link.certId, link.bank, [link.clientType], 'auto', account.number.replace(/\D/g, '') || null)).connectedId;
       }
       try {
         onPhase?.('fetching');

@@ -17,7 +17,7 @@ import { BizVerifier } from './bizverify.ts';
 import { portGatewayAuth } from './gateway-auth.ts';
 import { portIssueLock } from './issue-lock.ts';
 import { connectRunBrowser, RunBrowserSlot } from './browser.ts';
-import { COMMANDS, DataService, READ_QUERIES } from './data-service.ts';
+import { COMMANDS, DataService, READ_QUERIES, resetRetiredAuth } from './data-service.ts';
 import type { GatePortMessage } from './gate.ts';
 import { fixturePortal, HOMETAX_PORTAL } from './portal.ts';
 import { RunEnd } from './run-end.ts';
@@ -168,6 +168,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   const egress = new Egress(auth ? { gateway: { auth: portGatewayAuth(auth), bundles: BundleCatalog.load().allowEntries() } } : {});
   if (egress.envTampered.length) log.event('egress.env_tampered', { keys: egress.envTampered.join(',') });
   data = new DataService(db, new BizVerifier(egress), { vaultDir: paths.vault });
+  resetRetiredAuth(data.profiles, log);
   payroll = new BundleService(db, cipher, { exportDir: path.join(paths.root, 'exports') });
   // 레지스트리 GET은 Egress 레지스트리 바이트 GET(origin tax.laf-co.com 고정·허용 경로, ADR-028)으로만 나간다. main이 registry.sync를 부를 때만 받는다.
   // H-01 패키지는 받아 둔 서명 설치본을 실행 시작마다 다시 검증해 IR로 돌린다(PR-D2).
@@ -187,8 +188,10 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
     store: settingsCodefStore(db),
     bank: () => codefBank,
     onEvent: (e) => {
-      log.event('engine.codef', { phase: e.phase, ...(e.code ? { code: e.code } : {}) });
-      parentPort.postMessage({ t: 'ev', name: 'codef', data: { ...e } });
+      log.event('engine.codef', { phase: e.phase, ...(e.code ? { code: e.code } : {}), ...(e.cf ? { cf: e.cf } : {}), ...(e.param ? { param: e.param } : {}), ...(e.clientType ? { clientType: e.clientType } : {}), ...(e.order ? { order: e.order } : {}), ...(e.hint ? { hint: e.hint } : {}) });
+      const shown = { ...e };
+      delete shown.hint;
+      parentPort.postMessage({ t: 'ev', name: 'codef', data: shown });
     },
   });
   // 지난 실행이 고르기 대기·조회 중에 꺼졌으면 CODEF에 남은 계정을 지운다(못 지우면 적힌 채로 다음 연결·최신화·해제 때)
@@ -344,6 +347,8 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
           return c.connect(params);
         case 'codef.choose':
           return c.choose(params);
+        case 'codef.sms':
+          return c.sms(params);
         case 'codef.refresh':
           return c.refresh();
         case 'codef.cancel':
@@ -355,7 +360,7 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
     try {
       return { ok: true, ...(await run()) };
     } catch (e) {
-      if (e instanceof CodefError) return { ok: false, code: e.code, ...(e.cf ? { cf: e.cf } : {}), ...(e.retryAt ? { retryAt: e.retryAt } : {}) };
+      if (e instanceof CodefError) return { ok: false, code: e.code, ...(e.cf ? { cf: e.cf } : {}), ...(e.retryAt ? { retryAt: e.retryAt } : {}), ...(e.clientType ? { clientType: e.clientType } : {}) };
       throw e;
     }
   }

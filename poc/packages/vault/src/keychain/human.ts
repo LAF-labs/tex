@@ -1,12 +1,13 @@
 // 사람 비밀(세션 결박) 저장소(D05 §2, ADR-026 결정 2·3·4·7, ADR-020 결정 2).
-// - 칸 단위 항목: securitycard/<scope>/<row>, portal/<scope>/pw(포털 아이디는 비밀이 아니라 두지 않는다, D05 §2·ADR-035). 각 항목은 슬롯 KEK로 AES-256-GCM(AAD = 항목 이름).
+// - 칸 단위 항목: portal/<scope>/pw(포털 아이디는 비밀이 아니라 두지 않는다, D05 §2·ADR-035). 각 항목은 슬롯 KEK로 AES-256-GCM(AAD = 항목 이름).
 // - 슬롯 KEK(32B 무작위)는 기기 결박 래핑(kek/<slot>/device: TPM → DPAPI)과, Hello가 있으면 Hello 사본(kek/<slot>/hello)으로 둔다.
 // - 발급 1회에 요청된 칸만 복호한다. 금고가 잠기면 메모리의 슬롯 KEK를 지운다.
 // - 인증서 비밀번호: cert/<scope>/pw(대표 지시 2026-11-13, ADR-020 결정 2 고침). 이 모듈은 STORABLE_KINDS 밖을 받지 않는다.
+// - 보안카드는 지원하지 않는다(대표 결정 2026-11-19). 옛 판이 남긴 securitycard/<scope>/<row> 슬롯은 기동 때 한 번 지운다(purgeRetiredCard).
 import { randomBytes } from 'node:crypto';
 import type { EventLog } from '@sax/platform';
 import {
-  isProfileScope, SECURITY_CARD_ROWS, STORABLE_KINDS,
+  isProfileScope, STORABLE_KINDS,
   type ConsentRecord, type KeyTier, type PortalField, type ProfileScope, type StorableKind, type StoredSecretInfo, type VaultLockReason,
 } from '../protocol.ts';
 import { ITEM_MAX_BYTES, open, seal, type HelloPrompt, type KeychainBackend } from './backend.ts';
@@ -14,25 +15,25 @@ import { AccountRefreshStore } from './account.ts';
 import { CodefPasswordStore } from './codef.ts';
 import { SessionLock, type SessionLockOptions } from './session.ts';
 
-/** 칸 하나의 평문 상한(보안카드 2~4자리, 포털 비밀번호). 넘으면 거부한다. */
+/** 칸 하나의 평문 상한(포털·인증서 비밀번호). 넘으면 거부한다. */
 export const HUMAN_SECRET_MAX_BYTES = 256;
 
 const INDEX_ITEM = 'index/human';
 /** 엄격 모드 설정(값 없음, 1바이트). 기기 결박 사본을 지운 상태가 재시작 뒤에도 이어지게 키체인에 둔다. */
 const STRICT_ITEM = 'settings/strict';
 
-export const slotName = (kind: StorableKind, scope: ProfileScope): string => `${kind === 'security_card' ? 'securitycard' : kind === 'cert_password' ? 'cert' : 'portal'}/${scope}`;
+/**
+ * 지원을 끝낸 보안카드 슬롯(대표 결정 2026-11-19). 옛 판의 색인 종류 이름, 슬롯 이름, 칸 번호 상한이다.
+ * 기동 때 색인에 이 종류가 있으면 칸·KEK·동의 레코드를 지우고 색인에서 뺀다(purgeRetiredCard). 값은 읽지 않는다.
+ */
+export const RETIRED_CARD = { kind: 'security_card', slot: 'securitycard', rows: 35 } as const;
 
-export function itemName(kind: StorableKind, scope: ProfileScope, cell: { row?: number; field?: PortalField }): string {
-  if (kind === 'security_card') {
-    if (!isRow(cell.row) || cell.field !== undefined) throw new Error('bad_cell');
-    return `${slotName(kind, scope)}/${cell.row}`;
-  }
-  if (cell.field !== 'pw' || cell.row !== undefined) throw new Error('bad_cell');
+export const slotName = (kind: StorableKind, scope: ProfileScope): string => `${kind === 'cert_password' ? 'cert' : 'portal'}/${scope}`;
+
+export function itemName(kind: StorableKind, scope: ProfileScope, cell: { field?: PortalField }): string {
+  if (cell.field !== 'pw') throw new Error('bad_cell');
   return `${slotName(kind, scope)}/${cell.field}`;
 }
-
-const isRow = (r: unknown): r is number => Number.isInteger(r) && (r as number) >= SECURITY_CARD_ROWS.min && (r as number) <= SECURITY_CARD_ROWS.max;
 
 interface SlotIndex {
   v: 1;
@@ -86,6 +87,8 @@ export class HumanSecretVault {
     ).finally(() => this.lock.release());
     this.account = new AccountRefreshStore({ backend: this.b, lock: this.lock, ready: () => this.readyP, log: this.log });
     this.codef = new CodefPasswordStore({ backend: this.b, lock: this.lock, ready: () => this.readyP, log: this.log });
+    // 기동 때 색인을 한 번 읽는다: 옛 판의 보안카드 슬롯이 있으면 이때 지운다(purgeRetiredCard). 읽기 실패는 다음 연산이 다시 읽는다.
+    this.index().catch(() => {});
   }
 
   /** 모든 공개 비동기 연산 앞에서 기다린다(엄격 모드 설정을 읽은 뒤에 판정). */
@@ -110,12 +113,18 @@ export class HumanSecretVault {
       const raw = await this.b.items.get(INDEX_ITEM);
       const m = new Map<string, SlotIndex>();
       if (!raw) return m;
+      const retired: Array<{ scope: ProfileScope; cells: number }> = [];
       try {
-        const arr = JSON.parse(Buffer.from(raw).toString('utf8')) as SlotIndex[];
-        for (const s of arr) if (s?.v === 1 && (STORABLE_KINDS as readonly string[]).includes(s.kind) && isProfileScope(s.scope)) m.set(slotName(s.kind, s.scope), s);
+        const arr = JSON.parse(Buffer.from(raw).toString('utf8')) as Array<Omit<SlotIndex, 'kind'> & { kind: string }>;
+        for (const s of arr) {
+          if (s?.v !== 1 || !isProfileScope(s.scope)) continue;
+          if (s.kind === RETIRED_CARD.kind) retired.push({ scope: s.scope, cells: Array.isArray(s.cells) ? s.cells.length : 0 });
+          else if ((STORABLE_KINDS as readonly string[]).includes(s.kind)) m.set(slotName(s.kind as StorableKind, s.scope), s as SlotIndex);
+        }
       } catch {
         this.log.event('vault.index_corrupt');
       }
+      if (retired.length) await this.purgeRetiredCard(m, retired);
       return m;
     })();
     // 읽기 실패(키체인 잠김·권한 등 일시 오류)를 캐시하지 않는다. 다음 연산에서 다시 읽는다.
@@ -131,17 +140,35 @@ export class HumanSecretVault {
     await this.b.items.set(INDEX_ITEM, new TextEncoder().encode(JSON.stringify([...m.values()])));
   }
 
+  /**
+   * 옛 판이 남긴 보안카드 슬롯을 지운다(대표 결정 2026-11-19). 칸 전부·KEK 사본·동의 레코드를 지운 뒤 색인을 그 슬롯 없이 다시 쓴다.
+   * 색인을 다시 쓴 뒤로는 찾을 것이 없어 한 번만 돈다. 지우다 실패하면 색인을 그대로 두고 다음 기동에 다시 한다. 로그는 칸 수만 남긴다.
+   */
+  private async purgeRetiredCard(m: Map<string, SlotIndex>, retired: ReadonlyArray<{ scope: ProfileScope; cells: number }>): Promise<void> {
+    try {
+      for (const { scope } of retired) {
+        const slot = `${RETIRED_CARD.slot}/${scope}`;
+        for (let r = 1; r <= RETIRED_CARD.rows; r++) await this.b.items.delete(`${slot}/${r}`);
+        for (const n of [`kek/${slot}/device`, `kek/${slot}/hello`, `consent/${slot}`]) await this.b.items.delete(n);
+      }
+      await this.saveIndex(m);
+      this.log.event('vault.card_purged', { items: retired.reduce((n, s) => n + s.cells, 0) });
+    } catch {
+      this.log.event('vault.card_purge_failed');
+    }
+  }
+
   // ───────────── 저장(등록 창 T-06 전용) ─────────────
 
   /**
    * 한 슬롯을 통째로 다시 등록한다(옛 칸·KEK는 지운다). entries의 바이트는 부르는 쪽이 넘긴 뒤 여기서 0으로 덮는다.
    * 기기 결박 래핑이 안 되면(네이티브 헬퍼 없음) 저장하지 않는다. 약한 등급으로 조용히 내려가지 않는다.
    */
-  async store(kind: StorableKind, scope: ProfileScope, entries: Array<{ row?: number; field?: PortalField; bytes: Uint8Array }>, notice: { version: string }): Promise<ConsentRecord> {
+  async store(kind: StorableKind, scope: ProfileScope, entries: Array<{ field?: PortalField; bytes: Uint8Array }>, notice: { version: string }): Promise<ConsentRecord> {
     const wipe = () => entries.forEach((e) => e.bytes?.fill?.(0));
     try {
       if (!(STORABLE_KINDS as readonly string[]).includes(kind) || !isProfileScope(scope)) throw new Error('bad_slot');
-      if (!entries.length || entries.length > SECURITY_CARD_ROWS.max) throw new Error('bad_entries');
+      if (!entries.length) throw new Error('bad_entries');
       const names = entries.map((e) => itemName(kind, scope, e));
       if (new Set(names).size !== names.length) throw new Error('duplicate_cell');
       for (const e of entries) if (!(e.bytes instanceof Uint8Array) || e.bytes.length === 0 || e.bytes.length > HUMAN_SECRET_MAX_BYTES) throw new Error('bad_value');
@@ -216,7 +243,7 @@ export class HumanSecretVault {
   // ───────────── 꺼내기(타이피스트 전용, 칸 하나) ─────────────
 
   /** 칸 하나를 복호한다. 금고가 닫혔거나 suspect면 꺼내지 않는다. 받은 쪽이 다 쓴 뒤 0으로 덮는다. */
-  async readOne(kind: StorableKind, scope: ProfileScope, cell: { row?: number; field?: PortalField }): Promise<ReadResult> {
+  async readOne(kind: StorableKind, scope: ProfileScope, cell: { field?: PortalField }): Promise<ReadResult> {
     let name: string;
     try {
       name = itemName(kind, scope, cell);
@@ -272,7 +299,7 @@ export class HumanSecretVault {
 
   /**
    * Hello로 연다(유휴 잠금 뒤·최대 시간 뒤·엄격 모드 발급). 저장된 슬롯의 Hello 사본을 한 번의 프롬프트로 연다.
-   * Phase 1 저장 슬롯은 대개 1~2개(보안카드·포털)이므로 첫 사본으로 사람 확인을 받고, 나머지는 같은 확인 안에서 연다.
+   * Phase 1 저장 슬롯은 대개 1~2개(인증서·포털)이므로 첫 사본으로 사람 확인을 받고, 나머지는 같은 확인 안에서 연다.
    */
   async unlockWithHello(prompt: HelloPrompt): Promise<{ ok: boolean; presence: boolean; reason?: 'hello_unavailable' | 'hello_cancelled' | 'no_stored_secret' | 'session_locked' }> {
     await this.readyP;
@@ -373,9 +400,8 @@ export class HumanSecretVault {
     const info = idx.get(slot);
     // 색인에 없어도 이름이 정해진 항목은 지운다(반쯤 쓴 슬롯 정리).
     const names = new Set(info?.cells ?? []);
-    if (kind === 'security_card') for (let r = SECURITY_CARD_ROWS.min; r <= SECURITY_CARD_ROWS.max; r++) names.add(`${slot}/${r}`);
     // 'id'는 ADR-035 이전 PoC가 남겼을 수 있는 항목을 함께 지운다.
-    else for (const f of ['id', 'pw']) names.add(`${slot}/${f}`);
+    for (const f of ['id', 'pw']) names.add(`${slot}/${f}`);
     for (const n of [...names, `kek/${slot}/device`, `kek/${slot}/hello`, `consent/${slot}`]) await this.b.items.delete(n);
     this.keks.get(slot)?.fill(0);
     this.keks.delete(slot);

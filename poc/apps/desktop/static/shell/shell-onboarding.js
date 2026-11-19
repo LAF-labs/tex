@@ -1,8 +1,7 @@
 // 온보딩 대화(08 §4 O-01~O-06)와 동의 화면 4종(F-06 자리표시). 상태는 main(onboarding.ts)이 갖고, 렌더러는 그리고 답을 보낼 뿐이다.
-// - 비밀(홈택스 비밀번호·보안카드)은 여기서 받지 않는다. 보안카드는 금고 직결 등록 창이 받는다(shell-card.js → main → card-secret.js).
+// - 비밀(인증서 비밀번호)은 여기서 받지 않는다. 보안카드는 지원하지 않는다(대표 결정 2026-11-19).
 // - 동의는 화면마다 한 번씩 누른다. 묶음 동의 버튼은 없다.
 import { btn, fmtBiz, h, icon, kv, note, noteGroup, replyOptions, securityBox } from './shell-views.js';
-import { cardRegister } from './shell-card.js';
 import { bizDigits, bizNoInput, checkFields, emailInput, field, keys, LIMITS, textInput } from './fields.js';
 
 const Q = {
@@ -11,7 +10,6 @@ const Q = {
   'biz-number': '상호와 사업자번호를 알려 주세요. 홈택스에 등록된 것과 같아야 해요.',
   'biz-confirm': '이렇게 등록할게요. 맞는지 봐 주세요.',
   auth: '홈택스 로그인과 서명에 쓸 인증서를 골라 주세요. 비밀번호는 첫 발급 때 한 번만 여쭤봐요.',
-  delegation: '보안카드를 쓰려면 이 PC에 카드를 한 번 등록해 두면 돼요.',
   model: '말씀을 알아듣는 데 AI 모델을 써요. 아래 내용을 보고 동의해 주세요.',
   telemetry: '앱을 고치는 데 쓸 사용 기록을 보내 주실래요? 안 보내도 다 쓸 수 있어요.',
   tasks: '어떤 일을 맡기고 싶으세요? 나중에 바꿀 수 있어요.',
@@ -23,7 +21,6 @@ const Q = {
 /** O-03 수단마다 발급할 때 사람이 하는 일 한 줄(H-01 2.2.0 서명 단계, shell-runs.ts SIGN_BY_AUTH). */
 const AUTH = [
   ['cert', '공동인증서', '홈택스 로그인에 쓰는 그 인증서예요. 비밀번호를 처음 한 번 넣으면 다음부터는 앱이 넣어요.'],
-  ['card', '보안카드', '카드 사진을 한 번 넣으면 발급할 때 앱이 번호를 넣어요.'],
   ['fincert', '금융인증서', '발급할 때마다 6자리 인증서 비밀번호를 직접 넣어요.'],
   ['simple', '사업자 간편인증', '발급할 때마다 휴대폰(카카오뱅크·IBK·KB 앱)에서 승인해요.'],
 ];
@@ -106,7 +103,6 @@ function stepBody(o, act) {
     case 'terms':
     case 'model':
     case 'telemetry':
-    case 'delegation':
       return consentCard(o, reply, act);
     case 'welcome':
       return replyOptions([answer('사업자번호로 입력할게요', 'number'), answer('사업자등록증 올리기', 'upload'), answer('나중에 할게요', 'later')], { 'data-onb-step': o.step });
@@ -158,7 +154,6 @@ function consentCard(o, reply, act) {
     model: [btn('동의하고 계속', () => reply('agree'), 'sx-btn-primary', { 'data-onb': 'agree' })],
     // 기본 꺼짐: [끄고 계속]을 먼저 둔다
     telemetry: [btn('끄고 계속', () => reply('off'), 'sx-btn-primary', { 'data-onb': 'off' }), btn('켜기', () => reply('on'), '', { 'data-onb': 'on' })],
-    delegation: [btn('동의하고 금고 창 열기', () => reply('agree'), 'sx-btn-primary', { 'data-onb': 'agree' }), btn('다른 인증으로 바꾸기', () => reply('switch'), '', { 'data-onb': 'switch' })],
   }[o.step];
   const table =
     (o.step === 'model' || o.step === 'terms') && o.config
@@ -263,7 +258,7 @@ function bizCard(o, u, reply, answer, act) {
 /**
  * [홈택스 인증서](B4): 이 PC에서 찾은 공동인증서를 답 후보 줄로 보인다. 줄을 누르면 그 인증서로 정한다(이름은 main이 프로필에 둔다, 비밀번호는 첫 발급 때 금고 창).
  * 따로 확정 단추를 두지 않는다. 잘못 골라도 설정 > 발급 인증에서 바꾼다.
- * 보안 프로그램(MagicLine4NX)이 없거나 꺼져 있으면 같은 화면 위에 설치·켜기를 보인다. 다른 인증(보안카드·금융인증서·간편인증)은 [다른 방법]에 접어 둔다. 간편인증은 맨 뒤다(대표 지시 2026-11-14).
+ * 보안 프로그램(MagicLine4NX)이 없거나 꺼져 있으면 같은 화면 위에 설치·켜기를 보인다. 다른 인증(금융인증서·간편인증)은 [다른 방법]에 접어 둔다. 간편인증은 맨 뒤다(대표 지시 2026-11-14).
  */
 function authCard(o, u, reply, answer, act) {
   const today = new Date();
@@ -279,12 +274,7 @@ function authCard(o, u, reply, answer, act) {
       onPick: () => reply('cert', { certId: c.id }),
       attrs: { 'data-cert': c.id, disabled: !usable(c) },
     }));
-  const others = u.showCerts
-    ? AUTH.filter(([k]) => k !== 'cert').map(([k, label, line]) =>
-        // 보안카드는 그 자리에서 카드 사진을 받는다(굳지 않고, 다시 누르면 접는다)
-        k === 'card' ? { label: twoLines(label, line), lock: false, onPick: () => ((u.cardReg = !u.cardReg), act.rerender()), attrs: { 'data-onb': k, 'aria-expanded': String(!!u.cardReg) } } : answer(twoLines(label, line), k),
-      )
-    : [];
+  const others = u.showCerts ? AUTH.filter(([k]) => k !== 'cert').map(([k, label, line]) => answer(twoLines(label, line), k)) : [];
   const replies = replyOptions(
     [
       ...certs,
@@ -294,19 +284,6 @@ function authCard(o, u, reply, answer, act) {
     ],
     { 'data-onb-certs': '' },
   );
-  // 보안카드: 저장되면 main이 인증을 보안카드로 정하고 온보딩 화면을 돌려준다(렌더러가 다시 답하지 않는다, 따로 확인 없음)
-  if (u.showCerts && u.cardReg)
-    replies.querySelector('[data-onb=card]').after(
-      (u.cardEl ??= cardRegister({
-        call: act.call,
-        onboarding: true,
-        onStored: (r) => {
-          act.toast(`보안카드 ${r.stored}칸을 이 PC 금고에 등록했어요`);
-          act.applied(r);
-        },
-        skip: () => reply('card'),
-      })),
-    );
   // 인증서가 없을 때 할 일: 이 PC로 옮긴 뒤 [다시 찾기](목록만 다시 읽는다). 다른 방법은 아래 답 후보 줄에 있다.
   const noCert = o.certs.length
     ? null
@@ -366,7 +343,7 @@ function summaryCard(o, answer) {
   const tasks = o.tasksCatalog.filter((t) => o.tasks.includes(t.id)).map((t) => t.label);
   const rows = [
     ['사업자', b && !skipped.has('biz') ? `${b.name || '이름 미입력'} · ${fmtBiz(b.bizNo)}` : '나중에 등록'],
-    ['발급 인증', o.auth ? `${AUTH_LABEL[o.auth]}${o.registered ? ' · 금고에 등록함' : ''}` : '나중에 고르기'],
+    ['발급 인증', o.auth ? AUTH_LABEL[o.auth] : '나중에 고르기'],
     ['맡긴 업무', tasks.length ? tasks.join(', ') : '나중에 고르기'],
     ['서류 보관', '이 PC 앱 폴더 안 보관함(기본)'],
   ];

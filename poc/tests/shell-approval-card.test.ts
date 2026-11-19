@@ -3,7 +3,7 @@
 // ② 렌더러는 카드를 흉내 내거나 겹쳐 승인을 만들 수 없다. Electron을 import하는 모듈은 불러오지 않는다(판정 모듈 + 소스 확인).
 // 실제 창에서의 확인(가짜 버튼·메인 창 입력·카드 키·발급 POST 0회)은 apps/desktop/e2e/shell-e2e.ts.
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import type { GateField } from '@sax/engine/gate';
@@ -120,10 +120,18 @@ describe('음성 ①: main이 관찰한 [승인하고 발급] 클릭 없이는 �
 describe('음성 ②: 렌더러는 승인 카드를 흉내 내거나 겹쳐 승인을 만들 수 없다', () => {
   it('렌더러 IPC 표에는 승인·게이트·카드 명령이 없다', () => {
     const names = [...Object.keys(SHELL_METHODS), ...Object.keys(USER_ACTION_METHODS)];
-    // 이름만 겹치는 명령: card.status·card.register·card.forget은 보안카드(홈택스 서명용 번호표) 등록,
-    // secret.answer는 대화 비밀 입력 카드의 답(값은 금고 1회용 포트로만)이다. 승인·게이트와 무관하다
-    const NOT_GATE = new Set(['card.status', 'card.register', 'card.forget', 'secret.answer']);
+    // 이름만 겹치는 명령: secret.answer는 대화 비밀 입력 카드의 답(값은 금고 1회용 포트로만)이다. 승인·게이트와 무관하다
+    const NOT_GATE = new Set(['secret.answer']);
     for (const m of names) if (!NOT_GATE.has(m)) assert.doesNotMatch(m, /approv|gate|^bar\.|card\.|answer|attest\.(?!open|close)/i, m);
+  });
+
+  it('보안카드 명령(card.*)은 렌더러 IPC 표에도 셸 처리기에도 없다(대표 결정 2026-11-19 지원 안 함)', () => {
+    const names = [...Object.keys(SHELL_METHODS), ...Object.keys(USER_ACTION_METHODS)];
+    assert.deepEqual(names.filter((m) => /^card\./.test(m)), []);
+    const app = read('apps/desktop/src/shell-app.ts');
+    assert.doesNotMatch(app, /'card\.(status|register|forget)'/);
+    assert.doesNotMatch(app, /security_card|card-secret|shell-card/);
+    for (const f of ['shell-card.js', 'card-secret.js']) assert.ok(!existsSync(path.join(root, 'apps/desktop/static/shell', f)), f);
   });
 
   it('렌더러로 가는 카드 이벤트는 띠 여부·높이·사유뿐(값·판정 영역·좌표·근거 없음)', () => {

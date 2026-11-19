@@ -420,7 +420,7 @@ describe('셸 목업', () => {
     await runs.prepare(a.run.id);
     host.emit('run', { runId: a.run.id, type: 'handoff', phase: 'login', code: 'step.timeout' });
     let r = runs.get(a.run.id)!;
-    assert.deepEqual([r.status, r.handoff, r.turn], ['turn', { phase: 'login', afterGate: false, kind: 'login' }, HANDOFF_LOGIN]);
+    assert.deepEqual([r.status, r.handoff, r.turn], ['turn', { phase: 'login', afterGate: false, kind: 'login', code: 'step.timeout' }, HANDOFF_LOGIN]);
     host.reply['run.resume'] = { ok: false, code: 'not_paused' };
     await assert.rejects(runs.resume(a.run.id), /not_paused/);
     host.reply['run.resume'] = { ok: false, code: 'Bad Code!' };
@@ -435,7 +435,7 @@ describe('셸 목업', () => {
     host.emit('run', { runId: a.run.id, type: 'phase', phase: 'sign', state: 'now' });
     host.emit('run', { runId: a.run.id, type: 'handoff', phase: 'sign', code: 'sign.waiting' });
     r = runs.get(a.run.id)!;
-    assert.deepEqual([r.status, r.handoff, r.turn], ['turn', { phase: 'sign', afterGate: true, kind: 'sign' }, { text: SIGN_BY_AUTH['사업자 간편인증']!.text, note: HANDOFF_SIGN.note }]);
+    assert.deepEqual([r.status, r.handoff, r.turn], ['turn', { phase: 'sign', afterGate: true, kind: 'sign', code: 'sign.waiting' }, { text: SIGN_BY_AUTH['사업자 간편인증']!.text, note: HANDOFF_SIGN.note }]);
     await assert.rejects(runs.manualDone(a.run.id), /sign\.turn_resume_only/);
     assert.ok(!host.calls.some(([m]) => m === 'run.manualDone'), '서명 차례 [직접 발급함]은 엔진에 보내지도 않는다');
     // 서명 차례 [중지]: {stopped:false} → 확인 중(발급목록), 끝은 엔진 end로
@@ -458,7 +458,7 @@ describe('셸 목업', () => {
     assert.match(e.stoppedNote!, /아무것도 발급하지 않았어요/);
   });
 
-  it('H-01 2.2.0 발급 인증: 온보딩 값 → signMethod → 화면 라벨 → 서명 안내가 1:1, 패키지 methodTargets 키와 같다. 서명 단계에 들어서면 바로 할 일', async () => {
+  it('H-01 2.2.0 발급 인증: 온보딩 값 → signMethod → 화면 라벨 → 서명 안내가 1:1, 패키지 methodTargets 키에 있다. 서명 단계에 들어서면 바로 할 일', async () => {
     const methods = [...new Set(Object.values(AUTH_SIGN_METHOD))].sort();
     assert.deepEqual(Object.keys(SIGN_LABEL).sort(), methods);
     assert.deepEqual(Object.keys(SIGN_BY_AUTH).sort(), Object.values(SIGN_LABEL).sort());
@@ -467,11 +467,11 @@ describe('셸 목업', () => {
     const sf = pb.steps.find((x) => x.signFlow)?.signFlow;
     assert.ok(sf?.methodTargets, '2.2.0은 인증유형을 프로필 값으로 고른다');
     assert.equal(sf.method, '$profile.signMethod');
-    assert.deepEqual(Object.keys(sf.methodTargets).sort(), methods);
+    // 게시본 2.3.8에는 보안카드 갈래(security_card)가 남아 있지만 앱은 고르지 않는다(대표 결정 2026-11-19 지원 안 함)
+    assert.deepEqual(Object.keys(sf.methodTargets).filter((k) => k !== 'security_card').sort(), methods);
     for (const [label, s] of Object.entries(SIGN_BY_AUTH)) {
       assert.deepEqual(handoffTurn('sign', 'sign.waiting', label), { kind: 'sign', text: s.text, note: HANDOFF_SIGN.note });
-      // 보안카드 차례는 앱이 번호를 못 넣었을 때만 와서 까닭과 할 일을 말한다(자동으로 이어진다는 약속을 하지 않는다)
-      assert.ok((label === SIGN_LABEL.security_card || /끝나면 자동으로 이어집니다$/.test(s.text)) && !/세액 산정|절세|신고 대리|가산세/.test(s.text + s.now), label);
+      assert.ok(/끝나면 자동으로 이어집니다$/.test(s.text) && !/세액 산정|절세|신고 대리|가산세/.test(s.text + s.now), label);
       const h = new FakeHost();
       const runs = new ShellRuns(h, { counterparties: () => CPS, auth: () => label });
       const a = interpret('A상사에 18만원 세금계산서', null, 'business', runs);
@@ -536,10 +536,10 @@ describe('셸 목업', () => {
     runs.approved(a.run.id);
     host.emit('run', { runId: a.run.id, type: 'phase', phase: 'sign', state: 'now' });
     assert.equal(runs.get(a.run.id)!.steps[5]!.note, SIGN_BY_AUTH[SIGN_LABEL.cert]!.now);
-    auth = SIGN_LABEL.security_card;
+    auth = SIGN_LABEL.simple_auth;
     runs.syncAuth();
     assert.equal(runs.get(a.run.id)!.auth, SIGN_LABEL.cert, '진행 중인 실행은 그대로');
-    assert.equal(runs.get(b.run.id)!.auth, SIGN_LABEL.security_card, '시작하지 않은 초안은 새 기본');
+    assert.equal(runs.get(b.run.id)!.auth, SIGN_LABEL.simple_auth, '시작하지 않은 초안은 새 기본');
   });
 
   it('다시 게이트 경고: 고정 문구 3종(상수)만, 모르는 이유는 무시', async () => {

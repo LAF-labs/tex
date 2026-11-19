@@ -83,16 +83,16 @@ async function main() {
   check('[맞아요] → 발급 인증 4종 + 잘 모르겠어요·나중에', (await reply('[data-onb=confirm]', 'auth')) && (await js<number>(`document.querySelectorAll('.onb-auth').length`)) === 4);
   const appTypes = /알아서|대신 입력|앱이 입력|등록하면/;
   const auths = await js<Record<string, string>>(`Object.fromEntries([...document.querySelectorAll('.onb-auth')].map((b) => [b.dataset.onb, b.querySelector('.sx-meta').textContent]))`);
-  check('인증 설명은 발급할 때 사람이 하는 일: 보안카드는 번호를 직접 넣는다, 앱이 대신 넣는다는 설명은 없다', auths.card!.includes('발급할 때마다') && auths.card!.includes('보안카드 번호를 직접 넣어요') && Object.values(auths).every((t) => !appTypes.test(t)), auths);
+  check('인증 설명은 발급할 때 사람이 하는 일, 앱이 대신 넣는다는 설명은 없다. 보안카드는 고를 수 없다(대표 결정 2026-11-19 지원 안 함)', !Object.hasOwn(auths, 'card') && Object.values(auths).every((t) => !appTypes.test(t) && !t.includes('보안카드')), auths);
   await press('[data-onb=unsure]');
   await until('unsure note', async () => js<boolean>(`!!document.querySelector('[data-onb-step=auth] .sx-note')`));
   const unsure = await js<string>(`document.querySelector('[data-onb-step=auth] .sx-note')?.textContent ?? ''`);
-  check('[잘 모르겠어요] 설명도 같다: 보안카드 번호는 직접 넣고, 앱이 넣는다는 말이 없다', unsure.includes('보안카드 번호를 직접 넣어요') && !appTypes.test(unsure), unsure);
+  check('[잘 모르겠어요] 설명도 같다: 앱이 넣는다는 말이 없고 보안카드를 권하지 않는다', !unsure.includes('보안카드') && !appTypes.test(unsure), unsure);
   await press('[data-onb=cert]');
   check('공동인증서 → 이 PC에서 찾은 인증서 목록, 30일 안 만료 경고', await js<boolean>(`(() => { const l = document.querySelector('[data-onb-certs]'); return !!l && l.querySelectorAll('[data-cert]').length === 2 && l.textContent.includes('30일 안에 만료돼요'); })()`));
 
   // ②③
-  check('보안카드 → 금고 위임 단계 없이 바로 ② 모델 국외 이전: 처리자 표는 설정 데이터 그대로', (await reply('[data-onb=card]', 'model')) && !(await js<boolean>(`!!document.querySelector('[data-consent="consent.delegation"]')`)) && (await js<{ v: string; rows: number; first: string }>(`(() => { const t = document.querySelector('[data-processors]'); return { v: t.dataset.processors, rows: t.querySelectorAll('tbody tr').length, first: t.querySelector('tbody td').textContent }; })()`).then((t) => t.v === MOCK_CONSENT_CONFIG.processorsVersion && t.rows === MOCK_CONSENT_CONFIG.processors.length && t.first === MOCK_CONSENT_CONFIG.processors[0]!.name)));
+  check('사업자 간편인증 → 금고 위임 단계 없이 바로 ② 모델 국외 이전: 처리자 표는 설정 데이터 그대로', (await reply('[data-onb=simple]', 'model')) && !(await js<boolean>(`!!document.querySelector('[data-consent="consent.delegation"]')`)) && (await js<{ v: string; rows: number; first: string }>(`(() => { const t = document.querySelector('[data-processors]'); return { v: t.dataset.processors, rows: t.querySelectorAll('tbody tr').length, first: t.querySelector('tbody td').textContent }; })()`).then((t) => t.v === MOCK_CONSENT_CONFIG.processorsVersion && t.rows === MOCK_CONSENT_CONFIG.processors.length && t.first === MOCK_CONSENT_CONFIG.processors[0]!.name)));
   check('② 모델 동의는 필수: 버튼은 [동의하고 계속] 하나(거절 선택지 없음), main도 거절 답을 받지 않는다(bad_request)', (await js<string[]>(`[...document.querySelector('[data-consent="consent.model"]').querySelectorAll('button')].map((b) => b.textContent)`)).join() === '동의하고 계속' && (await callErr('onboarding.reply', { step: 'model', choice: 'decline' })) === 'bad_request');
   check('② [동의하고 계속] → ③ 사용 기록: 기본 꺼짐([끄고 계속]이 주 버튼)', (await reply('[data-onb=agree]', 'telemetry')) && (await js<boolean>(`document.querySelector('[data-onb=off]').classList.contains('sx-btn-primary')`)));
 
@@ -109,12 +109,12 @@ async function main() {
   check('세금계산서를 고르면 O-05 거래처', await reply('[data-onb=submit]', 'counterparties'));
 
   // O-06
-  check('[나중에] → O-06 요약: 등록 내용 + 하는 일·하지 않는 일(F-06 자리표시) + 건너뛴 항목 안내', (await reply('[data-onb=later]', 'summary')) && (await js<boolean>(`(() => { const t = document.querySelector('[data-onb-step=summary]').textContent; return t.includes('보안카드') && !t.includes('금고에 등록함') && !!document.querySelector('[data-onb-scope] .onb-draft') && t.includes('이번 달 할 일에'); })()`)));
+  check('[나중에] → O-06 요약: 등록 내용 + 하는 일·하지 않는 일(F-06 자리표시) + 건너뛴 항목 안내', (await reply('[data-onb=later]', 'summary')) && (await js<boolean>(`(() => { const t = document.querySelector('[data-onb-step=summary]').textContent; return t.includes('사업자 간편인증') && !t.includes('금고에 등록함') && !!document.querySelector('[data-onb-scope] .onb-draft') && t.includes('이번 달 할 일에'); })()`)));
   const scope = await js<string[]>(`[...document.querySelectorAll('[data-onb-scope] li')].map((l) => l.textContent)`);
   // 납세증명서(H-04)는 출시판에서 숨겨 O-04 표에서 빠진다(cert-docs hidden)
   check('요약 "지금 되는 일"은 세금계산서와 민원증명 1종(O-04 표 그대로)', scope[0] === '지금 되는 일: 세금계산서 발급·메일 전송, 사업자등록증명', scope);
   check('O-06 요약에 갈 곳 없는 [보관 위치 바꾸기]가 없다', !(await js<boolean>(`!!document.querySelector('[data-onb=storage]')`)));
-  check('[확인했어요] → 프로필 저장(엔진 profile.upsert, 고친 이메일·보안카드)', (await reply('[data-onb=ok]', 'first')) && (await S.host.rpc('db.query.profiles.list').then((ps) => (ps as DbProfile[]).some((p) => p.kind === 'business' && p.email === 'billing@ganada.example' && p.signMethod === 'security_card'))));
+  check('[확인했어요] → 프로필 저장(엔진 profile.upsert, 고친 이메일·간편인증)', (await reply('[data-onb=ok]', 'first')) && (await S.host.rpc('db.query.profiles.list').then((ps) => (ps as DbProfile[]).some((p) => p.kind === 'business' && p.email === 'billing@ganada.example' && p.signMethod === 'simple_auth'))));
   // 저장은 실제 엔진 명령으로 DB에(onboarding-store.ts, 엔진 #91·db #53). main만 부를 수 있다.
   {
     const host = S.host;
@@ -122,7 +122,7 @@ async function main() {
     const latest = (kind: string) => host.rpc('consent.latest', { profileId: biz.id, kind }) as Promise<{ choice: string; via: string; noticeVersion: string; processorsVersion: string | null } | null>;
     const [terms, deleg, model, tele, orphan] = await Promise.all([latest('terms'), latest('delegation'), latest('model'), latest('telemetry'), host.rpc('consent.latest', { profileId: null, kind: 'terms' })]);
     check(
-      '동의 레코드가 DB에 쌓여 프로필로 이어진다(약관 동의·모델 동의는 고지 판·처리자 표 판과 함께·사용 기록 끔). 보안카드여도 위임 동의는 없다',
+      '동의 레코드가 DB에 쌓여 프로필로 이어진다(약관 동의·모델 동의는 고지 판·처리자 표 판과 함께·사용 기록 끔). 위임 동의는 없다',
       terms?.choice === 'agreed' && terms.noticeVersion === CONSENT_NOTICES.terms.version && deleg === null && model?.choice === 'agreed' && model.noticeVersion === CONSENT_NOTICES.model.version && model.processorsVersion === MOCK_CONSENT_CONFIG.processorsVersion && tele?.choice === 'declined' && orphan === null,
       { terms, deleg, model, tele, orphan },
     );
@@ -143,7 +143,7 @@ async function main() {
 
   // 설정 > 발급 인증 [바꾸기]는 내 사업장과 같은 온보딩 다시 열기다(onboarding.reopen auth).
   await press('[data-view=settings]');
-  check('설정 > 발급 인증: 고른 인증 한 줄과 [바꾸기]', await until('settings auth', async () => js<boolean>(`(() => { const c = document.querySelector('[data-auth-card]'); return !!c && c.innerText.includes('보안카드') && !!c.querySelector('[data-act=auth-reopen]'); })()`)));
+  check('설정 > 발급 인증: 고른 인증 한 줄과 [바꾸기]', await until('settings auth', async () => js<boolean>(`(() => { const c = document.querySelector('[data-auth-card]'); return !!c && c.innerText.includes('사업자 간편인증') && !!c.querySelector('[data-act=auth-reopen]'); })()`)));
   await press('[data-act=auth-reopen]');
   check('설정 [바꾸기] → 대화로 돌아가 O-03 발급 인증 질문이 다시 열린다', await until('reopen auth', async () => (await js<string | null>(`[...document.querySelectorAll('[data-onb-step]')].pop()?.dataset.onbStep ?? null`)) === 'auth' && (await js<boolean>(`!!document.querySelector('[data-view=chat].is-on')`))));
 

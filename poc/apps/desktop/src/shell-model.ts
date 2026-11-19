@@ -33,10 +33,10 @@ export interface Profile {
 }
 
 /**
- * 프로필 발급 인증(signMethod) → 화면 라벨. 값은 H-01 2.2.0 signFlow.methodTargets 키와 1:1(홈택스 인증유형 창의 세 항목).
- * 온보딩의 금융인증서는 공동인증서와 같은 항목(cert)이다(onboarding.ts AUTH_SIGN_METHOD).
+ * 프로필 발급 인증(signMethod) → 화면 라벨. 값은 H-01 2.2.0 signFlow.methodTargets 키(홈택스 인증유형 창의 항목)와 같다.
+ * 온보딩의 금융인증서는 공동인증서와 같은 항목(cert)이다(onboarding.ts AUTH_SIGN_METHOD). 보안카드는 지원 안 함(대표 결정 2026-11-19).
  */
-export const SIGN_LABEL: Readonly<Record<'cert' | 'security_card' | 'simple_auth', string>> = { simple_auth: '사업자 간편인증', cert: '공동·금융인증서', security_card: '보안카드' };
+export const SIGN_LABEL: Readonly<Record<'cert' | 'simple_auth', string>> = { simple_auth: '사업자 간편인증', cert: '공동·금융인증서' };
 
 /** 발급 인증을 고르지 않은 프로필의 표시(내 사업장 화면). */
 export const NO_AUTH = '발급 인증 미설정';
@@ -57,7 +57,7 @@ export function setupText(work: 'invoice' | 'cert', missing: ReadonlyArray<Setup
       : missing.includes('biz')
         ? `${what} 먼저 사업자 정보(사업자번호)를 등록해 주세요.`
         : missing.includes('auth')
-          ? `${what} 먼저 발급할 때 쓸 인증(공동인증서·보안카드·간편인증)을 골라 주세요.`
+          ? `${what} 먼저 발급할 때 쓸 인증(공동인증서·간편인증)을 골라 주세요.`
           : null;
   // 보안 프로그램(MagicLine4NX)은 홈택스가 설치 안내로 멈추기 전에 앱이 먼저 말한다(B4, security-programs.ts)
   const sec = missing.includes('security') ? '홈택스 공동인증서 프로그램(MagicLine4NX)도 켜 주세요.' : '';
@@ -485,7 +485,7 @@ export interface RunViewBase {
    * kind: 무엇을 하는 차례인가(#278 셸 계약). login = 홈택스 로그인 대기([이어서]), sign = 인증서 서명 차례(완료 창이 보이면 엔진이 스스로 넘어가 [다 했어요]는 보조,
    * [직접 발급함] 없음), other = 그 밖의 사람 차례([다 했어요]·[직접 발급함]).
    */
-  handoff?: { phase: string; afterGate: boolean; kind?: 'login' | 'sign' | 'other' } | null;
+  handoff?: { phase: string; afterGate: boolean; kind?: 'login' | 'sign' | 'other'; code?: string } | null;
   /**
    * InDoubt 증언(ADR-021 결정 5). ready: 엔진이 증언을 받을 수 있다(이 카드를 열면 승인 바 자리에 황토색 바가 뜬다).
    * sent: 보냈고 엔진이 받았다. refused: 엔진이 받지 않았거나 보내지 못했다. 문구는 main의 ATTEST_NOTE에서 고른 것.

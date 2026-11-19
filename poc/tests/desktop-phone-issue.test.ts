@@ -138,6 +138,32 @@ describe('셸 실행 → 폰 단계', () => {
     assert.equal(v.attempt, 3);
     assert.equal(eventOf(run({ status: 'stopped', inDoubt: true }), ulid(), ulid(), NOW).code, 'in_doubt');
   });
+  it('사람 차례는 turn 사건과 까닭 코드로 보낸다(폰이 "진행 중"에 머물지 않게)', () => {
+    const t = eventOf(run({ status: 'turn', at: 0, handoff: { phase: 'login', afterGate: false, kind: 'login', code: 'login.simple_auth' } }), ulid(NOW), ulid(NOW), NOW);
+    assert.equal(t.event, 'turn');
+    assert.equal(t.phase, 'login');
+    assert.equal(t.code, 'login.simple_auth');
+    assert.ok(encodeEnvelope(makeEnvelope('run.event', t, { pairId: ulid(), from: 'desktop', seq: 1 })));
+    // 코드가 없거나 규칙 밖이면 종류만
+    assert.equal(eventOf(run({ status: 'turn', at: 0, handoff: { phase: 'login', afterGate: false, kind: 'login' } }), ulid(), ulid(), NOW).code, 'turn.login');
+    assert.equal(eventOf(run({ status: 'turn', at: 2, handoff: { phase: 'fill', afterGate: false, kind: 'other', code: 'Bad Code!' } }), ulid(), ulid(), NOW).code, 'turn.other');
+    // 발급 없이 멈춤
+    assert.equal(eventOf(run({ status: 'stopped', redo: true }), ulid(), ulid(), NOW).code, 'not_issued');
+    assert.equal(eventOf(run({ status: 'stopped' }), ulid(), ulid(), NOW).code, undefined);
+  });
+  it('차례가 오고 풀리면 각각 한 번 보낸다', async () => {
+    const x = await issueWorld();
+    const sink = new Sink();
+    x.p.attach('p', sink);
+    await x.p.handle('p', sink, issueCmd(ulid(NOW), req));
+    const r = x.runs.get('run-1')!;
+    const turn = { ...r, status: 'turn' as const, steps: run({ at: 0 }).steps, handoff: { phase: 'login', afterGate: false, kind: 'login' as const, code: 'login.simple_auth' } };
+    x.p.update({ ...r, status: 'preparing', steps: run({ at: 0 }).steps });
+    x.p.update(turn);
+    x.p.update(turn);
+    x.p.update({ ...r, status: 'preparing', steps: run({ at: 0 }).steps, handoff: null });
+    assert.deepEqual(sink.events.map((e) => [e.event, e.phase, e.code ?? '']), [['phase', 'login', ''], ['turn', 'login', 'login.simple_auth'], ['phase', 'login', '']]);
+  });
 });
 
 describe('PhoneIssue', () => {

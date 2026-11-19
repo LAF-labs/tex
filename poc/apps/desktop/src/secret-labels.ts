@@ -17,7 +17,6 @@ export interface SecretNeeded extends OneShotBind {
 export const SECRET_LABELS: Record<SecretKind, string> = {
   cert_password: '공동인증서 비밀번호',
   portal_password: '홈택스 비밀번호',
-  security_card: '보안카드 번호',
 };
 
 /** 창 아래 고정 문구(위장 창과 구별하는 단서는 OS 제목줄이다). */
@@ -39,12 +38,11 @@ export function parseSecretNeeded(d: unknown): SecretNeeded | null {
   if (typeof o.targetId !== 'string' || !o.targetId || o.targetId.length > 128) return null;
   if (!isKind(o.kind)) return null;
   if (o.scope !== 'business' && o.scope !== 'personal') return null;
-  if (o.row !== undefined && !(Number.isInteger(o.row) && (o.row as number) >= 1 && (o.row as number) <= 35)) return null;
-  return { runId: o.runId, targetId: o.targetId, kind: o.kind, scope: o.scope, ...(o.row !== undefined ? { row: o.row as number } : {}) };
+  return { runId: o.runId, targetId: o.targetId, kind: o.kind, scope: o.scope };
 }
 
 /**
- * 비밀 창은 동시에 하나, 활성 실행의 요청만 연다. 창이 열려 있을 때 온 요청(다음 보안카드 칸 등)은 마지막 하나를 들고
+ * 비밀 창은 동시에 하나, 활성 실행의 요청만 연다. 창이 열려 있을 때 온 요청은 마지막 하나를 들고
  * 있다가 창이 닫히면 넘긴다(창은 금고가 받은 뒤 잠시 있다 닫힌다).
  */
 export class SecretWindowCoordinator {
@@ -83,42 +81,16 @@ export class SecretWindowCoordinator {
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
-/** 보기 버튼 아이콘: 눈(가림)·빗금 눈(보임). 어느 쪽을 보일지는 secret.css가 aria-pressed로 고른다. */
-const EYE_PATH = '<path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"></path><circle cx="8" cy="8" r="2"></circle>';
-const EYE = `<svg class="eye" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">${EYE_PATH}</svg><svg class="eye-off" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">${EYE_PATH}<path d="M2.5 2.5l11 11"></path></svg>`;
-
-/** 비밀 창 페이지(main이 만든다). 값은 이스케이프한 텍스트로만. kind·scope·row는 금고 결속값과 같은 값만 싣는다. */
+/** 비밀 창 페이지(main이 만든다). 값은 이스케이프한 텍스트로만. kind·scope는 금고 결속값과 같은 값만 싣는다. */
 export function secretPageHtml(req: SecretInputBind, profileName: string): string {
-  const label = SECRET_LABELS[req.kind];
-  const field = req.kind === 'security_card' && req.row ? `${label} ${req.row}번` : label;
-  // 보안카드 번호는 SecretField 규칙대로 기본으로 가리고, 보기 버튼 하나로 보이게 한다(secret.js가 30초 뒤 다시 가린다).
-  const head = req.kind === 'security_card' ? `<div class="sx-secret-hd"><label for="v">${esc(field)}</label><span id="reveal-note" class="sx-meta"></span><button type="button" id="reveal" class="sx-reveal" aria-pressed="false">${EYE}<span>번호 보기</span></button></div>` : `<label for="v">${esc(field)}</label>`;
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
 <link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="bundle.css"><link rel="stylesheet" href="secret.css"><title>${esc(secretTitle(req.kind))}</title></head>
-<body data-kind="${req.kind}" data-scope="${req.scope}"${req.row ? ` data-row="${req.row}"` : ''}>
+<body data-kind="${req.kind}" data-scope="${req.scope}">
 <p class="ctx">${esc(`세금계산서 발급 · 홈택스 · ${profileName}`)}</p>
-<form id="f">${head}<input id="v" type="password" autocomplete="off" spellcheck="false" autofocus><button>금고에 넘기기</button></form>
+<form id="f"><label for="v">${esc(SECRET_LABELS[req.kind])}</label><input id="v" type="password" autocomplete="off" spellcheck="false" autofocus><button>금고에 넘기기</button></form>
 <p class="note">${esc(req.kind === 'cert_password' ? '이 창의 입력은 금고로 바로 가요. 이 PC 금고에 기억해 두고 다음 발급부터는 묻지 않아요.' : '이 창의 입력은 금고로 바로 가요. 저장하지 않고 이번 실행에서 한 번만 써요.')}</p>
 <p class="note">${esc(SECRET_FIXED_NOTE)}</p>
 <p id="msg" role="status"></p><script src="secret.js"></script></body></html>`;
 }
 
-/** 보안카드 등록 창 OS 제목줄(main 내장 문구). */
-export const CARD_WINDOW_TITLE = '금고 · 보안카드 등록';
-
-/**
- * 보안카드 등록 창 페이지(부장 판정 2026-11-14). 사진과 애매한 칸 값은 이 창에서 금고 포트로만 간다(card-secret.js). main은 내용을 보지 않는다.
- * 고정 글만 싣는다(사람·카드 값 없음).
- */
-export function cardSecretPageHtml(): string {
-  return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
-<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="bundle.css"><link rel="stylesheet" href="secret.css"><title>${esc(CARD_WINDOW_TITLE)}</title></head>
-<body>
-<p class="ctx">보안카드 등록</p>
-<div id="drop" class="card-drop"><b>보안카드 뒷면 사진을 여기에 끌어 놓으세요</b><span class="note">사진이나 스크린숏 모두 돼요. 이 PC 금고 안에서만 읽고 번호는 금고에만 둬요. 사진은 남기지 않아요.</span><button type="button" id="pick">사진 고르기</button><input id="file" type="file" accept="image/*"></div>
-<form id="ask" hidden autocomplete="off"><p id="ask-q"></p><div class="grid" id="cells"></div><button>금고에 넘기기</button></form>
-<p class="note">${esc(SECRET_FIXED_NOTE)}</p>
-<p id="msg" role="status"></p><script src="card-secret.js"></script></body></html>`;
-}

@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import { openDatabase, syntheticBizNo, type Consent, type Db, type OnboardingState, type Profile } from '@sax/db';
-import { BizVerifier, DataService } from '@sax/engine';
+import { BizVerifier, DataService, resetRetiredAuth } from '@sax/engine';
 import { COMMANDS, MAIN_ONLY } from '@sax/engine/protocol';
 import { Egress } from '@sax/net';
 
@@ -108,5 +108,23 @@ describe('data-service 온보딩 명령', () => {
     assert.equal((await call<Profile>('profile.setCertName', { id: p.id, name: null })).certName, null);
     assert.equal(await code('profile.setCertName', { id: p.id, name: 3 }), 'bad_cert_name');
     assert.equal(await code('profile.setCertName', { id: 'nope', name: 'x' }), 'profile_not_found');
+  });
+
+  it('기동 때 발급 인증이 보안카드인 프로필을 "고르지 않음"으로 되돌리고 그 사실만 남긴다(대표 결정 2026-11-19 지원 안 함)', async () => {
+    const p = await business();
+    db.prepare(`UPDATE profiles SET sign_method = 'security_card' WHERE id = ?`).run(p.id);
+    const lines: Array<[string, Record<string, unknown> | undefined]> = [];
+    const log = { event: (name: string, data?: Record<string, unknown>) => void lines.push([name, data]) };
+    assert.equal(resetRetiredAuth(svc.profiles, log), 1);
+    assert.deepEqual(lines, [['engine.auth_reset', { from: 'security_card', profiles: 1 }]]);
+    const after = (await call<Profile[]>('db.query.profiles.list')).find((x) => x.id === p.id)!;
+    assert.equal(after.signMethod, null, '화면은 "발급 인증을 아직 고르지 않았어요"로 다시 고르게 한다');
+    assert.equal(after.bizNo, p.bizNo, '다른 칸은 그대로');
+    // 다음 기동: 바꿀 것이 없고 로그도 없다
+    assert.equal(resetRetiredAuth(svc.profiles, log), 0);
+    assert.equal(lines.length, 1);
+    // 엔진 기동(entry.ts)이 DB를 연 뒤 바로 부른다
+    const entry = await fsp.readFile(path.resolve(import.meta.dirname, '../packages/engine/src/entry.ts'), 'utf8');
+    assert.match(entry, /data = new DataService\([^\n]*\);\n\s*resetRetiredAuth\(data\.profiles, log\);/);
   });
 });

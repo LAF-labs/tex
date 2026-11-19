@@ -23,15 +23,14 @@ commitGuard(#81)·crypto(#87)·npki(§9)는 구현됐다.
 - Phase 2(프로필 둘 동시 운영)에서 `ProfileId`로 넓힌다.
 
 ## 3. secretInput 결속(`SecretInputBind`) — desktop 트랙
-- 1회용 결속 `{runId, kind, scope, row?}`(mode 생략 = oneshot)는 금고가 `secret.needed`로 부른 것만 붙는다(ADR-025 결정 10, 비밀 창은 금고가 부른다).
-  - kind는 `TYPIST_KINDS`(portal_password·security_card)만이다. cert_password는 1회용으로도 받지 않는다(ADR-020 결정 2).
-  - 보안카드는 row(1~35) 필수, 포털 비밀번호는 row가 없다.
-  - `runId|kind|scope|row`가 살아 있는 `secret.needed`와 같아야 한다. 기록은 `SECRET_TTL_MS` 동안 살고, provide 한 번이나 `run.end`에 지운다.
+- 보안카드(security_card)는 지원 안 함(대표 결정 2026-11-19). 종류·칸 번호(row)·`typist.fillCard`·사진 등록을 뺐다. 옛 판이 키체인에 남긴 보안카드 슬롯은 금고 기동 때 한 번 지우고 `vault.card_purged{items}`만 남긴다.
+- 1회용 결속 `{runId, kind, scope}`(mode 생략 = oneshot)는 금고가 `secret.needed`로 부른 것만 붙는다(ADR-025 결정 10, 비밀 창은 금고가 부른다).
+  - kind는 `TYPIST_KINDS`(portal_password)와, 금고가 부른 cert_password(앱 입력 창)다.
+  - `runId|kind|scope`가 살아 있는 `secret.needed`와 같아야 한다. 기록은 `SECRET_TTL_MS` 동안 살고, provide 한 번이나 `run.end`에 지운다.
   - 맞지 않으면 포트를 붙이지 않고(답 없음) `vault.secret_input_unrequested{kind}`만 남긴다. 창을 연 뒤 기록이 사라지면 provide는 `not_requested`다.
   - main은 지금처럼 `secret.needed`를 받았을 때만 1회용 창을 연다. 창은 열리지만 포트가 붙지 않으면 값은 금고에 가지 않는다.
-- 등록 결속은 `{mode:'store', kind:'portal_password'|'security_card', scope, notice:{version}}`다. runId·row가 없고, cert_password는 받지 않는다(ADR-020 결정 2).
-- store 포트는 `secret.store{entries:[{row?, field?:'pw', bytes}], portalLoginId?}`를 한 번만 받는다.
-  - 보안카드는 row(1~35)를 쓰고, 포털은 `field:'pw'`를 쓴다.
+- 등록 결속은 `{mode:'store', kind:'portal_password'|'cert_password', scope, notice:{version}}`다. runId가 없다.
+- store 포트는 `secret.store{entries:[{field:'pw', bytes}], portalLoginId?}`를 한 번만 받는다.
   - 결과는 `{handle:{kind,scope}, tier, consent, portalLoginId?}`이고 비밀 값·길이는 없다.
 - 결속 모드와 메서드가 맞지 않으면 거부한다(store 포트에 온 provide, oneshot 포트에 온 store).
 - 금고가 닫혀 있으면 잠금 사유와 상관없이 저장을 거부한다(`vault_locked`). 이 경우 main은 T-06을 열기 전에 `vault.unlock`(Hello)을 부르거나 Windows 잠금 해제를 기다린다. 엄격 모드에서는 Hello 확인 뒤 300초 안에만 저장된다.
@@ -42,7 +41,7 @@ commitGuard(#81)·crypto(#87)·npki(§9)는 구현됐다.
 - 아이디는 DB `profiles.portal_login_id`(data 트랙)에 두고 엔진 `fill` 스텝이 넣는다. 타이피스트는 type=password 칸에만 넣는다(D05 §4).
 - 등록 창이 아이디를 같은 화면에서 받으면 `secret.store`의 `portalLoginId`로 넘긴다. 금고는 이 값을 저장·로그하지 않고 결과의 `portalLoginId`로 그대로 돌려준다(NFC·앞뒤 공백 제거 뒤). main이 그 값을 DB에 쓴다.
   - 1~64자이고 공백·제어 문자가 없어야 한다(`PORTAL_LOGIN_ID_MAX`). 틀리면 `bad_login_id`로 거부하고 비밀도 저장하지 않는다.
-  - 보안카드 결속에 아이디가 오면 `bad_login_id`다.
+  - 포털 아닌 결속에 아이디가 오면 `bad_login_id`다.
   - `field:'id'` 칸으로 보내면 `bad_cell`이다.
 
 ## 4. Windows 세션 추종 — desktop(main) 트랙
@@ -59,10 +58,9 @@ utilityProcess에는 powerMonitor가 없어서 main이 이벤트를 넘긴다.
 ## 5. 타이피스트 — engine 트랙
 - `FillRequest.startGate?: boolean`: trigger=remote인 실행은 시작 게이트를 통과했다는 플래그가 있을 때만 입력한다(ADR-029 결정 2).
 - `FillReason`에 `vault_locked`·`credential_suspect`를 더했다.
-- 종류 규칙(ADR-020 결정 2, ADR-025 결정 10): 타이피스트는 `TYPIST_KINDS`(portal_password·security_card)만 넣는다. cert_password 요청은 정책이 호스트를 허용해도 `denied`이고 `vault.typist_kind_refused`를 남긴다. 보안카드는 row 필수, 포털은 row 없음(어기면 `denied`).
-- `FillRequest.rowLabel?: string`(보안카드 필수): 같은 프레임에서 칸 번호가 보이는 요소의 CSS 셀렉터(256자 이하). 금고가 격리 세계에서 그 요소의 글자를 읽어 숫자가 정확히 하나(전각은 NFKC)이고 `secret.row`와 같을 때만 넣는다. 없거나 다르면 값을 꺼내지 않고 `row_mismatch`(`FillReason` 추가), 로그는 `vault.card_row_mismatch{readable}`(번호·값 없음).
+- 종류 규칙(ADR-020 결정 2, ADR-025 결정 10): 타이피스트는 `TYPIST_KINDS`(portal_password)만 넣는다. cert_password 요청은 정책이 호스트를 허용해도 `denied`이고 `vault.typist_kind_refused`를 남긴다.
 - `typist.authFailed{runId, kind, scope}`: 포털이 명시적 인증 실패(auth_failed)를 1회 알리면 엔진이 보낸다. 금고는 그 슬롯을 suspect로 두고, 다시 등록하기 전에는 입력하지 않는다(ADR-026 결정 7). 차단·셀렉터 실패에는 보내지 않는다.
-- 금고가 열려 있고 trigger≠daemon이면, 타이피스트는 1회용 값 대신 저장된 보안카드 칸·포털 비밀번호를 쓴다.
+- 금고가 열려 있고 trigger≠daemon이면, 타이피스트는 1회용 값 대신 저장된 포털 비밀번호를 쓴다.
   - 금고가 닫혔으면 `vault_locked`(사람 확인 필요), suspect면 `credential_suspect`로 멈춘다.
   - 금고는 열렸지만 저장본을 못 쓸 때(`kek_unavailable`: 기기 사본 없음·다른 기기·래핑 해제 실패, 또는 `corrupt`)는 1회용 값으로 넘어간다(`secret.needed`).
 

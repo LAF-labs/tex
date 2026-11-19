@@ -34,7 +34,7 @@ app.on('window-all-closed', () => {});
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** 장면이 바꾸는 하네스 상태(보관함 서류를 목록에 넣을지, 승인 바 페이지 HTML). */
-const S = { withVault: false, barHtml: '', onb: null, onbDelay: 0, g24Empty: false, bank: 'full', mode: {}, emptyBoot: false, security: 'ok' };
+const S = { bankAuto: 'sms', withVault: false, barHtml: '', onb: null, onbDelay: 0, g24Empty: false, bank: 'full', mode: {}, emptyBoot: false, security: 'ok' };
 /** 불러오는 중·오류 장면: S.mode[메서드] = 'hang'(답이 오지 않음) | 'fail'(거절) */
 const HANG = () => new Promise(() => {});
 const store = new MockStore();
@@ -172,7 +172,7 @@ const handlers = {
     const r = await S.onb.answer(p);
     return { onboarding: await S.onb.view(), fill: r.fill ?? null, profiles: PROFILES };
   },
-  'request.send': (p) => S.agentReply ? { kind: 'agent', text: S.agentReply, show: [], filtered: null } : (/등본/.test(p.text) ? { kind: 'g24', doc: '주민등록표 등본' } : { kind: 'draft', run: S.sendSeq ? { ...mkRun('draft'), id: `run-${++S.sendSeq}` } : mkRun('draft') }),
+  'request.send': async (p) => (S.replyDelay && (await sleep(S.replyDelay)), S.agentReply) ? { kind: 'agent', text: S.agentReply, show: [], filtered: null } : (/등본/.test(p.text) ? { kind: 'g24', doc: '주민등록표 등본' } : { kind: 'draft', run: S.sendSeq ? { ...mkRun('draft'), id: `run-${++S.sendSeq}` } : mkRun('draft') }),
   'counterparties.list': () => (EMPTY ? [] : cps),
   'docs.list': () => (EMPTY ? [] : S.withVault ? [vaultDoc, ...store.docs] : [...store.docs]),
   'issued.list': () => [],
@@ -180,6 +180,14 @@ const handlers = {
   'bank.receivable': (p) => bankDetail(p.id),
   'bank.refreshStatus': () => ({ state: 'done', result: { newCount: 0 } }),
   'bankAuto.status': () => ({ ok: true, connected: false }),
+  // 자동 연결 장면(bankAuto): 동의 → 인증서 → (은행이 SMS 인증번호 요구) → 보유계좌. S.bankAuto = 'sms' | 'identity'
+  'bankAuto.consent': () => ({ ok: true }),
+  'bankAuto.certs': () => ({ certs: [{ id: '0123456789abcdef', owner: '김하늘', usage: 'yessign 범용', expiresOn: '2027-03-01', usable: true, issuance: true }] }),
+  'bankAuto.connect': (p) => (S.bankAuto === 'withdraw' && !p.withdrawAccount ? { ok: false, code: 'withdraw_account_required', cf: 'CF-12401', clientType: 'P' } : S.bankAuto === 'identity' ? { ok: false, code: 'identity_required', cf: 'CF-12831', clientType: 'B' } : { ok: true, sessionId: 'cs1', bankName: '우리은행', step: 'sms', accounts: [] }),
+  'bankAuto.sms': (p) =>
+    p.code === '000000'
+      ? { ok: true, sessionId: 'cs2', bankName: '우리은행', step: 'sms', accounts: [] }
+      : { ok: true, sessionId: 'cs3', bankName: '우리은행', accounts: [{ key: 'a0', last4: '6789', name: '우리 사업자통장', balance: 5067000, usable: true }, { key: 'a1', last4: '8777', name: '정기예금', balance: 1000000, usable: false }] },
   'g24.candidates': () =>
     S.g24Empty
       ? []
@@ -376,6 +384,24 @@ const scenes = {
     await shot(win, '44-open-bank-screen');
     S.agentReply = null;
   },
+  // Muse 방식 대화(2026-11-19): 말풍선 둘, 시간 줄, 묶음(2분 안 같은 쪽 말), 답 기다리는 점 세 개
+  async muse(win) {
+    const say = (t) => js(win, `(() => { const i = document.querySelector('#composer'); i.value = ${JSON.stringify('')} + ${'`'}${'${'}t${'}'}${'`'}; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`.replace('${t}', t));
+    S.agentReply = '이번 달 발급은 3건이에요. A상사 363만원, B상사 60만 5천원, C테크 110만원이에요.';
+    await say('이번 달 세금계산서 몇 건 끊었어?');
+    await sleep(400);
+    ev(win, { type: 'say', text: '합계는 533만 5천원이에요.' });
+    await sleep(200);
+    S.replyDelay = 3000;
+    await say('B상사 건 다시 보여 줘');
+    await sleep(700);
+    console.log('dbg', await js(win, `JSON.stringify({t: !!document.querySelector('.sx-typing'), toast: document.querySelector('.toast, [role=alert]')?.textContent, last: document.querySelector('.sx-thread').lastElementChild.outerHTML.slice(0,200)})`));
+    await shot(win, '45-muse-chat');
+    await sleep(2600);
+    await shot(win, '46-muse-after-typing');
+    S.replyDelay = 0;
+    S.agentReply = null;
+  },
   // EMPTY=1 ONLY=empty: 빈 화면 셋(거래처·문서함·활동 기록)
   async empty(win) {
     for (const v of ['cps', 'docs']) {
@@ -431,7 +457,6 @@ const scenes = {
     await press('[data-onb=confirm]');
     await shot(win, '24-onb-auth');
     await press('[data-onb=other]');
-    await press('[data-onb=card]');
     await shot(win, '25-onb-auth-other');
     // 고른 줄이 굳는 순간(main 답을 기다리는 동안): 실선 + 체크, 나머지는 흐림
     S.onbDelay = 1200;
@@ -576,6 +601,46 @@ const scenes = {
     await shot(win, '62-error-bank-retried');
     S.mode = {};
   },
+};
+
+// 설정 > 계좌 연결 > 자동 연결: 사장님은 인증서·비밀번호만, 은행이 SMS를 요구하면 카드 안 칸 하나(대표 2026-11-19)
+scenes.bankAuto = async (win) => {
+  const start = async () => {
+    await js(win, `document.querySelector('#rail [data-view=settings]').click()`);
+    await sleep(100);
+    await js(win, `document.querySelector('[data-set-tab=bank]').click()`);
+    await sleep(300);
+    await js(win, `document.querySelector('[data-bank-connect]').click()`);
+    await sleep(100);
+    await js(win, `document.querySelectorAll('[data-bank-check]').forEach((c) => { c.checked = true; c.dispatchEvent(new Event('change')); })`);
+    await sleep(100);
+    await js(win, `document.querySelector('[data-bank-consent]').click()`);
+    await sleep(300);
+  };
+  S.bankAuto = 'sms';
+  await start();
+  await shot(win, '70-bankauto-certs');
+  await js(win, `document.querySelector('[data-bank-next]').click()`);
+  await sleep(300);
+  await shot(win, '71-bankauto-sms');
+  const type = (v) => js(win, `(() => { const i = document.querySelector('[data-bank-sms]'); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event('input')); document.querySelector('[data-bank-sms-go]').click(); })()`);
+  await type('000000');
+  await sleep(300);
+  await shot(win, '72-bankauto-sms-wrong');
+  await type('482913');
+  await sleep(300);
+  await shot(win, '73-bankauto-accounts');
+  S.bankAuto = 'identity';
+  await start();
+  await js(win, `document.querySelector('[data-bank-next]').click()`);
+  await sleep(300);
+  await shot(win, '74-bankauto-identity');
+  S.bankAuto = 'withdraw';
+  await start();
+  await js(win, `document.querySelector('[data-bank-next]').click()`);
+  await sleep(300);
+  await shot(win, '75-bankauto-withdraw');
+  S.bankAuto = 'sms';
 };
 
 // 설정 > 기기 연결 장면들(쓰던 PC 쪽 목록·새 PC 요청, 새 PC 쪽 로그인 세 단계, 끊긴 PC)
@@ -759,7 +824,7 @@ Object.assign(scenes, {
   },
 });
 
-const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'px', 'pair', 'newPc', ...(EMPTY ? ['empty'] : [])];
+const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'browser', 'replace', 'openBank', 'muse', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'px', 'pair', 'newPc', 'bankAuto', ...(EMPTY ? ['empty'] : [])];
 const agreed = { version: 'pv', choice: 'agreed', at: '' };
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {

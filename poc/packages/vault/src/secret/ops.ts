@@ -1,8 +1,7 @@
 import type { EventLog } from '@sax/platform';
 import { HUMAN_SETTLE_MS, SECRET_TTL_MS, SELF_SCAN_TIMEOUT_MS } from '../constants.ts';
 import { scanDir } from '../leak/scanner.ts';
-import { isTypistKind, SECURITY_CARD_ROWS, type CardFillReason, type CardFillRequest, type FillReason, type FillRequest, type OneShotBind, type VaultEventName } from '../protocol.ts';
-import { parseCardAsk } from './card-scan.ts';
+import { isTypistKind, type FillReason, type FillRequest, type OneShotBind, type VaultEventName } from '../protocol.ts';
 import { hostAllowed, type RelayPolicy } from '../relay/policy.ts';
 import type { Relay, TargetState } from '../relay/relay.ts';
 import { KNOWN_VALUE_MIN_LEN, knownValuePrefixVariants, knownValueVariants } from '../relay/sanitize.ts';
@@ -32,8 +31,8 @@ export class OneShotSecrets {
     this.onExpire = onExpire;
   }
 
-  private key(runId: string, kind: string, scope: string, row?: number) {
-    return `${runId}|${kind}/${scope}/${row ?? ''}`;
+  private key(runId: string, kind: string, scope: string) {
+    return `${runId}|${kind}/${scope}`;
   }
 
   private drop(k: string): HeldSecret | undefined {
@@ -45,7 +44,7 @@ export class OneShotSecrets {
   }
 
   provide(bind: OneShotBind, bytes: Uint8Array): void {
-    const k = this.key(bind.runId, bind.kind, bind.scope, bind.row);
+    const k = this.key(bind.runId, bind.kind, bind.scope);
     this.drop(k)?.bytes.fill(0);
     const timer = setTimeout(() => {
       const v = this.drop(k);
@@ -58,8 +57,8 @@ export class OneShotSecrets {
   }
 
   /** 같은 실행의 값만 꺼낸다. 꺼낸 값은 더 이상 들고 있지 않는다(부르는 쪽이 0으로 덮는다). */
-  take(runId: string, kind: string, scope: string, row?: number): Uint8Array | null {
-    return this.drop(this.key(runId, kind, scope, row))?.bytes ?? null;
+  take(runId: string, kind: string, scope: string): Uint8Array | null {
+    return this.drop(this.key(runId, kind, scope))?.bytes ?? null;
   }
 
   get size(): number {
@@ -117,10 +116,10 @@ export interface SecretOpsOptions {
   /** 실행당 종류별 1회 기록(N-46). Chrome을 다시 띄워도 남도록 금고가 들고 있다. */
   usedSlots?: Set<string>;
   /**
-   * 저장된 사람 비밀 칸 하나(ADR-026). 1회용 값이 없을 때만 부른다. 보안카드는 row, 포털은 pw.
+   * 저장된 사람 비밀 칸 하나(ADR-026). 1회용 값이 없을 때만 부른다(포털은 pw 칸).
    * 금고가 닫혔으면 vault_locked, suspect면 credential_suspect.
    */
-  stored?: (kind: string, scope: string, row?: number) => Promise<StoredRead>;
+  stored?: (kind: string, scope: string) => Promise<StoredRead>;
   /** 시험만 주입한다(사람 창 정착 판정 시계). 기본 Date.now. */
   now?: () => number;
   /**
@@ -143,8 +142,8 @@ export interface SecretOpsOptions {
 
 export type StoredRead = { ok: true; bytes: Uint8Array } | { ok: false; reason: 'vault_locked' | 'secret_missing' | 'credential_suspect' | 'corrupt' | 'kek_unavailable' };
 
-/** 실행당 종류별 1회 키(보안카드는 칸별). */
-export const slotKey = (runId: string, kind: string, row?: number): string => `${runId}|${kind}|${row ?? ''}`;
+/** 실행당 종류별 1회 키. */
+export const slotKey = (runId: string, kind: string): string => `${runId}|${kind}`;
 
 /** 비밀 창(D05 §3.5)과 타이피스트(D05 §4). 모든 동작은 금고 감시 세션에서 한다. */
 export class SecretOps {
@@ -207,20 +206,6 @@ export class SecretOps {
     return typeof node.frameId === 'string' ? node.frameId : null;
   }
 
-  /**
-   * 보안카드 요청 칸 번호를 금고 격리 월드에서 읽는다. 글자 안의 숫자가 정확히 하나이고 1~35일 때만 그 값, 아니면 null.
-   * "12번 앞 2자리"처럼 숫자가 둘 이상이면 읽지 못한 것으로 본다(셀렉터를 칸 번호 요소로 좁혀야 한다).
-   */
-  private async readRowLabel(t: TargetState, frameId: string, selector: string): Promise<number | null> {
-    const { executionContextId } = await this.relay.send<{ executionContextId: number }>('Page.createIsolatedWorld', { frameId, worldName: '__sax_vault' }, t.vaultSession);
-    const r = await this.relay.send<{ result: { value?: unknown } }>('Runtime.evaluate', {
-      expression: `(() => { const e = document.querySelector(${JSON.stringify(selector)}); return e ? String(e.textContent ?? '') : null; })()`,
-      contextId: executionContextId,
-      returnByValue: true,
-    }, t.vaultSession);
-    return parseCardRow(r.result.value);
-  }
-
   private async probe(t: TargetState, objectId: string): Promise<Probe | null> {
     try {
       const r = await this.relay.send<{ result: { value: Probe } }>('Runtime.callFunctionOn', { objectId, functionDeclaration: PROBE_FN, returnByValue: true }, t.vaultSession);
@@ -252,16 +237,14 @@ export class SecretOps {
     const t = this.relay.exposedTarget(req.targetId);
     if (!t) return { ok: false, reason: 'not_found' };
     if (!this.fillTriggerAllowed(req)) return { ok: false, reason: 'denied' };
-    // 타이피스트는 포털 비밀번호·보안카드만 넣는다. 인증서 비밀번호는 정책·허용 호스트와 상관없이 넣지 않는다(ADR-020 결정 2, ADR-025 결정 10).
+    // 타이피스트는 포털 비밀번호만 넣는다. 인증서 비밀번호는 정책·허용 호스트와 상관없이 넣지 않는다(ADR-020 결정 2, ADR-025 결정 10).
     if (!isTypistKind(req.secret?.kind)) {
       this.log.event('vault.typist_kind_refused', { kind: String(req.secret?.kind).slice(0, 20) });
       return { ok: false, reason: 'denied' };
     }
-    // 보안카드는 칸 하나씩(row 필수), 포털 비밀번호는 칸 번호가 없다(D05 §4).
-    if (req.secret.kind === 'security_card' ? !isRow(req.secret.row) : req.secret.row !== undefined) return { ok: false, reason: 'denied' };
     // 요청 kind와 사전 칸의 kind가 같아야 한다(「또는」이 아니라 「그리고」, N-46).
     if (!req.slot || req.slot.secretKind !== req.secret?.kind) return { ok: false, reason: 'not_secret_slot' };
-    const used = slotKey(req.runId, req.secret.kind, req.secret.row);
+    const used = slotKey(req.runId, req.secret.kind);
     if (this.usedSlots.has(used)) return { ok: false, reason: 'denied' };
     // 개시 검사와 표시는 await 없이 한 번에(N-43).
     if (t.win || this.opening.has(t.targetId)) return { ok: false, reason: 'denied' };
@@ -283,28 +266,17 @@ export class SecretOps {
     const p0 = await this.probe(t, el.objectId);
     if (!p0 || p0.type !== 'password') return { ok: false, reason: 'not_secret_slot' };
     if (!p0.active) return { ok: false, reason: 'denied' };
-    // 보안카드: 화면에 보인 칸 번호가 요청 칸과 같을 때만(D05 §4 2). 값을 꺼내기 전에 본다.
-    if (req.secret.kind === 'security_card') {
-      const sel = typeof req.rowLabel === 'string' && req.rowLabel.length > 0 && req.rowLabel.length <= ROW_LABEL_MAX ? req.rowLabel : null;
-      const shown = sel ? await this.readRowLabel(t, el.frameId, sel).catch(() => null) : null;
-      if (shown !== req.secret.row) {
-        this.log.event('vault.card_row_mismatch', { readable: shown !== null });
-        return { ok: false, reason: 'row_mismatch' };
-      }
-    }
-    let secret = this.secrets.take(req.runId, req.secret.kind, req.secret.scope, req.secret.row);
+    let secret = this.secrets.take(req.runId, req.secret.kind, req.secret.scope);
     if (!secret && this.opts.stored) {
       // 저장된 사람 비밀(세션 결박). 요청된 칸 하나만 복호한다.
-      const r = await this.opts.stored(req.secret.kind, req.secret.scope, req.secret.row);
+      const r = await this.opts.stored(req.secret.kind, req.secret.scope);
       if (r.ok) secret = r.bytes;
       else if (r.reason === 'vault_locked' || r.reason === 'credential_suspect') return { ok: false, reason: r.reason };
       // corrupt·kek_unavailable·secret_missing: 저장본을 못 쓰니 사람에게 1회용으로 받는다(아래 secret.needed).
     }
     if (!secret) {
       // 비밀 창은 금고가 부른다(N-44): main만 창을 열고, 값은 결속된 secretInput 포트로 온다.
-      const data: Json = { runId: req.runId, targetId: t.targetId, kind: req.secret.kind, scope: req.secret.scope };
-      if (req.secret.row !== undefined) data.row = req.secret.row;
-      this.emit(['control'], 'secret.needed', data);
+      this.emit(['control'], 'secret.needed', { runId: req.runId, targetId: t.targetId, kind: req.secret.kind, scope: req.secret.scope });
       return { ok: false, reason: 'secret_missing' };
     }
     this.usedSlots.add(used);
@@ -352,88 +324,6 @@ export class SecretOps {
     return ok ? { ok } : { ok, reason };
   }
 
-  /**
-   * 발급 서명의 보안카드 창(홈택스 UTXPPABA08: 실행 탭이 window.open으로 연 새 창, 대표 지시 2026-11-14).
-   * 금고가 그 창의 요청 글자("[7]번 보안카드번호 앞 2자리")를 자기 세션으로 읽고, 저장된 그 칸 4자리의 앞·뒤 2자리를 칸에 친다.
-   * 엔진은 칸 번호도 값도 모른다(끝났는지와 사유 코드만). 한 실행에서 같은 칸은 한 번만 친다: 틀림 뒤 같은 값으로 다시 치지 않는다(카드 5회 오류 폐기).
-   */
-  async fillCard(req: CardFillRequest): Promise<{ ok: boolean; reason?: CardFillReason }> {
-    const opener = this.relay.exposedTarget(String(req.targetId));
-    if (!opener) return { ok: false, reason: 'not_found' };
-    if (!this.fillTriggerAllowed({ runId: req.runId, startGate: req.startGate } as FillRequest)) return { ok: false, reason: 'denied' };
-    const fields = Array.isArray(req.fields) ? req.fields.filter((f) => typeof f?.element === 'string' && typeof f?.label === 'string' && f.element.length <= ROW_LABEL_MAX && f.label.length <= ROW_LABEL_MAX) : [];
-    if (!fields.length || fields.length !== req.fields.length || fields.length > 3 || typeof req.window !== 'string' || req.window.length > 200) return { ok: false, reason: 'denied' };
-    let re: RegExp;
-    try {
-      re = new RegExp(req.window);
-    } catch {
-      return { ok: false, reason: 'denied' };
-    }
-    const t = [...this.relay.targets.values()].find((x) => x.type === 'page' && x.exposed && !x.revoked && x.openerId === opener.targetId && re.test(x.url));
-    if (!t) return { ok: false, reason: 'window_missing' };
-    if (!hostAllowed(hostOf(t.url), this.policy.secretHosts.security_card ?? [])) return { ok: false, reason: 'origin_not_allowed' };
-    if (t.win || this.opening.has(t.targetId)) return { ok: false, reason: 'denied' };
-    this.opening.add(t.targetId);
-    try {
-      const blocker = await this.openBlocker();
-      if (blocker) return this.refuse(blocker);
-      // 먼저 칸·요청 글자를 모두 읽는다. 하나라도 못 읽으면 아무것도 치지 않는다.
-      const plan: Array<{ objectId: string; backendNodeId: number; frameId: string; row: number; half: 'front' | 'back' }> = [];
-      for (const f of fields) {
-        const el = await this.resolve(t, 'main', f.element).catch(() => null);
-        if (!el) return { ok: false, reason: 'not_found' };
-        const p0 = await this.probe(t, el.objectId);
-        if (!p0 || p0.type !== 'password') return { ok: false, reason: 'not_secret_slot' };
-        const ask = parseCardAsk(await this.readText(t, el.frameId, f.label).catch(() => null));
-        if (!ask) {
-          this.log.event('vault.card_ask_unreadable', {});
-          return { ok: false, reason: 'row_mismatch' };
-        }
-        if (this.usedSlots.has(slotKey(req.runId, 'security_card', ask.row))) return { ok: false, reason: 'already_used' };
-        plan.push({ objectId: el.objectId, backendNodeId: el.backendNodeId, frameId: el.frameId, row: ask.row, half: ask.half });
-      }
-      const values: string[] = [];
-      try {
-        for (const x of plan) {
-          const r = this.opts.stored ? await this.opts.stored('security_card', req.scope, x.row) : ({ ok: false, reason: 'secret_missing' } as const);
-          if (!r.ok) return { ok: false, reason: r.reason === 'vault_locked' || r.reason === 'credential_suspect' ? r.reason : 'secret_missing' };
-          const cell = new TextDecoder().decode(r.bytes);
-          r.bytes.fill(0);
-          if (!/^\d{4}$/.test(cell)) return { ok: false, reason: 'secret_missing' };
-          values.push(x.half === 'front' ? cell.slice(0, 2) : cell.slice(2, 4));
-        }
-        for (const x of plan) this.usedSlots.add(slotKey(req.runId, 'security_card', x.row));
-        let ok = true;
-        for (let i = 0; i < plan.length && ok; i++) {
-          const x = plan[i]!;
-          this.relay.openWindow(t, 'typist', x.frameId, x.backendNodeId);
-          try {
-            ok = (await this.typeInto(t, x.objectId, values[i]!)).ok;
-          } finally {
-            this.relay.deactivateWindow(t);
-          }
-        }
-        this.log.event('secret.used', { kind: 'security_card', viaTypist: true, ok, cells: plan.length });
-        return ok ? { ok } : { ok, reason: 'blocked_by_module' };
-      } finally {
-        values.fill('');
-      }
-    } finally {
-      this.opening.delete(t.targetId);
-    }
-  }
-
-  /** 요소 글자(비밀 아님: 보안카드 요청 칸 번호 글자)를 금고 격리 월드에서 읽는다. */
-  private async readText(t: TargetState, frameId: string, selector: string): Promise<string | null> {
-    const { executionContextId } = await this.relay.send<{ executionContextId: number }>('Page.createIsolatedWorld', { frameId, worldName: '__sax_vault' }, t.vaultSession);
-    const r = await this.relay.send<{ result: { value?: unknown } }>('Runtime.evaluate', {
-      expression: `(() => { const e = document.querySelector(${JSON.stringify(selector)}); return e ? String(e.textContent ?? '') : null; })()`,
-      contextId: executionContextId,
-      returnByValue: true,
-    }, t.vaultSession);
-    return typeof r.result.value === 'string' ? r.result.value : null;
-  }
-
   /** 기억한 인증서 비밀번호를 칸에 넣는다(타이피스트와 같은 방식: 한 글자씩, 칸이 바뀌면 멈춤, 끝에 길이 확인). */
   private async typeInto(t: TargetState, objectId: string, text: string): Promise<{ ok: boolean }> {
     const keyEvents = this.policy.typistInput === 'keyEvents';
@@ -468,7 +358,7 @@ export class SecretOps {
   }
 
   /**
-   * 비밀 사용 직후 그 값으로 logs·staging을 훑어 건수만 남긴다(N-17, PoC 빌드). 짧은 값(보안카드 칸)은 정상 글자와 겹쳐 건너뛴다.
+   * 비밀 사용 직후 그 값으로 logs·staging을 훑어 건수만 남긴다(N-17, PoC 빌드). 짧은 값은 정상 글자와 겹쳐 건너뛴다.
    * 기다림은 SELF_SCAN_TIMEOUT_MS까지. 넘으면 결과를 버리고 vault.leak_scan_skipped.
    */
   private selfScan(text: string): void {
@@ -705,20 +595,6 @@ export class SecretOps {
     this.appAsk.clear();
     this.secrets.clear();
   }
-}
-
-const isRow = (r: unknown): r is number => Number.isInteger(r) && (r as number) >= SECURITY_CARD_ROWS.min && (r as number) <= SECURITY_CARD_ROWS.max;
-
-/** FillRequest.rowLabel 셀렉터 최대 길이. */
-const ROW_LABEL_MAX = 256;
-
-/** 보안카드 칸 번호 요소의 글자에서 칸 번호를 읽는다. 숫자가 정확히 하나(1~35)일 때만, 전각 숫자는 NFKC로 맞춘다. */
-export function parseCardRow(text: unknown): number | null {
-  if (typeof text !== 'string' || text.length > 64) return null;
-  const nums = text.normalize('NFKC').match(/\d+/g) ?? [];
-  if (nums.length !== 1) return null;
-  const n = Number(nums[0]);
-  return isRow(n) ? n : null;
 }
 
 function hostOf(url: string): string {

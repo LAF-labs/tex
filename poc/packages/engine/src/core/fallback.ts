@@ -89,6 +89,8 @@ export class FallbackChain {
   private readonly firstGate: number;
   private readonly per = new Map<string, StepState>();
   private readonly reentered = new Set<string>();
+  /** 이 실행이 실제로 지난 체크포인트. 재진입은 여기서만 고른다(지나지 않은 갈래의 체크포인트로 뛰지 않게). */
+  private readonly passed = new Set<string>();
 
   constructor(d: FallbackDeps) {
     this.d = d;
@@ -127,6 +129,7 @@ export class FallbackChain {
   confirmed(stepId: string): void {
     const st = this.per.get(stepId);
     const s = this.info.get(stepId)?.step;
+    if (s?.type === 'checkpoint') this.passed.add(stepId);
     if (!st || !s || !this.d.memory) return;
     if (!st.added) {
       // 기억한 후보를 버린 뒤 패키지 후보로 통과했다: 그 기억은 필요 없다.
@@ -255,12 +258,16 @@ export class FallbackChain {
     return ['retry', ...(this.per.get(stepId)?.tried ?? [])].join(':');
   }
 
-  /** 이 스텝 앞(같은 줄기) 마지막 체크포인트. 첫 게이트 뒤 스텝은 재진입하지 않는다(커밋을 다시 지나는 길을 만들지 않는다). */
+  /**
+   * 이 스텝 앞(같은 줄기)에서 이 실행이 지난 마지막 체크포인트. 첫 게이트 뒤 스텝은 재진입하지 않는다(커밋을 다시 지나는 길을 만들지 않는다).
+   * 지나지 않은 체크포인트는 고르지 않는다(2026-11-19 실기기: 인증서 로그인은 됐는데 건별발급 화면 대기 s10a가 늦자, 순서상 앞인
+   * 간편인증 갈래 s7로 뛰어 "공동인증서로 로그인하지 못했어요"로 사람에게 넘겼다).
+   */
   private checkpointBefore(stepId: string): string | null {
     const me = this.info.get(stepId);
     if (!me || me.order >= this.firstGate || me.repeats.length) return null;
     let best: { id: string; order: number } | null = null;
-    for (const [id, v] of this.info) if (v.step.type === 'checkpoint' && !v.repeats.length && v.order < me.order && (!best || v.order > best.order)) best = { id, order: v.order };
+    for (const [id, v] of this.info) if (v.step.type === 'checkpoint' && this.passed.has(id) && !v.repeats.length && v.order < me.order && (!best || v.order > best.order)) best = { id, order: v.order };
     return best?.id ?? null;
   }
 
