@@ -7,6 +7,8 @@ export interface Link {
   /** 상대가 들어오면(룸·우편함 모두) 한 번 부른다. 이미 있으면 바로. */
   onPeer(cb: () => void): void;
   onClose(cb: () => void): void;
+  /** 우편함: 상대가 나갔다(내 연결은 그대로, 서버 {"t":"peer","online":false}). 모르는 링크는 없어도 된다. */
+  onPeerGone?(cb: () => void): void;
   close(): void;
   readonly closed: boolean;
 }
@@ -28,8 +30,8 @@ export interface MailboxTokens {
   write: Uint8Array;
 }
 
-/** 한 프레임을 받을 때까지 기다린다(시간 초과는 null). */
-export function nextFrame(link: Link, timeoutMs: number): Promise<Uint8Array | null> {
+/** 한 프레임을 받을 때까지 기다린다(시간 초과·signal 중단은 null. 중단되면 그 뒤 프레임은 다음 대기자가 받는다). */
+export function nextFrame(link: Link, timeoutMs: number, signal?: AbortSignal): Promise<Uint8Array | null> {
   return new Promise((resolve) => {
     const q = queueFor(link);
     let done = false;
@@ -42,10 +44,16 @@ export function nextFrame(link: Link, timeoutMs: number): Promise<Uint8Array | n
     };
     const onFrame = (f: Uint8Array) => finish(f);
     const t = setTimeout(() => finish(null), timeoutMs);
-    if (link.closed) return finish(null);
+    if (link.closed || signal?.aborted) return finish(null);
     q.wait(onFrame);
     link.onClose(() => finish(null));
+    signal?.addEventListener('abort', () => finish(null), { once: true });
   });
+}
+
+/** 이미 받아 둔 프레임이 있으면 하나 꺼낸다(기다리지 않는다). */
+export function queuedFrame(link: Link): Uint8Array | null {
+  return queueFor(link).take();
 }
 
 /** Link 위의 단순 수신 큐(onFrame 콜백을 하나만 걸고 여러 대기자에 나눈다). */
@@ -64,6 +72,9 @@ class FrameQueue {
   }
   drop(cb: (f: Uint8Array) => void) {
     this.#waiters = this.#waiters.filter((x) => x !== cb);
+  }
+  take(): Uint8Array | null {
+    return this.#buf.shift() ?? null;
   }
 }
 const queues = new WeakMap<Link, FrameQueue>();
@@ -99,6 +110,7 @@ class MemLink implements Link {
   #frameCbs: ((f: Uint8Array) => void)[] = [];
   #peerCbs: (() => void)[] = [];
   #closeCbs: (() => void)[] = [];
+  #goneCbs: (() => void)[] = [];
   #peer: MemLink | null = null;
   #closed = false;
   private relay: MemoryRelay;
@@ -148,6 +160,9 @@ class MemLink implements Link {
     if (this.#closed) cb();
     else this.#closeCbs.push(cb);
   }
+  onPeerGone(cb: () => void) {
+    this.#goneCbs.push(cb);
+  }
   close() {
     if (this.#closed) return;
     this.#closed = true;
@@ -164,6 +179,10 @@ class MemLink implements Link {
   /** 상대가 나갔다(내 연결은 그대로). 다음 상대가 오면 connect가 다시 잇는다 */
   detach() {
     this.#peer = null;
+    // 실제 릴레이처럼 먼저 보낸 프레임 뒤에 알린다(send는 microtask로 건넨다)
+    queueMicrotask(() => {
+      for (const cb of this.#goneCbs) cb();
+    });
   }
 }
 

@@ -441,13 +441,14 @@ describe('PC 폰 수신(phone-link)', () => {
     // 2) 다음 동기화: 같은 우편함에 다시 와 새 IK
     const b = await open();
     assert.ok(b.s, '닫고 나간 뒤 다시 온 폰의 세션');
-    // 3) 닫기 없이 사라졌다(앱이 꺼지거나 망이 끊김) 다시 온다: 새 IK가 옛 세션을 끝낸다
+    // 3) 닫기 없이 사라졌다(앱이 꺼지거나 망이 끊김): 서버의 peer offline으로 세션을 끝낸다(승인 요청을 푸시로 깨우게, 실기기 11/19)
     b.l.close();
+    await until(() => logs.includes('peer_gone'));
     const c = await open();
     assert.ok(c.s, '닫기 없이 사라졌다 다시 온 폰의 세션');
     c.s.channel.close();
     await until(() => logs.filter((s) => s === 'session').length >= 3);
-    assert.ok(logs.includes('closed_by_phone') && logs.includes('rehello'), logs.join(','));
+    assert.ok(logs.includes('closed_by_phone'), logs.join(','));
     link.stop();
   });
 

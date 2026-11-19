@@ -13,6 +13,7 @@ import {
   b64,
   KIND,
   nextFrame,
+  queuedFrame,
   parseFrame,
   CAP,
   fromB64,
@@ -656,6 +657,9 @@ export class PhoneLink {
       backoff = LIVE_BACKOFF.minMs;
       run.link = link;
       link.onEnv(() => run.kick());
+      /** 지금 세션의 "폰이 우편함에서 나갔다" 신호. 폰 앱이 꺼지거나 close 봉투 없이 끊기면 서버가 알린다. */
+      let gone: AbortController | null = null;
+      link.onPeerGone?.(() => gone?.abort());
       this.#log('main.phone_live', { step: 'joined' });
       const keys = await this.#o.keys();
       const pair: PairRecord = { pairId: rec.pairId, phoneStatic: fromB64(rec.Sm), revoked: false, ikTsMax: rec.ikTsMax };
@@ -681,6 +685,8 @@ export class PhoneLink {
           break;
         }
         if (!sess) continue;
+        // 세션을 받은 뒤 바로 건다(사본 보내기 등을 기다리는 사이 폰이 나가도 놓치지 않게)
+        const g = (gone = new AbortController());
         run.online = true;
         await this.#persist(rec, { lastSeenAt: this.#now() });
         this.#o.onChange?.();
@@ -705,8 +711,14 @@ export class PhoneLink {
           // 우편함 연결은 PC 쪽에 그대로 남으므로 채널이 닫혔다고 보이지 않는다. 그래서 (1) close 봉투를 받으면 세션을 끝내고,
           // (2) 새 IK 프레임이 오면 앞 세션을 끝내고 그 프레임으로 새 세션을 받는다.
           // 2026-11-18 실기기: 첫 세션만 열리고, 60초 뒤부터 폰의 IK를 옛 채널이 삼켜 폰이 "PC 켜짐 → 꺼짐 → 찾는 중"을 오갔다.
+          // (3) 폰이 close 봉투 없이 우편함에서 나가면(앱을 끔, 망 끊김) 세션을 끝낸다. 그래야 승인 요청을 푸시로 깨운다(ADR-053, 실기기 11/19).
           while (!sess.channel.closed && !abort.signal.aborted) {
-            const f = await nextFrame(link, 30_000);
+            // 받은 프레임이 먼저다(나가기 전에 보낸 close 봉투 등). 더 받을 것이 없고 폰이 나갔으면 끝낸다.
+            const f = g.signal.aborted ? queuedFrame(link) : await nextFrame(link, 30_000, g.signal);
+            if (!f && g.signal.aborted) {
+              this.#log('main.phone_live', { step: 'peer_gone' });
+              break;
+            }
             if (!f) continue;
             if (parseFrame(f)?.kind === KIND.HS) {
               nextHs = f;
@@ -725,6 +737,7 @@ export class PhoneLink {
           this.#log('main.phone_live', { step: 'recv', result: codeOf(e) });
           sess.channel.close();
         } finally {
+          gone = null;
           hook?.close(rec.pairId, sess.channel);
         }
         run.online = false;
