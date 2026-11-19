@@ -55,6 +55,7 @@
 - 폰은 받은 값으로 `cardHash`·`actionHash`를 다시 계산해 맞을 때만 단추를 켠다(이미 있는 승인 시트). 답 `gate.response{runId, stepId, reqId, decision, actionHash, sigAlg: p256, sig}`.
 - **서명 입력(D08 §6의 "‖" 표기를 이렇게 정한다):** `ECDSA-P256-SHA256( utf8("SAX-approve-v1") ‖ CBOR([pairId, reqId, challenge(바이트 32), actionHash(바이트 32), decision]) )`. CBOR은 결정적 인코딩(RFC 8949 §4.2.1)이다. `sig`는 r‖s 64바이트의 base64다(네이티브의 DER은 폰이 바꾼다). PC는 high-S도 받는다(Secure Enclave는 low-S를 보장하지 않는다. 재사용은 챌린지 1회용이 막는다).
 - 폰이 늦게 열었거나 120초가 지났으면 폰이 `gate.refresh{runId, reqId}`를 보내고, PC는 게이트가 아직 열려 있으면 새 챌린지로 `gate.request`를 다시 보낸다(`reqId`는 그대로). 세션이 다시 붙을 때도 열린 게이트를 새 챌린지로 다시 보낸다.
+- (2026-11-19 덧붙임, remote-envelope v1.11) 게이트가 PC에서 승인되거나, 대기가 끝나거나, 실행이 멈추면 PC는 그 게이트를 받은 폰에 `gate.resolved{runId, reqId, by}`를 보내 시트를 바로 닫게 한다. 폰이 답했을 때도 `by: phone`으로 보낸다. 폰이 `sync.v1`을 알렸을 때만 보낸다(Codex app-server `serverRequest/resolved`와 같은 생각).
 
 ### 5. PC 검증(main)
 
