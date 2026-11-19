@@ -3,7 +3,7 @@
 import { g24Card, g24Panel } from './shell-g24.js';
 import { onboardingView, showOnbError } from './shell-onboarding.js';
 import { accountCard, accountErrText, loginScreen } from './shell-account.js';
-import { pairErrText, pairSection, pairTtlText } from './shell-pair.js';
+import { pairErrText, pairInModal, pairLeftText, pairModal, pairSection, pairTtlText } from './shell-pair.js';
 import { bizEditStart, bizProfileCard } from './shell-biz.js';
 import { createBankAuto } from './shell-bank-auto.js';
 import { createBilling } from './shell-billing.js';
@@ -2114,9 +2114,16 @@ async function signOut() {
   }
 }
 
-/** 폰 연결 칸(shell-pair.js): main이 준 PairView로 계정 카드 안에서 그 자리에 그린다(따로 창 없음). */
+/** 폰 연결 칸(shell-pair.js): QR은 계정 카드 안에서 그 자리에, 6자리부터는 메인 창 안 모달로 그린다(따로 창 없음). */
 function pairRow() {
-  return pairSection(state.pair, PAIR_ACT, state.pairBusy);
+  return pairSection(state.pair, PAIR_ACT, state.pairBusy, Date.now(), pairModalOpen());
+}
+/** 6자리 단계부터 끝까지 모달. 이번 연결에서 6자리 단계에 들어왔는지(pairSas)는 QR 단계·쉬는 자리로 돌아가면 지운다. */
+function pairModalOpen() {
+  const step = state.pair?.step;
+  if (step === 'awaiting_sas' || step === 'checking') state.pairSas = true;
+  else if (step !== 'paired' && step !== 'failed') state.pairSas = false;
+  return state.view === 'settings' && state.setTab === 'devices' && pairInModal(state.pair, state.pairSas);
 }
 /** 폰 연결 요청 하나. 답(PairView)으로 다시 그린다. 못 보냈으면(실제 입력 없음·로그인 전) 알림 한 줄. */
 async function pairCall(method, params = {}) {
@@ -2126,7 +2133,10 @@ async function pairCall(method, params = {}) {
   pairRender(prev);
   try {
     state.pair = await call(method, params);
-    if (state.pair?.error === 'pair.sas_wrong') state.pairCode = '';
+    if (method === 'pair.submit' && state.pair?.error) {
+      state.pairCode = '';
+      state.pairShake = true;
+    }
   } catch (err) {
     toast(pairErrText(errText(err)));
   } finally {
@@ -2145,16 +2155,16 @@ const PAIR_ACT = {
 /** 설정 > 기기 연결에 있을 때만 다시 그린다. 6자리 칸에 있던 초점은 그대로 두고, 6자리 단계로 막 넘어왔으면 칸에 둔다. */
 function pairRender(prevStep) {
   if (state.view !== 'settings' || state.setTab !== 'devices') return;
-  const had = document.activeElement?.id === 'pair-sas';
   render();
   const step = state.pair?.step;
-  if (step === 'awaiting_sas' && (had || prevStep !== 'awaiting_sas')) $('#pair-sas')?.focus();
-  else if (prevStep && prevStep !== step && (step === 'idle' || !step)) $('[data-act=pair-open]')?.focus();
+  if (prevStep && prevStep !== step && (step === 'idle' || !step)) $('[data-act=pair-open]')?.focus();
 }
 // QR 남은 시간(1초마다 글자만 고친다). 0이 되면 main이 '시간이 지났어요'로 바꿔 보낸다
 setInterval(() => {
   const t = document.querySelector('[data-pair-ttl]');
   if (t) t.textContent = pairTtlText(Number(t.dataset.pairTtl));
+  const l = document.querySelector('[data-pair-left]');
+  if (l) l.textContent = pairLeftText(Number(l.dataset.pairLeft));
 }, 1000);
 
 function closeLogin() {
@@ -2505,16 +2515,24 @@ function renderModal() {
   if (loginGate() && !state.login) state.login = { screen: 'email', draft: { email: state.account?.email ?? '', password: '', code: '', show: false }, busy: false };
   const pw = state.view === 'docs' && !!state.docImport && !state.docBusy;
   const login = !pw && !!state.login;
-  const dev = !pw && !login && state.view === 'settings' && state.setTab === 'devices' ? devices.modal() : null;
-  const open = pw || login || !!dev;
+  const pair = !pw && !login && pairModalOpen();
+  const dev = !pw && !login && !pair && state.view === 'settings' && state.setTab === 'devices' ? devices.modal() : null;
+  const open = pw || login || pair || !!dev;
   // 처음 띄울 때와 창 안에 있던 포커스는 새 입력 칸으로 옮긴다(다시 그릴 때마다 칸을 새로 만든다)
   const a = document.activeElement;
   const focus = !root.firstChild || !a || a === document.body || root.contains(a);
-  root.replaceChildren(...(pw ? [passwordModal()] : login ? [loginScreen(loginCtx())] : dev ? [dev] : []));
+  const shake = pair && !!state.pairShake;
+  state.pairShake = false;
+  root.replaceChildren(...(pw ? [passwordModal()] : login ? [loginScreen(loginCtx())] : pair ? [pairModal(state.pair, PAIR_ACT, state.pairBusy, Date.now(), shake)] : dev ? [dev] : []));
   $('#app').inert = open;
   if (dev) {
     // 처음 띄울 때는 [취소]에 둔다(끊기는 되돌릴 수 없어서 Enter 한 번으로 끊기지 않게)
     if (focus) root.querySelector('[data-act=device-confirm-back], [data-act=px-confirm-back]')?.focus();
+    return;
+  }
+  if (pair) {
+    // 6자리 칸: 처음 띄울 때·틀린 뒤는 첫 빈 칸에. 끝 화면은 주 단추에.
+    if (focus || shake) (root.querySelector('.sas-box:not(:disabled)') ? root.querySelectorAll('.sas-box')[Math.min(state.pairCode.length, 5)] : root.querySelector('.modal-acts .sx-btn-primary:not(:disabled)'))?.focus();
     return;
   }
   const i = open && focus ? root.querySelector(pw ? '.doc-pw' : '.acct-code, .acct-password, .acct-email, [data-act=account-reset-done]') : null;
@@ -2777,7 +2795,7 @@ window.sax.onEvent((ev) => {
   if (ev.type === 'pair') {
     const prev = state.pair?.step;
     state.pair = ev.pair;
-    if (state.pair?.step !== 'awaiting_sas') state.pairCode = '';
+    if (state.pair?.step !== 'awaiting_sas' && state.pair?.step !== 'checking') state.pairCode = '';
     return void pairRender(prev);
   }
   if (ev.type === 'account') {
@@ -2884,6 +2902,7 @@ window.sax.onEvent((ev) => {
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && $('#modal').firstChild) {
     if (state.login) closeLogin();
+    else if ($('#modal [data-pair-modal]')) PAIR_ACT.cancel();
     else if ($('#modal [data-device-confirm]')) devices.close();
     else cancelPassword();
     return;

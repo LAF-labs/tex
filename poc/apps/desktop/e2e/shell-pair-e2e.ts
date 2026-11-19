@@ -67,6 +67,13 @@ async function press(sel: string, w: BrowserWindow = S!.win) {
   const ok = await js<boolean>(`(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (!b || b.disabled) return false; b.click(); return true; })()`, w);
   if (!ok) throw new Error(`no button ${sel}`);
 }
+/** 6칸에 넣기: main이 본 키 입력(keyDown) 뒤에 값을 넣는다(다 차면 렌더러가 바로 확인을 부른다). */
+async function typeKeys(sel: string, v: string, w: BrowserWindow = S!.win) {
+  w.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Shift' });
+  w.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Shift' });
+  await sleep(30);
+  await type(sel, v, w);
+}
 const type = (sel: string, v: string, w: BrowserWindow = S!.win) => js(`(() => { const i = document.querySelector(${JSON.stringify(sel)}); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event('input')); })()`, w);
 
 const claimKey = ed25519Keygen();
@@ -267,14 +274,15 @@ async function main() {
   });
   check('폰이 QR을 읽는다', phone.scan(qrText2!), phone.failure);
   const run = phone.run(await relay.joinRoom(phone.roomId, 'mobile'));
-  check('같은 칸이 6자리 단계로(폰 이름, 칸에 초점)', await until('sas', async () => (await step()) === 'awaiting_sas' && (await js<string>(`document.querySelector('[data-pair-phone]')?.textContent ?? ''`)) === '사장님 폰' && (await js<boolean>(`document.activeElement?.id === 'pair-sas'`))));
+  check('6자리 단계는 메인 창 안 모달(폰 이름, 6칸, 첫 칸에 초점, 뒤 화면은 inert)', await until('sas', async () => (await step()) === 'awaiting_sas' && (await js<string>(`document.querySelector('#modal [data-pair-modal] [data-pair-phone]')?.textContent ?? ''`)) === '사장님 폰' && (await js<number>(`document.querySelectorAll('#modal .sas-box').length`)) === 6 && (await js<boolean>(`document.activeElement?.dataset.sasI === '0' && document.querySelector('#app').inert`))));
+  check('6자리 모달도 따로 창이 아니다', BrowserWindow.getAllWindows().length === windowsBefore);
   check('6자리 단계에서도 화면 캡처 가림', S.win.isContentProtected());
-  await type('#pair-sas', phone.sas === '000000' ? '111111' : '000000');
-  await press('[data-act=pair-submit]');
-  check('틀린 6자리: 남은 횟수', await until('wrong', async () => (await js<string>(`document.querySelector('[data-pair-error]')?.dataset.pairError ?? ''`)) === 'pair.sas_wrong' && (await js<string>(`document.querySelector('[data-pair-error]').textContent`)).includes('2번 더')));
-  await type('#pair-sas', phone.sas!);
-  await press('[data-act=pair-submit]');
-  check('같은 칸이 연결됐어요로', await until('paired', async () => (await step()) === 'paired' && (await js<string>(`document.querySelector('[data-pair-done]')?.textContent ?? ''`)) === '연결됐어요'));
+  // 붙여넣기처럼 첫 칸에 6자리를 한 번에: 칸마다 나뉘고 다 차면 바로 확인한다([연결]을 누르지 않는다)
+  await typeKeys('.sas-box', phone.sas === '000000' ? '111111' : '000000');
+  check('틀린 6자리: 칸이 흔들리고 한 줄 안내(남은 횟수), 칸은 비우고 첫 칸에', await until('wrong', async () => (await js<string>(`document.querySelector('[data-pair-error]')?.dataset.pairError ?? ''`)) === 'pair.sas_wrong' && (await js<string>(`document.querySelector('[data-pair-error]').textContent`)).includes('2번 더') && (await js<boolean>(`!!document.querySelector('.sas-boxes.is-wrong') && [...document.querySelectorAll('.sas-box')].every((b) => b.value === '') && document.activeElement?.dataset.sasI === '0'`))));
+  check('남은 시간 표시', /^남은 시간 \d:\d\d$/.test(await js<string>(`document.querySelector('[data-pair-left]')?.textContent ?? ''`)));
+  await typeKeys('.sas-box', phone.sas!);
+  check('모달이 연결됐어요로', await until('paired', async () => (await step()) === 'paired' && (await js<string>(`document.querySelector('[data-pair-done]')?.textContent ?? ''`)) === '연결됐어요'));
   check('연결을 마치면 화면 캡처 가림을 푼다', !S.win.isContentProtected());
   const m = await run;
   check('폰: 계정 서비스 서명 acctClaim 검증 → 저장 전 확인 화면에 계정 이메일', m?.identity.account.email === EMAIL, phone.failure);

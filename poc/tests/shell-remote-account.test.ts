@@ -424,7 +424,9 @@ describe('셸 배선(소스 검사)', () => {
     // 6자리 확인은 클릭·Enter·Space 또는 메인 창 키 입력(숫자·붙여 넣기) 3초 안(0.1.5 실사용: 칸을 누르고 메일을 보는 사이 3초가 지난다). 다른 명령은 그대로 needGesture.
     assert.match(src, /'account\.verify': async \(p\) => \{[^}]*?needTyping\(3_000\);/);
     assert.match(src, /'account\.finishReset': async \(p\) => \{[^}]*?needTyping\(3_000\);/);
-    assert.equal((src.match(/needTyping\(/g) ?? []).length, 2, 'account.verify·account.finishReset 둘뿐');
+    // 폰 연결 6칸(pair.submit)도 다 차면 바로 확인한다(같은 규칙)
+    assert.match(src, /'pair\.submit': async \(p\) => \{[^}]*?needTyping\(3_000\);/);
+    assert.equal((src.match(/needTyping\(/g) ?? []).length, 3, 'account.verify·account.finishReset·pair.submit 셋뿐');
     assert.match(src, /if \(isTypingKey\(i\)\) typing\.note\(performance\.now\(\)\);/);
     assert.match(src, /if \(isGestureKey\(i\)\) gesture\.note\(performance\.now\(\)\);/);
   });
