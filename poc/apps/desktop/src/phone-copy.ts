@@ -45,12 +45,23 @@ export function lastIssues(runs: readonly RunView[]): Map<string, CopyCounterpar
   return new Map([...out].map(([k, { at, ...v }]) => (void at, [k, v])));
 }
 
-/** 거래처 → 사본 줄. 최근에 쓴 거래처가 앞이다(fitPhoneCopy가 뒤에서부터 뺀다). */
-export function copyCounterparties(cps: readonly Counterparty[], last: Map<string, CopyCounterparty['last']>, approver = false): CopyCounterparty[] {
+/** 거래처별 발급 건수(이 PC의 실행 기록 중 done). 폰 발급 시트가 "자주 발급한 곳" 순서로 쓴다. */
+export function issueCounts(runs: readonly RunView[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const r of runs) if (r.status === 'done' && r.doc === 'H-01' && r.counterparty.id) out.set(r.counterparty.id, (out.get(r.counterparty.id) ?? 0) + 1);
+  return out;
+}
+
+/**
+ * 거래처 → 사본 줄. 최근에 발급한 거래처가 앞이고(fitPhoneCopy가 뒤에서부터 뺀다), 같은 날이면 자주 발급한 곳, 그다음 상호 순이다.
+ * 폰은 이 순서를 그대로 목록에 쓴다(폰 발급 시트, 대표 요청 2026-11-19).
+ */
+export function copyCounterparties(cps: readonly Counterparty[], last: Map<string, CopyCounterparty['last']>, approver = false, counts: ReadonlyMap<string, number> = new Map()): CopyCounterparty[] {
   const recent = (c: Counterparty) => last.get(c.id)?.day ?? c.lastIssuedOn ?? '';
+  const many = (c: Counterparty) => counts.get(c.id) ?? 0;
   return [...cps]
     .filter((c) => CP_REF.test(c.id) && c.name.trim().length > 0)
-    .sort((a, b) => (recent(a) === recent(b) ? a.name.localeCompare(b.name, 'ko') : recent(a) < recent(b) ? 1 : -1))
+    .sort((a, b) => (recent(a) !== recent(b) ? (recent(a) < recent(b) ? 1 : -1) : many(b) - many(a) || a.name.localeCompare(b.name, 'ko')))
     .slice(0, 100)
     .map((c) => {
       const row: CopyCounterparty = { ref: c.id, name: clip(c.name.trim(), 60), phoneApprovable: approver && (!!c.lastIssuedOn || last.has(c.id)) };
@@ -165,7 +176,7 @@ interface OverviewLike {
 export async function buildPhoneCopy(src: PhoneCopySource): Promise<PhoneCopyBody> {
   const now = (src.now ?? Date.now)();
   const ap = (await src.approval?.().catch(() => null)) ?? null;
-  const body: PhoneCopyBody = { asOf: now, counterparties: copyCounterparties(src.counterparties(), lastIssues(src.runs()), !!ap?.approver) };
+  const body: PhoneCopyBody = { asOf: now, counterparties: copyCounterparties(src.counterparties(), lastIssues(src.runs()), !!ap?.approver, issueCounts(src.runs())) };
   if (ap?.approver) body.todayApprovalsLeft = ap.left;
   try {
     const o = (await src.bank('db.query.bank.overview')) as OverviewLike;
