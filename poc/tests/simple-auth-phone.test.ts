@@ -20,7 +20,10 @@ describe('간편인증 값', () => {
   it('인증 앱 코드·이름·생년월일·휴대폰 번호 검사', () => {
     const ok = { provider: 'kakao', name: '홍길동', birth: '19900101', phone: '01012345678' };
     assert.equal(checkIdentity(ok), null);
-    assert.equal(checkIdentity({ ...ok, provider: 'pass' }), 'simple.provider', 'PASS는 통신사 칸이 있어 아직 없다');
+    assert.equal(checkIdentity({ ...ok, provider: 'pass' }), 'simple.carrier', 'PASS는 통신사가 있어야 한다');
+    assert.equal(checkIdentity({ ...ok, provider: 'pass', carrier: 'SA' }), null);
+    assert.equal(checkIdentity({ ...ok, carrier: 'S' }), 'simple.carrier', 'PASS가 아니면 통신사가 없다');
+    assert.equal(checkIdentity({ ...ok, provider: 'nope' }), 'simple.provider');
     assert.equal(checkIdentity({ ...ok, birth: '19901301' }), 'simple.birth');
     assert.equal(checkIdentity({ ...ok, phone: '0101234' }), 'simple.phone');
     assert.equal(checkIdentity({ ...ok, name: '1234' }), 'simple.name');
@@ -31,6 +34,7 @@ describe('간편인증 값', () => {
     assert.ok(v.length <= 64);
     assert.deepEqual(parseSimpleAnswer(v), { op: 'request', d: { provider: 'kakaobank', birth: '19900101', phone: '01012345678', name: '남궁민수아름다운이름입니다' } });
     assert.deepEqual(parseSimpleAnswer('sa1:done'), { op: 'complete' });
+    assert.deepEqual(parseSimpleAnswer('sa1:req:pass-ka:19900101:01012345678:홍길동'), { op: 'request', d: { provider: 'pass', birth: '19900101', phone: '01012345678', name: '홍길동', carrier: 'KA' } });
     assert.equal(parseSimpleAnswer('sa1:req:kakao:1990:010:x'), null);
     assert.equal(parseSimpleAnswer(42), null);
   });

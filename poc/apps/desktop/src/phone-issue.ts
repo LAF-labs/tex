@@ -76,12 +76,12 @@ export function eventOf(r: RunView, runId: string, cmdId: string, at: number, ap
 const TURN_CODE = /^[a-z][a-z0-9_]*(\.[a-z0-9_]+){1,3}$/;
 /** 공동인증서 로그인 실패 차례(엔진 s7e)와, 폰이 시작한 간편인증 승인 대기(셸). 폰 [인증서로 다시 시도]·간편인증을 받는다. */
 const CERT_TURN: ReadonlySet<string> = new Set(['login.simple_auth', 'login.simple_sent']);
-/** 간편인증 답(human.response value): sa1:req:<앱>:<생년월일 8>:<휴대폰 숫자>:<이름> 또는 sa1:done */
-const SA_REQ = /^sa1:req:([a-z]{2,10}):(\d{8}):(01\d{8,9}):([^:]{1,20})$/;
-export function parseSimpleAnswer(v: unknown): { op: 'request'; d: { provider: string; birth: string; phone: string; name: string } } | { op: 'complete' } | null {
+/** 간편인증 답(human.response value): sa1:req:<앱>[-<통신사>]:<생년월일 8>:<휴대폰 숫자>:<이름> 또는 sa1:done. 통신사는 PASS만(예: pass-sa). */
+const SA_REQ = /^sa1:req:([a-z]{2,10})(?:-(s|k|l|sa|ka|la))?:(\d{8}):(01\d{8,9}):([^:]{1,20})$/;
+export function parseSimpleAnswer(v: unknown): { op: 'request'; d: { provider: string; birth: string; phone: string; name: string; carrier?: string } } | { op: 'complete' } | null {
   if (v === 'sa1:done') return { op: 'complete' };
   const m = typeof v === 'string' ? SA_REQ.exec(v) : null;
-  return m ? { op: 'request', d: { provider: m[1]!, birth: m[2]!, phone: m[3]!, name: m[4]! } } : null;
+  return m ? { op: 'request', d: { provider: m[1]!, birth: m[3]!, phone: m[4]!, name: m[5]!, ...(m[2] ? { carrier: m[2].toUpperCase() } : {}) } } : null;
 }
 export function turnCode(h: NonNullable<RunView['handoff']>, r?: RunView): string {
   if (h.code === 'login.simple_sent' && r?.simpleAuth && /^[a-z]{2,10}$/.test(r.simpleAuth.provider)) return `login.simple_sent.${r.simpleAuth.provider}`;
@@ -144,7 +144,7 @@ export interface PhoneIssuePorts {
   /** [인증서로 다시 시도](ShellRuns.retryCert). 없으면 폰의 cmd.resume을 받지 않는다. */
   retryCert?: (id: string) => Promise<unknown>;
   /** 폰에서 시작한 간편인증(ShellRuns.simpleAuth). 없으면 human.request를 보내지 않는다. */
-  simpleAuth?: (id: string, op: 'request' | 'complete', d?: { provider: string; name: string; birth: string; phone: string }) => Promise<unknown>;
+  simpleAuth?: (id: string, op: 'request' | 'complete', d?: { provider: string; name: string; birth: string; phone: string; carrier?: string }) => Promise<unknown>;
   get: (id: string) => RunView | undefined;
   /** 초안이 생겼다(판·대화에 카드를 그린다). */
   onDraft?: (run: RunView) => void;

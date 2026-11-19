@@ -3,8 +3,7 @@
 // 사장님이 휴대폰 인증 앱에서 승인하면 폰이 "승인했어요"를 보내고, 여기서 [인증 완료]를 누른 뒤 실행을 재개한다(s7f가 로그인 표지를 기다린다).
 // - 이 차례에서만 돈다(IrRun.simpleAuth가 HandedOff·login.simple_auth를 확인한다). 홈택스 밖으로는 가지 않는다(틀 주소를 확인한다).
 // - 값은 칸에만 넣고 로그·일지에 남기지 않는다(결과 코드만).
-// 통신사PASS는 통신사 고르기 칸이 더 있어 아직 넣지 않았다.
-// 칸 이름은 2026-11-19 홈택스 실화면(공개 로그인 화면, 요청은 누르지 않음)에서 읽은 것이다. [인증 요청] 뒤 화면([인증 완료])은 아직 실화면으로 보지 못했다.
+// 칸 이름은 2026-11-19 홈택스 실화면(공개 로그인 화면, 요청은 누르지 않음)에서 읽고 채워 보았다(카카오톡·네이버·토스·통신사PASS+통신사). [인증 요청] 뒤 화면([인증 완료])은 아직 실화면으로 보지 못했다.
 import type { Frame, Page } from 'playwright-core';
 
 /** 폰이 고르는 인증 앱 코드 → 홈택스 창의 글자 */
@@ -12,6 +11,7 @@ export const OACX_PROVIDERS: Readonly<Record<string, string>> = {
   kakao: '카카오톡',
   naver: '네이버',
   toss: '토스',
+  pass: '통신사PASS',
   kb: '국민인증서',
   shinhan: '신한인증서',
   woori: '우리인증서',
@@ -23,6 +23,8 @@ export const OACX_PROVIDERS: Readonly<Record<string, string>> = {
   banksalad: '뱅크샐러드',
 };
 export const OACX_PREFIXES = ['010', '011', '016', '017', '018', '019'] as const;
+/** 통신사PASS의 통신사 칸 값(홈택스 창 select, 2026-11-19 실화면) */
+export const OACX_CARRIERS: Readonly<Record<string, string>> = { S: 'SKT', K: 'KT', L: 'LGU+', SA: 'SKT알뜰폰', KA: 'KT알뜰폰', LA: 'LGU+알뜰폰' };
 
 export interface SimpleAuthIdentity {
   provider: string;
@@ -31,6 +33,8 @@ export interface SimpleAuthIdentity {
   birth: string;
   /** 숫자만 10~11자리(예: 01012345678) */
   phone: string;
+  /** 통신사PASS만: 통신사 칸 값(S·K·L·SA·KA·LA) */
+  carrier?: string;
 }
 
 /** 값 검사(폰에서 온 값). 틀리면 코드. */
@@ -39,6 +43,7 @@ export function checkIdentity(d: SimpleAuthIdentity): string | null {
   if (typeof d.name !== 'string' || !/^[가-힣A-Za-z][가-힣A-Za-z ]{0,19}$/.test(d.name.trim())) return 'simple.name';
   if (typeof d.birth !== 'string' || !/^(19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/.test(d.birth)) return 'simple.birth';
   if (typeof d.phone !== 'string' || !/^01[016789]\d{7,8}$/.test(d.phone)) return 'simple.phone';
+  if (d.provider === 'pass' ? !d.carrier || !Object.hasOwn(OACX_CARRIERS, d.carrier) : d.carrier !== undefined) return 'simple.carrier';
   return null;
 }
 
@@ -77,6 +82,11 @@ export async function oacxRequest(page: Page, d: SimpleAuthIdentity): Promise<Si
     const prefix = d.phone.slice(0, 3);
     await f.locator('#oacx_phone2').locator('xpath=preceding::select[1]').selectOption(prefix, { timeout: 5_000 });
     await f.locator('#oacx_phone2').fill(d.phone.slice(3), { timeout: 5_000 });
+    // 통신사PASS: 통신사 칸(값 S·K·L·SA·KA·LA를 가진 select)
+    if (d.carrier) {
+      const sel = f.locator('select').filter({ has: f.locator('option[value="SA"]') }).first();
+      await sel.selectOption(d.carrier, { timeout: 5_000 });
+    }
     const all = f.locator('#totalAgree');
     if (!(await all.isChecked().catch(() => false))) await f.locator('label[for="totalAgree"], #totalAgree').first().click({ timeout: 5_000 });
     if (!(await all.isChecked().catch(() => false))) return { ok: false, code: 'simple.agree' };

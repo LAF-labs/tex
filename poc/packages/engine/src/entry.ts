@@ -278,7 +278,7 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
     if (!runs) throw new Error('runs_not_ready');
     const op = params.op === 'complete' ? 'complete' : params.op === 'request' ? 'request' : null;
     if (!op) throw new Error('bad_params');
-    const d = op === 'request' ? { provider: String(params.provider ?? ''), name: String(params.name ?? ''), birth: String(params.birth ?? ''), phone: String(params.phone ?? '') } : undefined;
+    const d = op === 'request' ? { provider: String(params.provider ?? ''), name: String(params.name ?? ''), birth: String(params.birth ?? ''), phone: String(params.phone ?? ''), ...(typeof params.carrier === 'string' ? { carrier: params.carrier } : {}) } : undefined;
     return runs.simpleAuth(String(params.runId), op, d);
   }
   if (method === 'run.resume' || method === 'run.manualDone') {
