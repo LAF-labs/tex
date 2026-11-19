@@ -172,7 +172,7 @@ const handlers = {
     const r = await S.onb.answer(p);
     return { onboarding: await S.onb.view(), fill: r.fill ?? null, profiles: PROFILES };
   },
-  'request.send': async (p) => (S.replyDelay && (await sleep(S.replyDelay)), S.agentReply) ? { kind: 'agent', text: S.agentReply, show: [], filtered: null } : (/등본/.test(p.text) ? { kind: 'g24', doc: '주민등록표 등본' } : { kind: 'draft', run: S.sendSeq ? { ...mkRun('draft'), id: `run-${++S.sendSeq}` } : mkRun('draft') }),
+  'request.send': async (p) => S.reactOnly ? (await sleep(400), { kind: 'reaction', reaction: S.reactOnly }) : (S.replyDelay && (await sleep(S.replyDelay)), S.agentReply) ? { kind: 'agent', text: S.agentReply, show: [], filtered: null } : (/등본/.test(p.text) ? { kind: 'g24', doc: '주민등록표 등본' } : { kind: 'draft', run: S.sendSeq ? { ...mkRun('draft'), id: `run-${++S.sendSeq}` } : mkRun('draft') }),
   'counterparties.list': () => (EMPTY ? [] : cps),
   'docs.list': () => (EMPTY ? [] : S.withVault ? [vaultDoc, ...store.docs] : [...store.docs]),
   'issued.list': () => [],
@@ -399,6 +399,38 @@ const scenes = {
     await shot(win, '45-muse-chat');
     await sleep(2600);
     await shot(win, '46-muse-after-typing');
+    S.replyDelay = 0;
+    S.agentReply = null;
+  },
+  // 말풍선 반응(ADR-057): 일을 맡기면 👀를 먼저 달고 결과만 말한다, 고맙다는 말에는 반응만 하고 점 셋을 바로 거둔다
+  async react(win) {
+    const say = (t) => js(win, `(() => { const i = document.querySelector('#composer'); i.value = ${'`'}${'${'}t${'}'}${'`'}; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`.replace('${t}', t));
+    S.agentReply = 'B상사 55만원(부가세 별도) 카드를 만들었어요. 홈택스에서 준비하고 승인 전에 한 번 더 보여 드릴게요.';
+    S.replyDelay = 2400;
+    await say('B상사 55만원 세금계산서 끊어줘');
+    await sleep(500);
+    ev(win, { type: 'chat-reaction', reaction: 'eyes' });
+    await sleep(600);
+    await shot(win, '47-react-working');
+    await sleep(1800);
+    await shot(win, '48-react-result');
+    S.replyDelay = 0;
+    S.agentReply = null;
+    S.reactOnly = 'pray';
+    await say('고마워');
+    await sleep(250);
+    await shot(win, '49-react-waiting');
+    await sleep(500);
+    await shot(win, '50-reaction-only');
+    // 맞장구가 이어지면(대표 피드백 2026-11-19) 두 번째는 반응을 달고 한 문장으로 답한다
+    S.reactOnly = null;
+    S.agentReply = '별말씀을요. 또 필요하면 불러 주세요.';
+    S.replyDelay = 1200;
+    await say('고마워');
+    await sleep(400);
+    ev(win, { type: 'chat-reaction', reaction: 'pray' });
+    await sleep(1300);
+    await shot(win, '51-reaction-repeat-reply');
     S.replyDelay = 0;
     S.agentReply = null;
   },
@@ -833,7 +865,7 @@ Object.assign(scenes, {
   },
 });
 
-const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'browser', 'replace', 'openBank', 'muse', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'px', 'pair', 'newPc', 'bankAuto', ...(EMPTY ? ['empty'] : [])];
+const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'browser', 'replace', 'openBank', 'muse', 'react', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'px', 'pair', 'newPc', 'bankAuto', ...(EMPTY ? ['empty'] : [])];
 const agreed = { version: 'pv', choice: 'agreed', at: '' };
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {

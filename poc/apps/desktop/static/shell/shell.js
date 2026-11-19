@@ -46,6 +46,7 @@ const state = {
   fill: [], // 에이전트가 되물을 때 입력창 위에 띄우는 채우기 칩 { label, text, cp }
   composing: false, // 입력창에서 타이핑·클릭을 시작했다(칩을 숨긴다). 보내면 풀린다
   agentAsk: false, // 대화 에이전트가 되묻는 중(답 상자의 칩으로 답한다). 빠른 실행 칩을 숨긴다
+  lastMe: null, // 마지막에 보낸 내 말풍선(반응 알약이 붙는 곳, ADR-057)
   waitEl: null, // 답을 기다리는 줄(진행 단계 이벤트가 글자를 바꾼다)
   barActive: false,
   board: null, // 이번 달 판(main이 계산, board.ts). 판에는 승인 버튼이 없다(ADR-021·033)
@@ -878,8 +879,22 @@ async function send() {
   for (const b of chat.thread.querySelectorAll('[data-act="intent-retry"], [data-agent-chip]')) b.disabled = true;
   autoGrow();
   renderQuick();
-  appendThread(h('div', { class: 'sx-me' }, text));
+  const me = h('div', { class: 'sx-me' }, text);
+  appendThread(me);
+  state.lastMe = me;
   await ask(text, vat);
+}
+
+/** 판정이 고른 반응 허용 목록(ADR-057, @sax/chat-core REACTIONS와 같다). 이름 밖의 값은 그리지 않는다. */
+const REACTION_EMOJI = { thumbs_up: '👍', eyes: '👀', check: '✅', pray: '🙏' };
+const REACTION_LABEL = { thumbs_up: '좋아요', eyes: '보고 있어요', check: '확인', pray: '감사해요' };
+/** 사용자 말풍선 아래 귀퉁이에 반응 알약을 단다. 같은 말에 또 오면 바꾼다(하나만). */
+function reactTo(el, reaction) {
+  if (!el?.isConnected || !Object.hasOwn(REACTION_EMOJI, reaction)) return;
+  el.querySelector(':scope > .sx-react')?.remove();
+  el.classList.add('has-reaction');
+  el.dataset.reaction = reaction;
+  el.append(h('span', { class: 'sx-react', role: 'img', 'aria-label': REACTION_LABEL[reaction] }, REACTION_EMOJI[reaction]));
 }
 
 /**
@@ -930,6 +945,8 @@ async function ask(text, vat) {
     return;
   }
   if (r.kind === 'agent') return renderAgent(r);
+  // 반응만(ADR-057): 답 말풍선 없이 내 말에 이모지 하나. 점 셋은 위 finally에서 이미 거뒀다.
+  if (r.kind === 'reaction') return void reactTo(state.lastMe, r.reaction);
   // 세무사 꾸러미 요청: main이 그 달 꾸러미를 만들었다. 카드의 [꾸러미 열기]는 같은 달 꾸러미 화면으로 간다.
   if (r.kind === 'pack') {
     appendThread(h('div', { class: 'sx-app', 'data-pack-reply': r.pack.month }, h('p', {}, `${r.pack.label} 세무사 꾸러미를 만들었어요.`), packUi.chatCard(r.pack, (m) => (packUi.select(m), go('bundle')))));
@@ -2804,6 +2821,8 @@ window.sax.onEvent((ev) => {
     return;
   }
   if (ev.type === 'open-screen' && typeof ev.screen === 'string') return void openScreen(ev.screen);
+  // 일을 맡긴 말에 먼저 붙는 접수 표시(👀). 점 셋은 그대로 돌고 답은 결과만 말한다.
+  if (ev.type === 'chat-reaction') return void reactTo(state.lastMe, ev.reaction);
   if (ev.type === 'chat-progress') {
     const el = state.waitEl;
     if (el && Object.hasOwn(PROGRESS_TEXT, ev.phase)) {

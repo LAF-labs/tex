@@ -235,7 +235,7 @@ export interface ShellOptions {
 }
 
 /** 말풍선 반응(ADR-057)을 켰는가. 반응 알약 화면(static/shell/shell.js reactTo)과 같은 커밋에서 켠다. */
-export const CHAT_REACTIONS_ON = false;
+export const CHAT_REACTIONS_ON = true;
 
 /** ShellOptions.remote. */
 export interface RemoteWiring {
