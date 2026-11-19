@@ -3,8 +3,6 @@
 /** 끝처리 규칙. floor_10 = 10원 미만 절사, round_1 = 원 미만 반올림(0.5 올림) */
 export type Rounding = 'floor_1' | 'floor_10' | 'floor_100' | 'floor_1000' | 'round_1' | 'round_10';
 
-export const ROUNDINGS: readonly Rounding[] = ['floor_1', 'floor_10', 'floor_100', 'floor_1000', 'round_1', 'round_10'];
-
 const unitOf = (r: Rounding): bigint => BigInt(r.split('_')[1]!);
 
 /** 유리수 num/den(den > 0, num ≥ 0)을 규칙대로 원 단위 정수로 */
