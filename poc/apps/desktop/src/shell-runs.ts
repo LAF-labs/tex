@@ -781,6 +781,21 @@ export class ShellRuns extends EventEmitter implements Drafts {
     return [...this.runs.values()].some((x) => ['preparing', 'turn', 'waiting', 'issuing'].includes(x.status));
   }
 
+  /** 지금 진행 중인 실행(한 번에 하나, 08 §5). 없으면 null. */
+  activeRun(): RunView | null {
+    return [...this.runs.values()].find((x) => this.isActive(x.id)) ?? null;
+  }
+
+  /**
+   * 새 초안으로 바꿔도 되는 진행 중 실행인가(대표 지적 2026-11-19: 정정했는데 앞 건이 끝나야 한다며 [중지]를 누르게 했다).
+   * 승인 전 준비(홈택스 칸에 넣고 되읽기)만이다. 승인을 보냈거나 게이트를 지났거나 발급 중이면 바꾸지 않는다. 묶음·예행·증명서는 그대로 둔다.
+   */
+  replaceable(id: string): boolean {
+    const r = this.runs.get(id);
+    if (!r || !['preparing', 'turn', 'waiting'].includes(r.status) || r.cert || r.batch || r.rehearsal) return false;
+    return !(r.approvedPending === true || r.handoff?.afterGate === true || this.stopEarly.has(id));
+  }
+
   /** 진행 중인 실행이 하나라도 있는가(내 사업장 저장을 막는다). */
   anyActive(): boolean {
     return this.busy();
@@ -847,6 +862,14 @@ export class ShellRuns extends EventEmitter implements Drafts {
     if (!r) return;
     r.notices = [...(r.notices ?? []).filter((t) => t !== text), text];
     if (retry) r.retry = retry;
+    this.emit('update', r);
+  }
+
+  /** 그 실행 카드에만 한 줄을 붙인다(notice와 달리 진행 중인 다른 실행으로 옮기지 않는다). */
+  noteOn(runId: string, text: string): void {
+    const r = this.runs.get(runId);
+    if (!r) return;
+    r.notices = [...(r.notices ?? []).filter((t) => t !== text), text];
     this.emit('update', r);
   }
 

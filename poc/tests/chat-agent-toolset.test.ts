@@ -60,7 +60,10 @@ describe('chat_agent 머리말', () => {
     assert.match(p, /kind tax_advice/);
     assert.match(p, /# 데이터 규칙/);
     assert.match(p, /발급·전송 도구는 없다/);
-    assert.match(p, /\[홈택스에서 준비\]/);
+    assert.match(p, /\[승인하고 발급\]/);
+    // 카드가 뜨면 앱이 바로 준비한다(0클릭, 2026-11-13). 사장님께 [홈택스에서 준비]·[중지]를 누르라고 하지 않는다(2026-11-19)
+    assert.doesNotMatch(p, /\[홈택스에서 준비\]를 눌러/);
+    assert.match(p, /\[중지\]를 누르라고 하지 않는다/);
     const examples = [...p.matchAll(/\{r\d+\.[a-z]+\.[a-z]+\}/g)].map((m) => m[0]);
     assert.ok(examples.length >= 2);
     for (const s of examples) assert.match(s, slotPattern, s);
