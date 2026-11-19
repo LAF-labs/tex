@@ -31,7 +31,7 @@ import {
   type ToolCall,
 } from '@sax/model';
 import type { Egress } from '@sax/net';
-import { AGENT_SHOW_MAX, ReplyShapeError, TOOL_NEEDS, braceTokens, checkAgentReply, chatInput, gluedName, parseKrw, registerChatRecords, type ToolNeed } from '@sax/chat-core';
+import { AGENT_SHOW_MAX, OPEN_SCREENS, ReplyShapeError, TOOL_NEEDS, braceTokens, checkAgentReply, chatInput, gluedName, parseKrw, registerChatRecords, type OpenScreen, type ToolNeed } from '@sax/chat-core';
 import { CHAT_MAP_IDLE_MS, ChatTokenMaps, TOKEN_RE, detokenize, type Redactor } from '@sax/redaction';
 import { ChatError, chatSecretShaped, errorOf, type ChatErrorCode } from './chat.ts';
 import { INTENT_TEXT_MAX } from './intent.ts';
@@ -67,6 +67,8 @@ export const CHAT_AGENT_DONE_TEXT: Partial<Record<ToolStatus, string>> = {
   ok: '찾은 기록을 아래 표로 보여 드렸어요.',
   empty: '찾는 기록이 아직 없어요.',
   not_set_up: '아직 계좌를 연결하지 않아서 볼 수 없어요. 설정 > 계좌 연결에서 먼저 이어 주세요.',
+  // 화면을 연 턴의 답은 모델이 쓴다. 이 문장은 답이 검사에 걸렸을 때만(조회 되풀이·슬롯).
+  opened: '말씀하신 화면을 열었어요.',
 };
 /** 엔진이 조회 되풀이로 턴을 닫을 때의 문장. 슬롯은 main이 결과 값으로 채운다. */
 export const CHAT_AGENT_LOOKUP_TEXT = (ref: string): string => `{${ref}.count}건, 합계 {${ref}.sum.total}이에요. 가장 최근은 {${ref}.first.date} {${ref}.first.counterparty} 건이에요.`;
@@ -100,7 +102,7 @@ const RETRY_CODES: readonly ChatErrorCode[] = ['chat.unavailable', 'chat.budget_
 /** 게이트웨이 respond 스키마의 replay maxItems */
 const REPLAY_MAX = 12;
 
-export const TOOL_STATUSES = ['ok', 'partial', 'empty', 'unknown_counterparty', 'not_set_up', 'card_shown', 'needs_input', 'setup_missing', 'card_updated', 'no_such_draft', 'not_editable', 'discarded'] as const;
+export const TOOL_STATUSES = ['ok', 'partial', 'empty', 'unknown_counterparty', 'not_set_up', 'card_shown', 'needs_input', 'setup_missing', 'card_updated', 'no_such_draft', 'not_editable', 'discarded', 'opened'] as const;
 export type ToolStatus = (typeof TOOL_STATUSES)[number];
 // 대화 경로 가림 규칙·금액 읽기는 @sax/chat-core로 옮겼다(폰과 같은 코드, ADR-047 결정 4). 이름은 여기서 그대로 다시 내보낸다.
 export { draftDate, issueDateRule, lineSupply, parseQuantity, shortDate, type IssueDateRule } from '@sax/chat-core';
@@ -145,7 +147,8 @@ export type DomainCall =
   | { tool: 'cash_flow'; monthOffset: number }
   | ({ tool: 'invoice_draft'; counterpartyId: string; amount: DraftAmount; vat: Vat | null; item: string | null } & DraftExtra)
   | ({ tool: 'draft_edit'; draft: string; amount: DraftAmount; vat: Vat | null; item: string | null } & DraftExtra)
-  | { tool: 'draft_discard'; draft: string };
+  | { tool: 'draft_discard'; draft: string }
+  | { tool: 'open_screen'; screen: OpenScreen };
 
 /** 검사를 마친 답. filtered가 있으면 text는 엔진 고정 문구다. */
 export interface AgentReply {
@@ -240,7 +243,7 @@ const validFrame: ValidateFunction = ajv.compile({
 });
 
 /** 도구마다 결과 ref의 종류(조회 결과 r#, 카드 d#) */
-const REF_KIND: Record<ChatAgentToolName, 'r' | 'd'> = { sales_summary: 'r', invoice_history: 'r', receivables: 'r', payables: 'r', cash_flow: 'r', invoice_draft: 'd', draft_edit: 'd', draft_discard: 'd' };
+const REF_KIND: Record<ChatAgentToolName, 'r' | 'd'> = { sales_summary: 'r', invoice_history: 'r', receivables: 'r', payables: 'r', cash_flow: 'r', invoice_draft: 'd', draft_edit: 'd', draft_discard: 'd', open_screen: 'r' };
 const engineAnswer = (status: 'unknown_counterparty' | 'no_such_draft'): ToolOutput => ({ ref: null, status, fields: null, needs: null });
 /**
  * 풀리지 않은 거래처 인자가 사장님 이번 문장의 낱말인가: 이번 문장에 있는 토큰이면 그 원값, 토큰 없는 말이면 문장에 글자 그대로 있을 때만.
@@ -633,6 +636,10 @@ export class ChatAgent {
       draft_discard: () => {
         const d = draft(a.draft);
         return d ? { tool: 'draft_discard', draft: d } : engineAnswer('no_such_draft');
+      },
+      open_screen: () => {
+        if (!(OPEN_SCREENS as readonly unknown[]).includes(a.screen)) throw new ChatError('chat.bad_response');
+        return { tool: 'open_screen', screen: a.screen as OpenScreen };
       },
     };
     if (!Object.hasOwn(parse, tool)) throw new ChatError('chat.bad_response');

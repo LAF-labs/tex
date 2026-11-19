@@ -18,6 +18,13 @@ const DRAFT_EXTRA = {
   unit_price: NULLABLE_STRING,
 };
 
+/**
+ * 앱 안 화면을 바로 여는 도구(open_screen)의 대상(대표 지적 2026-11-19: 앱에서 할 수 있는 일을 말해도 할 수 있는 일 목록만 되풀이했다, "에이전틱하지 않잖아").
+ * 화면은 PC 앱에만 있다(폰 도구 표에서 뺀다). 여는 것까지만 하고 값은 사장님이 그 화면에서 넣는다(비밀 값은 대화로 받지 않는다).
+ */
+export const OPEN_SCREENS = ['issue_auth', 'business', 'bank', 'devices', 'billing', 'counterparties', 'docs', 'receivables', 'chrome', 'security_program'] as const;
+export type OpenScreen = (typeof OPEN_SCREENS)[number];
+
 /** 도구 표. counterparty는 거래처 토큰, amount는 금액 토큰이나 결과 슬롯, draft는 카드 ref(d#)다. */
 export const CHAT_AGENT_TOOLS = [
   { name: 'sales_summary', parameters: obj({ month_offset: { type: 'integer', minimum: -12, maximum: 0 } }) },
@@ -28,6 +35,7 @@ export const CHAT_AGENT_TOOLS = [
   { name: 'invoice_draft', parameters: obj({ counterparty: { type: 'string' }, amount: NULLABLE_STRING, vat: VAT, item: NULLABLE_STRING, ...DRAFT_EXTRA }) },
   { name: 'draft_edit', parameters: obj({ draft: { type: 'string' }, amount: NULLABLE_STRING, vat: VAT, item: NULLABLE_STRING, ...DRAFT_EXTRA }) },
   { name: 'draft_discard', parameters: obj({ draft: { type: 'string' } }) },
+  { name: 'open_screen', parameters: obj({ screen: { type: 'string', enum: OPEN_SCREENS } }) },
 ] as const;
 export type ChatAgentToolName = (typeof CHAT_AGENT_TOOLS)[number]['name'];
 
@@ -80,7 +88,7 @@ export type Vat = 'separate' | 'included';
 // ── 폰 대화(chat_phone, ADR-047 결정 3) ──
 
 /** 폰에 없는 도구(장부 전체·통장 거래내역이 있어야 답하는 조회. 낼 돈·돈 흐름은 폰 사본에 아직 없다). 이런 요청은 defer로 답하고 PC가 켜지면 PC가 이어받는다. */
-export const PHONE_OMITTED_TOOLS = ['sales_summary', 'payables', 'cash_flow'] as const;
+export const PHONE_OMITTED_TOOLS = ['sales_summary', 'payables', 'cash_flow', 'open_screen'] as const;
 /** 폰 대화 도구 표: chat_agent 표에서 폰에 없는 것만 뺀다(이름·인자 모양은 PC와 같다). */
 export const CHAT_PHONE_TOOLS = CHAT_AGENT_TOOLS.filter((t) => !(PHONE_OMITTED_TOOLS as readonly string[]).includes(t.name)) as ReadonlyArray<Exclude<(typeof CHAT_AGENT_TOOLS)[number], { name: (typeof PHONE_OMITTED_TOOLS)[number] }>>;
 export type ChatPhoneToolName = Exclude<ChatAgentToolName, (typeof PHONE_OMITTED_TOOLS)[number]>;

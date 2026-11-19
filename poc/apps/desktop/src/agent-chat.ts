@@ -6,6 +6,9 @@
 import { draftDate, issueDateRule, lineSupply, parseQuantity } from '@sax/engine';
 import type { AgentReply, DomainCall, DraftExtra, ScreenFrame, ShownReply, StepParams, StepResult, ToolOutput, Vat } from '@sax/engine';
 import { CHAT_ERROR_TEXT } from './chat-reply.ts';
+
+/** 대화가 열 수 있는 앱 안 화면(@sax/chat-core OPEN_SCREENS) */
+export type OpenScreen = Extract<DomainCall, { tool: 'open_screen' }>['screen'];
 import { fillWithJosa, finalOf, fixJosa } from './josa.ts';
 import { cleanItem, split } from './shell-model.ts';
 
@@ -148,6 +151,8 @@ export interface AgentChatPorts {
   /** KST YYYY-MM-DD */
   today(): string;
   onProgress(phase: AgentPhase): void;
+  /** 대화가 고른 앱 안 화면을 연다(open_screen). 렌더러가 답을 그린 뒤 그 화면으로 간다. */
+  openScreen?(screen: OpenScreen): void;
   now?: () => number;
 }
 
@@ -202,6 +207,7 @@ const TOOL_PHASE: Record<DomainCall['tool'], Exclude<AgentPhase, 'thinking'>> = 
   invoice_draft: 'drafting',
   draft_edit: 'drafting',
   draft_discard: 'drafting',
+  open_screen: 'reading',
 };
 
 const out = (status: ToolOutput['status'], ref: string | null = null, needs: ToolNeed[] | null = null): ToolOutput => ({ ref, status, fields: null, needs });
@@ -391,6 +397,11 @@ export class AgentChat {
         if ('setup' in r) return out('setup_missing');
         created.push(r.runId);
         return out('card_shown', this.cardRef(s, r.runId));
+      }
+      case 'open_screen': {
+        // 앱 안 화면을 연다(보안카드 등록·계좌 연결·기기 연결 등). 값은 사장님이 그 화면에 넣는다. 열 곳이 없으면(시험 대역) 그래도 opened로 닫는다.
+        this.ports.openScreen?.(call.screen);
+        return out('opened');
       }
       case 'draft_edit':
       case 'draft_discard': {

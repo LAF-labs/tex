@@ -1268,6 +1268,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       // 시연: 씨앗 이력(승인번호 있는 것)도 지난 발급이다. 제품은 원장만.
       pastIssued: () => (seed?.past ?? []).flatMap((x) => (x.kind === 'issued' && x.approvalNo && x.who && x.day ? [{ counterpartyId: cps.find((c) => c.name === x.who)?.id ?? null, counterparty: x.who, date: x.day, total: x.total, approvalNo: x.approvalNo, documentId: x.documentId, mail: null }] : [])),
       onProgress: (phase: AgentPhase) => send({ type: 'chat-progress', phase }),
+      // 화면 열기(open_screen): 렌더러가 답을 그린 뒤 그 화면으로 간다. 값은 사장님이 그 화면에서 넣는다.
+      openScreen: (screen: string) => send({ type: 'open-screen', screen }),
     }),
   );
   const finishReply = (reply: ReturnType<typeof interpret>, via: 'model' | 'offline', note: string | null, sent: SentTo[]) => {

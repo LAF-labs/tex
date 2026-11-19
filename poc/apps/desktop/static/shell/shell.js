@@ -611,6 +611,27 @@ async function securityGuide() {
   appendThread(wrap);
 }
 
+/**
+ * 대화가 연 앱 안 화면(open_screen, main 'open-screen' 이벤트). 답이 대화에 그려진 뒤 그 화면으로 간다(대표 지적 2026-11-19 "에이전틱하지 않잖아").
+ * 화면 이름은 @sax/chat-core OPEN_SCREENS와 같다. 모르는 이름은 무시한다.
+ */
+const SCREEN_TAB = { issue_auth: 'auth', business: 'biz', bank: 'bank', devices: 'devices', billing: 'billing' };
+const SCREEN_VIEW = { counterparties: 'cps', docs: 'docs', receivables: 'bank' };
+function openScreen(screen) {
+  const tab = Object.hasOwn(SCREEN_TAB, screen) ? SCREEN_TAB[screen] : null;
+  const view = Object.hasOwn(SCREEN_VIEW, screen) ? SCREEN_VIEW[screen] : null;
+  if (!tab && !view && screen !== 'chrome' && screen !== 'security_program') return;
+  // 답 문장이 먼저 보이게 조금 뒤에 연다
+  setTimeout(async () => {
+    if (screen === 'chrome') return chromeGuide();
+    if (screen === 'security_program') return securityGuide();
+    if (view) return go(view);
+    state.setTab = tab;
+    await go('settings');
+    setTab(tab);
+  }, 700);
+}
+
 async function reopenSetup(item) {
   if (item === 'chrome') return chromeGuide();
   if (item === 'security') return securityGuide();
@@ -2731,6 +2752,7 @@ window.sax.onEvent((ev) => {
     if (state.view === 'settings' || loginGate()) render();
     return;
   }
+  if (ev.type === 'open-screen' && typeof ev.screen === 'string') return void openScreen(ev.screen);
   if (ev.type === 'chat-progress') {
     const el = state.waitEl;
     if (el && Object.hasOwn(PROGRESS_TEXT, ev.phase)) {
