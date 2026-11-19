@@ -88,7 +88,7 @@ export const PHONE_ERROR_TEXT: Record<PhoneChatErrorCode, { text: string; retry:
   'chat.daily_limit': { text: '오늘 쓸 수 있는 대화를 다 썼어요. 새벽 4시에 다시 채워져요.', retry: false },
   'chat.subscription_required': { text: '무료 체험이 끝났어요. 구독하면 대화를 다시 쓸 수 있어요.', retry: false },
   'chat.rate_limited': { text: '요청이 잠깐 몰렸어요. 조금 뒤에 다시 보내 주세요.', retry: true },
-  'chat.device_suspended': { text: '이 폰의 연결이 정지되어 있어요. PC의 설정에서 폰 연결을 확인해 주세요.', retry: false },
+  'chat.device_suspended': { text: '이 폰의 연결이 정지되어 있어요. 설정의 연결된 기기에서 확인해 주세요.', retry: false },
   'chat.input_too_large': { text: '문장이 길어요. 두세 번에 나눠서 말해 주세요.', retry: false },
   'chat.secret_rejected': { text: '비밀번호 같은 값은 대화창에 쓰지 말아 주세요. 이 문장은 보내지 않았어요.', retry: false },
   'chat.turn_limit': { text: '한 번에 하기엔 일이 많아요. 하나씩 나눠서 말씀해 주세요.', retry: false },
