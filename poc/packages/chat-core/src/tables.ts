@@ -92,17 +92,26 @@ export type Vat = 'separate' | 'included';
 // ── 폰 대화(chat_phone, ADR-047 결정 3) ──
 
 /** 폰에 없는 도구(장부 전체·통장 거래내역이 있어야 답하는 조회. 낼 돈·돈 흐름은 폰 사본에 아직 없다). 이런 요청은 defer로 답하고 PC가 켜지면 PC가 이어받는다. */
-export const PHONE_OMITTED_TOOLS = ['sales_summary', 'payables', 'cash_flow', 'open_screen', 'reply'] as const;
-/** 폰 대화 도구 표: chat_agent 표에서 폰에 없는 것만 뺀다(이름·인자 모양은 PC와 같다). */
-export const CHAT_PHONE_TOOLS = CHAT_AGENT_TOOLS.filter((t) => !(PHONE_OMITTED_TOOLS as readonly string[]).includes(t.name)) as ReadonlyArray<Exclude<(typeof CHAT_AGENT_TOOLS)[number], { name: (typeof PHONE_OMITTED_TOOLS)[number] }>>;
-export type ChatPhoneToolName = Exclude<ChatAgentToolName, (typeof PHONE_OMITTED_TOOLS)[number]>;
+export const PHONE_OMITTED_TOOLS = ['sales_summary', 'payables', 'cash_flow', 'reply'] as const;
+/** 폰 앱 화면(말 한마디로 여는 곳). capture: 영수증·종이 증빙 찍기, cash: 현금 매출 적기, bizreg: 사업자등록증으로 거래처 추가, issue: 발급 작성(카드 없이) */
+export const PHONE_SCREENS = ['capture', 'cash', 'bizreg', 'issue'] as const;
+export type PhoneScreen = (typeof PHONE_SCREENS)[number];
+/** 폰에만 있는 도구: 앱 화면을 연다(사장님이 누를 단추를 대화에 붙인다. 값은 없다). PC의 open_screen(OPEN_SCREENS)과 이름은 같고 화면 목록이 다르다. */
+export const PHONE_ONLY_TOOLS = [{ name: 'open_screen', parameters: obj({ screen: { type: 'string', enum: [...PHONE_SCREENS] } }) }] as const;
+const PHONE_OWN = new Set<string>([...PHONE_OMITTED_TOOLS, ...PHONE_ONLY_TOOLS.map((t) => t.name)]);
+/** 폰 대화 도구 표: chat_agent 표에서 폰에 없는 것과 폰이 따로 갖는 것(open_screen)을 빼고(이름·인자 모양은 PC와 같다) 폰 화면 도구를 더한다. */
+export const CHAT_PHONE_TOOLS = [
+  ...CHAT_AGENT_TOOLS.filter((t) => !PHONE_OWN.has(t.name)),
+  ...PHONE_ONLY_TOOLS,
+] as ReadonlyArray<Exclude<(typeof CHAT_AGENT_TOOLS)[number], { name: (typeof PHONE_OMITTED_TOOLS)[number] | 'open_screen' }> | (typeof PHONE_ONLY_TOOLS)[number]>;
+export type ChatPhoneToolName = Exclude<ChatAgentToolName, (typeof PHONE_OMITTED_TOOLS)[number]> | (typeof PHONE_ONLY_TOOLS)[number]['name'];
 
 /** 답 종류: PC와 같고 defer(PC가 켜지면 이어서 할 일)만 더 있다. */
 export const PHONE_REPLY_KINDS = [...AGENT_REPLY_KINDS, 'defer'] as const;
 export type PhoneReplyKind = (typeof PHONE_REPLY_KINDS)[number];
 
 /** 폰 도구 결과의 status(폰 코어가 만들고 머리말이 뜻을 적는다. 시험이 머리말과 대조한다). */
-export const PHONE_TOOL_STATUSES = ['ok', 'empty', 'unknown_counterparty', 'not_on_phone', 'card_shown', 'needs_input', 'card_updated', 'no_such_draft', 'not_editable', 'discarded'] as const;
+export const PHONE_TOOL_STATUSES = ['ok', 'empty', 'unknown_counterparty', 'not_on_phone', 'card_shown', 'needs_input', 'card_updated', 'no_such_draft', 'not_editable', 'discarded', 'screen_shown'] as const;
 export type PhoneToolStatus = (typeof PHONE_TOOL_STATUSES)[number];
 
 /** 사본 상태([사실]의 "사본:" 줄): fresh(받은 지 하루 안), stale(그보다 오래됨), none(아직 받은 적 없음) */
