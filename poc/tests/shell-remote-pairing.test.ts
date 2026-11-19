@@ -123,6 +123,10 @@ describe('폰 연결: 룸 → QR → 6자리 → 대리 등록·목록·우편�
     assert.ok(s.client.calls.includes('POST /v1/devices/enroll') && s.client.calls.includes('PUT /v1/device-list') && s.client.calls.includes('GET /v1/acct-claim'));
     const t = JSON.stringify(logs);
     for (const bad of ['사장님', mob.sas!, EMAIL]) assert.ok(!t.includes(bad), bad);
+    // 설정 화면 연결 칸의 [닫기]: 화면만 쉬는 자리로(취소 기록·우편함 지우기 없음)
+    assert.equal(host.dismiss().step, 'idle');
+    assert.deepEqual(relayCalls, ['room', 'mailbox']);
+    assert.ok(!JSON.stringify(logs).includes('cancelled'));
   });
 
   it('6자리를 3번 틀리면 끝(pair.sas_locked), 우편함을 만들지 않는다', async () => {

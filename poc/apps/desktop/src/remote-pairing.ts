@@ -1,5 +1,5 @@
 // 폰 연결(S-03, D08 §4.2) main 쪽: 룸 열기 → QR → 폰 핸드셰이크 → 사용자가 폰의 6자리를 PC에 입력 → 7단계(대리 등록·목록·우편함·acctClaim) → pair.ok.
-// 이 파일은 Electron을 쓰지 않는다(창은 pair-window.ts). 화면(창)에 가는 값은 PairView뿐이고, QR은 SVG data URL 이미지로만 간다(remote-qr.ts, psk가 든 글자를 넘기지 않는다).
+// 이 파일은 Electron을 쓰지 않는다(배선은 shell-app.ts, 화면은 설정 > 기기 연결 안의 연결 칸 shell-pair.js). 화면에 가는 값은 PairView뿐이고, QR은 SVG data URL 이미지로만 간다(remote-qr.ts, psk가 든 글자를 넘기지 않는다).
 // - 계정 확인 주장(acctClaim)은 GET /v1/acct-claim을 받아 b64(JCS({claim, sig}))로 pair.ok에 싣는다(DeviceSession.acctClaimField).
 // - 우편함을 등록한 뒤 페어링이 실패하면 우편함을 지운다(D08 §4.2, 기기당 3회 상한을 아끼려고).
 // - 로그는 단계·결과 코드만(폰 이름·키·SAS·QR 없음).
@@ -12,14 +12,14 @@ export type QrImage = (text: string) => string;
 
 export interface PairView {
   step: 'idle' | 'opening' | 'waiting_phone' | 'awaiting_sas' | 'checking' | 'paired' | 'failed';
-  /** waiting_phone일 때만. SVG data URL(창은 <img src>로만 쓴다). */
+  /** waiting_phone일 때만. SVG data URL(화면은 <img src>로만 쓴다). */
   qr: string | null;
   /** QR 만료(ms). */
   expiresAt: number | null;
   /** 폰이 알린 이름(awaiting_sas 뒤, textContent로만 그린다). */
   phoneName: string | null;
   triesLeft: number | null;
-  /** 실패·틀린 입력 코드(문구는 창이 고른다). */
+  /** 실패·틀린 입력 코드(문구는 화면이 고른다). */
   error: string | null;
 }
 
@@ -167,7 +167,14 @@ export class PairingHost {
     return this.#view;
   }
 
-  /** [취소]·창 닫기. */
+  /** 연결을 마친 칸을 [닫기]: 화면만 쉬는 자리로 돌린다. 채널은 pair.ok를 보낸 뒤 closeAfterMs에 닫히니 여기서 끊지 않는다. 진행 중이면 cancel과 같다. */
+  dismiss(): PairView {
+    if (this.#view.step !== 'paired') return this.cancel();
+    this.#set(IDLE);
+    return this.#view;
+  }
+
+  /** [취소]·로그아웃. */
   cancel(): PairView {
     const step = this.#view.step;
     this.#gen++;
@@ -224,5 +231,5 @@ export class PairingHost {
   }
 }
 
-/** QR 수명(초). 창 문구용. */
+/** QR 수명(초). 화면 문구용. */
 export const PAIR_QR_TTL_SEC = QR_TTL_SEC;

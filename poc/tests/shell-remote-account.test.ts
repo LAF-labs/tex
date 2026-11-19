@@ -339,14 +339,14 @@ describe('데스크톱 계정: 이메일 6자리 → 첫 PC 등록 → 기기 �
     assert.match(read('apps/desktop/src/shell-app.ts'), /if \(opts\.remote\?\.pairing === false\) throw new Error\('pair_unavailable'\);/);
   });
 
-  it('[로그아웃] 배선: 실제 입력 3초, 발급 실행 중이면 거부, 폰 연결 창을 닫는다, 렌더러는 설정 > 계정의 [로그아웃] → 로그인 게이트', () => {
+  it('[로그아웃] 배선: 실제 입력 3초, 발급 실행 중이면 거부, 진행 중인 폰 연결을 그만둔다, 렌더러는 설정 > 계정의 [로그아웃] → 로그인 게이트', () => {
     const read = (f: string) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
     const src = read('apps/desktop/src/shell-app.ts');
-    assert.match(src, /'account\.signOut': async \(\) => \{\s*needGesture\(3_000\);\s*await accountInit\(\);\s*if \(runs\.anyActive\(\)\) throw new Error\('run_active'\);\s*pairWin\?\.close\(\);\s*pairWin = null;/);
+    assert.match(src, /'account\.signOut': async \(\) => \{\s*needGesture\(3_000\);\s*await accountInit\(\);\s*if \(runs\.anyActive\(\)\) throw new Error\('run_active'\);\s*pairReset\(\);/);
     const acct = read('apps/desktop/static/shell/shell-account.js');
     assert.match(acct, /onSignOut \? h\('div', \{ class: 'sx-actions' \}, btn\('로그아웃', onSignOut, 'sx-btn-quiet', \{ 'data-act': 'account-signout' \}\)/);
     const shell = read('apps/desktop/static/shell/shell.js');
-    assert.match(shell, /accountCard\(state\.account, openLogin, openPair, signOut\)/);
+    assert.match(shell, /accountCard\(state\.account, openLogin, pairRow, signOut\)/);
     assert.match(shell, /state\.account = await call\('account\.signOut', \{\}\);\s*state\.login = null;\s*render\(\);/);
   });
 

@@ -1,6 +1,7 @@
-// 폰 연결 e2e(S-03, remote-pairing.ts·pair-window.ts): 로그인 → 설정 > 기기 연결 [폰 연결] → main 소유 창(QR, 화면 캡처 차단) → 폰(MobilePairing)이 찍고
-// 폰의 6자리를 그 창에 넣는다 → 폰이 계정 서비스 서명 acctClaim을 검증한다. 계정·릴레이는 메모리 가짜, 금고 키는 소프트 키.
-// QR은 실제 인코더(qrcode-generator)로 main이 만든 이미지다. 폰 대신 창에 그려진 <img>를 캔버스로 읽어 jsQR(개발용)로 푼다.
+// 폰 연결 e2e(S-03, remote-pairing.ts·shell-pair.js): 로그인 → 설정 > 기기 연결 [폰 연결] → 그 자리에 펼쳐지는 연결 칸(QR, 그동안 창은 화면 캡처 차단)
+// → 폰(MobilePairing)이 찍고 폰의 6자리를 같은 칸에 넣는다 → 폰이 계정 서비스 서명 acctClaim을 검증한다 → 칸이 '연결됐어요'로 바뀌고 [닫기]로 쉬는 자리.
+// 따로 창은 뜨지 않는다. 계정·릴레이는 메모리 가짜, 금고 키는 소프트 키.
+// QR은 실제 인코더(qrcode-generator)로 main이 만든 이미지다. 폰 대신 화면에 그려진 <img>를 캔버스로 읽어 jsQR(개발용)로 푼다.
 // 실행: electron apps/desktop/e2e-dist/shell-pair-e2e.js. 앱 폴더·키체인·네트워크를 쓰지 않는다.
 import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
 import { randomBytes } from 'node:crypto';
@@ -231,19 +232,30 @@ async function main() {
   await type('.acct-code', '123456');
   check('로그인 끝: 연결된 폰 0대', await until('signed in', async () => js<boolean>(`document.querySelector('[data-account-phones]')?.dataset.accountPhones === '0'`)));
 
-  // [폰 연결] → main 소유 창
+  // [폰 연결] → 같은 화면의 연결 칸(따로 창 없음)
+  const windowsBefore = BrowserWindow.getAllWindows().length;
+  const step = () => js<string>(`document.querySelector('.pair-panel')?.dataset.pair ?? document.querySelector('[data-pair]')?.dataset.pair ?? ''`);
   await press('[data-act=pair-open]');
-  const pw = () => BrowserWindow.getAllWindows().find((w) => w !== S!.win && w.getTitle() === '폰 연결') ?? null;
-  check('폰 연결 창이 따로 뜬다', await until('pair window', () => !!pw()));
-  const w = pw()!;
-  check('QR 단계(main이 만든 SVG data URL 이미지)', await until('qr', async () => (await js<string>(`document.body.dataset.pair ?? ''`, w)) === 'waiting_phone' && (await js<boolean>(`(() => { const i = document.querySelector('img.qr'); return !!i && i.complete && i.naturalWidth > 0 && i.src.startsWith('data:image/svg+xml;base64,'); })()`, w))));
-  check('창에 SVG 요소를 넣지 않는다(이미지로만)', (await js<number>(`document.querySelectorAll('svg').length`, w)) === 0);
+  check('QR 단계(main이 만든 SVG data URL 이미지, 설정 화면 안)', await until('qr', async () => (await step()) === 'waiting_phone' && (await js<boolean>(`(() => { const i = document.querySelector('.pair-panel img.pair-qr-img'); return !!i && i.complete && i.naturalWidth > 0 && i.src.startsWith('data:image/svg+xml;base64,'); })()`))));
+  check('따로 창이 뜨지 않는다', BrowserWindow.getAllWindows().length === windowsBefore);
+  check('QR이 떠 있는 동안 창은 화면 캡처에서 가린다', S.win.isContentProtected());
+  check('연결 칸에 SVG 요소를 넣지 않는다(이미지로만)', (await js<number>(`document.querySelectorAll('.pair-panel svg').length`)) === 0);
+  check('남은 시간·단계 안내', /^\d:\d\d 안에 찍어 주세요$/.test(await js<string>(`document.querySelector('[data-pair-ttl]')?.textContent ?? ''`)) && (await js<number>(`document.querySelectorAll('.pair-steps li').length`)) === 3);
   // 폰 카메라 대신: 화면에 그려진 이미지를 캔버스에 옮겨 읽는다
-  const px = await js<{ w: number; d: number[] }>(`(() => { const i = document.querySelector('img.qr'); const n = 400; const c = document.createElement('canvas'); c.width = c.height = n; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, n, n); g.imageSmoothingEnabled = false; g.drawImage(i, 0, 0, n, n); return { w: n, d: Array.from(g.getImageData(0, 0, n, n).data) }; })()`, w);
+  const px = await js<{ w: number; d: number[] }>(`(() => { const i = document.querySelector('.pair-panel img.pair-qr-img'); const n = 400; const c = document.createElement('canvas'); c.width = c.height = n; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, n, n); g.imageSmoothingEnabled = false; g.drawImage(i, 0, 0, n, n); return { w: n, d: Array.from(g.getImageData(0, 0, n, n).data) }; })()`);
   const qrText = jsQR(Uint8ClampedArray.from(px.d), px.w, px.w)?.data ?? null;
   check('그려진 QR을 다시 읽는다', !!qrText && qrText.length > 20);
-  check('셸 렌더러에는 QR 글자가 없다', !!qrText && !(await js<string>(`document.documentElement.outerHTML`)).includes(qrText!));
-  check('창 페이지에도 QR 글자는 없다(이미지만)', !(await js<string>(`document.documentElement.outerHTML`, w)).includes(qrText!));
+  check('셸 렌더러에는 QR 글자가 없다(이미지만)', !!qrText && !(await js<string>(`document.documentElement.outerHTML`)).includes(qrText!));
+
+  // [취소] → 쉬는 자리, 다시 [폰 연결]
+  await press('[data-act=pair-cancel]');
+  check('[취소]: 쉬는 자리로', await until('cancel', async () => (await step()) === 'idle' && !(await js<boolean>(`!!document.querySelector('.pair-panel')`))));
+  check('취소하면 화면 캡처 가림을 푼다', !S.win.isContentProtected());
+  await press('[data-act=pair-open]');
+  check('다시 [폰 연결]: 새 QR', await until('qr2', async () => (await step()) === 'waiting_phone'));
+  const px2 = await js<{ w: number; d: number[] }>(`(() => { const i = document.querySelector('.pair-panel img.pair-qr-img'); const n = 400; const c = document.createElement('canvas'); c.width = c.height = n; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, n, n); g.imageSmoothingEnabled = false; g.drawImage(i, 0, 0, n, n); return { w: n, d: Array.from(g.getImageData(0, 0, n, n).data) }; })()`);
+  const qrText2 = jsQR(Uint8ClampedArray.from(px2.d), px2.w, px2.w)?.data ?? null;
+  check('새 QR은 앞 QR과 다르다', !!qrText2 && qrText2 !== qrText);
 
   // 폰: QR을 찍고 룸에 들어간다
   const phoneS = x25519Keygen();
@@ -253,22 +265,25 @@ async function main() {
     relayAllowlist: [RELAY_HOST],
     pairOkTimeoutMs: 20_000,
   });
-  check('폰이 QR을 읽는다', phone.scan(qrText!), phone.failure);
+  check('폰이 QR을 읽는다', phone.scan(qrText2!), phone.failure);
   const run = phone.run(await relay.joinRoom(phone.roomId, 'mobile'));
-  check('6자리 단계(폰 이름)', await until('sas', async () => (await js<string>(`document.body.dataset.pair ?? ''`, w)) === 'awaiting_sas' && (await js<string>(`document.querySelector('[data-pair-phone]')?.textContent ?? ''`, w)) === '사장님 폰'));
-  await type('#sas', phone.sas === '000000' ? '111111' : '000000', w);
-  await press('[data-act=pair-submit]', w);
-  check('틀린 6자리: 남은 횟수', await until('wrong', async () => (await js<string>(`document.querySelector('[data-pair-error]')?.dataset.pairError ?? ''`, w)) === 'pair.sas_wrong' && (await js<string>(`document.querySelector('[data-pair-error]').textContent`, w)).includes('2번 남음')));
-  await type('#sas', phone.sas!, w);
-  await press('[data-act=pair-submit]', w);
-  check('연결했어요', await until('paired', async () => (await js<string>(`document.body.dataset.pair ?? ''`, w)) === 'paired'));
+  check('같은 칸이 6자리 단계로(폰 이름, 칸에 초점)', await until('sas', async () => (await step()) === 'awaiting_sas' && (await js<string>(`document.querySelector('[data-pair-phone]')?.textContent ?? ''`)) === '사장님 폰' && (await js<boolean>(`document.activeElement?.id === 'pair-sas'`))));
+  check('6자리 단계에서도 화면 캡처 가림', S.win.isContentProtected());
+  await type('#pair-sas', phone.sas === '000000' ? '111111' : '000000');
+  await press('[data-act=pair-submit]');
+  check('틀린 6자리: 남은 횟수', await until('wrong', async () => (await js<string>(`document.querySelector('[data-pair-error]')?.dataset.pairError ?? ''`)) === 'pair.sas_wrong' && (await js<string>(`document.querySelector('[data-pair-error]').textContent`)).includes('2번 더')));
+  await type('#pair-sas', phone.sas!);
+  await press('[data-act=pair-submit]');
+  check('같은 칸이 연결됐어요로', await until('paired', async () => (await step()) === 'paired' && (await js<string>(`document.querySelector('[data-pair-done]')?.textContent ?? ''`)) === '연결됐어요'));
+  check('연결을 마치면 화면 캡처 가림을 푼다', !S.win.isContentProtected());
   const m = await run;
   check('폰: 계정 서비스 서명 acctClaim 검증 → 저장 전 확인 화면에 계정 이메일', m?.identity.account.email === EMAIL, phone.failure);
   check('폰: 같은 AIK', !!m && b64(m.aikPub) === (await import('node:fs')).readFileSync(path.join(S.fixture!.root, 'userData', 'remote-identity.json'), 'utf8').match(/"aikPub":"([^"]+)"/)![1]);
-  check('PC 7단계 순서(룸 → 대리 등록 → 목록 → 우편함 → acctClaim)', JSON.stringify(calls.filter((c) => c !== 'token')) === JSON.stringify(['code', 'room', 'enroll', 'devlist', 'mailbox', 'claim']), calls);
+  check('PC 7단계 순서(룸(취소한 첫 QR, 새 QR) → 대리 등록 → 목록 → 우편함 → acctClaim)', JSON.stringify(calls.filter((c) => c !== 'token')) === JSON.stringify(['code', 'room', 'room', 'enroll', 'devlist', 'mailbox', 'claim']), calls);
   check('셸 계정 줄: 연결된 폰 1대', await until('phones 1', async () => js<boolean>(`document.querySelector('[data-account-phones]')?.dataset.accountPhones === '1'`)));
-  await press('[data-act=pair-close]', w);
-  check('창 닫기', await until('closed', () => !pw()));
+  await press('[data-act=pair-close]');
+  check('[닫기]: 쉬는 자리([폰 연결])로', await until('closed', async () => (await step()) === 'idle' && (await js<boolean>(`!!document.querySelector('[data-act=pair-open]')`))));
+  check('끝까지 따로 창 없음', BrowserWindow.getAllWindows().length === windowsBefore);
 }
 
 app.whenReady().then(async () => {
