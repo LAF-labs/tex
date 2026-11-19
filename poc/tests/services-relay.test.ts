@@ -6,7 +6,7 @@ import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { FORBIDDEN_COLUMN, Logger, createServer, listen, looksSensitive, migrate, openSqlite, schemaColumns, type Sql } from '../services/shared/src/index.ts';
 import { MIGRATIONS_DIR as RELAY_MIGRATIONS, OUTER, RELAY, RELAY_VISIBILITY, RelayHub, RelayService, newRoomId, wsOrigin } from '../services/relay/src/index.ts';
-import { ApnsSender, FcmSender, MIGRATIONS_DIR as PUSH_MIGRATIONS, MockPushSender, PUSH_VISIBILITY, PushService, WAKE, pushRouter } from '../services/push/src/index.ts';
+import { ApnsSender, FcmSender, MIGRATIONS_DIR as PUSH_MIGRATIONS, MockPushSender, PUSH_VISIBILITY, PushService, RoutingSender, WAKE, apnsPayload, pushRouter, senderFromEnv } from '../services/push/src/index.ts';
 import { D, H, INTERNAL_KEY, client, device, entry, internalAuth, internalHeaders } from './services-kit.ts';
 import { DEVICE, httpPairingRooms, httpStopHook } from '../services/account/src/index.ts';
 import { ACCOUNT_ORIGIN, accountStack, signedDesktop, signedPhone, type Signed, type Stack } from './services-stack.ts';
@@ -727,7 +727,7 @@ describe('M7-3 푸시: 내용 없는 깨우기(/v1/wake)', () => {
     assert.equal((await e.pcall(e.pc, 'POST', '/v1/wake', { deviceId: e.pc.d.id })).json.error, 'push.target_not_found');
     for (let i = 0; i < 3; i++) assert.deepEqual((await e.pcall(e.pc, 'POST', '/v1/wake', { deviceId: e.phone.id })).json, { sent: true });
     assert.equal((await e.pcall(e.pc, 'POST', '/v1/wake', { deviceId: e.phone.id })).json.error, 'policy.rate_limited');
-    assert.deepEqual(e.sender.sent, Array.from({ length: 3 }, () => ({ platform: 'apns', token: tok })));
+    assert.deepEqual(e.sender.sent, Array.from({ length: 3 }, () => ({ platform: 'apns', token: tok, kind: 'update' })), '종류가 없으면 update');
     let sent = 3;
     for (let m = 1; sent < 20; m++) {
       e.s.clock.advance(61_000);
@@ -752,6 +752,22 @@ describe('M7-3 푸시: 내용 없는 깨우기(/v1/wake)', () => {
     assert.equal((await e.pcall(e.phone, 'DELETE', '/v1/push-token')).status, 204);
     assert.equal((await e.pcall(e.pc, 'POST', '/v1/wake', { deviceId: e.phone.id })).json.error, 'push.token_not_found');
   });
+
+  it('ADR-053: 종류(approve·update)를 공급사까지 넘기고, 개발 빌드는 apns_dev로 올린다. 다른 종류·다른 플랫폼은 거부', async () => {
+    const tok = 'e'.repeat(64);
+    assert.equal((await e.pcall(e.phone, 'PUT', '/v1/push-token', { platform: 'apns_dev', token: 'Q'.repeat(64) })).json.error, 'request.param_rejected');
+    assert.equal((await e.pcall(e.phone, 'PUT', '/v1/push-token', { platform: 'webpush', token: tok })).json.error, 'request.param_rejected');
+    assert.equal((await e.pcall(e.phone, 'PUT', '/v1/push-token', { platform: 'apns_dev', token: tok })).status, 204);
+    assert.equal((await e.pcall(e.pc, 'POST', '/v1/wake', { deviceId: e.phone.id, kind: 'urgent' })).json.error, 'request.param_rejected');
+    assert.equal((await e.pcall(e.pc, 'POST', '/v1/wake', { deviceId: e.phone.id, kind: 'approve', amount: 1 })).json.error, 'request.param_rejected', '종류 말고 다른 값은 받지 않는다');
+    assert.deepEqual((await e.pcall(e.pc, 'POST', '/v1/wake', { deviceId: e.phone.id, kind: 'approve' })).json, { sent: true });
+    assert.deepEqual((await e.pcall(e.pc, 'POST', '/v1/wake', { deviceId: e.phone.id, kind: 'update' })).json, { sent: true });
+    assert.deepEqual(e.sender.sent, [
+      { platform: 'apns_dev', token: tok, kind: 'approve' },
+      { platform: 'apns_dev', token: tok, kind: 'update' },
+    ]);
+    assert.deepEqual((await e.pushDb.all<{ platform: string }>('SELECT platform FROM push_tokens')).map((r) => r.platform), ['apns_dev'], '종류는 저장하지 않는다');
+  });
 });
 
 describe('M7-3 푸시 어댑터: 내용 없는 페이로드(APNs 샌드박스·FCM v1 형식)', () => {
@@ -773,23 +789,52 @@ describe('M7-3 푸시 어댑터: 내용 없는 페이로드(APNs 샌드박스·F
     });
     await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
     const port = (srv.address() as { port: number }).port;
-    const s = new ApnsSender({ origin: `http://127.0.0.1:${port}`, teamId: 'TEAM123456', keyId: 'KEY1234567', p8: privateKey.export({ type: 'pkcs8', format: 'pem' }) as string, topic: 'dev.sax.app', now: () => Date.UTC(2026, 10, 10) });
-    assert.equal(await s.send('apns', 'ab'.repeat(32)), 'ok');
-    assert.equal(await s.send('apns', 'dead'.repeat(16)), 'invalid');
-    assert.equal(await s.send('apns', 'not-hex'), 'invalid');
-    assert.equal(await s.send('apns', 'bad0'.repeat(16)), 'retry', '400 BadTopic(설정 오류)은 토큰을 지우지 않는다');
-    assert.equal(await s.send('apns', 'bad0'.repeat(16)), 'invalid', '400 BadDeviceToken은 무효');
+    const local = `http://127.0.0.1:${port}`;
+    const p8 = privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
+    const now = () => Date.UTC(2026, 10, 10);
+    const s = new ApnsSender({ origins: { apns: local, apns_dev: local }, production: true, teamId: 'TEAM123456', keyId: 'KEY1234567', p8, topic: 'dev.sax.app', now });
+    assert.equal(await s.send('apns', 'ab'.repeat(32), 'approve'), 'ok');
+    assert.equal(await s.send('apns_dev', 'ab'.repeat(32), 'update'), 'ok');
+    assert.equal(await s.send('apns', 'dead'.repeat(16), 'update'), 'invalid');
+    assert.equal(await s.send('apns', 'not-hex', 'update'), 'invalid');
+    assert.equal(await s.send('fcm', 'ab'.repeat(32), 'update'), 'invalid');
+    assert.equal(await s.send('apns', 'bad0'.repeat(16), 'update'), 'invalid', '400 BadDeviceToken은 무효');
+    assert.equal(await s.send('apns', 'bad0'.repeat(16), 'update'), 'retry', '400 BadTopic(설정 오류)은 토큰을 지우지 않는다');
     s.close();
+    // 샌드박스 모드(production 아님): 운영 토큰은 보내지 않고 지우지도 않는다
+    const sb = new ApnsSender({ origins: { apns: local, apns_dev: local }, teamId: 'TEAM123456', keyId: 'KEY1234567', p8, topic: 'dev.sax.app', now });
+    const before = seen.length;
+    assert.equal(await sb.send('apns', 'ab'.repeat(32), 'approve'), 'retry');
+    assert.equal(seen.length, before, '샌드박스 모드는 운영 토큰을 공급사에 보내지 않는다');
+    sb.close();
     srv.close();
     const h = seen[0]!.headers;
-    assert.deepEqual(JSON.parse(seen[0]!.body), WAKE.apns);
+    assert.deepEqual(JSON.parse(seen[0]!.body), { aps: { alert: { 'loc-key': 'SAX_WAKE_APPROVE' }, sound: 'default' } });
+    assert.deepEqual(JSON.parse(seen[0]!.body), apnsPayload('approve'));
     assert.equal(h['apns-push-type'], 'alert');
     assert.equal(h['apns-topic'], 'dev.sax.app');
-    assert.equal(h['apns-collapse-id'], 'sax-wake');
+    assert.equal(h['apns-collapse-id'], 'sax-wake-approve');
+    assert.equal(h['apns-expiration'], String(Date.UTC(2026, 10, 10) / 1000 + 600), 'approve는 10분');
+    assert.equal(seen[1]!.headers['apns-collapse-id'], 'sax-wake-update');
+    assert.equal(seen[1]!.headers['apns-expiration'], String(Date.UTC(2026, 10, 10) / 1000 + 12 * 3600), 'update는 12시간');
+    assert.deepEqual(JSON.parse(seen[1]!.body), { aps: { alert: { 'loc-key': 'SAX_WAKE_UPDATE' }, sound: 'default' } });
+    for (const x of seen) assert.ok(!('mutable-content' in (JSON.parse(x.body) as { aps: object }).aps), 'Notification Service Extension 없음');
     const [hd, cl, sig] = String(h.authorization).replace('bearer ', '').split('.');
     assert.deepEqual(JSON.parse(Buffer.from(hd!, 'base64url').toString()), { alg: 'ES256', kid: 'KEY1234567' });
     assert.deepEqual(JSON.parse(Buffer.from(cl!, 'base64url').toString()), { iss: 'TEAM123456', iat: Date.UTC(2026, 10, 10) / 1000 });
     assert.ok(createVerify('sha256').update(`${hd}.${cl}`).verify({ key: publicKey, dsaEncoding: 'ieee-p1363' }, Buffer.from(sig!, 'base64url')));
+  });
+
+  it('PUSH_PROVIDER: mock(기본) | sandbox | apns. 주소는 고르지 못한다(APNS_ORIGIN 거부), FCM은 설정이 있을 때만', () => {
+    const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const apnsEnv = { APNS_TEAM_ID: 'TEAM123456', APNS_KEY_ID: 'KEY1234567', APNS_TOPIC: 'com.lafco.tex', APNS_P8: privateKey.export({ type: 'pkcs8', format: 'pem' }) as string };
+    assert.ok(senderFromEnv({}) instanceof MockPushSender);
+    assert.throws(() => senderFromEnv({ PUSH_PROVIDER: 'live' }), /config_PUSH_PROVIDER/);
+    assert.throws(() => senderFromEnv({ PUSH_PROVIDER: 'apns' }), /config_APNS_TEAM_ID/);
+    assert.throws(() => senderFromEnv({ PUSH_PROVIDER: 'apns', ...apnsEnv, APNS_ORIGIN: 'https://api.push.apple.com' }), /config_APNS_ORIGIN/);
+    assert.throws(() => senderFromEnv({ PUSH_PROVIDER: 'sandbox', ...apnsEnv, FCM_PROJECT_ID: 'p' }), /config_FCM_SERVICE_ACCOUNT_JSON/);
+    for (const mode of ['sandbox', 'apns']) assert.ok(senderFromEnv({ PUSH_PROVIDER: mode, ...apnsEnv }) instanceof RoutingSender);
+    assert.deepEqual(Object.keys(WAKE), ['approve', 'update']);
   });
 
   it('FCM: 서비스 계정 JWT → 접근 토큰(캐시) → data 메시지 {t: wake}만, UNREGISTERED면 invalid', async () => {
@@ -803,13 +848,13 @@ describe('M7-3 푸시 어댑터: 내용 없는 페이로드(APNs 샌드박스·F
     }) as unknown as typeof fetch;
     const sa = JSON.stringify({ client_email: 'push@sax.test.invalid', private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }), token_uri: 'https://oauth.test.invalid/token' });
     const s = new FcmSender({ projectId: 'sax-dev', serviceAccountJson: sa, endpointBase: 'https://fcm.test.invalid', fetchFn });
-    assert.equal(await s.send('fcm', 'a'.repeat(152)), 'ok');
-    assert.equal(await s.send('fcm', 'gone' + 'a'.repeat(148)), 'invalid');
+    assert.equal(await s.send('fcm', 'a'.repeat(152), 'update'), 'ok');
+    assert.equal(await s.send('fcm', 'gone' + 'a'.repeat(148), 'update'), 'invalid');
     assert.equal(calls.filter((c) => c.url.includes('oauth')).length, 1, '접근 토큰 캐시');
     const msg = calls.find((c) => c.url.includes('messages:send'))!;
     assert.equal(msg.url, 'https://fcm.test.invalid/v1/projects/sax-dev/messages:send');
     assert.equal(msg.auth, 'Bearer at-1');
-    assert.deepEqual(JSON.parse(msg.body), { message: { token: 'a'.repeat(152), data: { t: 'wake' }, android: { priority: 'HIGH', ttl: '60s', collapse_key: 'sax-wake' } } });
+    assert.deepEqual(JSON.parse(msg.body), { message: { token: 'a'.repeat(152), data: { t: 'wake', k: 'update' }, android: { priority: 'HIGH', ttl: '43200s', collapse_key: 'sax-wake-update' } } });
   });
 
   it('FCM: 무응답은 시간 제한으로 끊고, 429·5xx 뒤에는 Retry-After 동안 공급사를 부르지 않는다, 401이면 접근 토큰을 다시 받는다', async () => {
@@ -828,18 +873,18 @@ describe('M7-3 푸시 어댑터: 내용 없는 페이로드(APNs 샌드박스·F
     const sa = JSON.stringify({ client_email: 'push@sax.test.invalid', private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }), token_uri: 'https://oauth.test.invalid/token' });
     const s = new FcmSender({ projectId: 'sax-dev', serviceAccountJson: sa, endpointBase: 'https://fcm.test.invalid', fetchFn, now: () => now, timeoutMs: 20 });
     const tok = 'a'.repeat(152);
-    assert.equal(await s.send('fcm', tok), 'retry');
+    assert.equal(await s.send('fcm', tok, 'update'), 'retry');
     mode = '503';
-    assert.equal(await s.send('fcm', tok), 'retry');
+    assert.equal(await s.send('fcm', tok, 'update'), 'retry');
     const n = calls.length;
     now += 19_000;
-    assert.equal(await s.send('fcm', tok), 'retry');
+    assert.equal(await s.send('fcm', tok, 'update'), 'retry');
     assert.equal(calls.length, n, '물러서는 동안 공급사를 부르지 않는다');
     now += 2_000;
     mode = '401';
-    assert.equal(await s.send('fcm', tok), 'retry');
+    assert.equal(await s.send('fcm', tok, 'update'), 'retry');
     mode = 'ok';
-    assert.equal(await s.send('fcm', tok), 'ok');
+    assert.equal(await s.send('fcm', tok, 'update'), 'ok');
     assert.deepEqual(calls, ['oauth', 'send', 'send', 'send', 'oauth', 'send']);
   });
 });

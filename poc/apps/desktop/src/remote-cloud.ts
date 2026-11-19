@@ -396,6 +396,13 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
       const url = `${accountOrigin}/v1/issue-lock/release`;
       await call('POST', url, [204], { headers: await authed(auth, 'POST', url), body: { lockId } });
     },
+    async wakePhone(auth, deviceId, kind) {
+      if (!UUID4.test(deviceId) || (kind !== 'approve' && kind !== 'update')) throw new CloudPortError('request.param_rejected');
+      const url = `${accountOrigin}/v1/wake`;
+      const b = await call('POST', url, [202], { headers: await authed(auth, 'POST', url), body: { deviceId, kind } });
+      if (!isObj(b) || typeof b.sent !== 'boolean') shape();
+      return { sent: (b as { sent: boolean }).sent };
+    },
     async putShareRow(auth, row) {
       const url = `${accountOrigin}/v1/share/rows/${shareId(row.rowId)}`;
       const body = { kind: row.kind, epoch: row.epoch, body: row.body, ...(row.taskId === undefined ? {} : { taskId: shareId(row.taskId) }) };

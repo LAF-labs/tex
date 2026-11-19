@@ -177,6 +177,7 @@ function fakeCloud() {
     acquireIssueLock: async () => ({ lockId: 'fake-lock-0000000000000000', expiresAt: Date.now() + 90_000 }),
     renewIssueLock: async () => ({ expiresAt: Date.now() + 90_000 }),
     releaseIssueLock: async () => {},
+    wakePhone: async () => ({ sent: false }),
     // 계정 공유 기록: 이 대역은 기기가 하나라 동기화가 서버를 부르지 않는다
     putShareRow: async () => ({ seq: 1 }),
     shareRows: async () => ({ rows: [], head: 0, epoch: 0, more: false }),

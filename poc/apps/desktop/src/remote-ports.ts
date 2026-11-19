@@ -154,6 +154,11 @@ export interface AccountClient {
   acquireIssueLock(auth: DeviceAuth): Promise<{ lockId: string; expiresAt: number }>;
   renewIssueLock(auth: DeviceAuth, lockId: string): Promise<{ expiresAt: number }>;
   releaseIssueLock(auth: DeviceAuth, lockId: string): Promise<void>;
+  /**
+   * POST /v1/wake(기기 토큰 wake 범위, 데스크톱만. ADR-053 결정 2, services/push/API.md): 같은 계정의 그 폰에 내용 없는 알림.
+   * kind는 알림 글의 종류(approve·update)뿐이다. sent:false는 공급사 일시 장애. 토큰이 없으면 push.token_not_found, 한도면 policy.rate_limited.
+   */
+  wakePhone(auth: DeviceAuth, deviceId: string, kind: 'approve' | 'update'): Promise<{ sent: boolean }>;
   // ---- 계정 공유 기록(기기 토큰 share 범위. ADR-048 결정 5, D07 §10, API.md 계정 공유 기록) ----
   // 줄은 암호문이다. 받은 줄은 믿지 않는다(호출자가 @sax/remote openShareRow로 열고 서명을 본다).
   /** PUT /v1/share/rows/:rowId. 같은 줄을 같은 내용으로 다시 올리면 처음 순번, 다른 내용이면 account.share_row_conflict. */

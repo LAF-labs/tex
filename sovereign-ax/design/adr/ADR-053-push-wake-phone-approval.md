@@ -1,6 +1,6 @@
 # ADR-053. 승인 요청이 오면 내용 없는 푸시로 폰을 깨운다
 
-> 상태: 방향 채택(2026-11-19). 대표 지시 "모두 진행"(2026-11-19 yulmu, 조사 문서 `pc-mobile-oss-learnings.md` 추천 5번). 결정 3의 알림 글은 대표가 "종류별"을 골랐다(2026-11-19 yulmu). 구현 전이다. 실제 푸시 발송을 켜는 일(결정 7)은 대표 확인 뒤에 한다.
+> 상태: 방향 채택(2026-11-19). 대표 지시 "모두 진행"(2026-11-19 yulmu, 조사 문서 `pc-mobile-oss-learnings.md` 추천 5번). 결정 3의 알림 글은 대표가 "종류별"을 골랐다(2026-11-19 yulmu). 결정 2, 5(서버, PC)는 tex #444에서 구현했다. 결정 4(폰)는 taxoff-mobile에서 진행 중이다. 실제 푸시 발송을 켜는 일(결정 7)은 대표 확인 뒤에 한다.
 > 잇는 결정: [ADR-052](ADR-052-phone-approval-px-enroll-gate-relay.md)(폰 승인, 게이트 중계), [ADR-015](ADR-015-sovereign-model-infra-strategy.md)(공급사 중립), [ADR-029](ADR-029-remote-recovery-data-minimization.md)(데이터 최소화)
 > 고치는 것: D08 §8.1의 "Notification Service Extension이 깨어나 우편함을 확인"을 1단계에서 뺀다. 푸시 디스패처의 "Phase 1에는 실제 푸시를 보내지 않는다"(절대 규칙 6)를 깨우기 푸시에 한해 푼다.
 > 관련: D08 §8.1, D09 §4.2, `poc/services/push`(API.md, ENV.md), `apps/desktop/src/phone-gate.ts`, taxoff-mobile `src/notify/`, `src/session.tsx`

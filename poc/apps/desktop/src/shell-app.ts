@@ -63,6 +63,7 @@ import type { AccountClient, BillingView, CloudPorts, DeviceAuth, PcLinkVault, V
 import { PairingHost, type PairView } from './remote-pairing.ts';
 import { buildPhoneCopy } from './phone-copy.ts';
 import { ApprovalLog, PhoneGate } from './phone-gate.ts';
+import { PhoneWaker } from './phone-wake.ts';
 import { CmdLog, PhoneIssue } from './phone-issue.ts';
 import { DESKTOP_CAPS, PhoneLink, PhoneStore, type PhoneView, type TokenSeal } from './phone-link.ts';
 import { APPROVE_CAPS, phoneSession, SESSION_CAPS } from './phone-session.ts';
@@ -1515,15 +1516,37 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       onDraft: () => pushBoard(), // 초안은 update 이벤트 없이 생긴다
       cmds: new CmdLog(path.join(appPaths(root ?? defaultAppRoot()).userData, 'remote-cmds.json')),
       log: (n, d) => log.event(n, d ?? {}),
+      wake: (pairId, kind) => void phoneWaker.wake(pairId, kind),
     });
     return phoneIssue;
   };
+  // 폰 깨우기(ADR-053, phone-wake.ts): 폰 앱이 뒤에 있을 때 내용 없는 알림(종류만). 클라우드 연결이 없으면 부르지 않는다.
+  const wakeClient = opts.remote?.keys ? (opts.remote.cloud?.account ?? null) : null;
+  const phoneWaker = new PhoneWaker({
+    deviceOf: (pairId) => phoneLink?.deviceOf(pairId) ?? null,
+    call: wakeClient
+      ? async (deviceId, kind) => {
+          const d = account.device();
+          if (!d) throw Object.assign(new Error('account'), { code: 'account.signed_out' });
+          try {
+            return await wakeClient.wakePhone(d.auth, deviceId, kind);
+          } catch (e) {
+            if ((e as { code?: unknown }).code !== 'account.unauthorized' && (e as { code?: unknown }).code !== 'push.unauthorized') throw e;
+            d.clearToken();
+            return wakeClient.wakePhone(d.auth, deviceId, kind);
+          }
+        }
+      : null,
+    log: (n, d) => log.event(n, d),
+  });
   // 폰 승인(ADR-052): 폰이 맡긴 발급의 커밋 게이트를 그 폰에 보내고, 답의 서명을 연결 기록의 승인 키로 검증한다.
   const phoneGateOf = (): PhoneGate => {
     phoneGate ??= new PhoneGate({
       px: (pairId) => phoneLink?.px(pairId) ?? null,
       tracked: (id) => phoneIssue?.trackedOf(id) ?? null,
       poke: (id) => phoneIssue?.poke(id),
+      wake: (pairId, kind) => void phoneWaker.wake(pairId, kind),
+      attached: (pairId) => phoneWaker.forget(pairId),
       approvals: new ApprovalLog(path.join(appPaths(root ?? defaultAppRoot()).userData, 'remote-approvals.json')),
       log: (n, d) => log.event(n, d ?? {}),
     });

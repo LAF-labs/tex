@@ -4,6 +4,7 @@
 //   오늘(한국 시간) 폰 승인이 한도 미만이다. 아니면 이유 코드(pc_*)를 run.event에 실어 폰이 "PC에서 승인"을 보이게 한다.
 // - 답(gate.response)은 열린 요청·runId·stepId·sigAlg·actionHash·만료·서명(지금 기록의 키)·한도 순으로 본다. 챌린지는 1회용이다.
 // - 통과한 승인은 디스크(remote-approvals.json)에 먼저 적고 넘긴다. 승인 근거(LocalApproval remote+px) 발급과 엔진 전달은 shell-app이 한다.
+// - 폰 세션이 없으면(앱이 뒤에 있다) 내용 없는 알림으로 깨운다(ADR-053 결정 2, phone-wake.ts). 게이트당 최대 2번(열 때, 60초 뒤). 깨우기는 덤이라 실패해도 흐름은 같다.
 // - 로그는 결과 코드만(거래처·금액·서명 없음).
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -13,6 +14,7 @@ import {
 } from '@sax/remote';
 import { gateSelfCheck, remotePresenceRefusal, type GateRequest } from '@sax/engine/gate';
 import { kstToday, summarize } from './approval-gate.ts';
+import { WAKE_APPROVE_AGAIN_MS, type WakeKind } from './phone-wake.ts';
 
 /** 폰 응답 챌린지 수명(D03 §3 gate.request.exp). 지나면 폰이 gate.refresh로 새 챌린지를 청한다. */
 export const PHONE_GATE_TTL_MS = 120_000;
@@ -113,7 +115,22 @@ export interface PhoneGatePorts {
   now?: () => number;
   random?: (n: number) => Uint8Array;
   log?: (name: string, data?: Record<string, string | number | boolean>) => void;
+  /** 폰 깨우기(phone-wake PhoneWaker.wake). 던지지 않는다. 없으면 깨우지 않는다. */
+  wake?: (pairId: string, kind: WakeKind) => unknown;
+  /** 폰 세션이 붙었다(깨우기 쪽이 "토큰 없음"으로 쉬던 것을 푼다. 폰이 막 토큰을 올렸을 수 있다). */
+  attached?: (pairId: string) => void;
+  /** 다시 깨우기 타이머(시험용). 기본은 unref된 setTimeout. */
+  timers?: { set: (f: () => void, ms: number) => unknown; clear: (h: unknown) => void };
 }
+
+const systemTimers = {
+  set: (f: () => void, ms: number) => {
+    const t = setTimeout(f, ms);
+    t.unref?.();
+    return t;
+  },
+  clear: (h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>),
+};
 
 export interface GateHandlers {
   /** 폰이 승인했다(서명 검증·기록 끝). 한 번만 불린다. */
@@ -138,6 +155,10 @@ interface OpenGate {
   badSigs: number;
   /** 폰에 gate.request를 한 번이라도 보냈다(닫힐 때 gate.resolved를 보낼 대상) */
   sent: boolean;
+  /** 이 게이트로 폰을 깨운 횟수(최대 2) */
+  wakes: number;
+  /** 60초 뒤 다시 깨우기 */
+  again: unknown;
 }
 
 export type AnswerResult =
@@ -183,7 +204,12 @@ export class PhoneGate {
   /** approve.v1 세션이 열렸다. 이 폰에 열려 있는 게이트를 새 챌린지로 다시 보낸다. */
   attach(pairId: string, sink: GateSink): void {
     this.#sinks.set(pairId, sink);
-    for (const g of this.#open.values()) if (g.pairId === pairId && !g.refusal) this.#send(g);
+    this.#o.attached?.(pairId);
+    for (const g of this.#open.values()) {
+      if (g.pairId !== pairId) continue;
+      this.#stopAgain(g);
+      if (!g.refusal) this.#send(g);
+    }
   }
   detach(pairId: string, sink: GateSink): void {
     if (this.#sinks.get(pairId) === sink) this.#sinks.delete(pairId);
@@ -196,15 +222,43 @@ export class PhoneGate {
   async offer(shellRunId: string, req: GateRequest, on: GateHandlers): Promise<boolean> {
     const t = this.#o.tracked(shellRunId);
     if (!t) return false;
-    const g: OpenGate = { shellRunId, req, pairId: t.pairId, runId: t.runId, reqId: ulid(this.#now()), on, refusal: null, pending: null, badSigs: 0, sent: false };
+    const g: OpenGate = { shellRunId, req, pairId: t.pairId, runId: t.runId, reqId: ulid(this.#now()), on, refusal: null, pending: null, badSigs: 0, sent: false, wakes: 0, again: null };
+    const prev = this.#open.get(shellRunId);
+    if (prev) this.#stopAgain(prev);
     this.#open.set(shellRunId, g);
     g.refusal = await this.#refusal(g);
     // 기다리는 동안 닫혔거나(PC 승인·중지) 새 게이트로 바뀌었으면 보내지 않는다
     if (this.#open.get(shellRunId) !== g) return true;
     if (g.refusal) this.#log(g.refusal);
-    else this.#send(g);
+    else {
+      this.#send(g);
+      if (!this.#sinks.has(g.pairId)) this.#wakeApprove(g);
+    }
     this.#o.poke(shellRunId);
     return true;
+  }
+
+  /** 폰으로 보낼 수 있는 게이트인데 그 폰 세션이 없다: 깨우고, 60초 뒤에도 안 붙었으면 한 번 더(ADR-053 결정 2). */
+  #wakeApprove(g: OpenGate): void {
+    if (!this.#o.wake || g.wakes >= 2) return;
+    g.wakes++;
+    this.#o.wake(g.pairId, 'approve');
+    if (g.wakes >= 2) return;
+    g.again = (this.#o.timers ?? systemTimers).set(() => {
+      g.again = null;
+      if (this.#open.get(g.shellRunId) === g && !g.refusal && !this.#sinks.has(g.pairId)) this.#wakeApprove(g);
+    }, WAKE_APPROVE_AGAIN_MS);
+  }
+
+  #stopAgain(g: OpenGate): void {
+    if (g.again === null) return;
+    (this.#o.timers ?? systemTimers).clear(g.again);
+    g.again = null;
+  }
+
+  #drop(g: OpenGate): void {
+    this.#stopAgain(g);
+    if (this.#open.get(g.shellRunId) === g) this.#open.delete(g.shellRunId);
   }
 
   async #refusal(g: OpenGate): Promise<PcOnlyCode | null> {
@@ -268,7 +322,7 @@ export class PhoneGate {
   close(shellRunId: string, gateReqId?: string, by: GateResolvedBy = 'pc'): void {
     const g = this.#open.get(shellRunId);
     if (!g || (gateReqId !== undefined && g.req.reqId !== gateReqId)) return;
-    this.#open.delete(shellRunId);
+    this.#drop(g);
     if (g.sent) this.#resolved(g, by);
   }
 
@@ -328,7 +382,7 @@ export class PhoneGate {
     const challenge = g.pending.challenge;
     g.pending = null;
     if (body.decision === 'deny') {
-      this.#open.delete(g.shellRunId);
+      this.#drop(g);
       this.#resolved(g, 'phone');
       await g.on.deny();
       return 'denied';
@@ -349,7 +403,7 @@ export class PhoneGate {
       return 'log_failed';
     }
     if (this.#open.get(g.shellRunId) !== g) return 'no_request';
-    this.#open.delete(g.shellRunId);
+    this.#drop(g);
     this.#resolved(g, 'phone');
     await g.on.approve();
     return 'approved';

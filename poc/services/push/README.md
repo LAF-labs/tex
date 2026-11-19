@@ -1,6 +1,6 @@
 # 푸시 디스패처(D14 M7-3)
 
-`POST /v1/wake`: PC가 같은 계정의 폰을 내용 없이 깨운다. API는 [API.md](API.md), 환경 변수는 [ENV.md](ENV.md).
+`POST /v1/wake`: PC가 같은 계정의 폰을 내용 없이 깨운다(종류 `approve`·`update`만, ADR-053). API는 [API.md](API.md), 환경 변수는 [ENV.md](ENV.md).
 
 **침해되면 무엇이 새는가**(D09 §1): `device_id` ↔ 봉인된 푸시 토큰. `PUSH_TOKEN_KEY`까지 새면 푸시 토큰 원문(공격자가 그 폰에 알림을 보낼 수 있다 = 알림 스팸, 내용 유출은 없다). 우편함 ID·계정·알림 내용·깨우기 이력은 저장하지 않는다. 대응: 키 회전 + 폰 앱의 토큰 재등록.
 
@@ -17,7 +17,7 @@ D09 §1.1의 "깨우기 시각"은 이력으로 저장하지 않는다(더 엄�
 
 ## 공급사 중립(ADR-015)·Phase 1
 
-- `MockPushSender`(기본), `ApnsSender`(HTTP/2, 기본 주소 샌드박스, 운영 주소면 기동 거부), `FcmSender`(HTTP v1). 실제 푸시 발송은 Phase 1에서 하지 않는다(절대 규칙 ⑥). 시험은 APNs를 로컬 HTTP/2 서버로, FCM을 주입한 fetch로 확인한다.
+- `MockPushSender`(기본), `ApnsSender`(HTTP/2, 토큰 플랫폼으로 주소 선택: `apns_dev` 샌드박스, `apns` 운영은 `PUSH_PROVIDER=apns`일 때만), `FCM_PROJECT_ID`가 있을 때만 `FcmSender`(HTTP v1). 실제 발송은 깨우기 푸시에 한해 ADR-053이 풀었고, 켜는 것은 대표 확인 뒤다. 시험은 APNs를 로컬 HTTP/2 서버로, FCM을 주입한 fetch로 확인한다.
 - 국내 푸시 공급사로 옮겨도 iOS·Android OS 푸시 경로(APNs·FCM)는 남는다(D09 §4.2).
 
 ## 실행

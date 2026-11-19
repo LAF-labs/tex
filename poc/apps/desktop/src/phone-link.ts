@@ -372,6 +372,11 @@ export class PhoneLink {
   }
 
   /** 지금 이 폰의 승인 키(검증할 때마다 다시 읽는다: 폐기가 바로 듣는다). 없거나 받지 않는 종류면 null. */
+  /** 연결 기록의 그 폰 서버 deviceId(깨우기 대상, ADR-053). 끊은 폰이면 null. */
+  deviceOf(pairId: string): string | null {
+    return this.#recs.find((x) => x.pairId === pairId)?.deviceId ?? null;
+  }
+
   px(pairId: string): { pub: Uint8Array; hw: PxHw; deviceId: string } | null {
     const r = this.#recs.find((x) => x.pairId === pairId);
     if (!r?.px || !this.#pxUsable(r)) return null;
