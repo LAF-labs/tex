@@ -1,0 +1,6081 @@
+{
+  "summary": {
+    "target": "intent",
+    "model": "typesafe/jev-1.14",
+    "resolvedModels": [
+      "typesafe/jev-1.14-20261014"
+    ],
+    "at": "2026-11-19T02:57:10.330Z",
+    "costUsd": 0.0487,
+    "costKrw": 71,
+    "score": {
+      "n": 362,
+      "errors": 0,
+      "act": {
+        "accuracy": null,
+        "coarse": 0.5801,
+        "recall": {
+          "work": {
+            "n": 275,
+            "recall": 0.5345
+          },
+          "talk": {
+            "n": 67,
+            "recall": 0.9403
+          },
+          "advice": {
+            "n": 20,
+            "recall": 0
+          }
+        },
+        "ece": 0.3199,
+        "confusion": {
+          "task": {
+            "task": 103,
+            "other": 66
+          },
+          "lookup": {
+            "lookup": 30,
+            "other": 28,
+            "task": 3
+          },
+          "followup": {
+            "task": 11,
+            "other": 34
+          },
+          "app_help": {
+            "other": 17,
+            "task": 4
+          },
+          "smalltalk": {
+            "other": 30
+          },
+          "tax_advice": {
+            "other": 20
+          },
+          "other": {
+            "other": 16
+          }
+        }
+      },
+      "domain": {
+        "accuracy": 0.5773,
+        "recall": {
+          "invoice": {
+            "n": 120,
+            "recall": 0.65
+          },
+          "records": {
+            "n": 41,
+            "recall": 0.5366
+          },
+          "cert_doc": {
+            "n": 23,
+            "recall": 0.913
+          },
+          "bank": {
+            "n": 18,
+            "recall": 0
+          },
+          "auth": {
+            "n": 17,
+            "recall": 0
+          },
+          "phone_link": {
+            "n": 15,
+            "recall": 0
+          },
+          "counterparty": {
+            "n": 14,
+            "recall": 0.2857
+          },
+          "pack": {
+            "n": 11,
+            "recall": 0.8182
+          },
+          "capture": {
+            "n": 13,
+            "recall": 0
+          },
+          "settings": {
+            "n": 15,
+            "recall": 0
+          },
+          "none": {
+            "n": 75,
+            "recall": 1
+          }
+        },
+        "ece": 0.312
+      },
+      "joint": 0.5138,
+      "corrects": null,
+      "advice": {
+        "recall": 1,
+        "falsePositive": 0.0206
+      },
+      "sure": {
+        "unsure": 0.2155,
+        "jointWhenSure": 0.5951
+      },
+      "gate": {
+        "issueMiss": 0.2155,
+        "falseOpen": 0,
+        "joint": 0.5138
+      },
+      "byStyle": {
+        "advice_mix": {
+          "n": 2,
+          "joint": 1
+        },
+        "ambiguous_cp": {
+          "n": 1,
+          "joint": 1
+        },
+        "amend": {
+          "n": 6,
+          "joint": 0.6667
+        },
+        "amount_only": {
+          "n": 1,
+          "joint": 1
+        },
+        "answer_ask": {
+          "n": 16,
+          "joint": 0.125
+        },
+        "chain": {
+          "n": 3,
+          "joint": 1
+        },
+        "colloquial": {
+          "n": 26,
+          "joint": 0.4231
+        },
+        "cp_only": {
+          "n": 1,
+          "joint": 1
+        },
+        "date": {
+          "n": 6,
+          "joint": 1
+        },
+        "dialect": {
+          "n": 7,
+          "joint": 0.7143
+        },
+        "edit_card": {
+          "n": 19,
+          "joint": 0.3158
+        },
+        "edit_pending": {
+          "n": 7,
+          "joint": 0
+        },
+        "english": {
+          "n": 1,
+          "joint": 1
+        },
+        "followup_like": {
+          "n": 2,
+          "joint": 0
+        },
+        "greeting_mix": {
+          "n": 2,
+          "joint": 1
+        },
+        "inject": {
+          "n": 5,
+          "joint": 1
+        },
+        "korean_number": {
+          "n": 2,
+          "joint": 1
+        },
+        "multi": {
+          "n": 2,
+          "joint": 1
+        },
+        "new_while_open": {
+          "n": 5,
+          "joint": 1
+        },
+        "noise": {
+          "n": 3,
+          "joint": 1
+        },
+        "odd_value": {
+          "n": 1,
+          "joint": 1
+        },
+        "pc": {
+          "n": 1,
+          "joint": 0
+        },
+        "phone": {
+          "n": 21,
+          "joint": 0.4286
+        },
+        "plain": {
+          "n": 158,
+          "joint": 0.4304
+        },
+        "polite": {
+          "n": 11,
+          "joint": 0.7273
+        },
+        "purpose": {
+          "n": 2,
+          "joint": 1
+        },
+        "qty": {
+          "n": 4,
+          "joint": 1
+        },
+        "repeat": {
+          "n": 1,
+          "joint": 1
+        },
+        "scope": {
+          "n": 1,
+          "joint": 1
+        },
+        "secret": {
+          "n": 2,
+          "joint": 1
+        },
+        "short": {
+          "n": 14,
+          "joint": 0.5714
+        },
+        "skip_confirm": {
+          "n": 1,
+          "joint": 1
+        },
+        "slang": {
+          "n": 13,
+          "joint": 0.3846
+        },
+        "status": {
+          "n": 1,
+          "joint": 0
+        },
+        "typo": {
+          "n": 3,
+          "joint": 1
+        },
+        "unknown_cp": {
+          "n": 2,
+          "joint": 1
+        },
+        "unsupported": {
+          "n": 6,
+          "joint": 1
+        },
+        "vague": {
+          "n": 3,
+          "joint": 1
+        }
+      },
+      "latencyMs": {
+        "p50": 399,
+        "p95": 463
+      },
+      "inputTokensMean": 3203
+    }
+  },
+  "rows": [
+    {
+      "id": "task.invoice.01",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 456.11679100000003,
+      "inputTokens": 3211,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.02",
+      "act": {
+        "got": "task",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 457.554041,
+      "inputTokens": 3218,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.03",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 497.75379200000003,
+      "inputTokens": 3220,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.04",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 488.651875,
+      "inputTokens": 3208,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.05",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 457.31120799999997,
+      "inputTokens": 3207,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.06",
+      "act": {
+        "got": "task",
+        "conf": 0.47
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.47
+      },
+      "corrects": null,
+      "advice": 0.1,
+      "ms": 487.335417,
+      "inputTokens": 3210,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.07",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 432.37924999999996,
+      "inputTokens": 3213,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.08",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 418.2359580000001,
+      "inputTokens": 3205,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.09",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 399.9677499999999,
+      "inputTokens": 3209,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.10",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 387.7991249999999,
+      "inputTokens": 3207,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.11",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 380.337125,
+      "inputTokens": 3211,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.12",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 450.64866699999993,
+      "inputTokens": 3207,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.13",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 429.3111660000002,
+      "inputTokens": 3224,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.14",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 426.840375,
+      "inputTokens": 3212,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.15",
+      "act": {
+        "got": "task",
+        "conf": 0.86
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.86
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 416.47120799999993,
+      "inputTokens": 3216,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.16",
+      "act": {
+        "got": "task",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 420.7461250000001,
+      "inputTokens": 3207,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.17",
+      "act": {
+        "got": "task",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 409.3030839999999,
+      "inputTokens": 3216,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.18",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 420.03770800000007,
+      "inputTokens": 3218,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.19",
+      "act": {
+        "got": "task",
+        "conf": 0.95
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.95
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 387.154041,
+      "inputTokens": 3218,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.20",
+      "act": {
+        "got": "task",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 402.57329200000004,
+      "inputTokens": 3213,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.21",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 401.28266699999995,
+      "inputTokens": 3221,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.22",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 412.2431670000001,
+      "inputTokens": 3212,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.23",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 390.908584,
+      "inputTokens": 3214,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.24",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 378.2769169999999,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.25",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 390.6467089999999,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.26",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 429.8370000000002,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.27",
+      "act": {
+        "got": "other",
+        "conf": 0.91
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.91
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 413.42533300000014,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.28",
+      "act": {
+        "got": "other",
+        "conf": 0.87
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.87
+      },
+      "corrects": null,
+      "advice": 0.1,
+      "ms": 410.86337500000013,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.29",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 373.1202080000003,
+      "inputTokens": 3208,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.30",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 400.00754199999983,
+      "inputTokens": 3210,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.31",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 390.5161670000002,
+      "inputTokens": 3220,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.32",
+      "act": {
+        "got": "task",
+        "conf": 0.97
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.97
+      },
+      "corrects": null,
+      "advice": 0.1,
+      "ms": 416.09729100000004,
+      "inputTokens": 3205,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.33",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 399.121666,
+      "inputTokens": 3209,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.34",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 428.7512920000004,
+      "inputTokens": 3209,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.35",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 398.41662499999984,
+      "inputTokens": 3213,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.36",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 389.90316699999994,
+      "inputTokens": 3210,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.37",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 377.5418749999999,
+      "inputTokens": 3208,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.38",
+      "act": {
+        "got": "other",
+        "conf": 0.63
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.63
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 389.56958299999997,
+      "inputTokens": 3207,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.39",
+      "act": {
+        "got": "other",
+        "conf": 0.79
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.79
+      },
+      "corrects": null,
+      "advice": 0.33,
+      "ms": 381.10641699999996,
+      "inputTokens": 3210,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.40",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 411.33050000000003,
+      "inputTokens": 3211,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.41",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 406.4011660000001,
+      "inputTokens": 3213,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.42",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 426.08349999999973,
+      "inputTokens": 3216,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.43",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 416.16550000000007,
+      "inputTokens": 3212,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.44",
+      "act": {
+        "got": "task",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.13,
+      "ms": 428.66883400000006,
+      "inputTokens": 3213,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.45",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 408.5677089999999,
+      "inputTokens": 3219,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.46",
+      "act": {
+        "got": "task",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 400.3308750000001,
+      "inputTokens": 3221,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.47",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 443.55616599999985,
+      "inputTokens": 3222,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.48",
+      "act": {
+        "got": "task",
+        "conf": 0.87
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.87
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 394.06737499999963,
+      "inputTokens": 3214,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.49",
+      "act": {
+        "got": "task",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 396.05095900000015,
+      "inputTokens": 3213,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.50",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 400.7838749999996,
+      "inputTokens": 3210,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.51",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.03,
+      "ms": 401.54720899999984,
+      "inputTokens": 3228,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.52",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.03,
+      "ms": 409.39075,
+      "inputTokens": 3212,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.53",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 401.41541700000016,
+      "inputTokens": 3214,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.54",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 381.91754200000014,
+      "inputTokens": 3211,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.55",
+      "act": {
+        "got": "task",
+        "conf": 0.94
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.94
+      },
+      "corrects": null,
+      "advice": 0.94,
+      "ms": 396.6995830000001,
+      "inputTokens": 3224,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.56",
+      "act": {
+        "got": "task",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.84,
+      "ms": 395.28283399999964,
+      "inputTokens": 3223,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.57",
+      "act": {
+        "got": "task",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 398.01900000000023,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.58",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 419.34533299999975,
+      "inputTokens": 3211,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.59",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 397.79737500000056,
+      "inputTokens": 3207,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.60",
+      "act": {
+        "got": "other",
+        "conf": 0.93
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.93
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 396.6938750000004,
+      "inputTokens": 3206,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.61",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 390.28150000000005,
+      "inputTokens": 3208,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.62",
+      "act": {
+        "got": "task",
+        "conf": 0.94
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.94
+      },
+      "corrects": null,
+      "advice": 0.12,
+      "ms": 422.75758399999995,
+      "inputTokens": 3206,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.63",
+      "act": {
+        "got": "task",
+        "conf": 0.92
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.92
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 427.1229579999999,
+      "inputTokens": 3206,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.64",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 389.2613339999998,
+      "inputTokens": 3207,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.65",
+      "act": {
+        "got": "task",
+        "conf": 0.96
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.96
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 385.54241699999966,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.66",
+      "act": {
+        "got": "other",
+        "conf": 0.56
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.56
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 391.078125,
+      "inputTokens": 3214,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.67",
+      "act": {
+        "got": "task",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 379.5404580000004,
+      "inputTokens": 3225,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.68",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 390.3509160000003,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.69",
+      "act": {
+        "got": "task",
+        "conf": 0.97
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.97
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 393.5323329999992,
+      "inputTokens": 3216,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.70",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 462.8434159999997,
+      "inputTokens": 3220,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.invoice.71",
+      "act": {
+        "got": "other",
+        "conf": 0.57
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.57
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 410.2999579999996,
+      "inputTokens": 3218,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.cert_doc.01",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.03,
+      "ms": 388.88866700000017,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.cert_doc.02",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 391.5689999999995,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.cert_doc.03",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 391.0687079999998,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.cert_doc.04",
+      "act": {
+        "got": "task",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 402.0503749999998,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.cert_doc.05",
+      "act": {
+        "got": "task",
+        "conf": 0.92
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 0.92
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 393.0452089999999,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.cert_doc.06",
+      "act": {
+        "got": "task",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.53,
+      "ms": 400.691417,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.cert_doc.07",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 370.7378749999998,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.cert_doc.08",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 428.7818749999997,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.cert_doc.09",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 404.6188750000001,
+      "inputTokens": 3208,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.cert_doc.10",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 382.0367500000002,
+      "inputTokens": 3205,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.cert_doc.11",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 417.6038749999998,
+      "inputTokens": 3204,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.cert_doc.12",
+      "act": {
+        "got": "task",
+        "conf": 0.97
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 0.97
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 393.57920899999954,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.cert_doc.13",
+      "act": {
+        "got": "other",
+        "conf": 0.52
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.52
+      },
+      "corrects": null,
+      "advice": 0.36,
+      "ms": 390.5704999999998,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.cert_doc.14",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 391.64016699999956,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.cert_doc.15",
+      "act": {
+        "got": "other",
+        "conf": 0.47
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.47
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 396.7659999999996,
+      "inputTokens": 3205,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.cert_doc.16",
+      "act": {
+        "got": "task",
+        "conf": 0.51
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 0.51
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 402.9179159999994,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.cert_doc.17",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 455.7291669999995,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.cert_doc.18",
+      "act": {
+        "got": "task",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 459.12574999999924,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.bank.01",
+      "act": {
+        "got": "task",
+        "conf": 0.5
+      },
+      "domain": {
+        "got": "capture",
+        "conf": 0.5
+      },
+      "corrects": null,
+      "advice": 0.11,
+      "ms": 398.4757499999996,
+      "inputTokens": 3196,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.bank.02",
+      "act": {
+        "got": "other",
+        "conf": 0.87
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.87
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 387.56287500000053,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.bank.03",
+      "act": {
+        "got": "other",
+        "conf": 0.43
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.43
+      },
+      "corrects": null,
+      "advice": 0.1,
+      "ms": 406.55166700000063,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.bank.04",
+      "act": {
+        "got": "other",
+        "conf": 0.95
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.95
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 423.931458,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.bank.05",
+      "act": {
+        "got": "task",
+        "conf": 0.6
+      },
+      "domain": {
+        "got": "capture",
+        "conf": 0.6
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 410.175792,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.bank.06",
+      "act": {
+        "got": "task",
+        "conf": 0.85
+      },
+      "domain": {
+        "got": "capture",
+        "conf": 0.85
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 399.1834169999993,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.bank.07",
+      "act": {
+        "got": "task",
+        "conf": 0.55
+      },
+      "domain": {
+        "got": "capture",
+        "conf": 0.55
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 390.38945799999965,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.bank.08",
+      "act": {
+        "got": "other",
+        "conf": 0.94
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.94
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 389.05858400000034,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.bank.09",
+      "act": {
+        "got": "other",
+        "conf": 0.83
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.83
+      },
+      "corrects": null,
+      "advice": 0.62,
+      "ms": 419.9930830000003,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.bank.10",
+      "act": {
+        "got": "other",
+        "conf": 0.57
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.57
+      },
+      "corrects": null,
+      "advice": 0.1,
+      "ms": 377.71220900000026,
+      "inputTokens": 3196,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.bank.11",
+      "act": {
+        "got": "other",
+        "conf": 0.71
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.71
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 369.0124589999996,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.bank.12",
+      "act": {
+        "got": "other",
+        "conf": 0.89
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.89
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 379.6687499999998,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.auth.01",
+      "act": {
+        "got": "other",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 389.8806249999998,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.auth.02",
+      "act": {
+        "got": "other",
+        "conf": 0.96
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.96
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 381.0291669999997,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.auth.03",
+      "act": {
+        "got": "other",
+        "conf": 0.92
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.92
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 379.8612499999999,
+      "inputTokens": 3205,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.auth.04",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 390.2688330000001,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.auth.05",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 369.74816699999974,
+      "inputTokens": 3204,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.auth.06",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 379.9825000000001,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.auth.07",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 402.93983299999945,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.auth.08",
+      "act": {
+        "got": "other",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 389.5904580000006,
+      "inputTokens": 3204,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.auth.09",
+      "act": {
+        "got": "other",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 433.22470799999974,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.auth.10",
+      "act": {
+        "got": "other",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 402.70737499999996,
+      "inputTokens": 3206,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.auth.11",
+      "act": {
+        "got": "other",
+        "conf": 0.96
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.96
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 389.3695830000006,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.auth.12",
+      "act": {
+        "got": "other",
+        "conf": 0.84
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.84
+      },
+      "corrects": null,
+      "advice": 0.58,
+      "ms": 416.6239999999998,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.phone_link.01",
+      "act": {
+        "got": "other",
+        "conf": 0.78
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.78
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 577.2508330000001,
+      "inputTokens": 3196,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.phone_link.02",
+      "act": {
+        "got": "other",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 400.8855000000003,
+      "inputTokens": 3204,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.phone_link.03",
+      "act": {
+        "got": "other",
+        "conf": 0.65
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.65
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 399.37075000000004,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.phone_link.04",
+      "act": {
+        "got": "other",
+        "conf": 0.97
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.97
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 407.1660840000004,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.phone_link.05",
+      "act": {
+        "got": "other",
+        "conf": 0.76
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.76
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 396.8221250000006,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.phone_link.06",
+      "act": {
+        "got": "other",
+        "conf": 0.87
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.87
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 425.2389170000006,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.phone_link.07",
+      "act": {
+        "got": "other",
+        "conf": 0.79
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.79
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 390.19845800000076,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.phone_link.08",
+      "act": {
+        "got": "other",
+        "conf": 0.92
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.92
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 420.0434580000001,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.phone_link.09",
+      "act": {
+        "got": "other",
+        "conf": 0.86
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.86
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 380.2403340000001,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.phone_link.10",
+      "act": {
+        "got": "other",
+        "conf": 0.82
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.82
+      },
+      "corrects": null,
+      "advice": 0.2,
+      "ms": 379.407541999999,
+      "inputTokens": 3194,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.counterparty.01",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "counterparty",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 369.7283750000006,
+      "inputTokens": 3205,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.counterparty.02",
+      "act": {
+        "got": "other",
+        "conf": 0.78
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.78
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 403.3352909999994,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.counterparty.03",
+      "act": {
+        "got": "other",
+        "conf": 0.92
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.92
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 407.51224999999977,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.counterparty.04",
+      "act": {
+        "got": "other",
+        "conf": 0.73
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.73
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 501.1857089999994,
+      "inputTokens": 3208,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.counterparty.05",
+      "act": {
+        "got": "other",
+        "conf": 0.89
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.89
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 414.75837499999943,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.counterparty.06",
+      "act": {
+        "got": "other",
+        "conf": 0.9
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.9
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 394.9449590000004,
+      "inputTokens": 3211,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.counterparty.07",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "counterparty",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 415.0059999999994,
+      "inputTokens": 3204,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.counterparty.08",
+      "act": {
+        "got": "other",
+        "conf": 0.95
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.95
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 384.57183299999997,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.counterparty.09",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "counterparty",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 386.8456249999999,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.counterparty.10",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "counterparty",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 417.6542920000011,
+      "inputTokens": 3206,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.counterparty.11",
+      "act": {
+        "got": "other",
+        "conf": 0.55
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.55
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 417.49224999999933,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.counterparty.12",
+      "act": {
+        "got": "task",
+        "conf": 0.83
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.83
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 445.04091700000026,
+      "inputTokens": 3212,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.pack.01",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "pack",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 414.1253749999996,
+      "inputTokens": 3206,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.pack.02",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "pack",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 389.10212499999943,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.pack.03",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "pack",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 383.0685830000002,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.pack.04",
+      "act": {
+        "got": "task",
+        "conf": 0.88
+      },
+      "domain": {
+        "got": "pack",
+        "conf": 0.88
+      },
+      "corrects": null,
+      "advice": 0.15,
+      "ms": 397.56666700000096,
+      "inputTokens": 3207,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.pack.05",
+      "act": {
+        "got": "task",
+        "conf": 0.88
+      },
+      "domain": {
+        "got": "pack",
+        "conf": 0.88
+      },
+      "corrects": null,
+      "advice": 0.27,
+      "ms": 439.0215840000001,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.pack.06",
+      "act": {
+        "got": "task",
+        "conf": 0.94
+      },
+      "domain": {
+        "got": "pack",
+        "conf": 0.94
+      },
+      "corrects": null,
+      "advice": 0.19,
+      "ms": 409.77979199999936,
+      "inputTokens": 3207,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.pack.07",
+      "act": {
+        "got": "other",
+        "conf": 0.88
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.88
+      },
+      "corrects": null,
+      "advice": 0.78,
+      "ms": 410.26900000000023,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.pack.08",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "pack",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.11,
+      "ms": 381.1357919999991,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.pack.09",
+      "act": {
+        "got": "task",
+        "conf": 1
+      },
+      "domain": {
+        "got": "pack",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 390.3777919999993,
+      "inputTokens": 3208,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.pack.10",
+      "act": {
+        "got": "task",
+        "conf": 0.92
+      },
+      "domain": {
+        "got": "pack",
+        "conf": 0.92
+      },
+      "corrects": null,
+      "advice": 0.25,
+      "ms": 399.9489160000012,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.capture.01",
+      "act": {
+        "got": "task",
+        "conf": 0.86
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.86
+      },
+      "corrects": null,
+      "advice": 0.1,
+      "ms": 390.3926250000004,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.capture.02",
+      "act": {
+        "got": "other",
+        "conf": 0.71
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.71
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 398.86454200000117,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.capture.03",
+      "act": {
+        "got": "other",
+        "conf": 0.85
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.85
+      },
+      "corrects": null,
+      "advice": 0.24,
+      "ms": 397.98679099999936,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.capture.04",
+      "act": {
+        "got": "other",
+        "conf": 0.55
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.55
+      },
+      "corrects": null,
+      "advice": 0.19,
+      "ms": 378.23825000000033,
+      "inputTokens": 3204,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.capture.05",
+      "act": {
+        "got": "other",
+        "conf": 0.84
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.84
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 384.45237499999894,
+      "inputTokens": 3209,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.capture.06",
+      "act": {
+        "got": "other",
+        "conf": 0.55
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.55
+      },
+      "corrects": null,
+      "advice": 0.11,
+      "ms": 410.4160419999989,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.capture.07",
+      "act": {
+        "got": "other",
+        "conf": 0.46
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.46
+      },
+      "corrects": null,
+      "advice": 0.26,
+      "ms": 389.2797920000012,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.capture.08",
+      "act": {
+        "got": "task",
+        "conf": 0.84
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.84
+      },
+      "corrects": null,
+      "advice": 0.22,
+      "ms": 429.4007500000007,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.capture.09",
+      "act": {
+        "got": "task",
+        "conf": 0.67
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.67
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 388.53129199999967,
+      "inputTokens": 3209,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.capture.10",
+      "act": {
+        "got": "other",
+        "conf": 0.62
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.62
+      },
+      "corrects": null,
+      "advice": 0.37,
+      "ms": 399.6412080000009,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.capture.11",
+      "act": {
+        "got": "other",
+        "conf": 0.45
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.45
+      },
+      "corrects": null,
+      "advice": 0.14,
+      "ms": 394.28670799999963,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.capture.12",
+      "act": {
+        "got": "task",
+        "conf": 0.39
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.39
+      },
+      "corrects": null,
+      "advice": 0.21,
+      "ms": 392.9147499999999,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.settings.01",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 392.8395840000012,
+      "inputTokens": 3196,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.settings.02",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 401.59691699999894,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.settings.03",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.13,
+      "ms": 372.5626250000005,
+      "inputTokens": 3196,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.settings.04",
+      "act": {
+        "got": "other",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 410.6487080000006,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.settings.05",
+      "act": {
+        "got": "other",
+        "conf": 0.77
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.77
+      },
+      "corrects": null,
+      "advice": 0.1,
+      "ms": 372.1387079999986,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.settings.06",
+      "act": {
+        "got": "other",
+        "conf": 0.94
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.94
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 408.1352500000012,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.settings.07",
+      "act": {
+        "got": "task",
+        "conf": 0.69
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.69
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 386.1462080000001,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.settings.08",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.12,
+      "ms": 386.75287500000013,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.settings.09",
+      "act": {
+        "got": "other",
+        "conf": 0.96
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.96
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 420.70158399999855,
+      "inputTokens": 3196,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.settings.10",
+      "act": {
+        "got": "other",
+        "conf": 0.92
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.92
+      },
+      "corrects": null,
+      "advice": 0.17,
+      "ms": 420.30270799999926,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.settings.11",
+      "act": {
+        "got": "other",
+        "conf": 0.97
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.97
+      },
+      "corrects": null,
+      "advice": 0.3,
+      "ms": 400.087375000001,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "task.settings.12",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 390.9966660000009,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.01",
+      "act": {
+        "got": "lookup",
+        "conf": 0.8
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 0.8
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 389.9495000000006,
+      "inputTokens": 3207,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.02",
+      "act": {
+        "got": "lookup",
+        "conf": 0.72
+      },
+      "domain": {
+        "got": "records",
+        "conf": 0.72
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 379.24270799999977,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.03",
+      "act": {
+        "got": "lookup",
+        "conf": 1
+      },
+      "domain": {
+        "got": "records",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.14,
+      "ms": 401.1480420000007,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.04",
+      "act": {
+        "got": "lookup",
+        "conf": 0.68
+      },
+      "domain": {
+        "got": "records",
+        "conf": 0.68
+      },
+      "corrects": null,
+      "advice": 0.12,
+      "ms": 495.3275419999991,
+      "inputTokens": 3209,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.05",
+      "act": {
+        "got": "lookup",
+        "conf": 1
+      },
+      "domain": {
+        "got": "records",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 628.7007080000003,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.06",
+      "act": {
+        "got": "lookup",
+        "conf": 0.93
+      },
+      "domain": {
+        "got": "records",
+        "conf": 0.93
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 420.8429589999996,
+      "inputTokens": 3205,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.07",
+      "act": {
+        "got": "lookup",
+        "conf": 0.51
+      },
+      "domain": {
+        "got": "records",
+        "conf": 0.51
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 453.94804099999965,
+      "inputTokens": 3209,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.08",
+      "act": {
+        "got": "lookup",
+        "conf": 0.7
+      },
+      "domain": {
+        "got": "records",
+        "conf": 0.7
+      },
+      "corrects": null,
+      "advice": 0.25,
+      "ms": 411.2286670000012,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.09",
+      "act": {
+        "got": "other",
+        "conf": 0.71
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.71
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 391.74270799999977,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.10",
+      "act": {
+        "got": "other",
+        "conf": 0.79
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.79
+      },
+      "corrects": null,
+      "advice": 0.27,
+      "ms": 477.0238329999993,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.11",
+      "act": {
+        "got": "other",
+        "conf": 0.49
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.49
+      },
+      "corrects": null,
+      "advice": 0.32,
+      "ms": 401.4008329999997,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.12",
+      "act": {
+        "got": "other",
+        "conf": 0.66
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.66
+      },
+      "corrects": null,
+      "advice": 0.55,
+      "ms": 436.0346669999999,
+      "inputTokens": 3207,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.13",
+      "act": {
+        "got": "other",
+        "conf": 0.84
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.84
+      },
+      "corrects": null,
+      "advice": 0.56,
+      "ms": 478.2775409999995,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.14",
+      "act": {
+        "got": "lookup",
+        "conf": 0.8
+      },
+      "domain": {
+        "got": "records",
+        "conf": 0.8
+      },
+      "corrects": null,
+      "advice": 0.22,
+      "ms": 435.86362499999996,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.15",
+      "act": {
+        "got": "lookup",
+        "conf": 0.43
+      },
+      "domain": {
+        "got": "records",
+        "conf": 0.43
+      },
+      "corrects": null,
+      "advice": 0.43,
+      "ms": 436.2086250000011,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.16",
+      "act": {
+        "got": "lookup",
+        "conf": 0.7
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 0.7
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 453.1012090000004,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.17",
+      "act": {
+        "got": "lookup",
+        "conf": 1
+      },
+      "domain": {
+        "got": "records",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 397.1988330000004,
+      "inputTokens": 3206,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.18",
+      "act": {
+        "got": "lookup",
+        "conf": 1
+      },
+      "domain": {
+        "got": "records",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 392.3064999999988,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.19",
+      "act": {
+        "got": "lookup",
+        "conf": 1
+      },
+      "domain": {
+        "got": "records",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.15,
+      "ms": 451.67779100000007,
+      "inputTokens": 3204,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.20",
+      "act": {
+        "got": "task",
+        "conf": 0.84
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.84
+      },
+      "corrects": null,
+      "advice": 0.19,
+      "ms": 451.8383329999997,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.21",
+      "act": {
+        "got": "lookup",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "records",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.16,
+      "ms": 479.75233300000036,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.22",
+      "act": {
+        "got": "lookup",
+        "conf": 1
+      },
+      "domain": {
+        "got": "records",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 393.85812499999884,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.23",
+      "act": {
+        "got": "lookup",
+        "conf": 0.95
+      },
+      "domain": {
+        "got": "records",
+        "conf": 0.95
+      },
+      "corrects": null,
+      "advice": 0.1,
+      "ms": 389.62975000000006,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.24",
+      "act": {
+        "got": "lookup",
+        "conf": 0.9
+      },
+      "domain": {
+        "got": "records",
+        "conf": 0.9
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 399.2946670000001,
+      "inputTokens": 3207,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.25",
+      "act": {
+        "got": "other",
+        "conf": 0.77
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.77
+      },
+      "corrects": null,
+      "advice": 0.44,
+      "ms": 400.2605000000003,
+      "inputTokens": 3195,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.26",
+      "act": {
+        "got": "other",
+        "conf": 0.74
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.74
+      },
+      "corrects": null,
+      "advice": 0.45,
+      "ms": 400.21691699999974,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.27",
+      "act": {
+        "got": "other",
+        "conf": 0.67
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.67
+      },
+      "corrects": null,
+      "advice": 0.16,
+      "ms": 400.3685829999995,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.28",
+      "act": {
+        "got": "other",
+        "conf": 0.59
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.59
+      },
+      "corrects": null,
+      "advice": 0.21,
+      "ms": 389.66450000000077,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.29",
+      "act": {
+        "got": "other",
+        "conf": 0.63
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.63
+      },
+      "corrects": null,
+      "advice": 0.13,
+      "ms": 400.00154099999963,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.30",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 500.82075000000077,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.31",
+      "act": {
+        "got": "other",
+        "conf": 0.77
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.77
+      },
+      "corrects": null,
+      "advice": 0.2,
+      "ms": 399.2108329999992,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.32",
+      "act": {
+        "got": "lookup",
+        "conf": 0.87
+      },
+      "domain": {
+        "got": "records",
+        "conf": 0.87
+      },
+      "corrects": null,
+      "advice": 0.19,
+      "ms": 407.72470799999974,
+      "inputTokens": 3206,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.33",
+      "act": {
+        "got": "lookup",
+        "conf": 1
+      },
+      "domain": {
+        "got": "records",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 389.36991599999965,
+      "inputTokens": 3204,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.34",
+      "act": {
+        "got": "lookup",
+        "conf": 0.91
+      },
+      "domain": {
+        "got": "records",
+        "conf": 0.91
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 390.19379200000003,
+      "inputTokens": 3204,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.35",
+      "act": {
+        "got": "lookup",
+        "conf": 0.83
+      },
+      "domain": {
+        "got": "records",
+        "conf": 0.83
+      },
+      "corrects": null,
+      "advice": 0.12,
+      "ms": 459.2990829999999,
+      "inputTokens": 3204,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.36",
+      "act": {
+        "got": "other",
+        "conf": 0.62
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.62
+      },
+      "corrects": null,
+      "advice": 0.26,
+      "ms": 395.228000000001,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.37",
+      "act": {
+        "got": "other",
+        "conf": 0.82
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.82
+      },
+      "corrects": null,
+      "advice": 0.16,
+      "ms": 388.09375,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.38",
+      "act": {
+        "got": "lookup",
+        "conf": 1
+      },
+      "domain": {
+        "got": "records",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.13,
+      "ms": 401.1034159999999,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.39",
+      "act": {
+        "got": "other",
+        "conf": 0.71
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.71
+      },
+      "corrects": null,
+      "advice": 0.26,
+      "ms": 376.158875000001,
+      "inputTokens": 3196,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.40",
+      "act": {
+        "got": "lookup",
+        "conf": 0.85
+      },
+      "domain": {
+        "got": "records",
+        "conf": 0.85
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 378.54504199999974,
+      "inputTokens": 3206,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.records.41",
+      "act": {
+        "got": "other",
+        "conf": 0.82
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.82
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 399.91799999999967,
+      "inputTokens": 3206,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.cert_doc.01",
+      "act": {
+        "got": "lookup",
+        "conf": 0.45
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 0.45
+      },
+      "corrects": null,
+      "advice": 0.35,
+      "ms": 382.75295800000094,
+      "inputTokens": 3204,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.cert_doc.02",
+      "act": {
+        "got": "lookup",
+        "conf": 0.56
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 0.56
+      },
+      "corrects": null,
+      "advice": 0.1,
+      "ms": 394.835833000001,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.cert_doc.03",
+      "act": {
+        "got": "task",
+        "conf": 0.9
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 0.9
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 393.7747500000005,
+      "inputTokens": 3205,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.cert_doc.04",
+      "act": {
+        "got": "lookup",
+        "conf": 1
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 429.3992909999997,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.cert_doc.05",
+      "act": {
+        "got": "lookup",
+        "conf": 1
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.1,
+      "ms": 431.89750000000095,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.bank.01",
+      "act": {
+        "got": "other",
+        "conf": 0.83
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.83
+      },
+      "corrects": null,
+      "advice": 0.13,
+      "ms": 389.3044170000012,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.bank.02",
+      "act": {
+        "got": "other",
+        "conf": 0.86
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.86
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 387.05212500000016,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.bank.03",
+      "act": {
+        "got": "task",
+        "conf": 0.48
+      },
+      "domain": {
+        "got": "capture",
+        "conf": 0.48
+      },
+      "corrects": null,
+      "advice": 0.1,
+      "ms": 389.1746669999993,
+      "inputTokens": 3205,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.bank.04",
+      "act": {
+        "got": "other",
+        "conf": 0.92
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.92
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 407.0319589999999,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.auth.01",
+      "act": {
+        "got": "lookup",
+        "conf": 0.56
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 0.56
+      },
+      "corrects": null,
+      "advice": 0.12,
+      "ms": 379.0261249999985,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.auth.02",
+      "act": {
+        "got": "other",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.1,
+      "ms": 388.27329100000134,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.auth.03",
+      "act": {
+        "got": "other",
+        "conf": 0.97
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.97
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 400.0186670000003,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.phone_link.01",
+      "act": {
+        "got": "other",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 399.505165999999,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.phone_link.02",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.11,
+      "ms": 390.3824999999997,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.phone_link.03",
+      "act": {
+        "got": "other",
+        "conf": 0.93
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.93
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 411.87845800000105,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.settings.01",
+      "act": {
+        "got": "lookup",
+        "conf": 0.51
+      },
+      "domain": {
+        "got": "cert_doc",
+        "conf": 0.51
+      },
+      "corrects": null,
+      "advice": 0.13,
+      "ms": 389.0400410000002,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.settings.02",
+      "act": {
+        "got": "other",
+        "conf": 0.94
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.94
+      },
+      "corrects": null,
+      "advice": 0.12,
+      "ms": 417.47120899999936,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.settings.03",
+      "act": {
+        "got": "other",
+        "conf": 0.97
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.97
+      },
+      "corrects": null,
+      "advice": 0.1,
+      "ms": 399.84950000000026,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.counterparty.01",
+      "act": {
+        "got": "other",
+        "conf": 0.75
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.75
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 390.59370800000033,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "lookup.counterparty.02",
+      "act": {
+        "got": "other",
+        "conf": 0.62
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.62
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 389.47841700000026,
+      "inputTokens": 3205,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.01",
+      "act": {
+        "got": "task",
+        "conf": 0.97
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.97
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 412.07937499999935,
+      "inputTokens": 3208,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.02",
+      "act": {
+        "got": "task",
+        "conf": 0.88
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.88
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 379.7579590000005,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.03",
+      "act": {
+        "got": "other",
+        "conf": 0.93
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.93
+      },
+      "corrects": null,
+      "advice": 0.57,
+      "ms": 382.4082920000001,
+      "inputTokens": 3194,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.04",
+      "act": {
+        "got": "other",
+        "conf": 0.93
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.93
+      },
+      "corrects": null,
+      "advice": 0.3,
+      "ms": 382.173166999999,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.05",
+      "act": {
+        "got": "other",
+        "conf": 0.84
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.84
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 393.23520799999824,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.06",
+      "act": {
+        "got": "other",
+        "conf": 0.55
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.55
+      },
+      "corrects": null,
+      "advice": 0.33,
+      "ms": 413.57587499999863,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.07",
+      "act": {
+        "got": "other",
+        "conf": 0.97
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.97
+      },
+      "corrects": null,
+      "advice": 0.53,
+      "ms": 392.9321250000012,
+      "inputTokens": 3193,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.08",
+      "act": {
+        "got": "other",
+        "conf": 0.96
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.96
+      },
+      "corrects": null,
+      "advice": 0.17,
+      "ms": 387.1629580000008,
+      "inputTokens": 3196,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.09",
+      "act": {
+        "got": "other",
+        "conf": 0.51
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.51
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 389.4019589999989,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.10",
+      "act": {
+        "got": "other",
+        "conf": 0.84
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.84
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 398.796792000001,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.11",
+      "act": {
+        "got": "other",
+        "conf": 0.56
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.56
+      },
+      "corrects": null,
+      "advice": 0.16,
+      "ms": 386.48308299999917,
+      "inputTokens": 3196,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.12",
+      "act": {
+        "got": "other",
+        "conf": 0.89
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.89
+      },
+      "corrects": null,
+      "advice": 0.29,
+      "ms": 386.1283340000009,
+      "inputTokens": 3196,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.13",
+      "act": {
+        "got": "other",
+        "conf": 0.52
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.52
+      },
+      "corrects": null,
+      "advice": 0.11,
+      "ms": 385.1808749999982,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.14",
+      "act": {
+        "got": "other",
+        "conf": 0.86
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.86
+      },
+      "corrects": null,
+      "advice": 0.33,
+      "ms": 371.47462500000256,
+      "inputTokens": 3194,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.15",
+      "act": {
+        "got": "other",
+        "conf": 0.92
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.92
+      },
+      "corrects": null,
+      "advice": 0.45,
+      "ms": 393.1919999999991,
+      "inputTokens": 3195,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.16",
+      "act": {
+        "got": "other",
+        "conf": 0.94
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.94
+      },
+      "corrects": null,
+      "advice": 0.28,
+      "ms": 401.0025830000013,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.17",
+      "act": {
+        "got": "task",
+        "conf": 0.39
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.39
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 392.1582090000011,
+      "inputTokens": 3208,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.18",
+      "act": {
+        "got": "other",
+        "conf": 0.91
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.91
+      },
+      "corrects": null,
+      "advice": 0.58,
+      "ms": 399.3587090000001,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.19",
+      "act": {
+        "got": "other",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.12,
+      "ms": 392.4193750000013,
+      "inputTokens": 3205,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.20",
+      "act": {
+        "got": "other",
+        "conf": 0.97
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.97
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 401.8092919999981,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.21",
+      "act": {
+        "got": "task",
+        "conf": 0.39
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.39
+      },
+      "corrects": null,
+      "advice": 0.1,
+      "ms": 388.0852080000004,
+      "inputTokens": 3211,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.22",
+      "act": {
+        "got": "task",
+        "conf": 0.72
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.72
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 390.1979170000013,
+      "inputTokens": 3205,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.23",
+      "act": {
+        "got": "other",
+        "conf": 0.85
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.85
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 387.15045800000007,
+      "inputTokens": 3210,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.24",
+      "act": {
+        "got": "other",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 400.46500000000015,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.25",
+      "act": {
+        "got": "task",
+        "conf": 0.46
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.46
+      },
+      "corrects": null,
+      "advice": 0.15,
+      "ms": 396.05266699999993,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.26",
+      "act": {
+        "got": "other",
+        "conf": 0.75
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.75
+      },
+      "corrects": null,
+      "advice": 0.1,
+      "ms": 387.1411249999983,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.27",
+      "act": {
+        "got": "task",
+        "conf": 0.52
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.52
+      },
+      "corrects": null,
+      "advice": 0.48,
+      "ms": 417.5240840000006,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.28",
+      "act": {
+        "got": "other",
+        "conf": 0.79
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.79
+      },
+      "corrects": null,
+      "advice": 0.15,
+      "ms": 381.47620800000004,
+      "inputTokens": 3196,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.29",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 389.21783400000277,
+      "inputTokens": 3196,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.30",
+      "act": {
+        "got": "other",
+        "conf": 0.93
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.93
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 439.21408299999894,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.31",
+      "act": {
+        "got": "other",
+        "conf": 0.91
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.91
+      },
+      "corrects": null,
+      "advice": 0.16,
+      "ms": 419.99449999999706,
+      "inputTokens": 3196,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.32",
+      "act": {
+        "got": "other",
+        "conf": 0.66
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.66
+      },
+      "corrects": null,
+      "advice": 0.19,
+      "ms": 469.5751659999987,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.33",
+      "act": {
+        "got": "task",
+        "conf": 0.49
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.49
+      },
+      "corrects": null,
+      "advice": 0.26,
+      "ms": 380.6442080000015,
+      "inputTokens": 3205,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.34",
+      "act": {
+        "got": "other",
+        "conf": 0.95
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.95
+      },
+      "corrects": null,
+      "advice": 0.69,
+      "ms": 395.59612500000003,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.35",
+      "act": {
+        "got": "other",
+        "conf": 0.77
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.77
+      },
+      "corrects": null,
+      "advice": 0.28,
+      "ms": 399.5219160000015,
+      "inputTokens": 3205,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.36",
+      "act": {
+        "got": "other",
+        "conf": 0.92
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.92
+      },
+      "corrects": null,
+      "advice": 0.11,
+      "ms": 399.5225829999981,
+      "inputTokens": 3204,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.37",
+      "act": {
+        "got": "other",
+        "conf": 0.83
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.83
+      },
+      "corrects": null,
+      "advice": 0.21,
+      "ms": 389.17525000000023,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.38",
+      "act": {
+        "got": "other",
+        "conf": 0.68
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.68
+      },
+      "corrects": null,
+      "advice": 0.77,
+      "ms": 378.8110420000012,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.39",
+      "act": {
+        "got": "other",
+        "conf": 0.63
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.63
+      },
+      "corrects": null,
+      "advice": 0.16,
+      "ms": 390.13508300000103,
+      "inputTokens": 3211,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.40",
+      "act": {
+        "got": "other",
+        "conf": 0.81
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.81
+      },
+      "corrects": null,
+      "advice": 0.12,
+      "ms": 448.80004199999894,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.41",
+      "act": {
+        "got": "other",
+        "conf": 0.74
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.74
+      },
+      "corrects": null,
+      "advice": 0.11,
+      "ms": 410.5304159999978,
+      "inputTokens": 3208,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.42",
+      "act": {
+        "got": "other",
+        "conf": 0.52
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.52
+      },
+      "corrects": null,
+      "advice": 0.11,
+      "ms": 418.3657910000002,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.43",
+      "act": {
+        "got": "task",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 422.6412080000009,
+      "inputTokens": 3208,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.44",
+      "act": {
+        "got": "task",
+        "conf": 0.96
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.96
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 400.90512500000114,
+      "inputTokens": 3204,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "followup.invoice.45",
+      "act": {
+        "got": "task",
+        "conf": 0.61
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.61
+      },
+      "corrects": null,
+      "advice": 0.37,
+      "ms": 389.52150000000256,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.none.01",
+      "act": {
+        "got": "other",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.13,
+      "ms": 389.89945799999987,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.none.02",
+      "act": {
+        "got": "other",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.24,
+      "ms": 409.2458340000012,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.none.03",
+      "act": {
+        "got": "other",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 389.799332999999,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.none.04",
+      "act": {
+        "got": "other",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.14,
+      "ms": 449.3739999999998,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.none.05",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 410.7418749999997,
+      "inputTokens": 3196,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.none.06",
+      "act": {
+        "got": "other",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.13,
+      "ms": 379.5011659999982,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.none.07",
+      "act": {
+        "got": "other",
+        "conf": 0.97
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.97
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 409.8432920000014,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.none.08",
+      "act": {
+        "got": "other",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.13,
+      "ms": 430.34695799999827,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.none.09",
+      "act": {
+        "got": "other",
+        "conf": 0.95
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.95
+      },
+      "corrects": null,
+      "advice": 0.69,
+      "ms": 402.6658329999991,
+      "inputTokens": 3204,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.invoice.01",
+      "act": {
+        "got": "task",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.22,
+      "ms": 402.2662500000006,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.invoice.02",
+      "act": {
+        "got": "task",
+        "conf": 0.83
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.83
+      },
+      "corrects": null,
+      "advice": 0.13,
+      "ms": 398.62774999999965,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.invoice.03",
+      "act": {
+        "got": "task",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.14,
+      "ms": 410.1390829999982,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.invoice.04",
+      "act": {
+        "got": "other",
+        "conf": 0.97
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.97
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 402.3219999999965,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.bank.01",
+      "act": {
+        "got": "other",
+        "conf": 0.92
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.92
+      },
+      "corrects": null,
+      "advice": 0.14,
+      "ms": 389.0387499999997,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.bank.02",
+      "act": {
+        "got": "other",
+        "conf": 0.96
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.96
+      },
+      "corrects": null,
+      "advice": 0.42,
+      "ms": 388.2384579999998,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.auth.01",
+      "act": {
+        "got": "other",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.17,
+      "ms": 395.35504199999923,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.auth.02",
+      "act": {
+        "got": "other",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.18,
+      "ms": 389.8531669999975,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.phone_link.01",
+      "act": {
+        "got": "other",
+        "conf": 0.96
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.96
+      },
+      "corrects": null,
+      "advice": 0.14,
+      "ms": 380.93362499999785,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.phone_link.02",
+      "act": {
+        "got": "task",
+        "conf": 0.92
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": 0.92
+      },
+      "corrects": null,
+      "advice": 0.11,
+      "ms": 388.75158400000146,
+      "inputTokens": 3204,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.pack.01",
+      "act": {
+        "got": "other",
+        "conf": 0.55
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.55
+      },
+      "corrects": null,
+      "advice": 0.41,
+      "ms": 390.8703339999993,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "app_help.capture.01",
+      "act": {
+        "got": "other",
+        "conf": 0.7
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.7
+      },
+      "corrects": null,
+      "advice": 0.15,
+      "ms": 399.3839999999982,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.01",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 399.7093330000025,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.02",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 379.4200830000009,
+      "inputTokens": 3193,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.03",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 397.67658299999675,
+      "inputTokens": 3194,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.04",
+      "act": {
+        "got": "other",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.7,
+      "ms": 398.2700420000001,
+      "inputTokens": 3195,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.05",
+      "act": {
+        "got": "other",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.81,
+      "ms": 390.11066700000083,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.06",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 380.02079199999935,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.07",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.11,
+      "ms": 410.8472499999989,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.08",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 430.1916249999995,
+      "inputTokens": 3195,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.09",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 399.68429200000173,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.10",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 382.5826249999991,
+      "inputTokens": 3195,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.11",
+      "act": {
+        "got": "other",
+        "conf": 0.97
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.97
+      },
+      "corrects": null,
+      "advice": 0.68,
+      "ms": 397.5734590000029,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.12",
+      "act": {
+        "got": "other",
+        "conf": 0.97
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.97
+      },
+      "corrects": null,
+      "advice": 0.7,
+      "ms": 405.62787500000195,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.13",
+      "act": {
+        "got": "other",
+        "conf": 0.97
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.97
+      },
+      "corrects": null,
+      "advice": 0.71,
+      "ms": 392.53741600000285,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.14",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 565.7771670000002,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.15",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.11,
+      "ms": 389.104124999998,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.16",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 377.3142919999991,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.17",
+      "act": {
+        "got": "other",
+        "conf": 0.85
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.85
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 395.7129590000004,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.18",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 428.35212500000125,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.19",
+      "act": {
+        "got": "other",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.73,
+      "ms": 399.60841699999946,
+      "inputTokens": 3193,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.20",
+      "act": {
+        "got": "other",
+        "conf": 0.97
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.97
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 401.2312920000004,
+      "inputTokens": 3195,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.21",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.13,
+      "ms": 424.2828750000008,
+      "inputTokens": 3196,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.22",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 396.67991600000096,
+      "inputTokens": 3195,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.23",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 395.05604200000016,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.24",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.07,
+      "ms": 505.83108300000094,
+      "inputTokens": 3193,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.25",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 469.9476250000007,
+      "inputTokens": 3195,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.26",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 429.95687499999985,
+      "inputTokens": 3196,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.27",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.11,
+      "ms": 403.354207999997,
+      "inputTokens": 3195,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.28",
+      "act": {
+        "got": "other",
+        "conf": 0.97
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.97
+      },
+      "corrects": null,
+      "advice": 0.85,
+      "ms": 424.0515830000004,
+      "inputTokens": 3192,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.29",
+      "act": {
+        "got": "other",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.79,
+      "ms": 378.4437910000015,
+      "inputTokens": 3194,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "smalltalk.none.30",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 424.9852920000012,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.01",
+      "act": {
+        "got": "other",
+        "conf": 0.97
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.97
+      },
+      "corrects": null,
+      "advice": 0.9,
+      "ms": 423.74670900000274,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.02",
+      "act": {
+        "got": "other",
+        "conf": 0.8
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.8
+      },
+      "corrects": null,
+      "advice": 0.94,
+      "ms": 496.1194579999974,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.03",
+      "act": {
+        "got": "other",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.93,
+      "ms": 403.1461249999993,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.04",
+      "act": {
+        "got": "other",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.94,
+      "ms": 441.1088750000017,
+      "inputTokens": 3204,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.05",
+      "act": {
+        "got": "other",
+        "conf": 0.93
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.93
+      },
+      "corrects": null,
+      "advice": 0.92,
+      "ms": 401.58420900000056,
+      "inputTokens": 3207,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.06",
+      "act": {
+        "got": "other",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.94,
+      "ms": 415.36066700000083,
+      "inputTokens": 3205,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.07",
+      "act": {
+        "got": "other",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.89,
+      "ms": 404.0181249999987,
+      "inputTokens": 3204,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.08",
+      "act": {
+        "got": "other",
+        "conf": 0.9
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.9
+      },
+      "corrects": null,
+      "advice": 0.9,
+      "ms": 379.3741659999978,
+      "inputTokens": 3198,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.09",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.93,
+      "ms": 402.37604199999987,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.10",
+      "act": {
+        "got": "other",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.91,
+      "ms": 381.39908399999695,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.11",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.94,
+      "ms": 397.09183400000256,
+      "inputTokens": 3202,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.12",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.91,
+      "ms": 389.1008750000001,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.13",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.94,
+      "ms": 369.08699999999953,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.14",
+      "act": {
+        "got": "other",
+        "conf": 0.96
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.96
+      },
+      "corrects": null,
+      "advice": 0.89,
+      "ms": 380.35320800000045,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.15",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.86,
+      "ms": 388.3292079999992,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.16",
+      "act": {
+        "got": "other",
+        "conf": 0.93
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.93
+      },
+      "corrects": null,
+      "advice": 0.83,
+      "ms": 398.4066249999996,
+      "inputTokens": 3197,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.17",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.88,
+      "ms": 409.86312499999985,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.18",
+      "act": {
+        "got": "other",
+        "conf": 0.96
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.96
+      },
+      "corrects": null,
+      "advice": 0.89,
+      "ms": 399.31679200000144,
+      "inputTokens": 3199,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.19",
+      "act": {
+        "got": "other",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.94,
+      "ms": 390.4067079999986,
+      "inputTokens": 3206,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "tax_advice.none.20",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.93,
+      "ms": 369.45720900000015,
+      "inputTokens": 3209,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "other.none.01",
+      "act": {
+        "got": "other",
+        "conf": 0.9
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.9
+      },
+      "corrects": null,
+      "advice": 0.23,
+      "ms": 439.7379159999982,
+      "inputTokens": 3218,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "other.none.02",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.06,
+      "ms": 388.650791,
+      "inputTokens": 3211,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "other.none.03",
+      "act": {
+        "got": "other",
+        "conf": 0.94
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.94
+      },
+      "corrects": null,
+      "advice": 0.41,
+      "ms": 429.90070800000103,
+      "inputTokens": 3208,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "other.none.04",
+      "act": {
+        "got": "other",
+        "conf": 0.88
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.88
+      },
+      "corrects": null,
+      "advice": 0.19,
+      "ms": 401.34620899999936,
+      "inputTokens": 3205,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "other.none.05",
+      "act": {
+        "got": "other",
+        "conf": 0.69
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.69
+      },
+      "corrects": null,
+      "advice": 0.11,
+      "ms": 449.2206660000011,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "other.none.06",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.08,
+      "ms": 389.5957920000001,
+      "inputTokens": 3210,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "other.none.07",
+      "act": {
+        "got": "other",
+        "conf": 0.96
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.96
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 370.0954590000001,
+      "inputTokens": 3207,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "other.none.08",
+      "act": {
+        "got": "other",
+        "conf": 0.93
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.93
+      },
+      "corrects": null,
+      "advice": 0.78,
+      "ms": 381.2439169999998,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "other.none.09",
+      "act": {
+        "got": "other",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.05,
+      "ms": 391.4285830000008,
+      "inputTokens": 3211,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "other.none.10",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.09,
+      "ms": 409.53237499999886,
+      "inputTokens": 3195,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "other.none.11",
+      "act": {
+        "got": "other",
+        "conf": 1
+      },
+      "domain": {
+        "got": "none",
+        "conf": 1
+      },
+      "corrects": null,
+      "advice": 0.26,
+      "ms": 440.0554579999989,
+      "inputTokens": 3193,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "other.none.12",
+      "act": {
+        "got": "other",
+        "conf": 0.98
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.98
+      },
+      "corrects": null,
+      "advice": 0.76,
+      "ms": 390.26074999999764,
+      "inputTokens": 3203,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "other.none.13",
+      "act": {
+        "got": "other",
+        "conf": 0.96
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.96
+      },
+      "corrects": null,
+      "advice": 0.81,
+      "ms": 470.34108299999934,
+      "inputTokens": 3192,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "other.none.14",
+      "act": {
+        "got": "other",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.22,
+      "ms": 388.9604169999984,
+      "inputTokens": 3200,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "other.none.15",
+      "act": {
+        "got": "other",
+        "conf": 0.95
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.95
+      },
+      "corrects": null,
+      "advice": 0.44,
+      "ms": 468.5304999999971,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "id": "other.none.16",
+      "act": {
+        "got": "other",
+        "conf": 0.99
+      },
+      "domain": {
+        "got": "none",
+        "conf": 0.99
+      },
+      "corrects": null,
+      "advice": 0.04,
+      "ms": 388.62808399999994,
+      "inputTokens": 3201,
+      "model": "typesafe/jev-1.14-20261014"
+    }
+  ]
+}
