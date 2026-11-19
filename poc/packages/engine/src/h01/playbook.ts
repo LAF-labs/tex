@@ -51,7 +51,7 @@ export const H01 = {
     // 작성일자(과세기간)가 의도(KST 오늘)와 다르면 게이트를 열지 않는다(N-26).
     { id: 's19e', phase: 'readback', type: 'assert', cond: { readbackEquals: { fieldKey: 'issueDate', ref: '$inputs.issueDate' } }, code: 'assert.issue_date_mismatch' },
     { id: 's20', phase: 'gate', type: 'gate', authorizes: ['s21'], waitMs: 600_000 },
-    // signFlow(간편인증·인증서·보안카드)는 PoC-3에서 실제 순서를 본 뒤 X 안에 넣는다(D02 §4.5).
+    // signFlow(간편인증·인증서)는 PoC-3에서 실제 순서를 본 뒤 X 안에 넣는다(D02 §4.5).
     { id: 's21', phase: 'sign', type: 'submit', target: 'form.issueButton', verify: 's30' },
     { id: 's30', phase: 'verify', type: 'verify', lookup: 'invoice', baseline: 'pre_gate_snapshot', on: { committed: 's33', not_committed: 's36', unknown: 's37' } },
     // skipUnless email: 승인한 받는 이메일(readback counterpartEmail)이 있을 때만.

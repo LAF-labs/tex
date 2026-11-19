@@ -349,7 +349,6 @@ export const ATTEST_TEXT: CardText = { title: DOC_TITLE, chip: '확인 필요', 
 export const SIGN_AFTER: Readonly<Record<string, string>> = {
   '공동·금융인증서': '승인 뒤 인증서 비밀번호를 넣으면',
   '사업자 간편인증': '승인 뒤 휴대폰 간편인증을 마치면',
-  보안카드: '승인 뒤 보안카드 번호를 넣으면',
 };
 export const SIGN_AFTER_DEFAULT = '승인 뒤 홈택스 인증을 마치면';
 export const irreversibleText = (auth: string | undefined, mail: boolean): string =>

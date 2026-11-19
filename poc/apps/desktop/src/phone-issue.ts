@@ -55,15 +55,27 @@ export function phaseOf(r: RunView): RunPhase {
  */
 export function eventOf(r: RunView, runId: string, cmdId: string, at: number, approveCode?: string): RunEventBody {
   const phase = phaseOf(r);
-  const ev: RunEventBody = { runId, cmdId, at, event: phase === 'done' || phase === 'stopped' ? 'end' : 'phase', phase, status: r.status };
+  const turn = phase !== 'done' && phase !== 'stopped' && r.status === 'turn' && !!r.handoff;
+  // 사람 차례(핸드오프): 'turn' 사건과 그 까닭(엔진 코드, 예: login.simple_auth)을 싣는다. 이게 없으면 폰은 "진행 중"에 머문다(2026-11-19 실기기).
+  const ev: RunEventBody = { runId, cmdId, at, event: phase === 'done' || phase === 'stopped' ? 'end' : turn ? 'turn' : 'phase', phase, status: r.status };
+  if (turn) ev.code = turnCode(r.handoff!);
   if (phase === 'verify' && Number.isSafeInteger(r.verifyAttempt) && r.verifyAttempt! >= 1) ev.attempt = Math.min(r.verifyAttempt!, 99);
   if (phase === 'done' && r.result && APPROVAL_NO.test(r.result.approvalNo) && Number.isSafeInteger(r.total) && r.total >= 0) {
     ev.result = { approvalNo: r.result.approvalNo, total: r.total, emailSent: r.result.mailConfirmed };
     if (UUID4.test(r.result.docId)) ev.result.docId = r.result.docId;
   }
   if (phase === 'stopped' && r.inDoubt) ev.code = 'in_doubt';
+  // 발급 없이 멈췄다(승인 전 실패·핸드오프 끝·버림). 폰은 "아무것도 발급하지 않았어요"를 확실히 말할 수 있다.
+  else if (phase === 'stopped' && (r.redo || r.handoffEnd || r.discarded) && !r.result) ev.code = 'not_issued';
   if (phase === 'approve' && approveCode) ev.code = approveCode;
   return ev;
+}
+
+/** 사람 차례 까닭(폰에 보내는 코드). 엔진 코드는 패키지 규칙 모양(소문자·점·밑줄)일 때만 그대로, 아니면 종류만(turn.login·turn.sign·turn.other). */
+const TURN_CODE = /^[a-z][a-z0-9_]*(\.[a-z0-9_]+){1,3}$/;
+export function turnCode(h: NonNullable<RunView['handoff']>): string {
+  if (h.code && TURN_CODE.test(h.code) && h.code.length <= 64) return h.code;
+  return `turn.${h.kind ?? 'other'}`;
 }
 
 /** 처리한 cmdId(디스크 영속, 0600). 같은 명령을 두 번 시작하지 않는다. */
@@ -189,7 +201,7 @@ export class PhoneIssue {
 
   #emit(r: RunView, t: Tracked, force: boolean): void {
     const ev = eventOf(r, t.runId, t.cmdId, this.#now(), this.#o.approveCode?.(r.id));
-    const key = `${ev.phase}:${ev.attempt ?? ''}:${ev.result ? 'r' : ''}:${ev.phase === 'approve' ? (ev.code ?? '') : ''}`;
+    const key = `${ev.event}:${ev.phase}:${ev.attempt ?? ''}:${ev.result ? 'r' : ''}:${ev.phase === 'approve' || ev.event === 'turn' ? (ev.code ?? '') : ''}`;
     if (!force && key === t.last) return;
     t.last = key;
     const sink = this.#sinks.get(t.pairId);

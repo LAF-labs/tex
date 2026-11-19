@@ -1,5 +1,7 @@
 # 대외 문서 초안 (D15 F-04)
 
+> 2026-11-19 대표 결정: 보안카드는 지원 안 함(대표 결정 2026-11-19). 앱·금고·엔진에서 뺐고, 옛 판이 남긴 보안카드 값·발급 인증은 기동 때 지운다. 이 문서의 보안카드 내용은 그 전 설계 기록이다.
+
 > 상태: **초안 v0.3** (2026-11-02, Opus 검수 2차 반영). 아직 아무 곳에도 보내지 않았다. · 검토·발송: yanggang · 발송 전 확인: yulmu(보드 프로젝트 규칙 1) · 보드: EX-1(법률 질의), EX-3(공문 2종), EX-5(개인정보위 질의), 수신처는 EX-2
 > 근거: [05 §4](../05-access-and-detection.md), [04 §1 G0①·L1~L3·§6](../04-roadmap.md), [D14 P0-11·PoC-2](../design/14-work-breakdown.md), 기술 방식 문단은 [D03 §10](../design/03-engine.md)·[ADR-010](../design/adr/ADR-010-webdriver-flag-left-as-is.md) 표현, [ADR-011](../design/adr/ADR-011-portal-mode-gov24-postprocess.md)·[012](../design/adr/ADR-012-hotfix-scope-actuation-identity-policy-ceiling.md)·[017](../design/adr/ADR-017-poc-scope-and-start.md)·[018](../design/adr/ADR-018-document-demand-priority.md)·[020](../design/adr/ADR-020-design-review-issuance-auth-approval.md)·[021](../design/adr/ADR-021-pc-approval-evidence-main-approval-bar.md)
 

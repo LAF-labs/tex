@@ -17,6 +17,9 @@ export const CODEF_SOURCE_CODES: Record<CodefFailure, string> = {
   cert_missing: 'source.cert_missing',
   two_way_required: 'source.needs_user',
   identity_required: 'source.needs_user',
+  withdraw_account_required: 'source.needs_user',
+  banking_kind: 'source.needs_user',
+  not_enrolled: 'source.needs_user',
   account_password_required: 'source.needs_user',
   cancelled: 'source.cancelled',
   bank_error: 'source.bank_error',
@@ -33,6 +36,7 @@ export const CODEF_SOURCE_CODES: Record<CodefFailure, string> = {
   bad_response: 'source.rejected',
   rejected: 'source.rejected',
   busy: 'source.busy',
+  sms_wrong: 'source.needs_user',
 };
 
 const clean = (s: string): string | null => {

@@ -182,7 +182,7 @@ async function keychain(): Promise<Record<string, unknown>> {
     }
     out.osLimit = osLimit;
 
-    // (c) 항목 개수: 슬롯 1개 최대치(보안카드 35칸 + kek/device·kek/hello·consent) + 전역(index·settings) = 40개
+    // (c) 항목 개수: 2026-11 실측 때의 슬롯 1개 최대치(35칸 + kek/device·kek/hello·consent) + 전역(index·settings) = 40개. 지금 슬롯은 칸 하나라 여유가 크다
     const many = 40;
     const t2 = process.hrtime.bigint();
     for (let i = 0; i < many; i++) await store.set(name(`many-${i}`), new Uint8Array(randomBytes(256)));

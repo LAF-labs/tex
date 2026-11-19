@@ -28,7 +28,9 @@ describe('승인 카드: 발급 인증별 비가역 한 줄', () => {
     }
     assert.match(irreversibleText(SIGN_LABEL.cert, true), /인증서 비밀번호/);
     assert.match(irreversibleText(SIGN_LABEL.simple_auth, true), /휴대폰 간편인증/);
-    assert.match(irreversibleText(SIGN_LABEL.security_card, true), /보안카드 번호/);
+    // 보안카드는 지원하지 않는다(대표 결정 2026-11-19): 옛 라벨은 일반 문구로
+    assert.equal(irreversibleText('보안카드', true), irreversibleText(undefined, true));
+    assert.ok(!Object.values(SIGN_LABEL).includes('보안카드'));
   });
 
   it('인증서 비밀번호 틀림·잠김 문구: 승인 뒤 코드라 "아무것도 발급하지 않았어요"·[다시 준비]를 말하지 않는다', () => {

@@ -11,7 +11,7 @@ export const TEST_CHROME_ARGS = ['--headless=new', '--use-mock-keychain'];
 export function testPolicy(over: Partial<RelayPolicy> = {}): RelayPolicy {
   return {
     allowedHosts: ['127.0.0.1'],
-    secretHosts: { cert_password: ['127.0.0.1'], portal_password: ['127.0.0.1'], security_card: ['127.0.0.1'] },
+    secretHosts: { cert_password: ['127.0.0.1'], portal_password: ['127.0.0.1'] },
     domainMethods: RELAY_DOMAIN_METHOD_ALLOWLIST,
     deniedMethods: RELAY_DENIED_METHODS,
     keyDelayMs: 5,

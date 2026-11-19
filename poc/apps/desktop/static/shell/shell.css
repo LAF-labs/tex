@@ -583,19 +583,6 @@ section[data-view="bundle"] .rs-col { max-width: 920px; }
 .sx-batch-list .sx-card .sx-btn:not(.sx-btn-primary):not(.sx-btn-quiet) { background: var(--surface-tint); }
 .sx-batch-list .sx-card .sx-btn:not(.sx-btn-primary):not(.sx-btn-quiet):hover { background: var(--surface-sunken); }
 
-/* 보안카드 등록 안내: 셸에서는 [등록 창 열기] 면이다(사진을 끌어 놓는 칸은 따로 뜨는 금고 창 secret.css에만 있고, 점선은 거기에만 쓴다) */
-.card-reg { display: grid; gap: var(--space-2); margin-top: var(--space-2); width: 100%; }
-.card-drop { display: grid; gap: var(--space-1); justify-items: start; padding: var(--space-3); border: 0; border-radius: var(--radius-md); background: var(--canvas); }
-.card-drop.is-over { border-color: var(--ink); background: var(--surface-tint); }
-.card-drop.is-busy { opacity: 0.7; }
-.card-ask { display: grid; gap: var(--space-2); }
-.card-ask-grid { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.card-ask-row { display: flex; align-items: center; gap: 6px; }
-.card-ask-no { font-weight: 600; color: var(--ink-2); }
-.card-ask-input { width: 84px; height: 40px; padding: 0 10px; border: 0; box-shadow: inset 0 0 0 1px var(--line-strong); border-radius: var(--radius-md); background: var(--canvas); color: var(--ink); font: inherit; letter-spacing: 0.2em; }
-.card-ask-input:focus { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
-[data-card-register] .opt-main { width: 100%; }
-
 /* 설정 > 기기 연결: 계정 기기 목록·새 PC 연결 요청(shell-devices.js). 줄은 발급 인증 줄(auth-row)과 같은 모양, 줄 사이는 안쪽 선 */
 .dev-group .sx-card-hd { justify-content: flex-start; gap: var(--space-2); }
 .dev-group .sx-card-hd .sx-card-title { margin: 0; }

@@ -70,8 +70,6 @@ interface FakePage {
   connected: boolean;
   len: number;
   value: string;
-  /** 보안카드 칸 번호 요소의 글자(rowLabel 셀렉터로 금고가 읽는다). */
-  rowLabel?: string | null;
   /** 있으면 insertText가 이것을 기다린다(입력 도중 상태 재현). */
   gate?: Promise<void>;
 }
@@ -94,7 +92,7 @@ async function setup(opts: { now?: () => number } = {}) {
   conn.handlers.set('Target.getTargetInfo', (p) => ({ targetInfo: { targetId: p.targetId, type: 'page', url: '' } }));
   const page: FakePage = { type: 'password', active: true, connected: true, len: 0, value: '' };
   conn.handlers.set('Page.createIsolatedWorld', () => ({ executionContextId: 1 }));
-  conn.handlers.set('Runtime.evaluate', (p) => (p.returnByValue && String(p.expression).includes('textContent') ? { result: { value: page.rowLabel ?? null } } : { result: { objectId: 'OBJ' } }));
+  conn.handlers.set('Runtime.evaluate', () => ({ result: { objectId: 'OBJ' } }));
   conn.handlers.set('DOM.describeNode', () => ({ node: { backendNodeId: 7 } }));
   conn.handlers.set('Runtime.callFunctionOn', (p) =>
     String(p.functionDeclaration).includes('return typeof this.value')
@@ -131,9 +129,7 @@ const fillReq = (over: Partial<FillRequest> = {}): FillRequest => ({
 const bind = (over: Partial<SecretInputBind> = {}): SecretInputBind => ({ runId: 'r1', kind: 'portal_password', scope: 'business', ...over });
 /** 금고가 secret.needed를 보낸 것처럼(포트 시험은 Chrome 없이 ops를 직접 꽂으므로 요청 기록을 넣어 둔다). */
 const need = (v: Vault, b: Record<string, unknown>, ttlMs = 60_000) =>
-  (v as unknown as { needs: Map<string, number> }).needs.set(`${b.runId}|${b.kind}|${b.scope}|${b.row ?? ''}`, Date.now() + ttlMs);
-const card = (row: number, label: string | undefined = '#row') =>
-  fillReq({ secret: { kind: 'security_card', scope: 'business', row }, slot: { secretKind: 'security_card', purpose: 'sign' }, rowLabel: label });
+  (v as unknown as { needs: Map<string, number> }).needs.set(`${b.runId}|${b.kind}|${b.scope}`, Date.now() + ttlMs);
 const enc = (s: string) => new TextEncoder().encode(s);
 
 /** 크롬 없이 쓰는 금고(포트 시험). paths는 임시 루트. */
@@ -382,9 +378,8 @@ describe('audit-v V5 비밀 입력 포트 결속·TTL·secret.needed', () => {
     try {
       const bads = [
         undefined, {}, bind({ runId: 'bad id!' }), bind({ scope: 'p1' as never }),
-        bind({ kind: 'security_card', row: 0 }), bind({ kind: 'security_card', row: 36 }), bind({ kind: 'security_card', row: 1.5 }),
-        // 종류별 규칙: 인증서 비밀번호는 금고가 부른 1회용 창(창 없는 Chrome)만이고 칸 번호가 없다, 보안카드는 row 필수, 포털 비밀번호는 row 없음
-        bind({ kind: 'cert_password', row: 1 }), bind({ kind: 'security_card' }), bind({ row: 3 }),
+        // 보안카드는 지원하지 않는다(대표 결정 2026-11-19): 칸 번호가 있든 없든 결속을 받지 않는다
+        bind({ kind: 'security_card' as never }), { ...bind({ kind: 'security_card' as never }), row: 12 },
       ];
       for (const bad of bads) {
         if (bad) need(b.vault, bad as Record<string, unknown>);
@@ -402,13 +397,13 @@ describe('audit-v V5 비밀 입력 포트 결속·TTL·secret.needed', () => {
     const s = await setup();
     try {
       b.vault.ops = s.ops;
-      need(b.vault, bind({ kind: 'security_card', row: 12 }));
-      const port = b.secretPort(bind({ kind: 'security_card', row: 12 }));
-      assert.deepEqual(await port.rpc('secret.provide', { bytes: enc('42') }), {});
-      const second = enc('43');
+      need(b.vault, bind());
+      const port = b.secretPort(bind());
+      assert.deepEqual(await port.rpc('secret.provide', { bytes: enc('TEST-PW-once0042') }), {});
+      const second = enc('TEST-PW-once0043');
       await assert.rejects(port.rpc('secret.provide', { bytes: second }), /denied/);
       assert.equal(s.ops.secrets.size, 1);
-      assert.deepEqual([...(s.ops.secrets.take('r1', 'security_card', 'business', 12) ?? [])], [...enc('42')], '결속 값(kind·scope·row)으로 저장');
+      assert.deepEqual([...(s.ops.secrets.take('r1', 'portal_password', 'business') ?? [])], [...enc('TEST-PW-once0042')], '결속 값(kind·scope)으로 저장');
     } finally {
       await b.close();
     }
@@ -467,9 +462,8 @@ describe('audit-v V5 비밀 입력 포트 결속·TTL·secret.needed', () => {
 
   it('audit-v: fill without secret returns secret_missing and emits secret.needed', async () => {
     const s = await setup();
-    s.page.rowLabel = '3';
-    assert.deepEqual(await s.ops.fill(card(3)), { ok: false, reason: 'secret_missing' });
-    assert.deepEqual(s.events, [{ to: ['control'], name: 'secret.needed', data: { runId: 'r1', targetId: 'RUN', kind: 'security_card', scope: 'business', row: 3 } }]);
+    assert.deepEqual(await s.ops.fill(fillReq()), { ok: false, reason: 'secret_missing' });
+    assert.deepEqual(s.events, [{ to: ['control'], name: 'secret.needed', data: { runId: 'r1', targetId: 'RUN', kind: 'portal_password', scope: 'business' } }]);
     assert.equal(s.t.win, undefined, '창을 열지 않았다');
     // 다른 실행의 값은 쓰지 않는다
     s.ops.secrets.provide(bind({ runId: 'r9' }), enc('TEST-CERT-otherrun'));
@@ -556,12 +550,10 @@ describe('audit-v V7 창 상태 머신', () => {
   it('audit-v: concurrent fill on the same target — second is denied', async () => {
     const s = await setup();
     s.ops.secrets.provide(bind(), enc('TEST-CERT-conc0001'));
-    s.ops.secrets.provide(bind({ kind: 'security_card', row: 1 }), enc('TEST-CERT-conc0002'));
-    s.page.rowLabel = '1';
-    const [a, b] = await Promise.all([s.ops.fill(fillReq()), s.ops.fill(card(1))]);
+    const [a, b] = await Promise.all([s.ops.fill(fillReq()), s.ops.fill(fillReq())]);
     assert.deepEqual(a, { ok: true });
     assert.deepEqual(b, { ok: false, reason: 'denied' });
-    assert.equal(s.page.value, 'TEST-CERT-conc0001', '두 비밀이 섞여 입력되지 않는다');
+    assert.equal(s.page.value, 'TEST-CERT-conc0001', '두 입력이 섞이지 않는다');
     // 창 개시 중 human 창도 열리지 않는다
     const s2 = await setup();
     const gate = deferred();
@@ -764,13 +756,14 @@ describe('audit-v V13 비밀 종류↔칸 결박', () => {
     // 대표 지시 2026-11-13(ADR-020 결정 2 갱신): 금고가 기억한 인증서 비밀번호를 홈택스 인증서 창(#dscert, 같은 출처)에만 넣는다.
     assert.deepEqual(SECRET_ORIGINS.cert_password, ['hometax.go.kr']);
     assert.deepEqual(SECRET_ORIGINS.portal_password, ['hometax.go.kr']);
-    assert.deepEqual(SECRET_ORIGINS.security_card, ['hometax.go.kr']);
+    // 보안카드는 지원하지 않는다(대표 결정 2026-11-19): 넣을 곳이 없다
+    assert.deepEqual(Object.keys(SECRET_ORIGINS).sort(), ['cert_password', 'portal_password']);
   });
 
   it('audit-v: fill with a mismatched slot kind returns not_secret_slot', async () => {
     const s = await setup();
     s.ops.secrets.provide(bind(), enc('TEST-CERT-slot0001'));
-    assert.deepEqual(await s.ops.fill(fillReq({ slot: { secretKind: 'security_card', purpose: 'login' } })), { ok: false, reason: 'not_secret_slot' });
+    assert.deepEqual(await s.ops.fill(fillReq({ slot: { secretKind: 'cert_password', purpose: 'login' } })), { ok: false, reason: 'not_secret_slot' });
     assert.deepEqual(await s.ops.fill({ ...fillReq(), slot: undefined } as unknown as FillRequest), { ok: false, reason: 'not_secret_slot' }, 'slot 없음');
     assert.equal(s.page.value, '', '입력하지 않았다');
     assert.equal(s.ops.secrets.size, 1, '비밀을 꺼내지 않았다');
@@ -786,16 +779,6 @@ describe('audit-v V13 비밀 종류↔칸 결박', () => {
     s.ops.secrets.provide(bind(), enc('TEST-CERT-twice002'));
     assert.deepEqual(await s.ops.fill(fillReq()), { ok: false, reason: 'denied' }, '같은 실행·같은 종류 두 번째');
     assert.equal(s.page.value, '');
-    // 보안카드는 칸별 1회
-    s.ops.secrets.provide(bind({ kind: 'security_card', row: 1 }), enc('12'));
-    s.ops.secrets.provide(bind({ kind: 'security_card', row: 2 }), enc('34'));
-    s.page.rowLabel = '[1]';
-    assert.deepEqual(await s.ops.fill(card(1)), { ok: true });
-    s.conn.emitEvent('Page.frameNavigated', { frame: { id: 'RUN', url: 'http://127.0.0.1:1/card' } }, 'V-RUN');
-    s.page.value = '';
-    s.page.len = 0;
-    s.page.rowLabel = '2번';
-    assert.deepEqual(await s.ops.fill(card(2)), { ok: true });
   });
 });
 

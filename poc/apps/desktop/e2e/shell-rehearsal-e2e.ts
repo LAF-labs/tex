@@ -159,7 +159,7 @@ async function rehearsalFixture(): Promise<FixtureMode> {
     keyStore: new FileKeyStore(path.join(ROOT, 'e2e-keys.json')),
     policy: {
       allowedHosts: ['127.0.0.1'],
-      secretHosts: { cert_password: ['127.0.0.1'], portal_password: ['127.0.0.1'], security_card: ['127.0.0.1'] },
+      secretHosts: { cert_password: ['127.0.0.1'], portal_password: ['127.0.0.1'] },
       domainMethods: RELAY_DOMAIN_METHOD_ALLOWLIST,
       deniedMethods: RELAY_DENIED_METHODS,
       keyDelayMs: 5,
@@ -198,7 +198,6 @@ const DEV: ShellDev = {
     onboarding: () => ({
       recognizeBizCert: async () => ({ ...CERT_CP, bizNo: ME.bizNo, name: ME.name, email: '' }),
       checkBizNo: async () => ({ status: 'unknown', label: '조회하지 못했어요', taxType: null, source: '국세청 조회' }),
-      registerSecrets: async () => ({ ok: false, reason: 'unavailable' }),
       consentConfig: async () => structuredClone(CONSENT_CONFIG),
       findCerts: async () => [],
     }),
