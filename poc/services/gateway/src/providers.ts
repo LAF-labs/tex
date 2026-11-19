@@ -523,6 +523,11 @@ export function anthropicMessagesBody(s: RespondSpec, messages: AnthropicMessage
   };
 }
 
+/** Anthropic 오류 글을 로그 이벤트 이름에 쓸 수 있는 안전 문자열로(로그 SAFE_TOKEN, 80자) */
+export function anthropicErrToken(m: string): string {
+  return m.replace(/[^A-Za-z0-9.:/-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80);
+}
+
 /** 서버 쪽 거절 대체(fallbacks)를 받는 모델(Opus 5.5, Opus 5, Sonnet 5.5, Fable 5.x). Haiku는 없다 */
 export function anthropicFallbacks(model: string): boolean {
   return /^claude-(?:opus-5(?:-5)?|sonnet-5-5|fable-5(?:-[12])?)$/.test(model);
@@ -589,11 +594,14 @@ export class AnthropicProvider implements ModelProvider {
     this.o.onEvent('upstream_anthropic');
     if (res.status !== 200) {
       // 원인을 보려고 상태 코드와 오류 종류(error.type)만 이벤트 이름으로 남긴다. 오류 글과 본문은 남기지 않는다
-      const kind = await res
+      const err = await res
         .json()
-        .then((e: { error?: { type?: unknown } }) => (typeof e?.error?.type === 'string' && /^[a-z_]{1,40}$/.test(e.error.type) ? e.error.type : 'unknown'))
-        .catch(() => 'unknown');
+        .then((e: { error?: { type?: unknown; message?: unknown } }) => e?.error ?? {})
+        .catch(() => ({}) as { type?: unknown; message?: unknown });
+      const kind = typeof err.type === 'string' && /^[a-z_]{1,40}$/.test(err.type) ? err.type : 'unknown';
       this.o.onEvent(`upstream_anthropic_${res.status}_${kind}`);
+      // 4xx는 어느 필드가 틀렸는지 보려고 오류 글 앞부분을 영숫자와 . : / - 만 남겨 이벤트 이름으로 남긴다(다른 글자는 _로, 한글 등 사용자 글이 섞여도 남지 않는다)
+      if (res.status >= 400 && res.status < 500 && typeof err.message === 'string') this.o.onEvent(`anthropic_err:${anthropicErrToken(err.message)}`);
       throw new ProviderError(res.status === 429 || res.status >= 500 ? 'retryable' : 'fatal');
     }
     let d: Record<string, unknown>;

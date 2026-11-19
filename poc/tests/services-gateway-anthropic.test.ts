@@ -176,7 +176,7 @@ describe('게이트웨이: 생성만 Anthropic(GW_RESPOND_PROVIDER)', () => {
           { body: { stop_reason: 'max_tokens', content: [{ type: 'text', text: '{"a' }], usage: {} } },
           { status: 429, body: {} },
           { status: 529, body: {} },
-          { status: 400, body: { type: 'error', error: { type: 'invalid_request_error', message: '사용자 글 sk-ant-x' } } },
+          { status: 400, body: { type: 'error', error: { type: 'invalid_request_error', message: 'tools.0.input_schema: 사용자 글 not supported' } } },
         ],
         sent,
       ),
@@ -190,7 +190,8 @@ describe('게이트웨이: 생성만 Anthropic(GW_RESPOND_PROVIDER)', () => {
     }
     // 상태 코드와 error.type만 이벤트로 남긴다(오류 글은 남기지 않는다)
     assert.deepEqual(events.filter((e) => e.startsWith('upstream_anthropic_')), ['upstream_anthropic_429_unknown', 'upstream_anthropic_529_unknown', 'upstream_anthropic_400_invalid_request_error']);
-    assert.ok(!events.join(' ').includes('sk-ant'));
+    assert.deepEqual(events.filter((e) => e.startsWith('anthropic_err:')), ['anthropic_err:tools.0.input_schema:_not_supported']);
+    assert.ok(!events.join(' ').includes('사용자'));
     await assert.rejects(p.decide(), ProviderError);
     await assert.rejects(p.respond({ ...s, decision: { state: 's', choices: { a: 'A' } } }), ProviderError);
   });
