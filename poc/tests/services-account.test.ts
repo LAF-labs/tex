@@ -592,6 +592,11 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     assert.equal((await pc.call('POST', `/v1/devices/${phone.id}/reactivate`, acctOp(edKey(), 'device.reactivate', accountId, phone.id, e.clock.now()))).json.error, 'account.aik_signature_invalid');
     assert.equal((await pc.call('POST', `/v1/devices/${phone.id}/reactivate`, acctOp(pc.aik, 'device.reactivate', accountId, phone.id, e.clock.now() - 10 * 60_000))).json.error, 'account.aik_signature_invalid');
     assert.equal((await pc.call('POST', `/v1/devices/${phone.id}/reactivate`, acctOp(pc.aik, 'device.reactivate', accountId, pc.d.id, e.clock.now()))).json.error, 'account.aik_signature_invalid');
+    // 정지된 폰은 자리를 막지 않는다: 그동안 새 폰 3대가 자리를 채우면 되살릴 수 없다(2026-11-19)
+    const fill = [device('mobile', 0), device('mobile', 0), device('mobile', 0)];
+    for (const p of fill) assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: p.id, role: 'mobile', platform: 'ios', name: '새 폰', Sx: p.S.b64, Vx: p.V.b64 } })).status, 201);
+    assert.equal((await pc.call('POST', `/v1/devices/${phone.id}/reactivate`, acctOp(pc.aik, 'device.reactivate', accountId, phone.id, e.clock.now()))).json.error, 'account.device_limit');
+    await e.db.run("UPDATE devices SET state = 'revoked' WHERE device_id = $1", [fill[0]!.id]);
     assert.equal((await pc.call('POST', `/v1/devices/${phone.id}/reactivate`, acctOp(pc.aik, 'device.reactivate', accountId, phone.id, e.clock.now()))).status, 204);
     assert.equal((await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c), phone.V, e.clock.now()) }, body: { cert: c } })).status, 200);
   });
@@ -1112,23 +1117,18 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
   });
 
   it('기기 상한(모바일 3)·30일 등록 상한(모바일 5)·플랫폼과 역할 불일치·중복 ID', async () => {
-    let s = await login(e, 'lim@example.com');
+    const s = await login(e, 'lim@example.com');
     const enroll = (p: Device, platform = 'ios') => e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: p.id, role: p.role, platform, name: '폰', Sx: p.S.b64, Vx: p.V.b64 } });
     const ps = [device('mobile', 0), device('mobile', 0), device('mobile', 0)];
     for (const p of ps) assert.equal((await enroll(p)).status, 201);
     assert.equal((await enroll(device('mobile', 0))).json.error, 'account.device_limit');
     assert.equal((await enroll(ps[0]!)).json.error, 'account.device_limit');
     for (const p of ps) await e.req('POST', `/v1/devices/${p.id}/suspend`, { headers: bearer(s) });
-    // 정지는 상한에서 빠지지 않는다(폐기만 빠진다). 폐기를 흉내 내려 대기 기기를 7일 뒤 정리
-    e.clock.advance(8 * D);
-    await e.svc.sweep();
-    s = await login(e, 'lim@example.com'); // 세션 1시간(ADR-038 (f))
-    assert.equal((await enroll(device('mobile', 0))).json.error, 'account.device_limit');
-    await e.db.run("UPDATE devices SET state = 'revoked'");
+    // 정지된 폰은 자리를 막지 않는다(목록에 보이지 않고 끊을 수도 없다, 2026-11-19). 되살릴 때 자리를 다시 본다
     assert.equal((await enroll(device('mobile', 0))).status, 201);
     assert.equal((await enroll(device('mobile', 0))).status, 201);
-    // 30일 안 추가 5회째까지 썼으니 기기 수(2)가 상한 아래여도 막힌다
-    assert.equal((await enroll(device('mobile', 0))).json.error, 'account.device_churn_limit');
+    // 폰은 30일 추가 횟수를 세지 않는다(2026-11-19 대표: "30일 5번 제한 삭제"): 6번째 추가도 자리만 있으면 된다
+    assert.equal((await enroll(device('mobile', 0))).status, 201);
     assert.equal((await enroll(device('mobile', 0), 'windows')).json.error, 'request.param_rejected');
   });
 });

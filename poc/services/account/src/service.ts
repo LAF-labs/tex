@@ -1139,13 +1139,19 @@ export class AccountService {
   // ---------- 기기: 첫 데스크톱·등록 신청·AIK 서명 기기 목록·긴급 정지·삭제 유예 ----------
 
   private async churnOk(q: Sql, accountId: string, role: 'desktop' | 'mobile'): Promise<boolean> {
+    // 폰은 30일 추가 횟수를 세지 않는다(2026-11-19 대표: "30일 5번 제한 삭제"). 폰 3대 한도만 지킨다. PC는 그대로 5회
+    if (role === 'mobile') return true;
     const since = kstDay(this.now() - DEVICE.churnWindowDays * MS.D);
     const r = await q.one<{ n: number }>("SELECT COUNT(*) AS n FROM device_events WHERE account_id = $1 AND role = $2 AND kind = 'add' AND day >= $3", [accountId, role, since]);
-    return Number(r?.n ?? 0) < (role === 'desktop' ? DEVICE.churnDesktop : DEVICE.churnMobile);
+    return Number(r?.n ?? 0) < DEVICE.churnDesktop;
   }
 
   private async countOk(q: Sql, accountId: string, role: 'desktop' | 'mobile', extra = 1): Promise<boolean> {
-    const r = await q.one<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE account_id = $1 AND role = $2 AND state <> 'revoked'", [accountId, role]);
+    // 폰 자리는 쓰는 폰(활성·연결 중)만 센다. 정지된 폰은 목록에 보이지 않고 끊을 수도 없으니 자리를 막지 않는다(2026-11-19,
+    // 예전 규칙으로 정지·유예 중인 폰 3대가 보이지 않는 채로 새 폰을 막았다). 정지된 폰을 되살릴 때 자리를 다시 본다(reactivate).
+    // PC는 그대로 폐기 전까지 센다(새로 붙은 PC가 쓰던 PC를 밀어내지 못하게 하는 7일 유예, ADR-048 결정 6).
+    const states = role === 'mobile' ? "state IN ('active', 'pending')" : "state <> 'revoked'";
+    const r = await q.one<{ n: number }>(`SELECT COUNT(*) AS n FROM devices WHERE account_id = $1 AND role = $2 AND ${states}`, [accountId, role]);
     return Number(r?.n ?? 0) + extra <= (role === 'desktop' ? DEVICE.maxDesktops : DEVICE.maxMobiles);
   }
 
@@ -1929,10 +1935,14 @@ export class AccountService {
     const a = await this.account(requester.accountId);
     if (!a.aik_pub || op.op.op !== 'device.reactivate' || !opSigOk(fromB64(a.aik_pub, 32)!, op, a.id, deviceId, this.now())) fail('account.aik_signature_invalid');
     // 폐기 레코드 없이 예약된 삭제(기기 토큰 정지·세션 삭제 요청)는 재활성화로 같이 취소한다. AIK 폐기 유예(revoke_record 있음)는 그대로 둔다
-    const n = await this.db.run(
-      "UPDATE devices SET state = 'active', delete_after = CASE WHEN revoke_record IS NULL THEN NULL ELSE delete_after END WHERE device_id = $1 AND account_id = $2 AND state = 'suspended'",
-      [deviceId, a.id],
-    );
+    const n = await this.db.tx(async (q) => {
+      await q.one(`SELECT id FROM accounts WHERE id = $1${q.forUpdate}`, [a.id]);
+      const d = await q.one<DeviceRow>("SELECT * FROM devices WHERE device_id = $1 AND account_id = $2 AND state = 'suspended'", [deviceId, a.id]);
+      if (!d) return 0;
+      // 정지된 폰은 자리를 세지 않으므로 되살릴 때 자리가 있어야 한다
+      if (d.role === 'mobile' && !(await this.countOk(q, a.id, 'mobile'))) fail('account.device_limit');
+      return q.run("UPDATE devices SET state = 'active', delete_after = CASE WHEN revoke_record IS NULL THEN NULL ELSE delete_after END WHERE device_id = $1 AND account_id = $2 AND state = 'suspended'", [deviceId, a.id]);
+    });
     if (!n) fail('account.device_not_found');
   }
 
