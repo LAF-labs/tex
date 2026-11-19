@@ -47,7 +47,7 @@ import { answersPending, emptyDocStore, SETUP_LABEL, setupMissing, setupText, ty
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { readPastRuns, type PastRun } from './run-history.ts';
 import { pendingWork, RunResumeStore } from './run-resume.ts';
-import { BATCH_AUTO_NOTE, BATCH_CHANGED_NOTE, fatalText, REHEARSAL, ShellRuns, vaultNotice } from './shell-runs.ts';
+import { BATCH_AUTO_NOTE, BATCH_CHANGED_NOTE, fatalText, REHEARSAL, ShellRuns, vaultNotice, QUEUED_NOTE, REPLACED_NOTE, REPLACING_NOTE } from './shell-runs.ts';
 import { AgentChat, type AgentPhase } from './agent-chat.ts';
 import { agentPorts } from './agent-wiring.ts';
 import type { StepParams, StepResult } from '@sax/engine';
@@ -357,9 +357,6 @@ export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
 const LINK_POLL_MS = 4_000;
 const REVERIFY_WAIT_NOTE = '지난 발급을 홈택스 목록에서 확인하고 있어요. 끝나면 바로 시작해요.';
 /** 진행 중인 건이 있을 때 새 초안(queueIfBusy). 정정은 앞 준비를 바꾸고, 다른 건은 앞 건 뒤에 바로 이어 간다. */
-const REPLACING_NOTE = '앞에서 준비하던 건을 멈추고 이 내용으로 바로 준비해요.';
-const REPLACED_NOTE = '고친 내용으로 새로 준비해서 이 건은 멈췄어요. 홈택스에는 아무것도 보내지 않았어요.';
-const QUEUED_NOTE = '지금 하는 건이 끝나면 바로 이어서 준비해요.';
 
 function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Array, store: DocStore, made: { host?: EngineHost }): Shell {
   // 공급사 직결(D04 예외)은 fixture 시연에만. 실제 홈택스 모드에서는 넘겨받아도 쓰지 않는다.
@@ -1315,7 +1312,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       log.event('main.prepare_replace', {});
       runs.noteOn(id, REPLACING_NOTE);
       runs.stop(active.id).then(
-        () => runs.noteOn(active.id, REPLACED_NOTE),
+        () => {
+          const prev = runs.get(active.id);
+          if (prev) prev.replaced = true;
+          runs.noteOn(active.id, REPLACED_NOTE);
+        },
         (e: Error) => log.event('main.prepare_replace_failed', { code: e.message.slice(0, 60) }),
       );
     } else {

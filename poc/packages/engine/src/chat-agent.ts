@@ -61,7 +61,7 @@ export const CHAT_AGENT_ASK_TEXT: Record<AgentAsk, string> = {
 };
 /** 엔진이 도구 결과로 턴을 닫을 때의 고정 문장(마지막 결과 status별). 없으면 CHAT_AGENT_NUMBER_TEXT. */
 export const CHAT_AGENT_DONE_TEXT: Partial<Record<ToolStatus, string>> = {
-  card_shown: '세금계산서 카드를 만들었어요. 맞으면 [홈택스에서 준비]를 눌러 주세요.',
+  card_shown: '세금계산서 카드를 만들었어요. 진행은 카드에서 보여 드려요.',
   card_updated: '카드를 고쳤어요. 바뀐 값을 한 번 봐 주세요.',
   discarded: '카드를 취소했어요. 홈택스에는 아무것도 보내지 않았어요.',
   ok: '찾은 기록을 아래 표로 보여 드렸어요.',
@@ -515,7 +515,7 @@ export class ChatAgent {
         const amt = amtOf(a) ?? line2;
         // 부가세를 말하지 않았으면(null) 앱이 별도로 둔다: 문장 끝에 한 번 알린다(vatNote)
         const vat = vatWord(a.vat);
-        return `${who ? `${who} 앞으로 ` : ''}${when ? `작성일 ${when}, ` : ''}${amt ? `${amt}${vat ? ', ' : ' '}` : ''}${vat ? `${vat}로 ` : ''}세금계산서 카드를 만들었어요.`;
+        return `${who ? `${who} 앞으로 ` : ''}${when ? `작성일 ${when}, ` : ''}${amt ? `${amt}${vat ? ', ' : ' '}` : ''}${vat ? `${vat}${vat.endsWith('포함') ? '으로' : '로'} ` : ''}세금계산서 카드를 만들었어요.`;
       }
       if (r.o.status === 'card_updated') {
         const parts = [amtOf(a) ? `금액 ${amtOf(a)}` : line2 ? `금액 ${line2}` : null, vatWord(a.vat), r.call?.tool === 'draft_edit' && r.call.item ? '품목' : null, when ? `작성일 ${when}` : null].filter((x) => x);
@@ -527,7 +527,7 @@ export class ChatAgent {
     const lines = round.map(line);
     const vatNote = round.some((r) => r.o.status === 'card_shown' && !vatWord(r.args.vat)) ? ' 부가세는 별도로 계산했어요. 포함이면 말씀해 주세요.' : '';
     const cards = round.filter((r) => r.o.status === 'card_shown').length;
-    const tail = round.at(-1)!.o.status === 'card_shown' ? ' 맞으면 [홈택스에서 준비]를 눌러 주세요.' : round.at(-1)!.o.status === 'card_updated' ? ' 바뀐 값을 한 번 봐 주세요.' : '';
+    const tail = round.at(-1)!.o.status === 'card_shown' ? ' 진행은 카드에서 보여 드려요.' : round.at(-1)!.o.status === 'card_updated' ? ' 바뀐 값을 한 번 봐 주세요.' : '';
     const text =
       round.every((r) => r.o.status === 'discarded') ? CHAT_AGENT_DONE_TEXT.discarded!
       : lines.every((l) => l) && lines.length <= 2 ? `${lines.join(' ')}${vatNote || tail}`

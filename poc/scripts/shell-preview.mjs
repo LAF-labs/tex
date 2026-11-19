@@ -11,7 +11,7 @@ const DESK = path.resolve(import.meta.dirname, '../apps/desktop');
 const { tokensCss, bundleCss, loadTokens } = await import(`${DESK}/dist/shell-tokens.js`);
 const { MockStore, seedTimeline, QUICK, PROFILES, dayOffset, mockBundle, MOCK_SETTINGS } = await import(`${DESK}/dist/shell-mock.js`);
 const { buildBoard } = await import(`${DESK}/dist/board.js`);
-const { REGATE_NOTE, HANDOFF_HINT, HANDOFF_TEXT, NOTE, HANDOFF_LOGIN, REHEARSAL_NEXT, LOGIN_NOW, STEP_LABELS, STEP_NOW, handoffTurn } = await import(`${DESK}/dist/shell-runs.js`);
+const { REGATE_NOTE, HANDOFF_HINT, HANDOFF_TEXT, NOTE, HANDOFF_LOGIN, REHEARSAL_NEXT, LOGIN_NOW, STEP_LABELS, STEP_NOW, handoffTurn, REPLACING_NOTE, REPLACED_NOTE, QUEUED_NOTE } = await import(`${DESK}/dist/shell-runs.js`);
 const { OnboardingFlow, initialOnbState } = await import(`${DESK}/dist/onboarding.js`);
 const { MockOnboardingPorts } = await import(`${DESK}/dist/onboarding-mock.js`);
 const { buildCardHtml, barCss, barPalette, summarize, BAR_CSP } = await import(`${DESK}/dist/approval-gate.js`);
@@ -159,7 +159,7 @@ const handlers = {
     const r = await S.onb.answer(p);
     return { onboarding: await S.onb.view(), fill: r.fill ?? null, profiles: PROFILES };
   },
-  'request.send': (p) => (/등본/.test(p.text) ? { kind: 'g24', doc: '주민등록표 등본' } : { kind: 'draft', run: mkRun('draft') }),
+  'request.send': (p) => (/등본/.test(p.text) ? { kind: 'g24', doc: '주민등록표 등본' } : { kind: 'draft', run: S.sendSeq ? { ...mkRun('draft'), id: `run-${++S.sendSeq}` } : mkRun('draft') }),
   'counterparties.list': () => (EMPTY ? [] : cps),
   'docs.list': () => (EMPTY ? [] : S.withVault ? [vaultDoc, ...store.docs] : [...store.docs]),
   'issued.list': () => [],
@@ -331,6 +331,26 @@ const scenes = {
     ev(win, { type: 'run', run: { ...mkRun('turn', { done: 2, attentionAt: 2, note: '직접 해 주세요' }), handoff: { phase: 'input', afterGate: false }, turn: handoffTurn('input') } });
     await shot(win, '39-browser-handoff');
     ev(win, { type: 'browser', shown: false, available: false, embedded: true, width: 0 });
+  },
+  // 정정(대표 실사용 2026-11-19): "일호유통 110원 끊어줘" 준비 중에 "100원이야" → 앞 준비는 접힌 요약, 새 카드가 같은 틀로 바로 준비. 다른 거래처는 기다림.
+  async replace(win) {
+    S.sendSeq = 0;
+    const small = (amt, o) => ({ supply: amt, tax: Math.round(amt / 10), total: amt + Math.round(amt / 10), amount: amt, counterparty: { id: 'c9', name: '일호유통', bizNo: '6495800524', first: false }, item: '예행', email: { value: '', first: false }, ...o });
+    const say = (t) => js(win, `(() => { const i = document.querySelector('#composer'); i.value = ${JSON.stringify(t)}; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
+    await say('일호유통 110원 끊어줘');
+    await sleep(300);
+    ev(win, { type: 'run', run: { ...mkRun('preparing', { done: 0, now: true, note: LOGIN_NOW }), ...small(110), id: 'run-1' } });
+    await shot(win, '40-replace-first');
+    await say('아 100원이야');
+    await sleep(300);
+    ev(win, { type: 'run', run: { ...mkRun('preparing', { done: 1, now: true }), ...small(100), id: 'run-2', notices: [REPLACING_NOTE] } });
+    ev(win, { type: 'run', run: { ...mkRun('stopped', { done: 1 }), ...small(110), id: 'run-1', replaced: true, notices: [REPLACED_NOTE], stoppedNote: REPLACED_NOTE } });
+    await shot(win, '41-replace-after');
+    await say('B상사 55만원도 끊어줘');
+    await sleep(300);
+    ev(win, { type: 'run', run: { ...mkRun('draft'), id: 'run-3', counterparty: { id: 'c2', name: 'B상사', bizNo: '1078145678', first: false }, amount: 550000, supply: 550000, tax: 55000, total: 605000, notices: [QUEUED_NOTE] } });
+    await shot(win, '42-replace-queued');
+    S.sendSeq = 0;
   },
   // EMPTY=1 ONLY=empty: 빈 화면 셋(거래처·문서함·활동 기록)
   async empty(win) {
@@ -651,7 +671,7 @@ Object.assign(scenes, {
   },
 });
 
-const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'browser', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'newPc', ...(EMPTY ? ['empty'] : [])];
+const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'browser', 'replace', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'newPc', ...(EMPTY ? ['empty'] : [])];
 const agreed = { version: 'pv', choice: 'agreed', at: '' };
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {

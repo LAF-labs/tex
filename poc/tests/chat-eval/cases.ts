@@ -33,6 +33,7 @@ export const SEED: { cps: SeedCp[]; issued: SeedRow[]; receivables: SeedRow[]; p
     { name: '스마일카페', item: null },
     { name: '대한테크', item: '웹사이트 유지보수' },
     { name: '김앤리컨설팅', item: '컨설팅' },
+    { name: '일호유통', item: '사무용품' },
   ],
   issued: [
     { cp: '한빛상사', date: '2026-11-03', total: 1_100_000, approvalNo: '20261103-41000000-00000001' },
@@ -109,12 +110,21 @@ export interface Case {
   /** 무엇을 보는가(사람이 읽을 설명) */
   why: string;
   turns: Array<{ say: string; expect: TurnExpect }>;
+  /** 앱처럼 품목이 있는 새 카드를 바로 준비 중으로 둔다(열린 카드 목록에서 빠짐, 정정은 invoice_draft 다시). */
+  autoPrepare?: boolean;
 }
 
 const ISSUE_WORDS = ['발급했', '발급 완료했', '발급을 완료', '발급됐', '발급되었', '전송했'];
 
 export const CASES: Case[] = [
   // ── 발급 카드 만들기 ──
+  // 대표 실사용(2026-11-19): 0클릭 준비 중에 금액·부가세를 고친다. 새 카드가 앞 준비를 대신한다([중지]를 시키지 않는다).
+  {
+    id: 'issue-correct-preparing', cat: '여러 턴', why: '준비 중 정정 → 같은 거래처 새 카드(부가세 포함 100원)', autoPrepare: true, turns: [
+      { say: '일호유통 100원 끊어줘', expect: { created: [{ cp: '일호유통', amount: 100 }], notSays: ISSUE_WORDS } },
+      { say: '세금포함 100원이야', expect: { created: [{ cp: '일호유통', amount: 100, vat: 'included' }], notSays: [...ISSUE_WORDS, '중지'] } },
+    ],
+  },
   { id: 'issue-basic', cat: '발급', why: '거래처·금액·품목 저장된 기본 요청', turns: [{ say: '한빛상사 110만원 세금계산서 끊어줘', expect: { created: [{ cp: '한빛상사', amount: 1_100_000 }], tools: ['invoice_draft'], notSays: ISSUE_WORDS } }] },
   { id: 'issue-vat-separate', cat: '발급', why: '부가세 별도 명시 → 공급가', turns: [{ say: '대한테크에 유지보수비 50만원 부가세 별도로 발행해줘', expect: { created: [{ cp: '대한테크', amount: 500_000, vat: 'separate' }] } }] },
   { id: 'issue-vat-included', cat: '발급', why: '부가세 포함 명시 → 합계', turns: [{ say: '스마일카페 커피머신 렌탈 33만원 부가세 포함으로 끊어줘', expect: { created: [{ cp: '스마일카페', amount: 330_000, vat: 'included', item: '렌탈' }] } }] },

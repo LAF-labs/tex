@@ -310,6 +310,7 @@ const certLine = (run) => h('div', { class: 'sx-meta', 'data-cert-inputs': '' },
 /** [홈택스 창 보기]: 사람이 할 일이 홈택스 창에 있을 때(로그인·서명·사람 차례). 실행 Chrome 창을 앞으로 올리기만 한다. 다른 주요 단추가 없으면 이것이 주요 단추다. */
 const showBrowserBtn = (run, act, primary = false) => btn('홈택스 창 보기', () => act.showBrowser(run.id), primary ? 'sx-btn-primary' : '', { 'data-act': 'show-browser' });
 
+const INFO_NOTICE = /바로 준비해요|이어서 준비해요/;
 /** 발급 뒤 확인 중 한 줄(main shell-runs verifyNow와 같은 말). */
 const verifyLine = (n) => (n && n > 1 ? `홈택스 반영이 늦어 발급 목록을 다시 보고 있어요(${n}번째)` : '홈택스 발급 목록에서 방금 건을 찾고 있어요. 1~2분 걸릴 수 있어요');
 /** 지금 단계 한 줄: 지금 하는 일 문장(main이 단계 메모로 준다)이 있으면 그 문장, 없으면 단계 이름. 할 일 줄이 같은 말을 하면 이름만(withNote false). */
@@ -339,10 +340,35 @@ function fold(card, run, step, stop = null) {
   card.classList.toggle('is-attention', run.status === 'attention');
   card.replaceChildren(
     h('div', { class: 'sx-card-hd sx-run-hd' }, h('div', { class: 'sx-card-title' }, `${run.batch ? `${run.batch.index + 1}. ` : ''}${runTitle(run)}`), chip(shownStatus(run)), stop),
-    // 지금 하는 일 한 문장(대표 피드백 4번: 각 스텝이 어떤 상태인지). 금액·값은 패널에 있다.
-    h('p', { class: 'sx-card-now', 'aria-live': 'polite' }, step),
-    run.status === 'attention' ? null : progressBar(run),
+    // 발급 카드는 언제나 같은 틀이다(대표 지적 2026-11-19 "카드가 매번 제각각"): 작성 카드와 같은 금액 줄·값 목록을 위에, 그 아래 지금 하는 일과 진행.
+    ...runFacts(run),
+    // 지금 하는 일 한 문장(대표 피드백 4번: 각 스텝이 어떤 상태인지)
+    step ? h('p', { class: 'sx-card-now', 'aria-live': 'polite' }, step) : null,
+    run.status === 'attention' || run.status === 'stopped' ? null : progressBar(run),
   );
+}
+
+/**
+ * 작성 카드와 같은 틀의 값(읽기 전용): 금액 줄(합계 · 공급가 + 세액) + 부가세 · 품목 · 작성일자 · 받는 이메일. 민원증명은 용도·제출처 줄.
+ * 준비 중·사람 차례·확인 필요·멈춤 카드가 모두 이 틀을 쓴다. 승인 대기 카드만 ADR-021 결정 7로 접힌다(값은 main 승인 카드에만).
+ */
+function runFacts(run) {
+  if (run.cert) return [certLine(run)];
+  return [
+    amount(run.total, run.supply, run.tax, null, true),
+    h(
+      'dl',
+      { class: 'sx-kv sx-draft sx-facts', 'data-run-facts': '' },
+      h('dt', {}, '부가세'),
+      h('dd', {}, run.vat === 'separate' ? '별도' : '포함'),
+      h('dt', {}, '품목'),
+      h('dd', {}, run.item || '—'),
+      h('dt', {}, '작성일자'),
+      h('dd', {}, writeDateText(run.writeDate)),
+      h('dt', {}, '받는 이메일'),
+      h('dd', {}, run.email?.value || '없음 · 메일은 보내지 않아요'),
+    ),
+  ];
 }
 const stopBtn = (run, act) => btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' });
 
@@ -544,7 +570,13 @@ export function taskCard(run, act) {
       h('div', { class: 'sx-actions' }, r.noFile ? null : btn('PDF 열기', () => act.openRunDoc(run), 'sx-btn-primary', { 'data-act': 'result-open' }), btn(run.cert ? '한 번 더 떼기' : '지난번과 같게', () => act.again(run), '', { 'data-act': 'again' }), toggle),
       where,
     );
+  } else if (st === 'stopped' && run.replaced) {
+    // 고친 내용으로 새로 준비해서 멈춘 앞 건(정정): 조용히 접힌 요약 한 줄. 새 카드가 바로 아래에 있다.
+    card.replaceChildren(h('div', { class: 'sx-card-hd sx-run-hd', 'data-replaced': '' }, h('div', { class: 'sx-card-title' }, runTitle(run)), h('span', { class: 'sx-meta sx-folded-line' }, `${won(run.total)} · 고친 카드로 바꿨어요`), chip(shownStatus(run))));
+    card.classList.add('is-folded', 'is-replaced');
+    return card;
   } else if (st === 'stopped') {
+    fold(card, run, null);
     card.append(line(run.stoppedNote || '중지했어요.', true));
     // 브라우저가 닫혀 멈춘 제출 전 실행: 같은 값으로 바로 다시 시작
     if (run.browserClosed) card.append(h('div', { class: 'sx-actions' }, btn('다시 시작', () => act.restart(run.id), 'sx-btn-primary', { 'data-act': 'restart' })));
@@ -583,7 +615,8 @@ export function taskCard(run, act) {
     );
   }
   // 포털 안내 문구·금고 알림(텍스트 노드로만).
-  if (run.notices?.length) card.append(noteGroup(run.notices));
+  // 정정·대기 안내(shell-runs REPLACING_NOTE·QUEUED_NOTE)는 할 일이 아니라 알림이라 안내 면(정보)이다. 나머지 포털 문구·금고 알림은 주의 면.
+  if (run.notices?.length) card.append(noteGroup(run.notices, !run.notices.every((t) => INFO_NOTICE.test(t))));
   // 금고가 Chrome 확장을 보고 멈춘 실행이 발급 없이 끝났으면 [다시 시도]: 같은 요청을 입력창에 채우기만 한다(보내기·준비는 사용자가, [지난번과 같게]와 같은 길).
   if (run.retry && !run.result && !run.inDoubt && (st === 'stopped' || st === 'attention')) {
     card.append(h('div', { class: 'sx-actions' }, btn('다시 시도', () => act.again(run), 'sx-btn-primary', { 'data-act': 'retry' })));
