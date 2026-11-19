@@ -420,7 +420,7 @@ describe('셸 목업', () => {
     await runs.prepare(a.run.id);
     host.emit('run', { runId: a.run.id, type: 'handoff', phase: 'login', code: 'step.timeout' });
     let r = runs.get(a.run.id)!;
-    assert.deepEqual([r.status, r.handoff, r.turn], ['turn', { phase: 'login', afterGate: false, kind: 'login' }, HANDOFF_LOGIN]);
+    assert.deepEqual([r.status, r.handoff, r.turn], ['turn', { phase: 'login', afterGate: false, kind: 'login', code: 'step.timeout' }, HANDOFF_LOGIN]);
     host.reply['run.resume'] = { ok: false, code: 'not_paused' };
     await assert.rejects(runs.resume(a.run.id), /not_paused/);
     host.reply['run.resume'] = { ok: false, code: 'Bad Code!' };
@@ -435,7 +435,7 @@ describe('셸 목업', () => {
     host.emit('run', { runId: a.run.id, type: 'phase', phase: 'sign', state: 'now' });
     host.emit('run', { runId: a.run.id, type: 'handoff', phase: 'sign', code: 'sign.waiting' });
     r = runs.get(a.run.id)!;
-    assert.deepEqual([r.status, r.handoff, r.turn], ['turn', { phase: 'sign', afterGate: true, kind: 'sign' }, { text: SIGN_BY_AUTH['사업자 간편인증']!.text, note: HANDOFF_SIGN.note }]);
+    assert.deepEqual([r.status, r.handoff, r.turn], ['turn', { phase: 'sign', afterGate: true, kind: 'sign', code: 'sign.waiting' }, { text: SIGN_BY_AUTH['사업자 간편인증']!.text, note: HANDOFF_SIGN.note }]);
     await assert.rejects(runs.manualDone(a.run.id), /sign\.turn_resume_only/);
     assert.ok(!host.calls.some(([m]) => m === 'run.manualDone'), '서명 차례 [직접 발급함]은 엔진에 보내지도 않는다');
     // 서명 차례 [중지]: {stopped:false} → 확인 중(발급목록), 끝은 엔진 end로
