@@ -413,6 +413,8 @@ export interface RunViewBase {
   itemGuessed: boolean;
   /** 승인·게이트 전에 실패·핸드오프로 끝났다(발급 없음): 카드에 [다시 준비](같은 값의 새 초안) */
   redo?: boolean;
+  /** 실패로 끝난 까닭 코드(폰에 알릴 것만: package.app_old). 없으면 다른 까닭이다. */
+  endCode?: string;
   /** 실행 Chrome(탭·프로세스)이 제출 전에 닫혀 멈췄다. 카드가 "브라우저가 닫혔어요 [다시 시작]"을 보인다. */
   browserClosed?: boolean;
   /** 끝난 시각(main 시계, 브라우저 닫힘과 엔진 끝이 같은 순간에 오는 경우를 맞춘다). 렌더러는 쓰지 않는다. */

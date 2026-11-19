@@ -58,6 +58,7 @@ const EXACT: Readonly<Record<string, Branch | 'human_wait'>> = {
   'chrome.not_installed': 'fallthrough',
   'package.not_loaded': 'fallthrough',
   'package.load_failed': 'fallthrough',
+  'package.app_old': 'fallthrough',
   selector_placeholder: 'fallthrough',
   // 발급 안 됨 확정
   'verify.not_committed': 'fallthrough',

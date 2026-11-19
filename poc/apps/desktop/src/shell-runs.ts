@@ -238,6 +238,7 @@ export const NOTE: Record<string, string> = {
   'login.not_implemented': '고른 발급 인증으로는 아직 홈택스에 로그인할 수 없어요. 내 사업장 화면의 발급 인증 [바꾸기]에서 다른 인증을 골라 주세요. 아무것도 발급하지 않았어요.',
   'package.not_loaded': '홈택스 작업 정보를 아직 받지 못해 시작하지 않았어요. 인터넷 연결을 확인하고 잠시 뒤 다시 준비해 주세요. 아무것도 발급하지 않았어요.',
   'package.load_failed': '홈택스 작업 정보를 확인하지 못해 시작하지 않았어요. 잠시 뒤 다시 준비해 주세요. 아무것도 발급하지 않았어요.',
+  'package.app_old': '이 앱 판이 낮아 홈택스 작업 정보를 쓸 수 없어 시작하지 않았어요. 앱을 업데이트한 뒤 다시 준비해 주세요. 아무것도 발급하지 않았어요.',
   'policy.portal_mode_denied': '지금은 서버 설정으로 이 작업을 자동으로 할 수 없어 시작하지 않았어요. 아무것도 발급하지 않았어요.',
   'token.invalid': '실행 확인 값이 맞지 않아 멈췄어요. 아무것도 발급하지 않았어요. 다시 준비해 주세요.',
   'step.commit_shadow': '발급 버튼 주변 화면이 예상과 달라 누르지 않았어요. 아무것도 발급하지 않았어요.',
@@ -1607,6 +1608,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
       // 실패·in_doubt는 사용자가 볼 일이 있다(확인 필요). 지금 단계를 표시하고 이유를 보인다.
       r.status = 'attention';
       r.stoppedNote = note(code, r);
+      if (code === 'package.app_old') r.endCode = code;
       r.inDoubt = e.status === 'in_doubt';
       // 승인 전 핸드오프로 끝남: "확인 필요"만 남지 않게 무슨 일인지와 다음 할 일(다시 준비 / 홈택스에서 직접)을 말한다. 승인·게이트 뒤면 발급 여부를 단정하지 않는다(엔진 코드 문구 그대로).
       // 발급 전 단계에서 끝났으면 같은 값으로 다시 준비할 수 있다(in_doubt·게이트 뒤는 아님: 기존 문구·확인 길 그대로)

@@ -174,7 +174,7 @@ export interface RunServiceDeps {
   ir?: IrPackage;
   /**
    * 실행을 시작할 때마다 부르는 패키지 공급(PR-D2, installedIrSource: 레지스트리에서 받아 둔 설치본을 loadPackage로 다시 검증).
-   * 실패면 시작이 package.not_loaded(설치본 없음) 또는 package.load_failed(검증 실패, 로그에 코드)다.
+   * 실패면 시작이 package.not_loaded(설치본 없음), package.app_old(앱 판이 낮음) 또는 package.load_failed(검증 실패, 로그에 코드)다.
    */
   irSource?: () => IrSourceResult;
   /**
@@ -586,6 +586,8 @@ export class RunService extends EventEmitter {
     if (r.ok) return r.ir;
     if (r.code === 'package.not_loaded') throw new RunEnd('failed', 'package.not_loaded');
     this.d.log.event('run.package_refused', { code: r.code });
+    // 앱 판이 패키지의 minAppVersion보다 낮다: 서명·내용 문제가 아니라 앱을 올리면 되는 일이라 따로 알린다(2026-11-19 폰 발급 시험).
+    if (r.code === 'registry.app_version_low') throw new RunEnd('failed', 'package.app_old');
     throw new RunEnd('failed', 'package.load_failed');
   }
 
@@ -723,6 +725,7 @@ export class RunService extends EventEmitter {
     if (r.code === 'cert.unknown_doc') this.d.log.event('run.cert_unknown_doc', { playbook: playbookId });
     if (r.code === 'package.not_loaded' || r.code === 'cert.unknown_doc') throw new RunEnd('failed', 'package.not_loaded');
     this.d.log.event('run.package_refused', { code: r.code, playbook: playbookId });
+    if (r.code === 'registry.app_version_low') throw new RunEnd('failed', 'package.app_old');
     throw new RunEnd('failed', 'package.load_failed');
   }
 
