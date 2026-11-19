@@ -379,9 +379,9 @@ export class IrRun {
   }
 
   /** RunService.answer가 승인 근거를 다 대조한 뒤 부른다. */
-  approve(reqId: string, actionHash: string): { ok: boolean; code?: string } {
+  approve(reqId: string, actionHash: string, by: 'local' | 'remote' = 'local'): { ok: boolean; code?: string } {
     if (!this.controller) return { ok: false, code: 'no_open_gate' };
-    const r = this.controller.answerGate({ reqId, decision: 'approved', by: 'local', actionHash });
+    const r = this.controller.answerGate({ reqId, decision: 'approved', by, actionHash });
     if (r.ok) this.answered = reqId;
     return r;
   }

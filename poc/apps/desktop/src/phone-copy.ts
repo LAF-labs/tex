@@ -2,7 +2,7 @@
 // - 숫자는 거래내역을 가진 PC가 계산한다(엔진 db.query.bank.summary·db.query.bank.cashflow). 폰은 마지막 사본을 날짜와 함께 보관만 한다.
 // - 넣지 않는 것: 대화 원문, 홈택스 비밀, 계좌번호(끝 4자리 포함, 은행 이름만), 거래처 이메일 원문(가린 힌트만), 거래처 장부 id 밖의 열쇠.
 // - 한 봉투가 한 프레임에 들어가도록 fitPhoneCopy가 오래 안 쓴 거래처부터 뺀다.
-// - 폰 승인(gate.request 중계)은 아직 PC에 없다. 그래서 phoneApprovable은 모두 false다(폰은 "PC에서 승인"을 먼저 보인다).
+// - phoneApprovable: 그 폰이 승인 기기이고(ADR-052) 전에 발급한 적이 있는 거래처면 true(힌트다. 처음 거래처인지는 승인 단계에서 엔진 원장으로 다시 본다).
 import type { CopyCashflow, CopyCounterparty, MoneySide, PhoneCopyBody } from '@sax/remote';
 import type { Counterparty, RunView } from './shell-model.ts';
 
@@ -46,14 +46,14 @@ export function lastIssues(runs: readonly RunView[]): Map<string, CopyCounterpar
 }
 
 /** 거래처 → 사본 줄. 최근에 쓴 거래처가 앞이다(fitPhoneCopy가 뒤에서부터 뺀다). */
-export function copyCounterparties(cps: readonly Counterparty[], last: Map<string, CopyCounterparty['last']>): CopyCounterparty[] {
+export function copyCounterparties(cps: readonly Counterparty[], last: Map<string, CopyCounterparty['last']>, approver = false): CopyCounterparty[] {
   const recent = (c: Counterparty) => last.get(c.id)?.day ?? c.lastIssuedOn ?? '';
   return [...cps]
     .filter((c) => CP_REF.test(c.id) && c.name.trim().length > 0)
     .sort((a, b) => (recent(a) === recent(b) ? a.name.localeCompare(b.name, 'ko') : recent(a) < recent(b) ? 1 : -1))
     .slice(0, 100)
     .map((c) => {
-      const row: CopyCounterparty = { ref: c.id, name: clip(c.name.trim(), 60), phoneApprovable: false };
+      const row: CopyCounterparty = { ref: c.id, name: clip(c.name.trim(), 60), phoneApprovable: approver && (!!c.lastIssuedOn || last.has(c.id)) };
       const b = bizNoOf(c.bizNo);
       if (b) row.bizNo = b;
       const e = maskEmail(c.email);
@@ -150,6 +150,8 @@ export interface PhoneCopySource {
   runs: () => readonly RunView[];
   /** 엔진 은행 조회(BankHost.call, 사업자 프로필 id를 붙인다). 실패하면 돈 칸 없이 보낸다. */
   bank: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
+  /** 이 사본을 받을 폰이 승인 기기인지와 오늘 남은 폰 승인 수(ADR-052). 없으면 승인 칸을 싣지 않는다. */
+  approval?: () => Promise<{ approver: boolean; left: number }>;
   now?: () => number;
 }
 
@@ -162,7 +164,9 @@ interface OverviewLike {
 /** 지금 보낼 사본(크기 맞추기 전). 돈 조회가 실패해도 거래처는 보낸다. */
 export async function buildPhoneCopy(src: PhoneCopySource): Promise<PhoneCopyBody> {
   const now = (src.now ?? Date.now)();
-  const body: PhoneCopyBody = { asOf: now, counterparties: copyCounterparties(src.counterparties(), lastIssues(src.runs())) };
+  const ap = (await src.approval?.().catch(() => null)) ?? null;
+  const body: PhoneCopyBody = { asOf: now, counterparties: copyCounterparties(src.counterparties(), lastIssues(src.runs()), !!ap?.approver) };
+  if (ap?.approver) body.todayApprovalsLeft = ap.left;
   try {
     const o = (await src.bank('db.query.bank.overview')) as OverviewLike;
     if (o?.summary?.payable && Array.isArray(o.unpaid) && Array.isArray(o.accounts)) {

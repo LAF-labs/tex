@@ -115,7 +115,28 @@ export interface GateRequest {
 }
 
 /** click+batch: 여러 건 묶음의 뒤 건. main이 같은 묶음의 처음 승인 카드에서 클릭을 관찰했고, 이 게이트의 되읽기 값이 그때 카드 값과 같다. */
-export type Presence = 'click' | 'click+hello' | 'click+waiver' | 'click+batch';
+/**
+ * remote+px(ADR-052): 폰의 하드웨어 승인 키(Px) 서명을 main이 검증했다(연결 기록의 키, 챌린지 1회용, 하루 한도).
+ * 세금계산서 게이트에서만, 처음 거래처·처음 보내는 이메일이 아닐 때만 받는다(remotePresenceRefusal).
+ */
+export type Presence = 'click' | 'click+hello' | 'click+waiver' | 'click+batch' | 'remote+px';
+
+/** 엔진이 받는 presence. Hello·waiver는 PoC 범위 밖(ADR-021). */
+export const PRESENCE_ACCEPTED: ReadonlySet<string> = new Set<Presence>(['click', 'click+batch', 'remote+px']);
+
+/**
+ * 폰 승인(remote+px)을 이 게이트에 받을 수 없는 이유. 받을 수 있으면 null. main과 엔진이 같은 규칙을 쓴다(D08 §6.1):
+ * 세금계산서 카드만, $first.bizNo·$first.email이 참이면 PC에서만(remote.newCounterpartyRequiresLocal).
+ */
+export function remotePresenceRefusal(req: Pick<GateRequest, 'docType' | 'fields'>): 'doc' | 'first' | null {
+  if (req.docType !== 'H-01') return 'doc';
+  const first = (k: FieldKey) => {
+    const v = req.fields.find((f) => f.fieldKey === k)?.value;
+    // 엔진은 H-01 게이트에 두 키를 늘 넣는다(gateSelfCheck). 빠졌으면 처음으로 본다(안전한 쪽).
+    return v === undefined || (v !== '' && v !== 'false');
+  };
+  return first('$first.bizNo') || first('$first.email') ? 'first' : null;
+}
 
 /** main 승인 바가 발급하는 근거(ADR-021 결정 1). HMAC 문맥 SAX-local-approval-v2, exp = 발급 + 120초. */
 export interface LocalApproval {

@@ -246,6 +246,8 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
     assert.deepEqual(runs.answer(approval(req, { exp: Date.now() - 1 })), { ok: false, code: 'expired' });
     assert.deepEqual(runs.answer(approval(req, { exp: Date.now() + 3_600_000 })), { ok: false, code: 'expired' });
     assert.deepEqual(runs.answer(approval(req, { presence: 'click+waiver' })), { ok: false, code: 'presence_unsupported' });
+    // 폰 승인(ADR-052)은 처음 거래처·처음 보내는 이메일 게이트에 받지 않는다(main이 걸러도 엔진이 한 번 더 본다).
+    assert.deepEqual(runs.answer(approval(req, { presence: 'remote+px' })), { ok: false, code: 'remote_not_allowed' });
     assert.deepEqual(runs.answer({ ...approval(req), v: 1 }), { ok: false, code: 'bad_version' });
     assert.throws(() => runs.answerFromRelay('gate.answer'), /forbidden_channel/);
     assert.ok(log.lines.some((l) => l.includes('security.gate_answer_from_relay')));

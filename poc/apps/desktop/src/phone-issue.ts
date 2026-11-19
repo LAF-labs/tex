@@ -1,6 +1,7 @@
 // 폰 발급 명령 받기(remote-envelope v1.8, ADR-046 결정 2, D08 §6 "폰 발급 명령").
 // - 폰 cmd.run{playbookId: hometax.invoice.issue}을 받아 PC 셸에 발급 초안을 만들고 [홈택스에서 준비]를 바로 시작한다(대화 0클릭 준비와 같은 길).
-// - 답은 cmd.ack 하나. 폰 승인(gate.request 중계)은 아직 PC에 없어서 시작한 건은 모두 pc_only다(승인은 PC 승인 바에서).
+// - 답은 cmd.ack 하나. 그 폰이 지금 승인 요청을 받을 수 있으면(받은 승인 키 + approve.v1 세션, ADR-052) accepted, 아니면 pc_only다.
+//   승인 단계에서 폰으로 보내지 못하는 건(처음 거래처·오늘 한도 등)은 run.event.code(pc_*)로 이유를 알린다(phone-gate.ts).
 // - 진행은 run.event(phase·attempt·result)로 그 폰의 라이브 세션에 보낸다. 세션이 없으면 버리고, 다음 세션을 열 때 지금 상태를 한 번 보낸다.
 // - 같은 cmdId는 한 번만 시작한다(B-10): 처리한 cmdId를 디스크에 먼저 적고 시작한다. 다시 오면 rejected/duplicate와 같은 runId로 답한다.
 // - 폰 입력의 거래처는 장부 id 참조뿐이다(사업자번호·이메일은 PC 장부 값). 받는 이메일은 거래처에 저장된 값을 쓴다.
@@ -48,8 +49,11 @@ export function phaseOf(r: RunView): RunPhase {
   return (['login', 'prepare', 'prepare', 'readback', 'approve', 'issue', 'verify', 'verify'] as const)[Math.min(at, 7)]!;
 }
 
-/** 폰에 보낼 진행 이벤트(runId는 폰 쪽 ULID). 발급이 끝났으면 승인번호·합계·메일 확인·보관 문서 id만 싣는다. */
-export function eventOf(r: RunView, runId: string, cmdId: string, at: number): RunEventBody {
+/**
+ * 폰에 보낼 진행 이벤트(runId는 폰 쪽 ULID). 발급이 끝났으면 승인번호·합계·메일 확인·보관 문서 id만 싣는다.
+ * approveCode: 승인 단계인데 폰으로 보내지 않는 이유(pc_key·pc_first·pc_limit·pc_only). 없으면 폰 승인(gate.request가 따로 간다)이거나 옛 PC다.
+ */
+export function eventOf(r: RunView, runId: string, cmdId: string, at: number, approveCode?: string): RunEventBody {
   const phase = phaseOf(r);
   const ev: RunEventBody = { runId, cmdId, at, event: phase === 'done' || phase === 'stopped' ? 'end' : 'phase', phase, status: r.status };
   if (phase === 'verify' && Number.isSafeInteger(r.verifyAttempt) && r.verifyAttempt! >= 1) ev.attempt = Math.min(r.verifyAttempt!, 99);
@@ -58,6 +62,7 @@ export function eventOf(r: RunView, runId: string, cmdId: string, at: number): R
     if (UUID4.test(r.result.docId)) ev.result.docId = r.result.docId;
   }
   if (phase === 'stopped' && r.inDoubt) ev.code = 'in_doubt';
+  if (phase === 'approve' && approveCode) ev.code = approveCode;
   return ev;
 }
 
@@ -112,6 +117,10 @@ export interface PhoneIssuePorts {
   /** 초안이 생겼다(판·대화에 카드를 그린다). */
   onDraft?: (run: RunView) => void;
   cmds: Pick<CmdLog, 'get' | 'put'>;
+  /** 이 폰이 지금 승인 요청을 받을 수 있는가(phone-gate PhoneGate.canApprove). 없으면 늘 pc_only. */
+  approver?: (pairId: string) => boolean;
+  /** 승인 단계에서 폰으로 보내지 않는 이유(phone-gate PhoneGate.codeOf). */
+  approveCode?: (shellRunId: string) => string | undefined;
   now?: () => number;
   log?: (name: string, data?: Record<string, string | number | boolean>) => void;
 }
@@ -165,9 +174,22 @@ export class PhoneIssue {
     if (t) this.#emit(r, t, false);
   }
 
+  /** 이 셸 실행을 맡긴 폰과 폰 쪽 runId. 폰이 시작한 실행이 아니면 null. */
+  trackedOf(shellRunId: string): { pairId: string; runId: string } | null {
+    const t = this.#runs.get(shellRunId);
+    return t ? { pairId: t.pairId, runId: t.runId } : null;
+  }
+
+  /** 승인 단계 이유가 바뀌었다(phone-gate). 지금 상태를 다시 본다(달라졌을 때만 보낸다). */
+  poke(shellRunId: string): void {
+    const t = this.#runs.get(shellRunId);
+    const r = t && this.#o.get(shellRunId);
+    if (t && r) this.#emit(r, t, false);
+  }
+
   #emit(r: RunView, t: Tracked, force: boolean): void {
-    const ev = eventOf(r, t.runId, t.cmdId, this.#now());
-    const key = `${ev.phase}:${ev.attempt ?? ''}:${ev.result ? 'r' : ''}`;
+    const ev = eventOf(r, t.runId, t.cmdId, this.#now(), this.#o.approveCode?.(r.id));
+    const key = `${ev.phase}:${ev.attempt ?? ''}:${ev.result ? 'r' : ''}:${ev.phase === 'approve' ? (ev.code ?? '') : ''}`;
     if (!force && key === t.last) return;
     t.last = key;
     const sink = this.#sinks.get(t.pairId);
@@ -226,6 +248,6 @@ export class PhoneIssue {
         if (r) this.#emit(r, t, true);
       });
     });
-    return { cmdId: body.cmdId, state: 'pc_only', runId };
+    return { cmdId: body.cmdId, state: this.#o.approver?.(pairId) ? 'accepted' : 'pc_only', runId };
   }
 }

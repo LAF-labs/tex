@@ -5,7 +5,7 @@ import type { DiagValue, EventLog } from '@sax/platform';
 
 import type { Page } from 'playwright-core';
 import type { DataService } from './data-service.ts';
-import { buildGateRequest, cbor, jcs, LOCAL_APPROVAL_TTL_MS, sha256hex, type GateField, type GatePortMessage, type GateRequest, type LocalApproval, type ReadbackKey } from './gate.ts';
+import { buildGateRequest, cbor, jcs, LOCAL_APPROVAL_TTL_MS, PRESENCE_ACCEPTED, remotePresenceRefusal, sha256hex, type GateField, type GatePortMessage, type GateRequest, type LocalApproval, type ReadbackKey } from './gate.ts';
 import { businessKey, canonicalEmail, H01, packageDigest, type Phase } from './h01/playbook.ts';
 import { portalProblems, type PortalConfig } from './portal.ts';
 import { H01Runner, type Readback, type RunInputs } from './h01/runner.ts';
@@ -221,7 +221,7 @@ const W_MAX_MS = 60_000;
 const GATE_STEP = 's20';
 /** 승인 뒤 이 시간 동안은 거부([중지])가 이긴다(D03 §2 전이표 "거부 우선 창 2초"). */
 export const DENY_PRIORITY_MS = 2_000;
-const PRESENCE_OK = new Set(['click', 'click+batch']); // Hello는 PoC 범위 밖(ADR-021). click+batch는 묶음 뒤 건(gate.ts Presence)
+const PRESENCE_OK = PRESENCE_ACCEPTED; // Hello는 PoC 범위 밖(ADR-021). click+batch는 묶음 뒤 건, remote+px는 폰 승인(gate.ts Presence, ADR-052)
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 export function ulid(now = Date.now()): string {
@@ -921,8 +921,9 @@ export class RunService extends EventEmitter {
     if (typeof ap.exp !== 'number' || ap.exp < now || ap.exp > now + LOCAL_APPROVAL_TTL_MS + 5_000) return reject('expired');
     if (now > g.deadline) return reject('gate_expired');
     if (!PRESENCE_OK.has(String(ap.presence)) || (ap.presence === 'click+batch' && g.req.docType !== 'H-01')) return reject('presence_unsupported');
+    if (ap.presence === 'remote+px' && remotePresenceRefusal(g.req)) return reject('remote_not_allowed');
     if (typeof ap.mac !== 'string' || !ap.mac) return reject('no_mac');
-    if (!this.gates.decide(g.req.reqId, 'approved', 'local')) return reject('not_open');
+    if (!this.gates.decide(g.req.reqId, 'approved', ap.presence === 'remote+px' ? 'remote' : 'local')) return reject('not_open');
     this.journal.append(a.runId, 'gate.approved', { reqId: g.req.reqId, presence: String(ap.presence) });
     clearTimeout(g.timer);
     a.gate = null;
@@ -944,8 +945,10 @@ export class RunService extends EventEmitter {
     if (now > run.gateDeadline) return reject('gate_expired');
     // click+batch(여러 건 묶음의 뒤 건)는 세금계산서(H-01) 게이트에서만 받는다.
     if (!PRESENCE_OK.has(String(ap.presence)) || (ap.presence === 'click+batch' && req.docType !== 'H-01')) return reject('presence_unsupported');
+    // 폰 승인(ADR-052): 세금계산서 게이트만, 처음 거래처·처음 보내는 이메일이면 PC에서만(main도 같은 규칙으로 거른다).
+    if (ap.presence === 'remote+px' && remotePresenceRefusal(req)) return reject('remote_not_allowed');
     if (typeof ap.mac !== 'string' || !ap.mac) return reject('no_mac');
-    const r = run.approve(req.reqId, req.actionHash);
+    const r = run.approve(req.reqId, req.actionHash, ap.presence === 'remote+px' ? 'remote' : 'local');
     if (r.ok) this.journal.append(a.runId, 'gate.presence', { reqId: req.reqId, presence: String(ap.presence) });
     return r.ok ? { ok: true } : reject('not_open');
   }

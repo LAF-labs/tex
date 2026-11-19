@@ -9,7 +9,7 @@ import { ulid } from './ulid.ts';
 
 export type Role = 'desktop' | 'mobile';
 /** 스키마 type enum과 같아야 한다(tests/remote-envelope.test.ts가 대조). */
-export type MessageType = 'hello' | 'pair.ok' | 'kek.grant' | 'devlist.push' | 'mbx.reissue' | 'close' | 'ping' | 'pong' | 'receipt.offer' | 'receipt.chunk' | 'receipt.ack' | 'cash.entry' | 'cash.ack' | 'cmd.run' | 'cmd.abort' | 'cmd.resume' | 'run.event' | 'gate.request' | 'gate.response' | 'consent.request' | 'consent.response' | 'human.request' | 'human.response' | 'file.offer' | 'query.documents' | 'query.result' | 'rotate.static' | 'cmd.ack' | 'phone.copy' | 'share.key';
+export type MessageType = 'hello' | 'pair.ok' | 'kek.grant' | 'devlist.push' | 'mbx.reissue' | 'close' | 'ping' | 'pong' | 'receipt.offer' | 'receipt.chunk' | 'receipt.ack' | 'cash.entry' | 'cash.ack' | 'cmd.run' | 'cmd.abort' | 'cmd.resume' | 'run.event' | 'gate.request' | 'gate.response' | 'consent.request' | 'consent.response' | 'human.request' | 'human.response' | 'file.offer' | 'query.documents' | 'query.result' | 'rotate.static' | 'cmd.ack' | 'phone.copy' | 'share.key' | 'px.enroll' | 'px.ack' | 'gate.refresh';
 
 export const ALL_MESSAGE_TYPES: readonly string[] = MESSAGE_TYPES as readonly string[];
 const BIN = new Set<string>(BINARY_KEYS as readonly string[]);
@@ -209,6 +209,24 @@ export interface GateResponseBody {
   sigAlg: 'ed25519' | 'p256';
   sig: string;
 }
+/** v1.10(ADR-052 결정 2): 폰 승인 키(Px) 등록 알림과 답, 승인 요청 다시 받기. */
+export type PxHw = 'ios_se' | 'android_strongbox' | 'android_tee';
+export interface PxEnrollBody {
+  /** P-256 공개키, SEC1 비압축 65바이트(base64) */
+  pxPub: string;
+  hw: PxHw;
+  /** Ed25519_Vm("SAX-px-enroll-v1" ‖ CBOR([pairId, deviceId, pxPub, hw])) */
+  sig: string;
+}
+export type PxAckState = 'enrolled' | 'needs_pc' | 'rejected';
+export interface PxAckBody {
+  state: PxAckState;
+  pxId: string;
+}
+export interface GateRefreshBody {
+  runId: string;
+  reqId: string;
+}
 export interface MoneySide {
   unpaidCount: number;
   unpaidTotal: number;
@@ -278,6 +296,9 @@ export interface Bodies {
   'gate.response': GateResponseBody;
   'phone.copy': PhoneCopyBody;
   'share.key': ShareKeyBody;
+  'px.enroll': PxEnrollBody;
+  'px.ack': PxAckBody;
+  'gate.refresh': GateRefreshBody;
 }
 export type KnownType = keyof Bodies;
 export type BodyOf<T extends string> = T extends KnownType ? Bodies[T] : object;
