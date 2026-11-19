@@ -1,6 +1,6 @@
 # ADR-057. 말풍선 반응: 맞장구에는 이모지 하나, 긴 일은 👀 접수 뒤 결과만
 
-> 상태: 제안(2026-11-19). 대표 지시(조율 스레드 전달, 2026-11-19 yulmu): "알겠습니다, 지금 바로 처리해 드릴게요" 같은 긴 문장 대신 이모지 하나로 출력 토큰을 아끼고, 긴 작업 전 접수 신호를 채팅창을 어지럽히지 않고 주고, "고마워"에 또 긴 인사로 답해 턴이 늘지 않게 한다. 대표 결정이 필요한 항목은 없다(보안 수준·제품 방향을 바꾸지 않는다).
+> 상태: 제안(2026-11-19), 첫 실측 끝(같은 날). 대표 지시(조율 스레드 전달, 2026-11-19 yulmu): "알겠습니다, 지금 바로 처리해 드릴게요" 같은 긴 문장 대신 이모지 하나로 출력 토큰을 아끼고, 긴 작업 전 접수 신호를 채팅창을 어지럽히지 않고 주고, "고마워"에 또 긴 인사로 답해 턴이 늘지 않게 한다. 대표 결정이 필요한 항목은 없다(보안 수준·제품 방향을 바꾸지 않는다).
 > 잇는 결정: [ADR-051](ADR-051-chat-harness-route-tools-reply.md)(판정 → 도구 → 답, 대표 결정 1·2), [ADR-054](ADR-054-chat-turn-events-streaming-principles.md)(턴 이벤트), [ADR-048](ADR-048-multi-device-three-pcs-three-phones.md) 결정 4(대화는 기기마다 따로)
 > 관련 코드: `packages/model/bundles/chat_route_v1.json`, `packages/chat-core/src/turn.ts`, `packages/engine/src/chat-agent.ts`(`chat.route`), `apps/desktop/src/agent-chat.ts`, `packages/chat-core/src/phone-chat.ts`, `services/gateway/src/{app,service}.ts`, `tests/chat-eval/route`
 
@@ -77,6 +77,7 @@
 - 러너: `--target=v1`(제품 번들). 채점은 제품 규칙(`shownMode` = `routeAck`)으로 본다.
 - 관문(초안, 첫 실측 뒤 확정): **질문·일을 반응만으로 닫는 비율 1% 이하**(가장 나쁜 오류: 사장님 말을 놓친다), 맞장구를 반응만으로 닫는 비율 80% 이상, 일을 맡긴 말에 접수 반응 80% 이상. 기존 A층 관문(발급 놓침·일상 말 잘못 열기 2% 이하, act·domain 92%)도 그대로 본다.
 - 비용(짐작, 러너 `--estimate`): 392건 상한 약 149원.
+- **실측(2026-11-19, jev-1.14-20261014, 96원, [보고서](../../../poc/reports/chat-eval/route-v1-2026-11-19.md)):** 질문이나 일을 반응만으로 닫음 0%, 맞장구를 반응만으로 닫음 84.6%, 일에 👀 78.4%(관문 80%에 조금 모자람, 놓친 것은 반응 없이 평소처럼 답함), p50 0.42초. act·domain 둘 다 맞음은 88.5%로 초안(93.1%)보다 낮다. 이번에는 기록만 하므로 영향이 없고, ADR-051 3단계 전에 되돌린다.
 
 ### 8. 비용과 지연(짐작, 실측 전)
 
@@ -92,6 +93,6 @@
 
 ## 남은 일
 
-1. 실모델 측정(`--target=v1`)을 돌려 관문을 확정하고 보고서를 `reports/chat-eval/`에 남긴다.
+1. 머리말 고치기(앱이 하지 않는 일은 answer, 줄임말 맞장구는 reaction_only) 뒤 다시 재고 관문을 확정한다. 첫 실측은 `reports/chat-eval/route-v1-2026-11-19.md`.
 2. 폰 앱(`taxoff-mobile`): chat-core 사본 맞추기, 반응 알약, 시뮬레이터 확인.
 3. ADR-051 3단계: `act`·`domain`으로 도구 좁히기, `intent_route_v1` 은퇴.

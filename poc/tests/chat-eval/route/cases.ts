@@ -466,7 +466,7 @@ g('smalltalk', 'none', {}, [
   st('아 배고파', 'plain'),
   st('커피 한잔 하고 올게', 'plain'),
   st('안녕', 'phone', PHONE),
-  st('고마워요', 'phone', PHONE, ACK),
+  st('고마워요', 'phone', { ...PHONE, ...ACK }),
   st('오늘 비 온대?', 'plain'),
   st('잠깐만', 'plain'),
   st('응', 'short'),
