@@ -26,8 +26,6 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     'browser.launch', 'browser.shutdown',
     // typist.authOk: 인증서 비밀번호를 넣은 뒤 로그인이 확인됐다(그때만 금고가 그 값을 기억한다, 부장 지시 2026-11-13)
     'typist.fill', 'typist.authFailed', 'typist.authOk',
-    // typist.fillCard: 발급 서명 보안카드 창의 두 칸(금고가 요청 칸 번호를 읽고 저장값을 친다, 대표 지시 2026-11-14)
-    'typist.fillCard',
     // popups.configure: 포털 기본 팝업 숨김(패키지 strings popup.*, 대표 지시 2026-11-14). 숨김 CSS·쿠키·닫을 창 주소만 받는다
     'popups.configure',
     'secretWindow.openForHuman', 'secretWindow.requestClose',
@@ -73,24 +71,26 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
 
 // ───────────────────────── 비밀 종류·범위 ─────────────────────────
 
-/** 비밀 종류(ADR-026 결정 6 `secretKind`). */
-export const SECRET_KINDS = ['cert_password', 'portal_password', 'security_card'] as const;
+/**
+ * 비밀 종류(ADR-026 결정 6 `secretKind`). 보안카드는 지원하지 않는다(대표 결정 2026-11-19).
+ * 옛 판이 금고에 남긴 보안카드 값은 기동 때 한 번 지운다(keychain/human.ts purgeRetiredCard).
+ */
+export const SECRET_KINDS = ['cert_password', 'portal_password'] as const;
 export type SecretKind = (typeof SECRET_KINDS)[number];
 
 /**
  * 저장할 수 있는 종류(ADR-020 결정 2·3, ADR-026 결정 2). 공동·금융인증서 비밀번호는 저장 기능 자체가 없다.
  * - portal_password: 칸 `portal/<scope>/pw` 하나(D05 §2, ADR-035). 포털 아이디는 비밀이 아니라 저장하지 않는다(DB `profiles.portal_login_id`, 엔진 fill)
- * - security_card: 칸 `securitycard/<scope>/<row>`(row 1~35)
  */
 // 인증서 비밀번호도 기억한다(대표 지시 2026-11-13, ADR-020 결정 2 고침): 처음 금고 비밀 창에 넣은 값을 저장하고 다음부터 금고가 칸에 넣는다.
-export const STORABLE_KINDS = ['portal_password', 'security_card', 'cert_password'] as const satisfies readonly SecretKind[];
+export const STORABLE_KINDS = ['portal_password', 'cert_password'] as const satisfies readonly SecretKind[];
 
 /**
  * 타이피스트가 넣는 종류(D05 §2 표·§4, ADR-020 결정 2, ADR-025 결정 10). 공동·금융인증서 비밀번호는 사용자가 전용 Chrome의
  * 포털 칸(가상키패드)에 직접 넣는다(`human:secret`, 비밀 창 (b)). 금고는 정책·허용 호스트와 상관없이 타이피스트 입력과
  * 1회용 입력 창(secretInput oneshot)에서 이 밖의 종류를 받지 않는다.
  */
-export const TYPIST_KINDS = ['portal_password', 'security_card'] as const satisfies readonly SecretKind[];
+export const TYPIST_KINDS = ['portal_password'] as const satisfies readonly SecretKind[];
 export type TypistKind = (typeof TYPIST_KINDS)[number];
 export const isTypistKind = (k: unknown): k is TypistKind => typeof k === 'string' && (TYPIST_KINDS as readonly string[]).includes(k);
 export type StorableKind = (typeof STORABLE_KINDS)[number];
@@ -104,9 +104,6 @@ export type StorableKind = (typeof STORABLE_KINDS)[number];
 export const PROFILE_SCOPES = ['business', 'personal'] as const;
 export type ProfileScope = (typeof PROFILE_SCOPES)[number];
 export const isProfileScope = (s: unknown): s is ProfileScope => typeof s === 'string' && (PROFILE_SCOPES as readonly string[]).includes(s);
-
-/** 보안카드 칸 번호 범위. */
-export const SECURITY_CARD_ROWS = { min: 1, max: 35 } as const;
 
 /**
  * 포털 자격 칸. 금고에 두는 것은 비밀번호뿐이다(D05 §2·§4, ADR-035). 타이피스트는 type=password 칸에만 넣는다.
@@ -123,8 +120,8 @@ export const PORTAL_LOGIN_ID_MAX = 64;
  * 1회용 비밀 입력 결속(I-1, N-44). main이 secretInput 포트를 넘길 때 함께 준다.
  * 금고는 이 포트에서 이 값으로 secret.provide를 한 번만 받는다. 결속이 없거나 틀리면 포트를 붙이지 않는다.
  * `mode`가 없으면 oneshot이다(PoC 호환).
- * - kind는 TYPIST_KINDS와, 금고가 부른 cert_password(row 없음, 앱 입력 창). 보안카드는 row 필수, 포털 비밀번호는 row 없음.
- * - 금고가 먼저 보낸 `secret.needed{runId, kind, scope, row?}`와 같은 결속만 붙인다(비밀 창은 금고가 부른다, ADR-025 결정 10).
+ * - kind는 TYPIST_KINDS와, 금고가 부른 cert_password(앱 입력 창).
+ * - 금고가 먼저 보낸 `secret.needed{runId, kind, scope}`와 같은 결속만 붙인다(비밀 창은 금고가 부른다, ADR-025 결정 10).
  *   요청은 SECRET_TTL_MS 동안 살아 있고, 값을 받거나 run.end면 지운다. 요청 없는 결속은 `vault.secret_input_unrequested`.
  */
 export type OneShotBind = {
@@ -132,7 +129,6 @@ export type OneShotBind = {
   runId: string;
   kind: SecretKind;
   scope: ProfileScope;
-  row?: number;
 };
 
 /**
@@ -174,39 +170,22 @@ export type CodefSealResult =
   | { ok: true; derFile: string; keyFile: string; password: string; remembered: boolean }
   | { ok: false; reason: 'cancelled' | 'timeout' | 'busy' | 'not_found' | 'no_key' | 'unreadable' | 'bad_public_key' | 'missing' | 'vault_locked' };
 
-/** secret.provide(oneshot) 인자. kind·scope·row는 생략하거나 결속값과 같아야 한다. */
+/** secret.provide(oneshot) 인자. kind·scope는 생략하거나 결속값과 같아야 한다. */
 export interface SecretProvideParams {
   bytes: Uint8Array;
   kind?: SecretKind;
   scope?: ProfileScope;
-  row?: number;
 }
 
 /**
- * secret.store 인자(store 결속). 보안카드는 row만, 포털은 field만 쓴다. 값은 TextEncoder 바이트.
+ * secret.store 인자(store 결속). 칸은 field로 고른다. 값은 TextEncoder 바이트.
  * `portalLoginId`: 포털 등록 창이 아이디를 같은 화면에서 받았을 때만(portal_password 결속). 비밀이 아니다.
  * 금고는 저장·로그하지 않고 결과에 그대로 돌려준다(main이 DB `profiles.portal_login_id`에 쓴다, ADR-035).
  */
 export interface SecretStoreParams {
-  entries: Array<{ row?: number; field?: PortalField; bytes: Uint8Array }>;
+  entries: Array<{ field?: PortalField; bytes: Uint8Array }>;
   portalLoginId?: string;
-  /**
-   * 보안카드 결속만: 카드 사진 바이트. 금고가 OS 텍스트 인식으로 칸을 읽는다(entries 없이). 애매한 칸이 있으면 저장하지 않고
-   * `{ pending }`을 돌려준다. 그다음 결속에 `draftId`와 그 칸들의 entries(4자리)를 보내면 합쳐서 한 번에 저장한다.
-   */
-  image?: Uint8Array;
-  draftId?: string;
 }
-
-/** 보안카드 사진 인식 뒤 다시 물을 칸(값 없음, 칸 번호만). draftId는 금고 메모리의 초안(10분). */
-export interface CardScanPending {
-  draftId: string;
-  ask: number[];
-  size: 30 | 35;
-}
-
-/** secret.store 답: 저장했으면 SecretStoreResult, 보안카드 사진에서 애매한 칸이 남았으면 pending. */
-export type SecretStoreReply = SecretStoreResult | { pending: CardScanPending };
 
 /** secret.store 결과. 비밀 값·길이 없음. `portalLoginId`는 인자로 받은 비밀 아닌 아이디를 돌려준 것. */
 export interface SecretStoreResult {
@@ -241,7 +220,7 @@ export interface ConsentRecord {
   v: 1;
   kind: StorableKind;
   scope: ProfileScope;
-  /** 저장한 칸 수(보안카드 30, 포털 1~2). 어떤 칸인지는 남기지 않는다. */
+  /** 저장한 칸 수. 어떤 칸인지는 남기지 않는다. */
   items: number;
   tier: KeyTier;
   /** Hello 결박 사본을 함께 두었는가. */
@@ -357,11 +336,8 @@ export interface RunBeginParams {
 
 // ───────────────────────── 타이피스트(engine) ─────────────────────────
 
-/**
- * typist.fill 실패 사유. `row_mismatch`: 보안카드 요청 칸 번호와 화면에 보인 칸 번호(`rowLabel`)가 다르거나 읽을 수 없다
- * (셀렉터·화면 문제, 입력하지 않는다, D05 §4 2).
- */
-export type FillReason = 'denied' | 'not_found' | 'blocked_by_module' | 'origin_not_allowed' | 'not_secret_slot' | 'secret_window_refused' | 'secret_missing' | 'vault_locked' | 'credential_suspect' | 'row_mismatch';
+/** typist.fill 실패 사유. */
+export type FillReason = 'denied' | 'not_found' | 'blocked_by_module' | 'origin_not_allowed' | 'not_secret_slot' | 'secret_window_refused' | 'secret_missing' | 'vault_locked' | 'credential_suspect';
 
 /**
  * typist.fill 인자(D05 §3.8·§4).
@@ -375,30 +351,9 @@ export interface FillRequest {
   frame: string;
   /** CSS 셀렉터(PoC). Phase 1은 셀렉터 사전 ElementLocator. */
   element: string;
-  /** kind는 TYPIST_KINDS만. 보안카드는 row(1~35)가 꼭 있고, 포털 비밀번호는 row가 없다. */
-  secret: { kind: string; scope: string; row?: number };
+  /** kind는 TYPIST_KINDS만. */
+  secret: { kind: string; scope: string };
   slot: { secretKind: SecretKind; purpose: 'login' | 'sign' };
-  startGate?: boolean;
-  /**
-   * 보안카드 전용(필수): 화면에서 요청 칸 번호를 보여 주는 요소의 셀렉터(element와 같은 프레임). 금고가 자기 세션으로 그 글자를
-   * 읽어 숫자가 하나만 있고 secret.row와 같을 때만 넣는다(D05 §4 2). "앞 2자리" 같은 다른 숫자가 함께 있으면 읽지 못한 것으로 본다.
-   */
-  rowLabel?: string;
-}
-
-/** typist.fillCard 실패 사유. window_missing: 보안카드 창이 아직 없다. already_used: 이 실행에서 그 칸을 이미 쳤다(틀림 뒤 다시 치지 않는다). */
-export type CardFillReason = 'denied' | 'not_found' | 'window_missing' | 'origin_not_allowed' | 'not_secret_slot' | 'row_mismatch' | 'already_used' | 'secret_missing' | 'vault_locked' | 'credential_suspect' | 'blocked_by_module' | 'secret_window_refused';
-
-/**
- * typist.fillCard 인자(대표 지시 2026-11-14). 실행 탭(targetId)이 연 새 창 가운데 주소가 window(정규식 원문)에 맞는 것에서,
- * fields마다 label 글자("[N]번 … 앞/뒤 2자리")를 금고가 읽어 저장된 N번 칸의 앞·뒤 2자리를 element(type=password)에 친다.
- */
-export interface CardFillRequest {
-  runId: string;
-  targetId: string;
-  window: string;
-  fields: Array<{ element: string; label: string }>;
-  scope: ProfileScope;
   startGate?: boolean;
 }
 
@@ -674,7 +629,7 @@ export const DOWNLOAD_ARM_TTL_MS = 60_000;
  */
 export type VaultEventName =
   | 'secret.needed' | 'secret.expired' | 'secret_window.refused' | 'secret_window.leak_suspected'
-  | 'commit.body_compared' | 'vault.state' | 'secret.suspect' | 'secret.stored' | 'download.completed' | 'download.failed'
+  | 'commit.body_compared' | 'vault.state' | 'secret.suspect' | 'download.completed' | 'download.failed'
   | 'screen.frame' | 'screen.paused'
   // 실행 Chrome이 사람 손으로 닫혔다(탭 전부 또는 프로세스, reason tab|chrome). main이 제출 전 실행을 멈춘다.
   | 'browser.closed' | 'browser.launched'

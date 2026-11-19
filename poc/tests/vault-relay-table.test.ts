@@ -224,7 +224,7 @@ describe('D05 §3.4 응답 정리 표', () => {
     const t = f.relay.targets.get('RUN')!;
     f.relay.openWindow(t, 'human', 'RUN', 7);
     f.relay.deactivateWindow(t);
-    // type=text 칸(보안카드 숫자 등): 비밀 노드 ID로만 알 수 있다(짧은 값은 알려진 값 치환에도 안 걸린다).
+    // type=text 칸(짧은 숫자 등): 비밀 노드 ID로만 알 수 있다(짧은 값은 알려진 값 치환에도 안 걸린다).
     const node = () => ({ nodeId: 1, backendNodeId: 7, nodeName: 'INPUT', attributes: ['type', 'text', 'value', '1234'], value: '1234' });
     f.conn.emitEvent('DOM.setChildNodes', { parentId: 0, nodes: [node()] }, f.sid);
     f.conn.emitEvent('DOM.childNodeInserted', { parentNodeId: 0, previousNodeId: 0, node: node() }, f.sid);

@@ -431,7 +431,20 @@ describe('포털 아이디·동의·온보딩 이어 하기(데스크톱 #69)', 
     assert.throws(() => p.setPortalLoginId('nope', 'x'), /profile_not_found/);
     assert.equal(p.setPortalLoginId(profileId, null).portalLoginId, null);
     const cols = (db.prepare('PRAGMA table_info(profiles)').all() as Array<{ name: string }>).map((c) => c.name);
-    assert.ok(cols.includes('portal_login_id') && !cols.some((c) => /password|secret|card/i.test(c)), '비밀번호·보안카드 칸 없음');
+    assert.ok(cols.includes('portal_login_id') && !cols.some((c) => /password|secret|card/i.test(c)), '비밀 칸 없음');
+  });
+
+  it('발급 인증이 옛 값(보안카드)인 프로필은 "고르지 않음"으로 되돌린다, 다른 값은 그대로(대표 결정 2026-11-19 지원 안 함)', () => {
+    const p = new ProfileRepo(db);
+    // 옛 판이 쓴 값(v1 DDL CHECK가 아직 받는다)
+    db.prepare(`UPDATE profiles SET sign_method = 'security_card' WHERE id = ?`).run(profileId);
+    assert.equal(p.get(profileId)!.signMethod, null, '되돌리기 전에도 옛 값은 고르지 않음으로 읽는다');
+    assert.equal(p.resetRetiredSignMethod(), 1);
+    assert.equal((db.prepare('SELECT sign_method FROM profiles WHERE id = ?').get(profileId) as { sign_method: unknown }).sign_method, null);
+    assert.equal(p.resetRetiredSignMethod(), 0, '한 번 되돌리면 바꿀 행이 없다');
+    db.prepare(`UPDATE profiles SET sign_method = 'simple_auth' WHERE id = ?`).run(profileId);
+    assert.equal(p.resetRetiredSignMethod(), 0);
+    assert.equal(p.get(profileId)!.signMethod, 'simple_auth');
   });
 
   it('동의 레코드: 쌓기만 하고 마지막 행이 현재 결정, 프로필 전 약관은 나중에 잇는다', () => {

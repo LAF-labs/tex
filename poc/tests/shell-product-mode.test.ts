@@ -24,10 +24,10 @@ describe('제품 모드: 견본 데이터 없음', () => {
     assert.match(src, /cardEnabled: !!sample,/);
     assert.match(src, /consentConfig: async \(\) => structuredClone\(CONSENT_CONFIG\),/);
   });
-  it('온보딩: 진위확인은 견본 결과 대신 조회하지 못함, 보안카드 등록은 지금은 할 수 없음(견본 등록 없음)', () => {
+  it('온보딩: 진위확인은 견본 결과 대신 조회하지 못함, 금고 위임 등록(보안카드, 지원 안 함)은 길 자체가 없다', () => {
     assert.match(src, /checkBizNo: async \(\) => \(\{ status: 'unknown', label: '조회하지 못했어요'/);
-    assert.match(src, /registerSecrets: async \(\) => \(\{ ok: false, reason: 'unavailable' \}\),/);
-    // 제품 쪽 바깥 일 묶음에 onbMock.checkBizNo·registerSecrets가 남지 않는다
+    assert.doesNotMatch(src, /registerSecrets/);
+    // 제품 쪽 바깥 일 묶음에 onbMock.checkBizNo가 남지 않는다
     const product = src.slice(src.indexOf('const onbExternal: OnboardingExternal = fixture'), src.indexOf('const onbPorts = onboardingPorts('));
     assert.ok(!/onbMock|MockOnboardingPorts/.test(product));
   });

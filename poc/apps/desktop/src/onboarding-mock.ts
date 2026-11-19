@@ -1,11 +1,11 @@
 // 온보딩 목업 어댑터(M4-2). 셸은 바깥 일만 이것으로 한다(onboarding-store.ts onboardingPorts). 실제 어댑터가 붙을 자리:
 // - recognizeBizCert: 제품은 bizcert-read.ts(M4-3, docparse 샌드박스, ADR-014), 목업은 시연·e2e만 · checkBizNo: 진위확인(packages/net egress, ADR-029 서버 경유, #65)
-// - findCerts: 제품은 이미 실제 길(금고 npki.list #93 → docparse 샌드박스 certInfo, npki-certs.ts). 목업 목록은 시연·e2e만 · registerSecrets: 금고 T-06 등록 창(금고 프로토콜 v1 secret.store, #42)
+// - findCerts: 제품은 이미 실제 길(금고 npki.list #93 → docparse 샌드박스 certInfo, npki-certs.ts). 목업 목록은 시연·e2e만
 // - consentConfig: 설정 데이터(모델 상류 공급사 표)
 // recordConsent·saveProfile·save(저장)는 셸에서 쓰지 않는다. 엔진 명령으로 DB에 남긴다(onboarding-store.ts). 여기 것은 상태 기계 시험용이다.
 import { dayOffset } from './shell-mock.ts';
 import { CONSENT_CONFIG } from './onboarding.ts';
-import type { AppConsentRecord, BizFields, ConsentConfig, OnbProfile, OnbState, OnboardingPorts, StoreBindRequest, VaultConsentRecord } from './onboarding.ts';
+import type { AppConsentRecord, BizFields, ConsentConfig, OnbProfile, OnbState, OnboardingPorts } from './onboarding.ts';
 
 /** 시연 등록증(fixture 가짜 홈택스의 공급자와 같은 값이어야 발급 시연이 이어진다, fixture-mode DEMO_PROFILE). */
 export const MOCK_BIZ_CERT: BizFields = { name: '가나다컴퍼니', bizNo: '1234567891', rep: '김가나', bizType: '서비스업', bizItem: '경영 컨설팅', address: '서울특별시 가나구 다라로 12, 3층', email: 'office@ganada.example' };
@@ -24,13 +24,10 @@ export interface MockOnboardingOptions {
   bizCert?: BizFields | null;
   /** 진위확인 결과(시험이 바꾼다). */
   bizStatus?: 'active' | 'suspended' | 'closed';
-  /** 금고 등록 창 결과(시험이 바꾼다). */
-  register?: 'ok' | 'cancelled';
 }
 
 export class MockOnboardingPorts implements OnboardingPorts {
   readonly consents: AppConsentRecord[] = [];
-  readonly binds: StoreBindRequest[][] = [];
   saved: OnbState | null = null;
   private readonly o: MockOnboardingOptions;
   constructor(o: MockOnboardingOptions) {
@@ -53,13 +50,6 @@ export class MockOnboardingPorts implements OnboardingPorts {
   /** 목업 인증서의 CN(가짜 홈택스 인증서 창의 소유자 칸과 같은 모양, h01-fixture). */
   async certName(certId: string) {
     return ({ 'npki-1': '가나다컴퍼니()0001234567891', 'npki-2': '김가나()0009876543210' } as Record<string, string>)[certId] ?? null;
-  }
-  async registerSecrets(binds: StoreBindRequest[]) {
-    this.binds.push(binds);
-    if (this.o.register === 'cancelled') return { ok: false as const, reason: 'cancelled' };
-    const at = new Date().toISOString();
-    const consents: VaultConsentRecord[] = binds.map((b) => ({ v: 1, kind: b.kind, scope: b.scope, items: b.kind === 'security_card' ? 30 : 1, tier: 'memory', helloCopy: false, strict: false, noticeVersion: b.notice.version, at, via: 'T-06' }));
-    return { ok: true as const, consents, portalLoginId: 'ganada01' };
   }
   async consentConfig() {
     return structuredClone(MOCK_CONSENT_CONFIG);

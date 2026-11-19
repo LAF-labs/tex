@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { MockOnboardingPorts, MOCK_BIZ_CERT, MOCK_CONSENT_CONFIG } from '../apps/desktop/src/onboarding-mock.ts';
-import { BIZ_NAME_NOTICE, certExpiringSoon, CONSENT_KINDS, CONSENT_NOTICES, ONB_CHOICES, OnboardingFlow, onboardingTodos, parseOnbState, type OnbAnswer, type OnbProfile } from '../apps/desktop/src/onboarding.ts';
+import { AUTH_LABEL, AUTH_SIGN_METHOD, BIZ_NAME_NOTICE, certExpiringSoon, CONSENT_KINDS, CONSENT_NOTICES, ONB_CHOICES, ONB_STEPS, OnboardingFlow, onboardingTodos, parseOnbState, type OnbAnswer, type OnbProfile } from '../apps/desktop/src/onboarding.ts';
 
 const NOW = () => new Date('2026-11-05T01:00:00Z');
 function make(o: Partial<ConstructorParameters<typeof MockOnboardingPorts>[0]> = {}) {
@@ -179,7 +179,8 @@ describe('온보딩: 한 번에 하나씩', () => {
 
 describe('동의 화면 4종', () => {
   it('키에 판이 붙은 자리표시 문구(F-06 초안 전), 문구에 세무 판단 표현이 없다', () => {
-    assert.deepEqual([...CONSENT_KINDS].sort(), ['delegation', 'model', 'telemetry', 'terms']);
+    // ① 위임 등록(보안카드·홈택스 아이디)은 없앴다(대표 결정 2026-11-19 보안카드 지원 안 함)
+    assert.deepEqual([...CONSENT_KINDS].sort(), ['model', 'telemetry', 'terms']);
     for (const k of CONSENT_KINDS) {
       const n = CONSENT_NOTICES[k];
       assert.equal(n.key, `consent.${k}`);
@@ -189,15 +190,13 @@ describe('동의 화면 4종', () => {
       const text = [n.title, ...n.lines].join(' ');
       for (const bad of ['세액 산정', '절세', '신고 대리', '가산세', '납부할 세액']) assert.ok(!text.includes(bad), `${k}: ${bad}`);
     }
-    assert.match(CONSENT_NOTICES.delegation.lines.join(' '), /악성코드로부터는 보호하지 못해요/, 'D05 §9 범위 문구');
-    assert.match(CONSENT_NOTICES.delegation.lines.join(' '), /인증서 비밀번호는 저장하지 않아요/);
     // 약관 화면은 전문 두 개(약관·처리방침)를 열 수 있고, 가리기의 한계를 숨기지 않는다(R13 §2.5)
     assert.deepEqual(CONSENT_NOTICES.terms.links?.map((l) => l.doc), ['terms', 'privacy']);
     assert.match(CONSENT_NOTICES.terms.lines.join(' '), /일부가 남을 수 있어요/);
   });
 
   it('동의 답은 명시 클릭 하나씩: 묶음(전체 동의) 답이 없다. 텔레메트리 화면은 첫 실행에서 묻지 않는다(기본 꺼짐, 기록 없음)', () => {
-    for (const step of ['terms', 'model', 'telemetry', 'delegation'] as const) {
+    for (const step of ['terms', 'model', 'telemetry'] as const) {
       const ch = ONB_CHOICES[step] as readonly string[];
       assert.ok(!ch.some((c) => /all|bundle|every/.test(c)), step);
     }
@@ -206,27 +205,33 @@ describe('동의 화면 4종', () => {
     assert.ok(!/agreeAll|모두 동의|전체 동의/.test(src));
   });
 
-  it('보안카드도 다른 인증처럼 바로 ②로: 금고 창을 열지 않고 위임 동의도 남기지 않는다(발급할 때 번호를 직접 넣는다)', async () => {
-    const { flow, ports, saved } = make();
+  it('발급 인증에 보안카드가 없다(대표 결정 2026-11-19 지원 안 함): 답 표·라벨·서명 방식 어디에도 없고, 보내도 bad_choice', async () => {
+    assert.deepEqual([...ONB_CHOICES.auth].sort(), ['cert', 'fincert', 'later', 'rescan', 'simple', 'unsure']);
+    assert.deepEqual(Object.keys(AUTH_LABEL).sort(), ['cert', 'fincert', 'simple']);
+    assert.ok(!Object.values(AUTH_LABEL).some((l) => l.includes('보안카드')));
+    assert.ok(!(Object.values(AUTH_SIGN_METHOD) as string[]).includes('security_card'));
+    assert.ok(!(ONB_STEPS as readonly string[]).includes('delegation'), '① 위임 등록 단계가 없다');
+    const { flow, saved } = make();
     await walk(flow, [
       { step: 'terms', choice: 'agree' },
       { step: 'welcome', choice: 'upload' },
       { step: 'biz-confirm', choice: 'confirm' },
-      { step: 'auth', choice: 'card' },
     ]);
-    assert.equal(flow.state.step, 'first');
-    assert.deepEqual(ports.binds, [], '금고 등록 창을 열지 않는다');
-    assert.equal(flow.state.consents.delegation, undefined, '위임 동의 레코드가 없다');
-    assert.deepEqual([saved[0]?.signMethod, saved[0]?.certId], ['security_card', null]);
+    await assert.rejects(flow.answer({ step: 'auth', choice: 'card' as never }), /bad_choice/);
+    assert.equal(flow.state.step, 'auth');
+    assert.equal(saved.length, 0);
+    // 렌더러 답 후보 줄에도 없다
+    const ui = fs.readFileSync(path.resolve(import.meta.dirname, '../apps/desktop/static/shell/shell-onboarding.js'), 'utf8');
+    assert.doesNotMatch(ui, /\['card'|보안카드를 쓰려면|shell-card|cardRegister|delegation/);
   });
 
-  it('이어 하기 저장 읽기: 모양이 틀리면 처음부터(null), 모르는 키는 버린다, 예전 저장(포털 아이디 칸 없음)도 받는다', () => {
+  it('이어 하기 저장 읽기: 모양이 틀리면 처음부터(null), 모르는 키는 버린다, 예전 저장(포털 아이디 칸 있음·없음)도 받는다', () => {
     assert.equal(parseOnbState(null), null);
     assert.equal(parseOnbState({ step: 'nope', tasks: [], skipped: [], log: [], consents: {} }), null);
     assert.equal(parseOnbState({ step: 'done', tasks: [], skipped: ['admin'], log: [], consents: {} }), null);
     assert.equal(parseOnbState({ step: 'done', tasks: [], skipped: [], log: [{ text: 1 }], consents: {} }), null);
-    const ok = parseOnbState({ step: 'done', tasks: ['H-03'], skipped: ['biz'], log: [], consents: { terms: { version: 'f06-pre.1', choice: 'agreed', at: 'x' } }, evil: '<img>' });
-    assert.ok(ok && ok.step === 'done' && ok.portalLoginId === null && !Object.hasOwn(ok, 'evil'));
+    const ok = parseOnbState({ step: 'done', tasks: ['H-03'], skipped: ['biz'], log: [], consents: { terms: { version: 'f06-pre.1', choice: 'agreed', at: 'x' } }, evil: '<img>', portalLoginId: 'old01', registered: { at: 'x', noticeVersion: 'v', items: 31 } });
+    assert.ok(ok && ok.step === 'done' && !Object.hasOwn(ok, 'evil') && !Object.hasOwn(ok, 'portalLoginId') && !Object.hasOwn(ok, 'registered'));
     assert.deepEqual(onboardingTodos(ok), [{ id: 'biz', label: '사업자 등록 마치기', view: 'biz' }]);
   });
 
@@ -254,21 +259,44 @@ describe('동의 화면 4종', () => {
       { step: 'terms', choice: 'agree' },
       { step: 'welcome', choice: 'later' },
     ]);
-    const old = parseOnbState({ ...JSON.parse(JSON.stringify(a.flow.state)), step: 'delegation', auth: 'card' });
+    const cur = JSON.parse(JSON.stringify(a.flow.state)) as { consents: Record<string, unknown> };
+    const old = parseOnbState({ ...cur, step: 'delegation', auth: 'card', log: [{ step: 'delegation', text: '동의하고 금고에 등록했어요' }], consents: { ...cur.consents, delegation: { version: 'f06-pre.1', choice: 'agreed', at: 'x' } } });
     assert.ok(old);
     assert.equal(old.step, 'auth');
     assert.equal(old.auth, null, '옛 보안카드 선택은 비운다');
+    assert.equal(old.log[0]?.step, 'auth', '지난 답의 단계도 지금 있는 단계로');
+    assert.ok(!Object.hasOwn(old.consents, 'delegation'), '없어진 ① 동의 표시는 버린다');
     const resumed = new OnboardingFlow(make().ports, old, NOW);
     const v = await resumed.view();
     assert.equal(v.step, 'auth');
     assert.equal(v.consent, null, '① 위임 동의 고지를 보이지 않는다');
     assert.doesNotMatch(JSON.stringify(v), /대신 입력|알아서 입력|금고에 한 번 등록/);
-    await resumed.answer({ step: 'auth', choice: 'card' });
-    assert.equal(resumed.state.step, 'first', '다시 보안카드를 골라도 ①을 거치지 않는다');
+    await resumed.answer({ step: 'auth', choice: 'simple' });
+    assert.equal(resumed.state.step, 'first', '다른 인증을 고르면 ①을 거치지 않는다');
     // ② 다시 묻기(reaskModel)로 ①이 resumeStep에 남은 저장도 같다
     const parked = parseOnbState({ ...JSON.parse(JSON.stringify(a.flow.state)), step: 'model', resumeStep: 'delegation', auth: 'card' });
     assert.equal(parked?.resumeStep, 'auth');
     assert.equal(parked?.auth, null);
+  });
+
+  it('끝낸 온보딩에서 보안카드를 골라 둔 저장은 "고르지 않음"으로 읽고 발급 인증을 다시 열 수 있다(대표 결정 2026-11-19)', async () => {
+    const a = make();
+    await walk(a.flow, [
+      { step: 'terms', choice: 'agree' },
+      { step: 'welcome', choice: 'upload' },
+      { step: 'biz-confirm', choice: 'confirm' },
+      { step: 'auth', choice: 'simple' },
+      { step: 'first', choice: 'later' },
+    ]);
+    assert.equal(a.flow.state.step, 'done');
+    const raw = JSON.parse(JSON.stringify(a.flow.state)) as Record<string, unknown>;
+    const old = parseOnbState({ ...raw, auth: 'card', certId: null, redoPrev: { auth: 'card', certId: null } });
+    assert.ok(old);
+    assert.deepEqual([old.step, old.auth, old.redoPrev], ['done', null, null]);
+    const flow = new OnboardingFlow(make().ports, old, NOW);
+    assert.deepEqual(flow.missing(), ['auth'], '발급 인증이 빠진 것으로 본다');
+    await flow.reopen('auth');
+    assert.equal(flow.state.step, 'auth');
   });
 
   it('약관 화면 한 클릭에 약관·모델 레코드 둘(각 키·판, 모델은 처리자 표 판). ②는 필수라 거절 답이 없다. 텔레메트리는 기록하지 않는다(B4)', async () => {

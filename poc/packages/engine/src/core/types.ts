@@ -12,6 +12,11 @@ export const PACKAGE_PORTALS = [...PORTALS, FIXTURE_PORTAL] as const;
 export type PackagePortal = (typeof PACKAGE_PORTALS)[number];
 export type Effect = 'issue_document' | 'send' | 'sign' | 'pay';
 export type ProfileKind = 'personal' | 'business';
+/**
+ * 패키지 형식의 비밀 종류·서명 방식. 보안카드(security_card)는 지원 안 함(대표 결정 2026-11-19)이지만, 게시본 H-01 2.3.8이
+ * 그 갈래(signFlow security_card·card 정의·security_card 셀렉터 칸)를 담고 있어 형식에는 남긴다. 엔진은 읽기만 하고 실행하지 않는다
+ * (run/controller.ts SIGN_ACTION). 그 갈래를 뺀 H-01을 다시 게시한 뒤 스키마와 함께 뺀다.
+ */
 export type SecretKind = 'cert_password' | 'portal_password' | 'security_card';
 export type SecretPurpose = 'login' | 'sign';
 export type SignMethod = 'cert' | 'simple_auth' | 'security_card';
@@ -88,6 +93,7 @@ export interface SignFlow {
    * IR rev v1.3.8(대표 지시 2026-11-14): 보안카드 서명 창. 방식 선택 뒤 실행 탭이 새 창(window: strings 키, 주소 정규식)을 연다.
    * fields마다 target(type=password 칸)과 rowFrom(요청 글자 "[N]번 … 앞/뒤 2자리")을 금고가 읽고 친다. 그 창의 confirmTarget(commits:true)을
    * 엔진이 누르고, 창의 알림 글(strings card.ok·card.wrong·card.locked)로 끝을 판정한다. secret_fill:security_card가 이것을 쓴다.
+   * 지원 안 함(대표 결정 2026-11-19): 형식 검사(V-08)만 하고 실행하지 않는다.
    */
   card?: { window: string; fields: Array<{ target: string; rowFrom: string }>; confirmTarget: string };
   maxWaitMs: number;

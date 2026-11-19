@@ -1,5 +1,7 @@
 # D07. 데이터 모델
 
+> 2026-11-19 대표 결정: 보안카드는 지원 안 함(대표 결정 2026-11-19). 앱·금고·엔진에서 뺐고, 옛 판이 남긴 보안카드 값·발급 인증은 기동 때 지운다. 이 문서의 보안카드 내용은 그 전 설계 기록이다.
+
 > 2026-11-06 정합(팀장 지시, 큐 1~15): §8 OCR 폴백의 언어 데이터 정정(`kor_fast` → `@tesseract.js-data/kor`의 `4.0.0_best_int`·`4.0.0`, docparse PR #78).
 > 제품 정의 반영 2026-11-05: 급여대장(`employees`·`payroll_months`·`payroll_lines`·`rate_tables`, ADR-031)과 세무사 꾸러미(`bundle_items`·`bundle_entries`·`card_txns`·`receipts`·`cash_sales`, ADR-032) 테이블을 §2에 더했다. 모두 로컬 전용이고 서버 색인 대상이 아니다.
 > ADR-034 결정 8 채택 2026-11-05: 근무표 범위 축소, `shifts` 삭제 제안(데이터 트랙 확인 전).

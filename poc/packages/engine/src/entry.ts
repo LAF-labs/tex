@@ -17,7 +17,7 @@ import { BizVerifier } from './bizverify.ts';
 import { portGatewayAuth } from './gateway-auth.ts';
 import { portIssueLock } from './issue-lock.ts';
 import { connectRunBrowser, RunBrowserSlot } from './browser.ts';
-import { COMMANDS, DataService, READ_QUERIES } from './data-service.ts';
+import { COMMANDS, DataService, READ_QUERIES, resetRetiredAuth } from './data-service.ts';
 import type { GatePortMessage } from './gate.ts';
 import { fixturePortal, HOMETAX_PORTAL } from './portal.ts';
 import { RunEnd } from './run-end.ts';
@@ -168,6 +168,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   const egress = new Egress(auth ? { gateway: { auth: portGatewayAuth(auth), bundles: BundleCatalog.load().allowEntries() } } : {});
   if (egress.envTampered.length) log.event('egress.env_tampered', { keys: egress.envTampered.join(',') });
   data = new DataService(db, new BizVerifier(egress), { vaultDir: paths.vault });
+  resetRetiredAuth(data.profiles, log);
   payroll = new BundleService(db, cipher, { exportDir: path.join(paths.root, 'exports') });
   // 레지스트리 GET은 Egress 레지스트리 바이트 GET(origin tax.laf-co.com 고정·허용 경로, ADR-028)으로만 나간다. main이 registry.sync를 부를 때만 받는다.
   // H-01 패키지는 받아 둔 서명 설치본을 실행 시작마다 다시 검증해 IR로 돌린다(PR-D2).

@@ -1,4 +1,4 @@
-import { ConsentRepo, CounterpartyRepo, OnboardingRepo, ProfileRepo, ValidationError, type ConsentInput, type ConsentKind, type Db, type OnboardingState } from '@sax/db';
+import { ConsentRepo, CounterpartyRepo, OnboardingRepo, ProfileRepo, RETIRED_SIGN_METHOD, ValidationError, type ConsentInput, type ConsentKind, type Db, type OnboardingState } from '@sax/db';
 import { appPaths, defaultAppRoot } from '@sax/platform';
 import { parseBizCert } from './bizcert.ts';
 import { BizVerifier, BizVerifyError } from './bizverify.ts';
@@ -13,6 +13,16 @@ const RESUME_KEY = 'shell.run_resume';
 const RESUME_MAX_CHARS = 64 * 1024;
 
 export type DataMethod = (typeof READ_QUERIES)[number] | (typeof COMMANDS)[number];
+
+/**
+ * 기동 때 한 번: 발급 인증이 보안카드인 프로필을 "고르지 않음"으로 되돌린다(대표 결정 2026-11-19 지원 안 함).
+ * 앱은 '발급 인증을 아직 고르지 않았어요'를 보이고 사용자가 다시 고른다. 되돌린 뒤에는 바꿀 행이 없어 로그도 남지 않는다.
+ */
+export function resetRetiredAuth(profiles: Pick<ProfileRepo, 'resetRetiredSignMethod'>, log: { event(name: string, data?: Record<string, unknown>): void }): number {
+  const n = profiles.resetRetiredSignMethod();
+  if (n) log.event('engine.auth_reset', { from: RETIRED_SIGN_METHOD, profiles: n });
+  return n;
+}
 
 export class DataError extends Error {
   readonly code: string;

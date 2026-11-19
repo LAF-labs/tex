@@ -1198,21 +1198,30 @@ describe('submit(M2-3, D03 §3 R-G7·§5.3, D02 §4·§4.5): 게이트 토큰·�
         assert.equal(h.c.finishSignTurn(), false, '닫힌 뒤에는 false');
       }
     });
-    it('security_card(secret_fill)에 보안카드 창 정의(card)가 없으면 치지 않고 verify로. 모르는 방식도 verify로', async () => {
-      const h = mk([CP, GATE, SF('security_card'), SV, END], { els: [...els(), SIGN_OK] });
+    it('보안카드(지원 안 함, 대표 결정 2026-11-19)·모르는 방식은 IR에 갈래가 있어도 치지 않고 확인 버튼도 누르지 않고 verify로', async () => {
+      for (const m of ['security_card', 'mystery']) {
+        const h = mk([CP, GATE, SF(m), SV, END], { els: [...els(), SIGN_OK] });
+        const p = h.c.start();
+        await h.atGate();
+        h.approve();
+        await p;
+        assert.ok(h.rec.journal.some(([t]) => t === 'signflow.method_unknown'), m);
+        assert.ok(!h.rec.journal.some(([t]) => t === 'signflow.unsupported'), `${m}: 보안카드 동작을 하려 하지 않는다`);
+        assert.deepEqual(h.rec.armedAtClick, [['f.issue', true]], `${m}: 발급 버튼 하나만`);
+        assert.deepEqual(h.rec.secret, [], `${m}: 비밀 창 없음`);
+      }
+    });
+    it('방식 선택(methodTargets)이 있어도 보안카드 항목은 누르지 않고 서명 차례(사람)로', async () => {
+      const METHOD: FEl = { id: 'authCard', role: 'button', name: '보안카드 인증', parent: 'root' };
+      const h = mk([CP, GATE, SF('security_card', { methodTargets: { security_card: 'f.authCard' } }), SV, END], { els: [...els(), SIGN_OK, METHOD] });
       const p = h.c.start();
       await h.atGate();
       h.approve();
+      await until(() => h.c.signTurnOpen, '서명 차례');
+      assert.ok(h.rec.journal.some(([t]) => t === 'signflow.method_choice_missing'));
+      assert.deepEqual(h.rec.armedAtClick, [['f.issue', true]], '보안카드 항목을 누르지 않는다');
+      h.c.finishSignTurn();
       await p;
-      assert.ok(h.rec.journal.some(([t, p]) => t === 'signflow.unsupported' && p.action === 'secret_fill:security_card'));
-      assert.deepEqual(h.rec.armedAtClick, [['f.issue', true]]);
-      const u = mk([CP, GATE, SF('mystery'), SV, END], { els: [...els(), SIGN_OK] });
-      const q = u.c.start();
-      await u.atGate();
-      u.approve();
-      await q;
-      assert.ok(u.rec.journal.some(([t]) => t === 'signflow.method_unknown'));
-      assert.deepEqual(u.rec.armedAtClick, [['f.issue', true]], '모르는 방식이면 확인 버튼을 누르지 않는다');
     });
   });
 });
@@ -1243,8 +1252,8 @@ describe('sign(M2-3, D02 §4): 로그인 등 커밋 구간 밖 포털 서명 흐
     assert.ok(!h.names().includes('WaitingHuman'));
   });
 
-  it('그 방식의 동작이 then[]에 없음(sign.no_path)·보안카드(card 정의 없음, sign.unsupported)·모르는 방식(sign.method_unknown) → 재시도 없이 핸드오프, 비밀 창 없음', async () => {
-    for (const [m, then, code] of [['cert', [], 'sign.no_path'], ['security_card', ['secret_fill:security_card'], 'sign.unsupported'], ['security_card', ['human:secret'], 'sign.no_path'], ['otp_app', ['human:secret'], 'sign.method_unknown']] as const) {
+  it('그 방식의 동작이 then[]에 없음(sign.no_path)·보안카드(지원 안 함)·모르는 방식(sign.method_unknown) → 재시도 없이 핸드오프, 비밀 창 없음', async () => {
+    for (const [m, then, code] of [['cert', [], 'sign.no_path'], ['security_card', ['secret_fill:security_card'], 'sign.method_unknown'], ['security_card', ['human:secret'], 'sign.method_unknown'], ['otp_app', ['human:secret'], 'sign.method_unknown']] as const) {
       const h = mk([CP, SIGN({ then }), END]);
       profile(h, m);
       const r = await h.c.start();

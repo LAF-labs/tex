@@ -4,15 +4,16 @@
 //   사용 기록(기본 꺼짐)·맡길 업무(지금 되는 일 전부)·거래처·요약 확인 화면은 묻지 않는다. 인증 단계는 "홈택스 인증서"(이 PC 인증서 고르기)다.
 //   옛 이어 하기 저장이 없어진 화면(telemetry·tasks·counterparties)에 멈춰 있으면 요약으로 옮긴다.
 // - 문구는 전부 "F-06 초안 전" 자리표시이고 키에 판을 붙인다(F-06이 오면 문구만 바꾼다).
-// - 비밀(홈택스 비밀번호·보안카드)은 여기를 지나지 않는다. ①은 금고 등록 창(T-06)을 여는 결속값(notice 판)만 만들고, 값은 금고 창에서 금고로 직접 간다(ADR-025·026).
+// - 비밀(인증서 비밀번호)은 여기를 지나지 않는다. 값은 금고 창에서 금고로 직접 간다(ADR-025·026).
+// - 보안카드는 지원하지 않는다(대표 결정 2026-11-19). 보안카드·홈택스 아이디를 금고에 맡기던 ① 위임 등록 단계도 없앴다.
+//   옛 이어 하기 저장이 ①에 멈췄거나 보안카드를 골라 둔 것이면 발급 인증을 다시 묻는다(parseOnbState).
 // - 사업자번호는 DB와 같은 체크섬으로 본다(@sax/db isValidBizNo, profile.upsert가 같은 규칙으로 거부한다).
-// - 바깥 일(등록증 읽기·진위확인·인증서 찾기·금고 등록·동의 기록·프로필 저장·이어 하기 저장)은 OnboardingPorts 뒤에 둔다. 지금은 목업 어댑터(onboarding-mock.ts).
+// - 바깥 일(등록증 읽기·진위확인·인증서 찾기·동의 기록·프로필 저장·이어 하기 저장)은 OnboardingPorts 뒤에 둔다. 지금은 목업 어댑터(onboarding-mock.ts).
 
-import type { ConsentRecord, SecretStoreResult, StoreBind } from '@sax/vault';
 import { isValidBizNo } from '@sax/db';
 import { certDocByCode } from './cert-docs.ts';
 
-export const ONB_STEPS = ['terms', 'welcome', 'biz-number', 'biz-confirm', 'auth', 'delegation', 'model', 'telemetry', 'tasks', 'counterparties', 'summary', 'first', 'done'] as const;
+export const ONB_STEPS = ['terms', 'welcome', 'biz-number', 'biz-confirm', 'auth', 'model', 'telemetry', 'tasks', 'counterparties', 'summary', 'first', 'done'] as const;
 export type OnbStep = (typeof ONB_STEPS)[number];
 
 /** 단계마다 받을 수 있는 답. 표에 없는 답은 bad_choice. "나중에"(later)가 있는 단계는 건너뛴 항목으로 판에 남는다(08 §4). */
@@ -21,8 +22,7 @@ export const ONB_CHOICES = {
   welcome: ['upload', 'number', 'later'],
   'biz-number': ['submit', 'back'],
   'biz-confirm': ['confirm', 'confirm_unverified', 'edit', 'recheck', 'later'],
-  auth: ['card', 'simple', 'cert', 'fincert', 'unsure', 'later', 'rescan'],
-  delegation: ['agree', 'switch'],
+  auth: ['simple', 'cert', 'fincert', 'unsure', 'later', 'rescan'],
   // ② 모델 처리 동의는 필수다(약관과 같은 취급, 사용자 결정 2026-11-10 "오프라인 해석은 없다"). 거절 선택지는 없다.
   model: ['agree'],
   telemetry: ['on', 'off'],
@@ -39,7 +39,7 @@ export const ONB_ALL_CHOICES = [...new Set(Object.values(ONB_CHOICES).flat())] a
 /** O-06 [지금 해 보기]가 입력창에 채우는 문장(보내지 않는다). 보내면 거래처·금액·품목을 되묻는다. */
 export const TRY_FIRST_FILL = '세금계산서 발급해 줘';
 
-export const CONSENT_KINDS = ['terms', 'model', 'telemetry', 'delegation'] as const;
+export const CONSENT_KINDS = ['terms', 'model', 'telemetry'] as const;
 export type ConsentKind = (typeof CONSENT_KINDS)[number];
 
 /** 고지 묶음 하나. key·version이 동의 레코드에 그대로 남는다. 문구는 F-06이 오기 전 자리표시다. */
@@ -98,21 +98,6 @@ export const CONSENT_NOTICES: Readonly<Record<ConsentKind, ConsentNotice>> = {
     lines: ['오류 종류와 단계별 걸린 시간만 보내요. 서류·금액·거래처·사업자번호는 보내지 않아요.', '기본은 꺼져 있어요.'],
     draft: DRAFT,
   },
-  // ① 보안카드·홈택스 아이디/비밀번호 위임 등록(범위 고지, 인증서 비밀번호는 저장하지 않음, D05 §9)
-  delegation: {
-    kind: 'delegation',
-    key: 'consent.delegation',
-    version: V,
-    title: '홈택스 아이디·비밀번호와 보안카드 등록',
-    lines: [
-      '홈택스 아이디·비밀번호와 보안카드 번호를 이 PC 금고에 한 번 등록하면, 발급할 때마다 앱이 대신 입력해요.',
-      '값은 앱 화면이 아니라 따로 뜨는 금고 창에서만 받아요. 모델·서버로 보내지 않아요.',
-      '같은 PC에 들어온 악성코드로부터는 보호하지 못해요.',
-      '인증서 비밀번호는 저장하지 않아요.',
-      '저장하지 않으려면 사업자 간편인증이나 인증서로 바꿀 수 있어요.',
-    ],
-    draft: DRAFT,
-  },
 };
 
 /** ② 화면의 처리자 표 한 줄. 설정 데이터로 받는다(모델 상류 OpenRouter의 공급사 목록이 바뀔 수 있다). */
@@ -142,10 +127,10 @@ export const CONSENT_CONFIG: ConsentConfig = {
   ],
 };
 
-/** 앱이 남기는 동의 레코드(②③④). ①은 금고가 만든다(금고 ConsentRecord). */
+/** 앱이 남기는 동의 레코드(②③④). */
 export interface AppConsentRecord {
   v: 1;
-  kind: Exclude<ConsentKind, 'delegation'>;
+  kind: ConsentKind;
   noticeKey: string;
   noticeVersion: string;
   /** ②만: 그때 보인 처리자 표의 판. */
@@ -155,15 +140,6 @@ export interface AppConsentRecord {
   at: string;
   via: 'onboarding';
 }
-
-/**
- * 금고 등록 창(T-06) 결속은 금고 프로토콜의 StoreBind(#42) 그대로다. 아이디·비밀번호·보안카드를 한 화면에서 받는다(팀장 결정): 결속 두 개를 한 창에.
- * 동의 레코드(①)는 금고가 저장 때 만드는 ConsentRecord(D05 §9)다. 값·길이·칸 번호 없음.
- */
-export type StoreBindRequest = StoreBind;
-export type VaultConsentRecord = ConsentRecord;
-/** portalLoginId: 금고 secret.store 결과의 비밀 아닌 포털 아이디(SecretStoreResult). DB `profiles.portal_login_id`에 쓴다. */
-export type RegisterResult = { ok: true; consents: VaultConsentRecord[]; portalLoginId?: SecretStoreResult['portalLoginId'] } | { ok: false; reason: string };
 
 // ---- 온보딩 데이터 ----
 
@@ -209,12 +185,15 @@ export interface NpkiCert {
 }
 export const CERT_EXPIRY_WARN_DAYS = 30;
 
-export type AuthKind = 'card' | 'simple' | 'cert' | 'fincert';
+export type AuthKind = 'simple' | 'cert' | 'fincert';
 /** DB profiles.sign_method 값(packages/db SignMethod). 금융인증서는 cert와 같은 칸(D07 열이 하나). */
-export const AUTH_SIGN_METHOD: Record<AuthKind, 'security_card' | 'simple_auth' | 'cert'> = { card: 'security_card', simple: 'simple_auth', cert: 'cert', fincert: 'cert' };
+export const AUTH_SIGN_METHOD: Record<AuthKind, 'simple_auth' | 'cert'> = { simple: 'simple_auth', cert: 'cert', fincert: 'cert' };
 /** 고르지 않았을 때 쓸 이 PC 인증서: 첫 사용 가능 인증서(온보딩 카드가 미리 고르는 것과 같다). 없으면 null. */
 export const defaultCertId = (certs: ReadonlyArray<{ id: string; usable?: boolean }>): string | null => certs.find((c) => c.usable !== false)?.id ?? null;
-export const AUTH_LABEL: Record<AuthKind, string> = { card: '보안카드', simple: '사업자 간편인증', cert: '공동인증서', fincert: '금융인증서' };
+export const AUTH_LABEL: Record<AuthKind, string> = { simple: '사업자 간편인증', cert: '공동인증서', fincert: '금융인증서' };
+/** 옛 판의 ① 위임 등록 단계와 보안카드 인증(대표 결정 2026-11-19 지원 안 함). 이어 하기 저장에 남았으면 발급 인증을 다시 묻는다. */
+const RETIRED_STEP = 'delegation';
+const RETIRED_AUTH = 'card';
 
 /** O-04 맡길 업무. now: 이 빌드에서 켠 일(08 §4). 꺼진 일은 회색 칩(누르면 "지원되면 알림"). O-06 "지금 되는 일"도 이 표에서 만든다. 민원증명 이름은 cert-docs 표에서. */
 export const ONB_TASKS: ReadonlyArray<{ id: string; label: string; now: boolean }> = [
@@ -243,8 +222,6 @@ export interface OnbState {
   certs: NpkiCert[];
   /** "잘 모르겠어요"를 눌러 수단 설명을 펼쳤는가. */
   explain: boolean;
-  /** ①: 금고 등록이 끝났다(값 없음). */
-  registered: { at: string; noticeVersion: string; items: number } | null;
   consents: Partial<Record<ConsentKind, { version: string; choice: 'agreed' | 'declined'; at: string }>>;
   tasks: string[];
   skipped: SkipItem[];
@@ -258,20 +235,21 @@ export interface OnbState {
   redoFrom: number | null;
   /** 이미 고른 발급 인증을 바꾸려고 다시 연 것이면 그 전 인증(O-03에서 [나중에]면 이것으로 되돌린다). 아니면 null. */
   redoPrev: { auth: AuthKind; certId: string | null } | null;
-  /**
-   * ①에서 금고가 돌려준 포털 아이디(비밀 아님, #42 계약). 이어 하기 저장에 넣어 요약에서 프로필에 쓴다(DB profiles.portal_login_id).
-   * 렌더러로 가는 view와 대화 기록(log)에는 넣지 않는다.
-   */
-  portalLoginId: string | null;
 }
 
 /**
  * 이어 하기 저장에서 읽은 값(앱 폴더 JSON, 비밀 없음)을 OnbState로 받는다. 모양이 틀리면 null(처음부터).
  * 단계·동의·건너뛴 항목·업무·대화 기록만 확인하고, 모르는 키는 버린다.
+ * 옛 판의 보안카드(고른 인증·① 위임 등록 단계·되돌릴 인증)는 "고르지 않음"으로 바꿔 발급 인증을 다시 묻는다(대표 결정 2026-11-19).
  */
 export function parseOnbState(x: unknown): OnbState | null {
   if (typeof x !== 'object' || x === null || Array.isArray(x)) return null;
-  const o = x as Record<string, unknown>;
+  const o = { ...(x as Record<string, unknown>) };
+  const retired = o.step === RETIRED_STEP || o.resumeStep === RETIRED_STEP || o.auth === RETIRED_AUTH;
+  if (o.step === RETIRED_STEP) o.step = 'auth';
+  if (o.resumeStep === RETIRED_STEP) o.resumeStep = 'auth';
+  if ((o.redoPrev as { auth?: unknown } | null | undefined)?.auth === RETIRED_AUTH) o.redoPrev = null;
+  if (Array.isArray(o.log)) o.log = o.log.map((l) => ((l as { step?: unknown } | null)?.step === RETIRED_STEP ? { ...(l as object), step: 'auth' } : l));
   if (typeof o.step !== 'string' || !(ONB_STEPS as readonly string[]).includes(o.step)) return null;
   const strs = (v: unknown) => Array.isArray(v) && v.every((t) => typeof t === 'string');
   if (!strs(o.tasks) || !strs(o.skipped) || !(o.skipped as string[]).every((t) => Object.hasOwn(SKIP_LABEL, t))) return null;
@@ -287,21 +265,18 @@ export function parseOnbState(x: unknown): OnbState | null {
   const base = initialOnbState();
   const picked = Object.fromEntries(Object.keys(base).filter((k) => Object.hasOwn(o, k)).map((k) => [k, o[k]]));
   const s = { ...base, ...structuredClone(picked) } as OnbState;
-  // 예전 판은 보안카드를 고르면 ① 위임 등록(금고에 넣고 앱이 대신 입력)으로 갔다. 그 약속은 이제 사실이 아니다.
-  // ①에 멈춘 저장은 발급 인증을 다시 묻는다(O-03, 지금 문구). 고른 인증은 비운다.
   // 없어진 화면(B4)에 멈춘 저장은 요약에서 마친다
   const GONE: readonly OnbStep[] = ['telemetry', 'tasks', 'counterparties'];
   if (GONE.includes(s.step)) s.step = 'summary';
   if (s.resumeStep && GONE.includes(s.resumeStep)) s.resumeStep = 'summary';
-  if (s.step === 'delegation' || s.resumeStep === 'delegation') {
-    if (s.step === 'delegation') s.step = 'auth';
-    else s.resumeStep = 'auth';
-    Object.assign(s, { auth: null, certId: null, registered: null, notice: null, explain: false });
+  if (retired) {
+    Object.assign(s, { auth: null, certId: null, notice: null, explain: false });
+    delete (s.consents as Record<string, unknown>)[RETIRED_STEP];
   }
   return s;
 }
 
-export const initialOnbState = (): OnbState => ({ step: 'terms', biz: null, check: null, notice: null, auth: null, certId: null, certs: [], explain: false, registered: null, consents: {}, tasks: [], skipped: [], log: [], resumeStep: null, redo: null, redoFrom: null, redoPrev: null, portalLoginId: null });
+export const initialOnbState = (): OnbState => ({ step: 'terms', biz: null, check: null, notice: null, auth: null, certId: null, certs: [], explain: false, consents: {}, tasks: [], skipped: [], log: [], resumeStep: null, redo: null, redoFrom: null, redoPrev: null });
 
 /** 끝난 온보딩이 저장할 프로필(DB profile.upsert에 넘긴다, 비밀 없음). */
 export interface OnbProfile {
@@ -313,11 +288,9 @@ export interface OnbProfile {
   bizItem: string | null;
   address: string | null;
   email: string | null;
-  signMethod: 'security_card' | 'simple_auth' | 'cert' | null;
+  signMethod: 'simple_auth' | 'cert' | null;
   /** [홈택스 인증서]에서 고른 인증서(금고 열거 id). 저장소가 main 안의 표로 CN을 찾아 프로필 cert_name에 쓴다(H-01 2.3.0이 이 이름으로 고른다). */
   certId: string | null;
-  /** ①에서 금고가 돌려준 포털 아이디(비밀 아님, DB profiles.portal_login_id, 금고 프로토콜 v1). */
-  portalLoginId?: string;
 }
 
 export interface OnboardingPorts {
@@ -327,8 +300,6 @@ export interface OnboardingPorts {
   checkBizNo(bizNo: string): Promise<BizCheck>;
   /** 이 PC의 NPKI 인증서 목록(메타만). */
   findCerts(): Promise<NpkiCert[]>;
-  /** ①: 금고 등록 창(T-06)을 연다. 값은 금고 창 → 금고로만 간다. */
-  registerSecrets(binds: StoreBindRequest[]): Promise<RegisterResult>;
   /** ② 처리자 표 등 설정 데이터. */
   consentConfig(): Promise<ConsentConfig>;
   recordConsent(rec: AppConsentRecord): Promise<void>;
@@ -355,12 +326,12 @@ const onlyDigits = (s: string) => s.replace(/[^0-9]/g, '');
 const clip = (s: unknown, n: number) => (typeof s === 'string' ? s.trim().slice(0, n) : '');
 
 /** 화면에 같이 보낼 것(지금 단계의 고지·처리자 표). */
-export interface OnbView extends Omit<OnbState, 'portalLoginId'> {
+export interface OnbView extends OnbState {
   consent: ConsentNotice | null;
   config: ConsentConfig | null;
   tasksCatalog: typeof ONB_TASKS;
 }
-const CONSENT_STEP: Partial<Record<OnbStep, ConsentKind>> = { terms: 'terms', model: 'model', telemetry: 'telemetry', delegation: 'delegation' };
+const CONSENT_STEP: Partial<Record<OnbStep, ConsentKind>> = { terms: 'terms', model: 'model', telemetry: 'telemetry' };
 
 export class OnboardingFlow {
   private s: OnbState;
@@ -440,9 +411,7 @@ export class OnboardingFlow {
 
   async view(): Promise<OnbView> {
     const kind = CONSENT_STEP[this.s.step] ?? null;
-    const st: Partial<OnbState> = this.state;
-    delete st.portalLoginId; // 포털 아이디는 렌더러로 보내지 않는다
-    return { ...(st as Omit<OnbState, 'portalLoginId'>), consent: kind ? CONSENT_NOTICES[kind] : null, config: this.s.step === 'model' || this.s.step === 'terms' ? await this.ports.consentConfig() : null, tasksCatalog: ONB_TASKS };
+    return { ...this.state, consent: kind ? CONSENT_NOTICES[kind] : null, config: this.s.step === 'model' || this.s.step === 'terms' ? await this.ports.consentConfig() : null, tasksCatalog: ONB_TASKS };
   }
 
   /** 답 하나를 처리한다. 지금 단계가 아닌 답은 stale_step(두 번 누름·지난 카드), 표에 없는 답은 bad_choice. 한 번에 하나만. */
@@ -476,7 +445,7 @@ export class OnboardingFlow {
   private unskip(item: SkipItem) {
     this.s.skipped = this.s.skipped.filter((x) => x !== item);
   }
-  private async consent(kind: Exclude<ConsentKind, 'delegation'>, choice: 'agreed' | 'declined', processorsVersion?: string) {
+  private async consent(kind: ConsentKind, choice: 'agreed' | 'declined', processorsVersion?: string) {
     const n = CONSENT_NOTICES[kind];
     const at = this.at();
     await this.ports.recordConsent({ v: 1, kind, noticeKey: n.key, noticeVersion: n.version, ...(processorsVersion ? { processorsVersion } : {}), choice, at, via: 'onboarding' });
@@ -530,7 +499,6 @@ export class OnboardingFlow {
       // 고르지 않았으면 공동인증서(대표 지시 2026-11-14). 이 PC 인증서가 있으면 첫 사용 가능 인증서를 쓴다
       signMethod: s.auth ? AUTH_SIGN_METHOD[s.auth] : 'cert',
       certId: !s.auth || s.auth === 'cert' ? (s.certId ?? defaultCertId(s.certs)) : null,
-      ...(s.portalLoginId ? { portalLoginId: s.portalLoginId } : {}),
     });
   }
   /** 서비스 기본 발급 인증(공동인증서). 이 PC 인증서가 있으면 첫 사용 가능 인증서. */
@@ -684,37 +652,6 @@ export class OnboardingFlow {
           await this.afterAuth();
         }
         return;
-      case 'delegation': {
-        // 예전 이어 하기 저장이 ①에 멈춰 있을 때만 온다(이제 보안카드도 바로 ②로 간다). 그 화면과 [다른 인증으로 바꾸기]가 돌게 남겨 둔다.
-        if (a.choice === 'switch') {
-          this.say('다른 인증으로 바꿀게요');
-          s.auth = null;
-          await this.toAuth();
-          return;
-        }
-        const version = CONSENT_NOTICES.delegation.version;
-        const r = await this.ports.registerSecrets([
-          { mode: 'store', kind: 'portal_password', scope: 'business', notice: { version } },
-          { mode: 'store', kind: 'security_card', scope: 'business', notice: { version } },
-        ]);
-        if (!r.ok) {
-          s.notice =
-            r.reason === 'cancelled'
-              ? '금고 창을 닫았어요. 다시 열거나 다른 인증으로 바꿀 수 있어요.'
-              : r.reason === 'unavailable'
-                ? '금고에 연결하지 못했어요. 앱을 다시 연 뒤 해 주세요.'
-                : '금고에 등록하지 못했어요. 다시 해 주세요.';
-          // 상태는 delegation 그대로(답은 기록하지 않는다). 실패를 오류로 던지지 않아 안내가 남는다.
-          return;
-        }
-        const at = r.consents[0]?.at ?? this.at();
-        s.registered = { at, noticeVersion: version, items: r.consents.reduce((n, c) => n + c.items, 0) };
-        s.consents.delegation = { version, choice: 'agreed', at };
-        if (r.portalLoginId) s.portalLoginId = r.portalLoginId;
-        this.say('동의하고 금고에 등록했어요');
-        await this.afterAuth();
-        return;
-      }
       case 'model': {
         const cfg = await this.ports.consentConfig();
         await this.consent('model', 'agreed', cfg.processorsVersion);

@@ -1,5 +1,7 @@
 # 10. 발급 폴백: 홈택스 발급이 끝내 안 될 때 팝빌 API로 발급
 
+> 2026-11-19 대표 결정: 보안카드는 지원 안 함(대표 결정 2026-11-19). 앱·금고·엔진에서 뺐고, 옛 판이 남긴 보안카드 값·발급 인증은 기동 때 지운다. 이 문서의 보안카드 내용은 그 전 설계 기록이다.
+
 > 작성일: 2026-11-12 · 상태: **기획 v0.1 · 계획 문서로만 둠(대표 결정 2026-11-16)** · 설계·코드 없음 · 지시: 대표 아이디어(2026-11-12, 부장 경유) "메인 기능인 세금계산서 발급(H-01)이 최종적으로 실패했을 때의 fallback을 팝빌 전자세금계산서 API로 둔다."
 > 관련: [ADR-020](design/adr/ADR-020-design-review-issuance-auth-approval.md)(발급 인증 고정·수단별 위임), [ADR-021](design/adr/ADR-021-pc-approval-evidence-main-approval-bar.md)(main 승인 카드·InDoubt 증언), [ADR-025](design/adr/ADR-025-poc3-real-account-safety-baseline.md)(실발급 상한), [ADR-036](design/adr/ADR-036-issuance-auth-fallback-pipeline.md)(화면 판정·복구 폴백 단계 0~4, 커밋 구간 규칙), [ADR-040](design/adr/ADR-040-engine-gateway-auth-scoped-device-token.md)(기기 토큰), [ADR-042](design/adr/ADR-042-ledger-attempt-regate.md)(원장 시도 번호), [D05](design/05-vault-secrets.md) §2·§6(인증서 비밀번호 미저장, 개인키 파일 미열람), [outreach/04](outreach/04-legal-questions.md) Q2·Q4, [01](01-business-plan.md) §3·§5(ASP 대비 "건당 요금 없음, 발급 데이터 미집적"), [06](06-feasibility.md) §2("만들지 않기로 한 것: ASP API 연동"), 09-bank-matching §4.4·§4.5(PR #279, 같은 날 CODEF·팝빌 계좌조회 옵트인 검토)
 > 표기: (결정)은 대표·부장이 이미 정한 것, (제안)은 이 문서가 권하는 것, 【결정 n】은 §11의 대표 결정 항목, **미확인**은 공개 자료로 확인하지 못한 사실이다. 팝빌·홈택스에 가입·로그인하지 않았고 공개 개발자 문서만 읽었다(2026-11-12).
