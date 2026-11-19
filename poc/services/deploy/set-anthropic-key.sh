@@ -32,4 +32,4 @@ put() { # 이름 값: 있으면 지우고 다시 넣는다. 값은 표준 입력
 put GATEWAY__ANTHROPIC_API_KEY "$KEY"
 unset KEY
 put GATEWAY__GW_RESPOND_PROVIDER anthropic
-echo "끝났어요. 다음 게이트웨이 배포부터 대화가 Claude(claude-opus-5-5)로 갑니다. 판정(jev)은 그대로 OpenRouter예요."
+echo "끝났어요. 다음 게이트웨이 배포부터 대화가 Claude(claude-haiku-5-5)로 갑니다. 판정(jev)은 그대로 OpenRouter예요."

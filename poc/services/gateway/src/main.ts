@@ -67,7 +67,7 @@ function openRouterFromEnv(env: NodeJS.ProcessEnv, onEvent?: (e: string) => void
 }
 
 /** Anthropic 쪽 기본 모델(GW_RESPOND_PROVIDER=anthropic일 때만 쓴다). 바꾸려면 ANTHROPIC_MODEL_RESPOND·ANTHROPIC_MODEL_AGENT */
-export const ANTHROPIC_DEFAULT_MODEL = 'claude-opus-5-5';
+export const ANTHROPIC_DEFAULT_MODEL = 'claude-haiku-5-5'; // 대표 2026-11-19: jev 밖 생성은 Haiku 5.5
 
 /**
  * 생성 호출 공급사(GW_RESPOND_PROVIDER). 없거나 `base`면 GW_PROVIDER가 다 한다(지금까지와 같다).

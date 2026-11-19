@@ -516,9 +516,14 @@ export function anthropicMessagesBody(s: RespondSpec, messages: AnthropicMessage
     ...(s.tools.length ? { tools: s.tools.map((x) => ({ name: x.name, input_schema: anthropicSchema(x.parameters), strict: true })), tool_choice: { type: 'auto' } } : {}),
     output_config: { effort: s.effort, format: { type: 'json_schema', schema: anthropicSchema(s.output.schema) } },
     metadata: { user_id: s.safetyId },
-    // 안전 분류기가 거절하면 같은 호출 안에서 다른 모델로 다시 돌린다(서버 쪽 대체)
-    fallbacks: 'default',
+    // 안전 분류기가 거절하면 같은 호출 안에서 다른 모델로 다시 돌린다(서버 쪽 대체). Haiku에는 서버 쪽 대체가 없다
+    ...(anthropicFallbacks(s.model) ? { fallbacks: 'default' } : {}),
   };
+}
+
+/** 서버 쪽 거절 대체(fallbacks)를 받는 모델(Opus 5.5, Opus 5, Sonnet 5.5, Fable 5.x). Haiku는 없다 */
+export function anthropicFallbacks(model: string): boolean {
+  return /^claude-(?:opus-5(?:-5)?|sonnet-5-5|fable-5(?:-[12])?)$/.test(model);
 }
 
 /**
@@ -571,7 +576,7 @@ export class AnthropicProvider implements ModelProvider {
     try {
       res = await this.o.fetchFn(`${this.o.baseUrl}/v1/messages`, {
         method: 'POST',
-        headers: { 'x-api-key': this.o.apiKey, 'anthropic-version': '2026-10-21', 'anthropic-beta': 'server-side-fallback-2026-07-01', 'content-type': 'application/json' },
+        headers: { 'x-api-key': this.o.apiKey, 'anthropic-version': '2026-10-21', ...(anthropicFallbacks(s.model) ? { 'anthropic-beta': 'server-side-fallback-2026-07-01' } : {}), 'content-type': 'application/json' },
         body: JSON.stringify(anthropicMessagesBody(s, messages)),
         redirect: 'error',
         signal: AbortSignal.timeout(s.timeoutMs ?? this.o.timeoutMs),
