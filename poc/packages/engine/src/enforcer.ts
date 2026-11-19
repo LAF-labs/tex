@@ -10,7 +10,7 @@ import type { ActResult, ActionKind, ActionPolicy, Clock, Policy, Portal } from 
 import { re2Problem } from './core/re2.ts';
 import { HTTP_RULES, matchSignal, type SignalDict, type SignalEntry, type SignalHit, type SignalKind } from './signals.ts';
 import { RunEnd } from './run-end.ts';
-import { EXTRA_AUTH_FOR_SIGNAL, RateGuard, UNKNOWN_SCREEN_POSITIVE, type RatePolicy } from './policy.ts';
+import { EXTRA_AUTH_FOR_SIGNAL, HANDOFF, RateGuard, UNKNOWN_SCREEN_POSITIVE, type RatePolicy } from './policy.ts';
 
 export type PaceProfile = 'interactive' | 'daemon';
 
@@ -105,9 +105,6 @@ export function runSignalDict(i: RunSignalInput): () => readonly SignalEntry[] {
     return now;
   };
 }
-
-/** 차단이 아닌 신호의 종료 코드(D16 portal.*). 이 코드들은 실행기 FORCED_STOPS에서 핸드오프다. */
-const HANDOFF: Record<Exclude<SignalKind, 'block'>, string> = { maintenance: 'portal.maintenance', extra_auth: 'portal.mfa_pending', captcha: 'portal.captcha', busy: 'portal.busy' };
 
 const OK: ActResult = { ok: true };
 const no = (code: string): ActResult => ({ ok: false, code });
