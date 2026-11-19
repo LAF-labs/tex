@@ -25,7 +25,7 @@ export type ReplyMode = (typeof REPLY_MODES)[number];
 export const REACTION_GTE = 0.8;
 
 /** 폰과 PC가 같은 번들을 부른다. digest는 packages/model/bundles/chat_route_v1.json과 같다(시험이 대조). */
-export const CHAT_ROUTE_BUNDLE = { id: 'chat_route_v1', digest: 'c81cab9b3a0e1046e7e4367d9b774d1367bf7eb8da09f9f99796e8f450be55b9' } as const;
+export const CHAT_ROUTE_BUNDLE = { id: 'chat_route_v1', digest: '57e81c6d6b2892830cc672d91eeb588d493b38687c6c9fdbbee136c3b91211e5' } as const;
 
 /** 판정 답 한 질문(이름 키). PC는 @sax/model BundleAnswers, 폰은 게이트웨이 응답을 이 꼴로 옮긴다. */
 export type RouteAnswer = { type: 'choice'; value: string; confidence: number } | { type: 'predicate'; probability: number } | { type: 'refusal' } | { type: string };
