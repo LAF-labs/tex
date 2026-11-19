@@ -10,7 +10,7 @@ import {
   type CmdAckBody, type Link, type PhoneCopyBody, type RelayLink, type RunEventBody,
 } from '@sax/remote';
 import { kstToday } from '../apps/desktop/src/approval-gate.ts';
-import { alertOf, bizNoOf, buildPhoneCopy, copyCounterparties, copyMoney, lastIssues, maskEmail, type BankSummaryLike, type CashFlowLike } from '../apps/desktop/src/phone-copy.ts';
+import { alertOf, bizNoOf, buildPhoneCopy, copyCounterparties, issueCounts, copyMoney, lastIssues, maskEmail, type BankSummaryLike, type CashFlowLike } from '../apps/desktop/src/phone-copy.ts';
 import { CmdLog, eventOf, parseIssueInputs, phaseOf, PhoneIssue, type PhoneIssuePorts, type PhoneSink } from '../apps/desktop/src/phone-issue.ts';
 import { PhoneLink, PhoneStore, type TokenSeal } from '../apps/desktop/src/phone-link.ts';
 import { phoneReceiver } from '../apps/desktop/src/phone-receive.ts';
@@ -266,6 +266,17 @@ describe('폰 사본', () => {
     assert.ok(rows.every((r) => r.phoneApprovable === false));
     assert.equal(bizNoOf('211-09-87654'), '211-09-87654');
     assert.equal(maskEmail('a@b.c'), 'a***@b.c');
+  });
+
+  it('거래처: 같은 날 발급했으면 자주 발급한 곳이 앞(폰 발급 시트 순서)', () => {
+    const a: Counterparty = { ...CP, id: 'cp_a', name: '가가상사', lastIssuedOn: '2026-11-16' };
+    const b: Counterparty = { ...CP, id: 'cp_b', name: '나나상사', lastIssuedOn: '2026-11-16' };
+    const c: Counterparty = { ...CP, id: 'cp_c', name: '다다상사', lastIssuedOn: null };
+    const d: Counterparty = { ...CP, id: 'cp_d', name: '라라상사', lastIssuedOn: null };
+    const done = (id: string) => run({ status: 'done', counterparty: { ...run().counterparty, id }, writeDate: '2026-11-01', supply: 1_000, item: 'x' });
+    const counts = issueCounts([done('cp_b'), done('cp_b'), done('cp_a'), done('cp_d'), run({ status: 'stopped', counterparty: { ...run().counterparty, id: 'cp_a' } })]);
+    assert.deepEqual([...counts], [['cp_b', 2], ['cp_a', 1], ['cp_d', 1]]);
+    assert.deepEqual(copyCounterparties([a, b, c, d], new Map(), false, counts).map((r) => r.ref), ['cp_b', 'cp_a', 'cp_d', 'cp_c']);
   });
 
   const summary: BankSummaryLike = {
