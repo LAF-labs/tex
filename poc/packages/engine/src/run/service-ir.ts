@@ -7,6 +7,7 @@ import type { Db, GateRepo, Ledger, LedgerState } from '@sax/db';
 import type { RunToken } from '@sax/model';
 import { Redactor } from '@sax/redaction';
 import type { Page } from 'playwright-core';
+import { oacxComplete, oacxRequest, type SimpleAuthIdentity } from './simple-auth.ts';
 import { isFixtureGrant, type FixtureOriginGrant, type LoadedPackage } from '../core/loader.ts';
 import { systemClock, type ActResult, type Clock } from '../core/page.ts';
 import type { PdfPort } from '../core/savepdf.ts';
@@ -328,6 +329,8 @@ export class IrRun {
   private cmdWake: ((c: HandoffCommand) => void) | null = null;
   /** 사람 대기 중인 조율기 상태(manualDone은 HandedOff에서만). */
   private waitingState: RunStateName | null = null;
+  /** 사람 대기의 까닭 코드(간편인증 도우미는 login.simple_auth 차례에서만 돈다). */
+  private waitingCode: string | null = null;
   /** 발급 잠금을 main에 잡아 달라고 했다(놓을 때까지). 쉬거나 끝날 때 놓는다. */
   private lockAsked = false;
   /** 비밀 차례 [중지](금고 창 닫기 요청). */
@@ -444,6 +447,24 @@ export class IrRun {
     if (c === 'manual' && this.waitingState !== 'HandedOff') return { ok: false, code: 'not_handed_off' };
     this.cmdWake(c);
     return { ok: true };
+  }
+
+  /**
+   * 폰에서 시작한 간편인증(run/simple-auth.ts). 공동인증서 로그인 실패 차례(HandedOff, login.simple_auth)에서만.
+   * request: 홈택스 간편인증 창을 채워 [인증 요청]. complete: [인증 완료]를 누르고 재개(s7f가 로그인 표지를 기다린다).
+   */
+  async simpleAuth(op: 'request' | 'complete', d?: SimpleAuthIdentity): Promise<{ ok: boolean; code?: string }> {
+    if (this.waitingState !== 'HandedOff' || this.waitingCode !== 'login.simple_auth' || !this.cmdWake) return { ok: false, code: 'not_simple_turn' };
+    if (op === 'request') {
+      if (!d) return { ok: false, code: 'simple.input' };
+      const r = await oacxRequest(this.i.page, d);
+      this.i.journal('run.simple_auth', { op, ok: r.ok, ...(r.ok ? {} : { code: r.code }) });
+      return r;
+    }
+    const r = await oacxComplete(this.i.page);
+    this.i.journal('run.simple_auth', { op, ok: r.ok, ...(r.ok ? {} : { code: r.code }) });
+    if (!r.ok) return r;
+    return this.command('resume');
   }
 
   /** 명령·[중지]·상한 중 먼저 오는 것. */
@@ -830,6 +851,7 @@ export class IrRun {
         const left = Math.min(capMs, lifeLeft());
         const phase = PHASE_OF[out.at ?? ''] ?? 'login';
         this.waitingState = out.state;
+        this.waitingCode = out.code ?? null;
         // 사람에게 넘긴 이유를 엔진 로그에도 남긴다(runs.ts가 run.handoff를 engine.log로 옮긴다): 코드·대상 셀렉터 키·거친 폴백 단계. 값·화면 글 없음.
         const at = stoppedAtOf(ir, out.at ?? null);
         i.journal('run.handoff', { stepId: out.at ?? '', state: out.state, code: out.code ?? '', ...(at?.target ? { target: at.target } : {}), ...(out.at ? { fallback: fallback.tried(out.at) } : {}) });
@@ -857,6 +879,7 @@ export class IrRun {
         const cmd = left > 0 ? await this.waitCommand(left) : 'cap';
         enforcer.resumeClock();
         this.waitingState = null;
+        this.waitingCode = null;
         if (cmd === 'stop') {
           c.abort();
           out = { state: c.state.name, at: out.at, code: 'run.aborted' };

@@ -4,7 +4,8 @@
 //   오늘(한국 시간) 폰 승인이 한도 미만이다. 아니면 이유 코드(pc_*)를 run.event에 실어 폰이 "PC에서 승인"을 보이게 한다.
 // - 답(gate.response)은 열린 요청·runId·stepId·sigAlg·actionHash·만료·서명(지금 기록의 키)·한도 순으로 본다. 챌린지는 1회용이다.
 // - 통과한 승인은 디스크(remote-approvals.json)에 먼저 적고 넘긴다. 승인 근거(LocalApproval remote+px) 발급과 엔진 전달은 shell-app이 한다.
-// - 폰 세션이 없으면(앱이 뒤에 있다) 내용 없는 알림으로 깨운다(ADR-053 결정 2, phone-wake.ts). 게이트당 최대 2번(열 때, 60초 뒤). 깨우기는 덤이라 실패해도 흐름은 같다.
+// - 폰 세션이 없으면(앱이 뒤에 있다) 내용 없는 알림으로 깨운다(ADR-053 결정 2, phone-wake.ts). 게이트당 최대 2번(열 때, 60초 뒤).
+//   보낸 뒤 답 없이 세션이 닫혀도 5초 뒤 안 붙었으면 깨운다. 깨우기는 덤이라 실패해도 흐름은 같다.
 // - 로그는 결과 코드만(거래처·금액·서명 없음).
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -14,7 +15,7 @@ import {
 } from '@sax/remote';
 import { gateSelfCheck, remotePresenceRefusal, type GateRequest } from '@sax/engine/gate';
 import { kstToday, summarize } from './approval-gate.ts';
-import { WAKE_APPROVE_AGAIN_MS, type WakeKind } from './phone-wake.ts';
+import { WAKE_APPROVE_AGAIN_MS, WAKE_DETACHED_MS, type WakeKind } from './phone-wake.ts';
 
 /** 폰 응답 챌린지 수명(D03 §3 gate.request.exp). 지나면 폰이 gate.refresh로 새 챌린지를 청한다. */
 export const PHONE_GATE_TTL_MS = 120_000;
@@ -211,8 +212,21 @@ export class PhoneGate {
       if (!g.refusal) this.#send(g);
     }
   }
+  /**
+   * 세션이 닫혔다. 그 폰에 보낸 채 답이 없는 게이트가 남아 있으면, 잠깐 뒤에도 다시 안 붙을 때 approve로 깨운다.
+   * 앱이 뒤로 간 직후 몇 초 동안은 세션이 살아 있어 gate.request를 받고도 사람이 못 볼 수 있다(실기기 시험 11/19).
+   */
   detach(pairId: string, sink: GateSink): void {
-    if (this.#sinks.get(pairId) === sink) this.#sinks.delete(pairId);
+    if (this.#sinks.get(pairId) !== sink) return;
+    this.#sinks.delete(pairId);
+    for (const g of this.#open.values()) {
+      if (g.pairId !== pairId || g.refusal || !g.sent || g.wakes >= 2) continue;
+      this.#stopAgain(g);
+      g.again = (this.#o.timers ?? systemTimers).set(() => {
+        g.again = null;
+        if (this.#open.get(g.shellRunId) === g && !g.refusal && !this.#sinks.has(g.pairId)) this.#wakeApprove(g);
+      }, WAKE_DETACHED_MS);
+    }
   }
 
   /**

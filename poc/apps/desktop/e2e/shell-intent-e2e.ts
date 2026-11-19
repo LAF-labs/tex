@@ -108,7 +108,7 @@ async function flow() {
   check('모름 → chat.respond에 문장 그대로, 답은 텍스트 노드(태그 해석 없음)', (await until('chat reply', async () => !!(await lastReply()))) && chatSeen.at(-1) === '오늘 날씨 어때' && (await lastReply())!.text.startsWith('<b>날씨</b>') && !(await lastReply())!.html);
   // 제안 칩은 대화 모델 도구 목록(packages/model chat_reply)에서 온다. 민원증명은 해석 전에 이 PC 규칙으로 바로 시작하므로 칩에 없다
   check('제안 칩 1개(세금계산서 발급), 카드는 생기지 않는다', JSON.stringify((await lastReply())!.chips) === JSON.stringify(['hometax.invoice.issue:세금계산서 발급']) && (await runs()) === n0);
-  check('고정 문구(빈 요청 안내)가 기본 답이 아니다', !(await lastApp()).includes('세금계산서 발급이나 지난 발급·매출을 말해 주세요'));
+  check('고정 문구(빈 요청 안내)가 기본 답이 아니다', !(await lastApp()).includes('세금계산서 발급이나 지난 발급, 매출을 말해 주세요'));
   await js(`[...document.querySelectorAll('[data-chat-suggest="hometax.invoice.issue"]')].pop().click()`);
   check('칩을 누르면 입력창에 시작 문장만 채운다(보내지 않음, 실행 없음)', (await js<string>(`document.querySelector('#composer').value`)) === '세금계산서 ' && (await runs()) === n0);
   await js(`(() => { const t = document.querySelector('#composer'); t.value = ''; t.dispatchEvent(new Event('input')); })()`);
