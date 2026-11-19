@@ -20,7 +20,9 @@ describe('계좌 자동조회 main', () => {
   });
 
   it('화면 요청 표: 비밀번호 칸이 없고, 연결·고르기·최신화·해제는 실제 입력 뒤에만', () => {
-    for (const m of ['bankAuto.connect', 'bankAuto.choose', 'bankAuto.refresh', 'bankAuto.disconnect'] as const) assert.equal(USER_ACTION_METHODS[m], 3_000);
+    for (const m of ['bankAuto.connect', 'bankAuto.choose', 'bankAuto.sms', 'bankAuto.refresh', 'bankAuto.disconnect'] as const) assert.equal(USER_ACTION_METHODS[m], 3_000);
+    // SMS 인증번호 칸은 숫자 몇 자리만(긴 글·다른 칸은 거부)
+    assert.throws(() => parseRendererRequest(SHELL_METHODS, { method: 'bankAuto.sms', params: { sessionId: 's', code: '123456789' } }), /bad_request/);
     assert.throws(() => parseRendererRequest(SHELL_METHODS, { method: 'bankAuto.connect', params: { certId: 'x', password: 'p' } }), /bad_request/);
     assert.throws(() => parseRendererRequest(SHELL_METHODS, { method: 'bankAuto.connect', params: { certId: 'x', bank: '9999' } }), /bad_request/);
   });
@@ -36,7 +38,7 @@ describe('계좌 자동조회 main', () => {
     assert.deepEqual(Object.keys(list.certs[0]!).sort(), ['expiresOn', 'id', 'owner', 'usable', 'usage']);
     assert.deepEqual(await b.handlers['bankAuto.connect']({ certId: 'fedcba9876543210' }), { ok: false, code: 'cert_missing' });
     await b.handlers['bankAuto.connect']({ certId: '0123456789abcdef', bank: '0020' });
-    assert.deepEqual(calls, [['codef.connect', { certId: '0123456789abcdef', bank: '0020', clientType: 'B' }]]);
+    assert.deepEqual(calls, [['codef.connect', { certId: '0123456789abcdef', bank: '0020' }]], '계좌 종류를 고르지 않으면 엔진이 기업·개인을 차례로 해 본다');
     assert.equal(b.chosenLabel(), '홍길동 · yessign');
   });
 
@@ -101,5 +103,40 @@ describe('계좌 자동조회 main', () => {
     });
     await b.handlers['bankAuto.connect']({ certId: '0123456789abcdef', bank: '0004' });
     assert.deepEqual(logs, [{ step: 'codef.connect', result: 'identity_required', cf: 'CF-12831', bank: '0004' }]);
+  });
+  it('SMS 인증번호는 엔진으로 넘기기만 하고 로그에 남기지 않는다', async () => {
+    const logs: string[] = [];
+    const calls: Array<[string, Record<string, unknown>]> = [];
+    const b = bankAutoHandlers({ engine: async (m, p) => (calls.push([m, p]), { ok: false, code: 'sms_wrong' }), certs: async () => [], log: (n, d) => logs.push(JSON.stringify([n, d])) });
+    await b.handlers['bankAuto.sms']({ sessionId: 's1', code: '482913' });
+    assert.deepEqual(calls, [['codef.sms', { sessionId: 's1', code: '482913' }]]);
+    assert.ok(logs.length === 1 && !logs.join('').includes('482913'), logs.join());
+  });
+  it('인증서 종류(주체 OU)로 먼저 해 볼 뱅킹을 엔진에 알린다', async () => {
+    const { certKind } = await import('../apps/desktop/src/npki-certs.ts');
+    assert.equal(certKind('CN=홍길동()0012345,OU=WOORI,OU=personal4IB,O=yessign,C=kr'), 'personal');
+    assert.equal(certKind('CN=하늘상회()0012,OU=corporation4EC,O=yessign,C=kr'), 'corp');
+    assert.equal(certKind('CN=김하늘,OU=법인,O=KICA,C=kr'), 'corp');
+    assert.equal(certKind('CN=김하늘,O=CrossCert,C=kr'), null);
+    const calls: Array<Record<string, unknown>> = [];
+    const b = bankAutoHandlers({ engine: async (_m, p) => (calls.push(p), { ok: true }), certs: async () => [{ id: '0123456789abcdef', owner: '하늘상회', usage: 'yessign', expiresOn: '2027-01-01', usable: true, kind: 'corp' }] });
+    await b.handlers['bankAuto.connect']({ certId: '0123456789abcdef' });
+    assert.deepEqual(calls, [{ certId: '0123456789abcdef', bank: '0020', prefer: 'B' }]);
+  });
+  it('은행이 요구한 계좌번호는 숫자만 엔진으로 넘기고 로그에 남기지 않는다', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const logs: string[] = [];
+    const b = bankAutoHandlers({ engine: async (_m, p) => (calls.push(p), { ok: false, code: 'rejected' }), certs: async () => [{ id: '0123456789abcdef', owner: '김하늘', usage: 'yessign', expiresOn: '2027-01-01', usable: true }], log: (n, d) => logs.push(JSON.stringify([n, d])) });
+    await b.handlers['bankAuto.connect']({ certId: '0123456789abcdef', withdrawAccount: '1002-123-456789' });
+    assert.equal(calls[0]!.withdrawAccount, '1002123456789');
+    assert.ok(!logs.join('').includes('1002123456789') && !logs.join('').includes('456789'), logs.join());
+  });
+  it('금고 창 계좌 비밀번호 모드: 결속에 field를 싣고 4자리 칸·은행 이름을 보인다', () => {
+    const r = parseCodefNeeded({ mode: 'codef', reqId: REQ, scope: 'business', field: 'account' });
+    assert.deepEqual(r, { mode: 'codef', reqId: REQ, scope: 'business', field: 'account' });
+    const html = codefPageHtml(r!, { profileName: '하늘상회', certLabel: null, bankName: '우리은행' });
+    assert.match(html, /우리은행 출금계좌 비밀번호 4자리/);
+    assert.match(html, /maxlength="4"/);
+    assert.doesNotMatch(codefPageHtml({ mode: 'codef', reqId: REQ, scope: 'business' }, { profileName: 'x', certLabel: null }), /출금계좌/);
   });
 });

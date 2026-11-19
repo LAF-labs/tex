@@ -6,7 +6,7 @@
 //      RSA(PKCS#1 v1.5) 암호화해 base64 세 칸을 엔진에 준다. 평문 비밀번호 바이트는 바로 0으로 덮는다.
 //   개인키 파일(signPri.key)은 인증서 비밀번호로 암호화된 파일이고, 감싼 비밀번호는 CODEF 개인키로만 풀린다. 이 묶음이 CODEF로 간다는 것은
 //   동의 화면에 그대로 적는다(사용자 선택 예외, 09-bank-matching §4.5).
-import { constants as cc, createPublicKey, publicEncrypt, randomBytes, type KeyObject } from 'node:crypto';
+import { constants as cc, createHash, createPublicKey, publicEncrypt, randomBytes, type KeyObject } from 'node:crypto';
 import type { EventLog } from '@sax/platform';
 import { CODEF_SEAL_TTL_MS, isProfileScope, type CodefSealParams, type CodefSealResult, type ProfileScope } from './protocol.ts';
 import type { CodefPasswordStore } from './keychain/codef.ts';
@@ -19,6 +19,7 @@ const B64 = /^[A-Za-z0-9+/]+={0,2}$/;
 interface Pending {
   reqId: string;
   scope: ProfileScope;
+  field: 'cert' | 'account';
   done: (v: { bytes: Uint8Array; remember: boolean } | 'cancelled' | 'timeout') => void;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -28,7 +29,7 @@ export interface CodefSealerOptions {
   store: CodefPasswordStore;
   readPair: (certId: string) => Promise<NpkiPairRead>;
   /** main에 비밀번호 창을 열라고 알린다(secret.needed). */
-  askWindow: (data: { mode: 'codef'; reqId: string; scope: ProfileScope }) => void;
+  askWindow: (data: { mode: 'codef'; reqId: string; scope: ProfileScope; field?: 'account' }) => void;
   ttlMs?: number;
 }
 
@@ -67,7 +68,7 @@ export class CodefSealer {
       bytes.fill(0);
       throw new Error('not_requested');
     }
-    if (bytes.length === 0 || bytes.length > CODEF_PASSWORD_MAX_BYTES) {
+    if (bytes.length === 0 || bytes.length > CODEF_PASSWORD_MAX_BYTES || (p.field === 'account' && !/^\d{4}$/.test(Buffer.from(bytes).toString('latin1')))) {
       bytes.fill(0);
       throw new Error('bad_length');
     }
@@ -91,6 +92,7 @@ export class CodefSealer {
     if (typeof certId !== 'string' || !CERT_ID_RE.test(certId) || !isProfileScope(scope) || !['ask', 'stored', 'auto'].includes(mode)) throw new Error('bad_params');
     const key = codefPublicKey(params.publicKey);
     if (!key) return this.refuse('bad_public_key');
+    if (params.field === 'account') return this.sealAccount(certId, scope, mode, key);
     // 인증서를 먼저 확인한다(없는 인증서에 비밀번호를 묻지 않는다). 읽은 바이트는 끝에 지운다.
     const pair = await this.o.readPair(certId);
     if (!pair.ok) return this.refuse(pair.reason === 'not_found' || pair.reason === 'no_key' ? pair.reason : 'unreadable');
@@ -106,7 +108,7 @@ export class CodefSealer {
       }
       if (!pw) {
         if (this.pending) return this.refuse('busy');
-        const got = await this.ask(scope);
+        const got = await this.ask(scope, 'cert');
         if (typeof got === 'string') return this.refuse(got);
         pw = got.bytes;
         if (got.remember) remembered = (await this.o.store.write(scope, certId, pw)) === 'ok';
@@ -128,18 +130,56 @@ export class CodefSealer {
     }
   }
 
-  /** 기억해 둔 비밀번호 지우기([연결 해제]·비밀번호 틀림) */
-  forget(scope: ProfileScope, certId: string): Promise<boolean> {
-    return this.o.store.forget(scope, certId);
+  /**
+   * 출금계좌 비밀번호 4자리: 기억해 둔 것(같은 칸 저장소, 인증서별 따로 이름)이나 금고 창('account' 모드)에서 받아 CODEF 공개키로 감싼다.
+   * 인증서 파일은 싣지 않는다(derFile·keyFile 빈 칸). 평문 바이트는 바로 0으로 덮는다.
+   */
+  private async sealAccount(certId: string, scope: ProfileScope, mode: CodefSealParams['mode'], key: KeyObject): Promise<CodefSealResult> {
+    const slot = accountSlotId(certId);
+    let pw: Uint8Array | null = null;
+    let remembered = false;
+    try {
+      if (mode !== 'ask') {
+        const r = await this.o.store.read(scope, slot);
+        if (r.ok) {
+          pw = r.bytes;
+          remembered = true;
+        } else if (mode === 'stored') return this.refuse(r.reason === 'vault_locked' ? 'vault_locked' : 'missing');
+      }
+      if (!pw) {
+        if (this.pending) return this.refuse('busy');
+        const got = await this.ask(scope, 'account');
+        if (typeof got === 'string') return this.refuse(got);
+        pw = got.bytes;
+        if (got.remember) remembered = (await this.o.store.write(scope, slot, pw)) === 'ok';
+        else await this.o.store.forget(scope, slot);
+      }
+      const enc = publicEncrypt({ key, padding: cc.RSA_PKCS1_PADDING }, pw);
+      this.o.log.event('vault.codef_sealed', { remembered: remembered ? 1 : 0, field: 'account' });
+      return { ok: true, derFile: '', keyFile: '', password: enc.toString('base64'), remembered };
+    } catch (e) {
+      const x = e as { code?: unknown; name?: unknown } | null;
+      this.o.log.event('vault.codef_seal_error', { why: typeof x?.code === 'string' && /^[A-Z0-9_]{1,48}$/.test(x.code) ? x.code : 'other', field: 'account' });
+      return this.refuse('unreadable');
+    } finally {
+      pw?.fill(0);
+    }
   }
 
-  private ask(scope: ProfileScope): Promise<{ bytes: Uint8Array; remember: boolean } | 'cancelled' | 'timeout'> {
+  /** 기억해 둔 비밀번호 지우기([연결 해제]·비밀번호 틀림). 같은 인증서의 출금계좌 비밀번호도 함께 */
+  async forget(scope: ProfileScope, certId: string): Promise<boolean> {
+    const a = await this.o.store.forget(scope, certId);
+    await this.o.store.forget(scope, accountSlotId(certId)).catch(() => false);
+    return a;
+  }
+
+  private ask(scope: ProfileScope, field: 'cert' | 'account'): Promise<{ bytes: Uint8Array; remember: boolean } | 'cancelled' | 'timeout'> {
     return new Promise((resolve) => {
       const reqId = randomBytes(16).toString('hex');
       const timer = setTimeout(() => this.pending?.reqId === reqId && this.finish(this.pending, 'timeout'), this.o.ttlMs ?? CODEF_SEAL_TTL_MS);
       timer.unref?.();
-      this.pending = { reqId, scope, done: resolve, timer };
-      this.o.askWindow({ mode: 'codef', reqId, scope });
+      this.pending = { reqId, scope, field, done: resolve, timer };
+      this.o.askWindow({ mode: 'codef', reqId, scope, ...(field === 'account' ? { field } : {}) });
     });
   }
 
@@ -148,3 +188,6 @@ export class CodefSealer {
     return { ok: false, reason };
   }
 }
+
+/** 출금계좌 비밀번호를 기억해 둘 칸 이름(인증서 id에서 만든 16 hex, 인증서 비밀번호 칸과 겹치지 않는다) */
+export const accountSlotId = (certId: string): string => createHash('sha256').update(`codef-account:${certId}`).digest('hex').slice(0, 16);

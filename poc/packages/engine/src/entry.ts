@@ -187,8 +187,10 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
     store: settingsCodefStore(db),
     bank: () => codefBank,
     onEvent: (e) => {
-      log.event('engine.codef', { phase: e.phase, ...(e.code ? { code: e.code } : {}) });
-      parentPort.postMessage({ t: 'ev', name: 'codef', data: { ...e } });
+      log.event('engine.codef', { phase: e.phase, ...(e.code ? { code: e.code } : {}), ...(e.cf ? { cf: e.cf } : {}), ...(e.param ? { param: e.param } : {}), ...(e.clientType ? { clientType: e.clientType } : {}), ...(e.order ? { order: e.order } : {}), ...(e.hint ? { hint: e.hint } : {}) });
+      const shown = { ...e };
+      delete shown.hint;
+      parentPort.postMessage({ t: 'ev', name: 'codef', data: shown });
     },
   });
   // 지난 실행이 고르기 대기·조회 중에 꺼졌으면 CODEF에 남은 계정을 지운다(못 지우면 적힌 채로 다음 연결·최신화·해제 때)
@@ -344,6 +346,8 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
           return c.connect(params);
         case 'codef.choose':
           return c.choose(params);
+        case 'codef.sms':
+          return c.sms(params);
         case 'codef.refresh':
           return c.refresh();
         case 'codef.cancel':
@@ -355,7 +359,7 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
     try {
       return { ok: true, ...(await run()) };
     } catch (e) {
-      if (e instanceof CodefError) return { ok: false, code: e.code, ...(e.cf ? { cf: e.cf } : {}), ...(e.retryAt ? { retryAt: e.retryAt } : {}) };
+      if (e instanceof CodefError) return { ok: false, code: e.code, ...(e.cf ? { cf: e.cf } : {}), ...(e.retryAt ? { retryAt: e.retryAt } : {}), ...(e.clientType ? { clientType: e.clientType } : {}) };
       throw e;
     }
   }

@@ -150,7 +150,7 @@ export type StoreBind = {
  * 계좌 자동조회(CODEF) 인증서 비밀번호 창 결속. 금고가 보낸 `secret.needed{mode:'codef', reqId, scope, remember}`와 같은 reqId만 붙는다.
  * 창은 secret.provide를 한 번 보낸다(`remember: true`면 사장님이 [이 PC에 기억]을 고른 것). 값은 금고가 CODEF 공개키로 감싸고 지운다.
  */
-export type CodefBind = { mode: 'codef'; reqId: string; scope: ProfileScope };
+export type CodefBind = { mode: 'codef'; reqId: string; scope: ProfileScope; field?: 'cert' | 'account' };
 
 export type SecretInputBind = OneShotBind | StoreBind | CodefBind;
 
@@ -168,6 +168,11 @@ export interface CodefSealParams {
   publicKey: string;
   scope: ProfileScope;
   mode: 'ask' | 'stored' | 'auto';
+  /**
+   * 무엇을 감쌀지. 'cert'(기본) = 인증서 비밀번호 + 인증서 파일. 'account' = 출금계좌 비밀번호 4자리만
+   * (일부 은행 개인 뱅킹이 인증서 로그인에 함께 요구한다, 2026-11-19 실기기 우리은행 reqWithdrawAccountPass). 인증서 파일은 싣지 않는다.
+   */
+  field?: 'cert' | 'account';
 }
 /** 성공이면 CODEF 계정 등록 accountList 원소에 그대로 넣을 base64 세 칸. 실패 사유는 값 없이 */
 export type CodefSealResult =
