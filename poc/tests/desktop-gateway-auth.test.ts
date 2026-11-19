@@ -260,9 +260,9 @@ describe('엔진 auth 포트 배선(소스)', () => {
   const app = src('apps/desktop/src/shell-app.ts');
   const gw = src('apps/desktop/src/gateway-auth.ts');
 
-  it('엔진 init에 앱 판(app.getVersion())을 싣는다: 엔진 #243 minAppVersion 대조(D09 §8)', () => {
+  it('엔진 init에 앱 판(app.getVersion(), 개발 빌드만 SAX_DEV_APP_VERSION)을 싣는다: 엔진 #243 minAppVersion 대조(D09 §8)', () => {
     assert.ok(host.includes("...(opts.appVersion ? { appVersion: opts.appVersion } : {})"));
-    assert.ok(/new EngineHost\(\{[^\n]*\bappVersion: app\.getVersion\(\)/.test(app));
+    assert.ok(/new EngineHost\(\{[^\n]*\bappVersion: runVersion\(app\.isPackaged, process\.env, \(\) => app\.getVersion\(\)\)/.test(app));
   });
 
   it('엔진 init 포트 순서는 [중계, 게이트, auth]. 답하는 쪽이 붙기 전에는 account.signed_out', () => {

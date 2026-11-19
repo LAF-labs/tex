@@ -99,10 +99,3 @@ export function mutate(doc: Json, r: () => number): string {
       return `nest ${where}`;
   }
 }
-
-/** 시간 상한 안에 끝나는지(무한 루프·지수 폭발 감지). */
-export function timed<T>(f: () => T): { value: T; ms: number } {
-  const t = performance.now();
-  const value = f();
-  return { value, ms: performance.now() - t };
-}

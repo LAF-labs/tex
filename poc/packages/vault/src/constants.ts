@@ -72,15 +72,6 @@ export const SECRET_ORIGINS: Record<string, string[]> = {
 };
 
 /**
- * 중계 허용 목록(D05 §3.3 초기값 + S6b 측정 반영). 기본 거부: 여기 없는 도메인은 전부 거부한다.
- * - Network는 이벤트 수신·읽기 전용 메서드만, Fetch는 commitEndpoints 패턴에 한함(PoC-6에서 연결).
- * - Emulation은 포커스 관련만.
- * - Target은 page 세션 수준의 자식 자동 부착·분리만 허용하고(자식 세션은 금고가 origin으로 거른다),
- *   브라우저 수준 Target은 가상 루트(relay.ts)가 합성 응답으로 처리한다.
- */
-export const RELAY_ALLOWED_DOMAINS = ['Page', 'Runtime', 'DOM', 'Accessibility', 'Input', 'Network', 'Fetch', 'Emulation', 'Log', 'Target', 'CSS', 'DOMSnapshot', 'Inspector'] as const;
-
-/**
  * 도메인 안에서도 메서드 단위 허용 목록이다(도메인 전체 허용 '*'는 두지 않는다). 근거: S6b 관측 + playwright-core 1.64 coreBundle이 부르는 명령.
  * 표 밖 명령(예: Page.startScreenRecording·searchInResource·getAnnotatedPageContent·setDocumentContent, Runtime.compileScript·runScript·queryObjects,
  * DOM.getOuterHTML)은 기본 거부다. 스크린샷 거부·값 접근 패턴 검사를 우회하는 경로이기 때문이다. 표 대조 시험: tests/vault-relay-table.test.ts.

@@ -11,7 +11,7 @@ const DESK = path.resolve(import.meta.dirname, '../apps/desktop');
 const { tokensCss, bundleCss, loadTokens } = await import(`${DESK}/dist/shell-tokens.js`);
 const { MockStore, seedTimeline, QUICK, PROFILES, dayOffset, mockBundle, MOCK_SETTINGS } = await import(`${DESK}/dist/shell-mock.js`);
 const { buildBoard } = await import(`${DESK}/dist/board.js`);
-const { REGATE_NOTE, NOTE, HANDOFF_LOGIN, REHEARSAL_NEXT, LOGIN_NOW, STEP_LABELS, STEP_NOW, handoffTurn, REPLACING_NOTE, REPLACED_NOTE, QUEUED_NOTE } = await import(`${DESK}/dist/shell-runs.js`);
+const { REGATE_NOTE, NOTE, HANDOFF_LOGIN, REHEARSAL_NEXT, LOGIN_NOW, STEP_LABELS, STEP_NOW, handoffTurn, CERT_FAILED_TWICE, CERT_RETRY_NOTE, REPLACING_NOTE, REPLACED_NOTE, QUEUED_NOTE } = await import(`${DESK}/dist/shell-runs.js`);
 const { OnboardingFlow, initialOnbState } = await import(`${DESK}/dist/onboarding.js`);
 const { MockOnboardingPorts } = await import(`${DESK}/dist/onboarding-mock.js`);
 const { buildCardHtml, barCss, barPalette, summarize, BAR_CSP } = await import(`${DESK}/dist/approval-gate.js`);
@@ -260,6 +260,40 @@ async function shot(win, name, bar) {
   console.log('shot', name);
 }
 
+
+/**
+ * 녹화(스크롤 밀림 재기): 사건 앞 0.3초부터 뒤 1.2초까지 그려진 프레임을 모두 PNG로 받아 scroll-shift.mjs로 잰다.
+ * 결과는 OUT/<name>/shift.json·sheet.png. 잰 곳은 대화 목록(.thread-scroll)만이다.
+ */
+async function record(win, name, act) {
+  const dir = path.join(OUT, name, 'frames');
+  await fs.rm(path.join(OUT, name), { recursive: true, force: true });
+  await fs.mkdir(dir, { recursive: true });
+  const frames = [];
+  const grab = (img) => frames.push(img.toPNG());
+  const off = !!process.env.OFFSCREEN;
+  if (off) win.webContents.on('paint', (_e, _d, img) => grab(img));
+  else win.webContents.beginFrameSubscription(false, grab);
+  // 아무것도 안 움직이는 동안에도 프레임이 오게 화면 구석 1px을 계속 바꾼다(잰 곳 밖)
+  await js(win, `window.__tick = setInterval(() => { let t = document.getElementById('__tick'); if (!t) { t = document.createElement('i'); t.id = '__tick'; t.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;z-index:99999'; document.body.append(t); } t.style.background = t.style.background === 'red' ? 'blue' : 'red'; }, 16)`);
+  await sleep(300);
+  const event = frames.length;
+  const top0 = await js(win, `document.querySelector('.thread-scroll').scrollTop`);
+  await act();
+  await sleep(1200);
+  if (off) win.webContents.removeAllListeners('paint');
+  else win.webContents.endFrameSubscription();
+  await js(win, 'clearInterval(window.__tick); document.getElementById("__tick")?.remove()');
+  for (const [i, b] of frames.entries()) await fs.writeFile(path.join(dir, `${String(i).padStart(4, '0')}.png`), b);
+  const r = await js(win, `(() => { const b = document.querySelector('.thread-scroll').getBoundingClientRect(); return [b.x, b.y, b.width, b.height, devicePixelRatio]; })()`);
+  const k = r[4];
+  const crop = r.slice(0, 4).map((v) => Math.round(v * k)).join(',');
+  const { spawnSync } = await import('node:child_process');
+  const res = spawnSync(process.env.NODE_BIN ?? 'node', [path.join(import.meta.dirname, 'scroll-shift.mjs'), '--frames', dir, '--fps', '30', '--crop', crop, '--scale', String(k), '--event', `#${Math.max(0, event - 1)}`, '--label', name, '--out', path.join(OUT, name)], { encoding: 'utf8' });
+  const top1 = await js(win, `document.querySelector('.thread-scroll').scrollTop`);
+  console.log('record', name, res.stdout.trim() || res.stderr.trim(), 'dom scrollTop delta', Math.round(top1 - top0));
+}
+
 const barFields = [
   ['counterpartName', 'A상사'], ['counterpartBizNo', '2148651233'], ['totalAmount', '3630000'], ['supplyAmount', '3300000'], ['taxAmount', '330000'], ['itemName', '디자인 용역'], ['issueDate', dayOffset(0)], ['counterpartEmail', 'tax@asangsa.example'], ['$first.bizNo', 'true'], ['$first.email', 'true'],
 ].map(([fieldKey, value]) => ({ fieldKey, value }));
@@ -320,6 +354,13 @@ const scenes = {
     await sleep(300);
     ev(win, { type: 'run', run: { ...mkRun('turn', { done: 2, attentionAt: 2, note: '직접 해 주세요' }), handoff: { phase: 'input', afterGate: false }, turn: handoffTurn('input') } });
     await shot(win, '30-handoff');
+    // 공동인증서 로그인 실패: 처음은 같은 값으로 다시(안내 한 줄), 두 번째는 [인증서로 다시 시도]·[간편인증 마치고 이어서]
+    ev(win, { type: 'run', run: { ...mkRun('preparing', { done: 0, now: true, note: LOGIN_NOW }), notices: [CERT_RETRY_NOTE] } });
+    await shot(win, '30b-cert-retry');
+    ev(win, { type: 'run', run: { ...mkRun('turn', { done: 0, attentionAt: 0, note: '' }), handoff: { phase: 'login', afterGate: false, kind: 'login', code: 'login.simple_auth' }, turn: CERT_FAILED_TWICE } });
+    await shot(win, '30c-cert-failed');
+    ev(win, { type: 'run', run: { ...mkRun('turn', { done: 0, attentionAt: 0, note: '' }), handoff: { phase: 'login', afterGate: false, kind: 'login', code: 'login.simple_sent' }, simpleAuth: { provider: 'kakao', deadline: Date.now() + 240_000 }, turn: { text: '카카오톡에서 승인해 주세요', note: '5분 안에 승인하면 바로 이어서 발급해요.' } } });
+    await shot(win, '30d-simple-sent');
     ev(win, { type: 'run', run: { ...mkRun('waiting', { done: 4, now: true, confirmed: true, note: '아래 [승인하고 발급]을 기다려요' }), regate: { reason: 'date_changed', note: REGATE_NOTE.date_changed } } });
     await shot(win, '31-regate');
     ev(win, { type: 'run', run: { ...mkRun('issuing', { done: 6, now: true, confirmed: true }), verifyAttempt: 3 } });
@@ -383,6 +424,45 @@ const scenes = {
     await sleep(1200);
     await shot(win, '44-open-bank-screen');
     S.agentReply = null;
+  },
+  // 스크롤(2026-11-19): 위로 올려 읽는 중 새 답이 와도 읽던 자리를 지키고 [새 답]을 띄운다. 내가 보낸 말은 늘 내린다. 녹화로 밀린 거리를 잰다.
+  async scroll(win) {
+    const say = (t) => js(win, `(() => { const i = document.querySelector('#composer'); i.value = ${JSON.stringify(t)}; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
+    const Q = ['이번 달 세금계산서 몇 건 끊었어?', 'B상사 미수금 얼마야?', '부가세 신고는 언제까지야?', '지난달 매출 합계 알려 줘', 'C테크 이메일 바뀌었어?', '세무사 꾸러미 만들어 줘', '현금영수증도 모아 줘?', '다음 주 할 일 있어?'];
+    const A = ['이번 달 발급은 3건이에요. A상사 363만원, B상사 60만 5천원, C테크 110만원이에요.', 'B상사에서 아직 60만 5천원을 받지 못했어요. 지난 3일이 약속한 날이었어요.', '2기 확정 신고는 1월 25일까지예요. 꾸러미는 1월 초에 만들어 둘게요.', '지난달 매출은 1,280만원이에요. 그중 세금계산서로 끊은 것이 1,100만원이에요.', '네, 지난주에 bill@ctech.example로 바뀌었어요. 다음 발급부터 새 주소로 보내요.', '11월 꾸러미를 만들었어요. 문서함에서 열어 볼 수 있어요.', '현금영수증 7건을 모았어요. 합계 23만 4천원이에요.', '다음 주에는 A상사 정기 발급 하나가 있어요. 금요일에 알려 드릴게요.'];
+    for (const [k, q] of Q.entries()) {
+      S.agentReply = A[k];
+      await say(q);
+      await sleep(260);
+    }
+    S.agentReply = null;
+    await js(win, `(() => { const s = document.querySelector('.thread-scroll'); s.scrollTop = Math.max(0, s.scrollHeight - s.clientHeight - 520); s.dispatchEvent(new Event('scroll')); })()`);
+    await sleep(300);
+    await record(win, 'rec-new-reply', () => ev(win, { type: 'say', text: '참고로 B상사는 지난달에도 입금이 열흘 늦었어요. 이번에도 늦으면 알려 드릴게요.' }));
+    await shot(win, '47-scroll-new-reply');
+    await js(win, `document.querySelector('[data-act=new-reply]')?.click()`);
+    await sleep(600);
+    await shot(win, '48-scroll-after-button');
+    await js(win, `(() => { const s = document.querySelector('.thread-scroll'); s.scrollTop = Math.max(0, s.scrollHeight - s.clientHeight - 520); s.dispatchEvent(new Event('scroll')); })()`);
+    await sleep(300);
+    S.agentReply = '네, 알겠어요.';
+    await say('고마워');
+    await sleep(500);
+    await shot(win, '49-scroll-sent');
+    S.agentReply = null;
+  },
+  // 실행 카드 단계 목록(11-19): 새 카드는 닫힌 채로, 연 카드는 상태가 바뀌어도 열린 채로
+  async steps(win) {
+    await js(win, `(() => { const i = document.querySelector('#composer'); i.value = 'A상사에 330만원 세금계산서'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
+    await sleep(300);
+    ev(win, { type: 'run', run: mkRun('preparing', { done: 2, now: true }) });
+    await shot(win, '50-steps-closed');
+    await js(win, `document.querySelector('[data-act=steps-toggle]').click()`);
+    await shot(win, '51-steps-open');
+    ev(win, { type: 'run', run: mkRun('preparing', { done: 3, now: true }) });
+    await sleep(100);
+    console.log('steps still open after update:', await js(win, `document.querySelector('[data-act=steps-toggle]').getAttribute('aria-expanded')`));
+    await shot(win, '52-steps-kept');
   },
   // Muse 방식 대화(2026-11-19): 말풍선 둘, 시간 줄, 묶음(2분 안 같은 쪽 말), 답 기다리는 점 세 개
   async muse(win) {
@@ -833,7 +913,7 @@ Object.assign(scenes, {
   },
 });
 
-const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'browser', 'replace', 'openBank', 'muse', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'px', 'pair', 'newPc', 'bankAuto', ...(EMPTY ? ['empty'] : [])];
+const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'browser', 'replace', 'openBank', 'muse', 'scroll', 'steps', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'px', 'pair', 'newPc', 'bankAuto', ...(EMPTY ? ['empty'] : [])];
 const agreed = { version: 'pv', choice: 'agreed', at: '' };
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {

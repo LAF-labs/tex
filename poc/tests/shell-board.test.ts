@@ -238,9 +238,13 @@ describe('M4-2 3부: InDoubt·핸드오프 화면(08 §11, D03 HandedOff)', () =
     const src = views();
     const body = branch(src, "} else if (st === 'turn' && run.handoff) {", "} else if (st === 'turn') {");
     const acts = [...new Set([...body.matchAll(/act\.([a-zA-Z]+)\(/g)].map((m) => m[1]))].sort();
-    assert.deepEqual(acts, ['manualDone', 'resume', 'stop']);
+    assert.deepEqual(acts, ['manualDone', 'resume', 'retryCert', 'simpleDone', 'stop']);
+    // 공동인증서 로그인 실패 차례(login.simple_auth)만 [인증서로 다시 시도](멈추고 같은 값으로 인증서 로그인부터, 발급 없음)
+    assert.match(body, /btn\('인증서로 다시 시도', \(\) => act\.retryCert\(run\.id\)/);
+    // 폰이 시작한 간편인증 요청 뒤(login.simple_sent)만 [승인했어요](엔진이 [인증 완료]를 누르고 재개)
+    assert.match(body, /run\.handoff\.code === 'login\.simple_sent' \? btn\('승인했어요', \(\) => act\.simpleDone\(run\.id\)/);
     assert.match(body, /showBrowserBtn\(run, act\)/, '사람 차례 카드에는 [홈택스 창 보기]'); 
-    assert.match(body, /kind === 'login' \? btn\('이어서'/);
+    assert.match(body, /: kind === 'login' \? btn\(run\.handoff\.code === 'login\.simple_auth' \? '간편인증 마치고 이어서' : '이어서'/);
     assert.match(body, /kind === 'other' \? btn\('직접 발급함'/);
     assert.match(body, /btn\('중지', \(\) => act\.stop\(run\.id\)/);
     assert.ok(!/act\.(prepare|again|reissue)|sx-btn-approve/.test(body), '사람 차례 카드는 다시 발급하지 않는다');

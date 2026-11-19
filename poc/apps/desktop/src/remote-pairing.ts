@@ -3,7 +3,7 @@
 // - 계정 확인 주장(acctClaim)은 GET /v1/acct-claim을 받아 b64(JCS({claim, sig}))로 pair.ok에 싣는다(DeviceSession.acctClaimField).
 // - 우편함을 등록한 뒤 페어링이 실패하면 우편함을 지운다(D08 §4.2, 기기당 3회 상한을 아끼려고).
 // - 로그는 단계·결과 코드만(폰 이름·키·SAS·QR 없음).
-import { b64, b64url, DesktopPairing, QR_TTL_SEC, SAS_MAX_TRIES, type DesktopKeys, type DesktopPairResult, type Link, type RelayClient } from '@sax/remote';
+import { b64, b64url, DesktopPairing, SAS_MAX_TRIES, type DesktopKeys, type DesktopPairResult, type Link, type RelayClient } from '@sax/remote';
 import type { DeviceSession } from './remote-account.ts';
 import type { AccountClient, RelayHttpClient } from './remote-ports.ts';
 
@@ -230,6 +230,3 @@ export class PairingHost {
     this.#stepError = null;
   }
 }
-
-/** QR 수명(초). 화면 문구용. */
-export const PAIR_QR_TTL_SEC = QR_TTL_SEC;
