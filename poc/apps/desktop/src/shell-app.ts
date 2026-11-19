@@ -1490,7 +1490,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   // 엔진이 죽으면 놓으라는 말을 못 했을 수 있다: main이 대신 놓는다(못 놓아도 서버 잠금은 90초 뒤 풀린다)
   host.on('exit', () => void issueLock.release());
   // 폰 연결(S-03, remote-pairing.ts). 로그인(첫 PC 등록)을 마치고 클라우드 포트·QR 인코더가 있을 때만.
-  // 따로 창을 띄우지 않고 설정 > 기기 연결의 연결 칸(shell-pair.js)에 그린다. 렌더러가 받는 값은 PairView뿐이고 QR은 main이 만든 이미지(data URL)다.
+  // 따로 창을 띄우지 않고 설정 > 기기 연결의 연결 칸(QR)과 메인 창 안 모달(6자리부터, shell-pair.js)에 그린다. 렌더러가 받는 값은 PairView뿐이고 QR은 main이 만든 이미지(data URL)다.
   // QR·6자리가 화면에 있는 동안은 메인 창을 화면 캡처에서 가린다(setContentProtection, ADR-016). 끝나면 푼다.
   // 우편함 토큰·채널이 든 결과는 지금은 이 실행의 메모리에만 둔다(수신 배선 PR에서 금고 보관).
   let pairHost: PairingHost | null = null;
@@ -2479,7 +2479,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     },
     'pair.view': async () => pairHost?.view() ?? { step: 'idle', qr: null, expiresAt: null, phoneName: null, triesLeft: null, error: null },
     'pair.submit': async (p) => {
-      needGesture(3_000);
+      // 6칸이 다 차면 렌더러가 바로 부른다(account.verify와 같다): 숫자 키·붙여 넣기도 main이 본 입력으로 친다.
+      needTyping(3_000);
       return pairing().submitSas(String(p.code).slice(0, 6));
     },
     'pair.retry': async () => {
