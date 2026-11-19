@@ -24,6 +24,7 @@ import {
   type ChatPhoneToolName,
   type PhoneCopyState,
   type PhoneReplyKind,
+  type PhoneScreen,
   type PhoneToolStatus,
   type SlotField,
   type ToolNeed,
@@ -36,7 +37,7 @@ import { estimateTokens } from './tokens.ts';
 /** 한 번 부를 때의 입력 상한(추정 토큰, 머리말·도구 정의 포함). 하루 한도(체험 50원·구독 300원) 안에서 대화 횟수를 지키는 값이다. */
 export const PHONE_CONTEXT_MAX_TOKENS = 8000;
 /** chat_phone 머리말 + 도구 정의 + 출력 스키마의 추정 토큰(넉넉하게). 시험이 실제 머리말의 추정값이 이보다 작은지 본다. */
-export const PHONE_PREFIX_EST_TOKENS = 4600;
+export const PHONE_PREFIX_EST_TOKENS = 5000;
 /** [앞 대화]에 두는 사용자 턴 수 상한. 넘으면 오래된 절반을 한꺼번에 요약으로 접는다. */
 export const PHONE_TURNS_MAX = 20;
 /** [사실]에 미리 조회해 넣는 거래처 수 상한 */
@@ -174,7 +175,7 @@ export interface PhoneTableRow {
   total: number | null;
   approvalNo: string | null;
 }
-export type PhoneShow = { type: 'card'; draft: PhoneDraft; counterparty: string } | { type: 'table'; table: 'history' | 'receivables'; title: string; rows: PhoneTableRow[]; copy: PhoneCopyState };
+export type PhoneShow = { type: 'card'; draft: PhoneDraft; counterparty: string } | { type: 'screen'; screen: PhoneScreen } | { type: 'table'; table: 'history' | 'receivables'; title: string; rows: PhoneTableRow[]; copy: PhoneCopyState };
 
 export type PhoneTurnResult =
   | {
@@ -233,7 +234,8 @@ type DomainCall =
   | { tool: 'invoice_history' | 'receivables'; counterpartyId: string | null }
   | { tool: 'invoice_draft'; counterpartyId: string; amount: DraftAmount; vat: Vat | null; item: string | null }
   | { tool: 'draft_edit'; draft: string; amount: DraftAmount; vat: Vat | null; item: string | null }
-  | { tool: 'draft_discard'; draft: string };
+  | { tool: 'draft_discard'; draft: string }
+  | { tool: 'open_screen'; screen: PhoneScreen };
 
 interface Turn {
   user: RedactedText;
@@ -248,8 +250,10 @@ interface Turn {
   unknownName?: string;
   /** 이번 문장의 발급 의도(가린 글에서 읽음). 모델이 놓치면 되묻기로 잇는다. */
   intent: IssueIntent;
-  /** 이번 턴에 고친 카드가 있다 */
-  edited?: boolean;
+  /** 이번 턴에 모델이 연 화면(단추로 붙는다) */
+  screens: PhoneScreen[];
+  /** 발급 의도를 놓친 첫 답 뒤에 한 번 더 부르는 중 */
+  retry?: boolean;
 }
 
 const KINDS: ReadonlySet<PhoneReplyKind> = new Set(PHONE_REPLY_KINDS);
@@ -261,14 +265,11 @@ export const PHONE_ENTRUST_ONLINE_TEXT = (name: string): string => `${name} 세�
 const INTENT_MISSED: ReadonlySet<PhoneReplyKind> = new Set(['smalltalk', 'answer', 'cannot']);
 
 /**
- * 발급 의도 안전망: "[AMT_1] 끊어줘"처럼 발급을 시켰는데 모델이 도구 없이 잡담·일반 답으로 넘기면, 비어 있는 칸 하나를 되묻는 답으로 바꾼다.
- * 거래처가 없으면 거래처(열린 카드가 하나도 없을 때), 금액이 없으면 금액. 둘 다 있으면 모델 답을 그대로 둔다(되묻기·카드는 모델이 한다).
- * 모델이 도구를 하나라도 불렀거나 되묻기·미루기·세무 판단으로 답했으면 손대지 않는다.
+ * 발급 의도 안전망: "[AMT_1] 끊어줘"처럼 발급을 시켰는데 모델이 도구를 하나도 부르지 않고 잡담·일반 답·못 함으로 넘겼는지.
+ * 맞으면 턴이 모델을 한 번 더 부른다(고정 문장으로 바꾸지 않는다). 두 번째 답은 그대로 쓴다.
  */
-export function intentNet(turn: Pick<Turn, 'intent' | 'done'>, openCards: boolean, reply: CheckedReply<PhoneReplyKind, AgentAsk>): CheckedReply<PhoneReplyKind, AgentAsk> {
-  if (!turn.intent.issue || turn.done.size > 0 || !INTENT_MISSED.has(reply.kind)) return reply;
-  const ask: AgentAsk | null = !turn.intent.counterparty && !openCards ? 'counterparty' : !turn.intent.amount ? 'amount' : null;
-  return ask ? { kind: 'ask', text: PHONE_ASK_TEXT[ask], show: reply.show, ask, filtered: null } : reply;
+export function intentMissed(turn: Pick<Turn, 'intent' | 'done' | 'retry'>, reply: CheckedReply<PhoneReplyKind, AgentAsk>): boolean {
+  return turn.intent.issue && !turn.retry && turn.done.size === 0 && !reply.filtered && INTENT_MISSED.has(reply.kind);
 }
 const ASKS: ReadonlySet<AgentAsk> = new Set(AGENT_ASKS);
 const VAT_LABEL = { separate: '별도', included: '포함' } as const;
@@ -460,11 +461,19 @@ export class PhoneChat {
       return this.unavailable('chat.unavailable');
     }
     const cards = this.openCards(st, copy);
-    const turn: Turn = { user, replay: [], done: new Map(), made: [], created: [], frameRefs: new Set(cards.map((c) => c.ref)), intent: issueIntent(user) };
+    const turn: Turn = { user, replay: [], done: new Map(), made: [], created: [], frameRefs: new Set(cards.map((c) => c.ref)), intent: issueIntent(user), screens: [] };
     const facts = this.facts(st, s, copy, now, user);
     const message = this.compose(st, s, copy, now, turn, facts, cards);
     s.turns++;
-    const reply = intentNet(turn, cards.length > 0, await this.advance(st, s, copy, now, turn, message));
+    let reply = await this.advance(st, s, copy, now, turn, message);
+    // 발급 안전망: 발급을 시켰는데 모델이 도구 없이 넘겼으면 고정 답을 내지 않고 모델을 한 번 더 부른다(짚는 줄을 더 분명히 해서).
+    // 그래도 넘기면 그 답을 그대로 둔다. 말은 언제나 모델이 한다.
+    if (intentMissed(turn, reply)) {
+      turn.retry = true;
+      turn.replay.length = 0;
+      turn.done.clear();
+      reply = await this.advance(st, s, copy, now, turn, this.compose(st, s, copy, now, turn, facts, cards));
+    }
     return this.finish(st, s, copy, now, text, turn, reply);
   }
 
@@ -542,7 +551,7 @@ export class PhoneChat {
         ? `화면: ${cards.map((c) => `카드 ${c.ref}(세금계산서, 거래처 ${mask(c.name)}, 금액 있음, 부가세 ${c.vat ? VAT_LABEL[c.vat] : '미정'}, 품목 ${c.item ? '있음' : '없음'})`).join('; ')}`
         : '화면: 열린 카드 없음';
       // 앱이 읽은 발급 의도: "세금계산서"라는 말이 없어도("[AMT_1] 끊어줘") 모델이 카드 만들기로 읽게 한 줄 짚어 준다
-      const hint = turn.intent.issue ? '\n앱 판단: 세금계산서 발급 요청' : '';
+      const hint = !turn.intent.issue ? '' : turn.retry ? '\n앱 판단: 세금계산서 발급 요청(앞 답이 발급으로 잇지 않았다. 카드를 만들거나 빈 칸 하나를 되묻는다)' : '\n앱 판단: 세금계산서 발급 요청';
       const nowBlock = `[지금]\n${frame}${hint}\n사용자: ${turn.user}`;
       const copyLine = `PC: ${this.ports.pcOnline?.() ? '켜짐' : '꺼짐'}\n사본: ${this.copyState(copy, now)}`;
       let nFacts = factBlocks.length;
@@ -680,6 +689,7 @@ export class PhoneChat {
         const d = draft(a.draft);
         return d ? { tool: 'draft_discard', draft: d } : out('no_such_draft');
       },
+      open_screen: () => ({ tool: 'open_screen', screen: a.screen as PhoneScreen }),
     };
     if (!Object.hasOwn(parse, c.name)) throw bad();
     return parse[c.name]();
@@ -715,6 +725,9 @@ export class PhoneChat {
 
   private exec(st: State, copy: PhoneCopy | null, now: number, call: DomainCall, turn: Turn): ToolOutput {
     switch (call.tool) {
+      case 'open_screen':
+        if (!turn.screens.includes(call.screen)) turn.screens.push(call.screen);
+        return out('screen_shown');
       case 'invoice_history':
       case 'receivables':
         return this.lookup(st, copy, now, call.tool, call.counterpartyId);
@@ -871,6 +884,8 @@ export class PhoneChat {
     }
     // 이번 턴에 만든 카드는 모델이 show에 넣지 않아도 보인다(카드가 사실이다).
     for (const ref of turn.created) card(ref);
+    // 모델이 연 화면은 사장님이 누를 단추로 붙는다(화면은 사장님이 눌러야 열린다)
+    for (const screen of turn.screens) show.push({ type: 'screen', screen });
     const name = reply.filtered ? undefined : turn.unknownName?.trim();
     const unknown = name && !copy?.counterparties.some((c) => c.name === name) ? { name, text: `${name}${finalOf(name) ? fixJosa(name, '은 폰에 받아 둔 거래처 목록에 없어요.') : '은(는) 폰에 받아 둔 거래처 목록에 없어요.'}` } : undefined;
     this.push(st, { from: 'user', text: said, ctx: capture(s.red, turn.user) ?? undefined });

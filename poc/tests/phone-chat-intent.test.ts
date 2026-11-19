@@ -1,7 +1,7 @@
 // 발급 의도(사장님이 "세금계산서"라고 말하지 않아도): 규칙 issueIntent, 폰 대화의 "앱 판단" 줄과 안전망, PC 켜짐 줄.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { PHONE_ASK_TEXT, PhoneChat, issueIntent, type PhoneChatPorts, type PhoneCopy, type PhoneModel, type PhoneRespondRequest, type PhoneRespondResult, type PhoneTurnResult } from '@sax/chat-core';
+import { PhoneChat, issueIntent, type PhoneChatPorts, type PhoneCopy, type PhoneModel, type PhoneRespondRequest, type PhoneRespondResult, type PhoneTurnResult } from '@sax/chat-core';
 
 describe('issueIntent: 가린 문장에서 발급 의도', () => {
   const yes = [
@@ -79,23 +79,48 @@ describe('폰 대화: 발급 의도와 PC 켜짐', () => {
     }
   });
 
-  it('"5만원 끊어줘": 앱 판단 줄을 싣고, 모델이 잡담으로 넘기면 거래처를 되묻는다', async () => {
-    const t = rig({ pc: true });
+  it('"5만원 끊어줘": 앱 판단 줄을 싣고, 모델이 잡담으로 넘기면 고정 답 없이 모델을 한 번 더 부른다(그 답을 쓴다)', async () => {
+    const t = rig({ pc: true, reply: (n) => (n === 1 ? say(n, 'smalltalk', '네, 말씀하세요.') : say(n, 'ask', '어느 거래처에 끊을까요?', 'counterparty')) });
     const r = reply(await t.chat.send('5만원 끊어줘'));
     assert.match(t.reqs[0]!.text, /앱 판단: 세금계산서 발급 요청\n사용자: \[AMT_\d+\] 끊어줘/);
-    assert.equal(r.reply, 'ask');
-    assert.equal(r.text, PHONE_ASK_TEXT.counterparty);
+    assert.equal(t.reqs.length, 2);
+    assert.match(t.reqs[1]!.text, /앱 판단: 세금계산서 발급 요청\(앞 답이 발급으로 잇지 않았다/);
+    assert.equal(t.reqs[1]!.replay.length, 0, '다시 부를 때는 앞 답을 잇지 않는다');
+    assert.equal(r.text, '어느 거래처에 끊을까요?');
     assert.equal(r.ask?.kind, 'counterparty');
   });
 
-  it('"한빛전자 끊어 줘": 금액을 되묻는다. 모델이 되물었으면 그대로 둔다', async () => {
-    const t = rig({});
+  it('다시 불러도 넘기면 모델 답을 그대로 쓴다(고정 문장으로 바꾸지 않는다). 모델이 처음부터 되물었으면 한 번만 부른다', async () => {
+    const t = rig({ reply: (n) => say(n, 'smalltalk', '좋아요.') });
     const r = reply(await t.chat.send('한빛전자 끊어 줘'));
-    assert.equal(r.ask?.kind, 'amount');
+    assert.equal(t.reqs.length, 2);
+    assert.equal(r.text, '좋아요.');
     const t2 = rig({ reply: (n) => say(n, 'ask', '얼마로 할까요?', 'amount') });
     const r2 = reply(await t2.chat.send('한빛전자 끊어 줘'));
+    assert.equal(t2.reqs.length, 1);
     assert.equal(r2.text, '얼마로 할까요?');
-    assert.equal(r2.filtered, null);
+  });
+
+  it('일상 말("오늘 점심 뭐 먹을까?")은 앱 판단 줄 없이 모델 답 그대로, 한 번만 부른다', async () => {
+    const t = rig({ reply: (n) => say(n, 'smalltalk', '날이 쌀쌀하니 따뜻한 국밥 어떠세요?') });
+    const r = reply(await t.chat.send('오늘 점심 뭐 먹을까?'));
+    assert.doesNotMatch(t.reqs[0]!.text, /앱 판단/);
+    assert.equal(t.reqs.length, 1);
+    assert.equal(r.text, '날이 쌀쌀하니 따뜻한 국밥 어떠세요?');
+  });
+
+  it('open_screen: 모델이 화면을 열면 단추(show screen)로 붙는다', async () => {
+    const tag2 = (n: number) => n.toString(16).padStart(64, '0');
+    const t = rig({
+      reply: (n) =>
+        n === 1
+          ? { status: 'completed', output: undefined, toolCalls: [{ callId: 'c1', name: 'open_screen', arguments: { screen: 'capture' } }], replay: [{ item: { type: 'function_call', call_id: 'c1', name: 'open_screen', arguments: '{"screen":"capture"}' }, tag: tag2(n) }] }
+          : say(n, 'answer', '아래 단추로 바로 찍을 수 있어요.'),
+    });
+    const r = reply(await t.chat.send('영수증 찍을래'));
+    assert.equal((t.reqs[1]!.replay[1] as { output: string }).output, '{"ref":null,"status":"screen_shown","fields":null,"needs":null}');
+    assert.deepEqual(r.show, [{ type: 'screen', screen: 'capture' }]);
+    assert.equal(r.text, '아래 단추로 바로 찍을 수 있어요.');
   });
 
   it('조회 말에는 앱 판단 줄이 없고 안전망도 손대지 않는다', async () => {
