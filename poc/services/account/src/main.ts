@@ -2,6 +2,7 @@
 import { fileURLToPath } from 'node:url';
 import { InternalAuth, InternalClient, Logger, SqlNonceStore, TokenIssuer, TokenVerifier, createServer, ed25519Private, ed25519RawPublic, key32, listen, migrate, openFromEnv, LIMITS_MIGRATIONS_DIR, sqlLimits } from '@sax/svc-shared';
 import { MockMailSender, MockPaymentGateway, type DeviceStopHook, type MailSender, type PairingRooms, type PaymentGateway } from './adapters.ts';
+import { KeyEscrow } from './escrow.ts';
 import { AcctClaimSigner } from './acct-claim.ts';
 import { SesMailSender } from './mail-ses.ts';
 import { TossPaymentGateway } from './pg-toss.ts';
@@ -82,6 +83,9 @@ export async function buildAccount(env: NodeJS.ProcessEnv = process.env, deps: A
   const internalKey = key32(env.INTERNAL_CALL_KEY, 'INTERNAL_CALL_KEY');
   if (env.INTERNAL_CALL_KEY === env.TOKEN_SIGNING_SEED || env.INTERNAL_CALL_KEY === env.ACCT_CLAIM_SIGNING_KEY) fail('INTERNAL_CALL_KEY');
   const passwords = passwordDeps(env, logger);
+  // 계정 열쇠 보관 키(ADR-050). 없으면 그 경로가 닫힌다(새 PC는 쓰던 PC의 승인으로만 붙는다). 다른 비밀과 같은 값이면 기동하지 않는다(키를 섞지 않는다)
+  if (env.KEY_ESCROW_KEY !== undefined && [env.TOKEN_SIGNING_SEED, env.ACCT_CLAIM_SIGNING_KEY, env.INTERNAL_CALL_KEY, env.CODE_MAC_KEY, env.LIMIT_ID_KEY, env.BILLING_KEY_SEAL_KEY].includes(env.KEY_ESCROW_KEY)) fail('KEY_ESCROW_KEY');
+  const escrow = env.KEY_ESCROW_KEY !== undefined ? KeyEscrow.fromSeedHex(env.KEY_ESCROW_KEY) : undefined;
   const payments: PaymentGateway = deps.payments ?? (env.PG_PROVIDER === 'toss' ? TossPaymentGateway.fromEnv(env, publicOrigin, { onEvent: (n) => logger.event(n) }) : new MockPaymentGateway(env.MOCK_PG_SECRET));
   // 빌링키 봉인 키: 빌링키 PG면 필수. 다른 비밀과 같은 값이면 기동하지 않는다(키를 섞지 않는다)
   let billingKeySealKey: Buffer | undefined;
@@ -105,6 +109,7 @@ export async function buildAccount(env: NodeJS.ProcessEnv = process.env, deps: A
     acctClaims,
     pairing: env.RELAY_INTERNAL_URL ? httpPairingRooms(env.RELAY_INTERNAL_URL, internalKey) : undefined,
     passwords,
+    escrow,
     onEvent: (n) => logger.event(n),
   });
   const limits = sqlLimits(db, svc.now, key32(env.LIMIT_ID_KEY, 'LIMIT_ID_KEY'));

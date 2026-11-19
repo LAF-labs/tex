@@ -49,6 +49,8 @@ const shape = (): never => {
   throw new CloudPortError('response.shape');
 };
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+/** 표준 base64 32바이트 */
+const B64_KEY32 = /^[A-Za-z0-9+/]{43}=$/;
 const str = (v: unknown, max = 4096): v is string => typeof v === 'string' && v.length > 0 && v.length <= max;
 const int = (v: unknown): v is number => Number.isSafeInteger(v);
 const UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -229,7 +231,7 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
       return pinnedList(await call('GET', url, [200], { headers: await authed(auth, 'GET', url) }));
     },
     async pinFirstDesktop(session, x) {
-      const b = await call('POST', `${accountOrigin}/v1/aik`, [201], { headers: bearer(session), body: { aikPub: x.aikPub, deviceList: x.deviceList, platform: x.platform, name: x.name } });
+      const b = await call('POST', `${accountOrigin}/v1/aik`, [201], { headers: bearer(session), body: { aikPub: x.aikPub, deviceList: x.deviceList, platform: x.platform, name: x.name, ...(x.escrow ? { escrow: x.escrow } : {}) } });
       if (!isObj(b) || !str(b.deviceId, 64)) shape();
       return { deviceId: (b as { deviceId: string }).deviceId };
     },
@@ -316,6 +318,33 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
     },
     async pcLinkCancel(session, deviceId) {
       await call('DELETE', linkUrl(deviceId), [204], { headers: bearer(session) });
+    },
+    async keyEscrowState(auth) {
+      const url = `${accountOrigin}/v1/key-escrow`;
+      const b = await call('GET', url, [200], { headers: await authed(auth, 'GET', url) });
+      if (!isObj(b) || !str(b.pub, 44) || !B64_KEY32.test(b.pub) || typeof b.stored !== 'boolean') shape();
+      return { pub: (b as { pub: string }).pub, stored: (b as { stored: boolean }).stored };
+    },
+    async putKeyEscrow(auth, sealed) {
+      const url = `${accountOrigin}/v1/key-escrow`;
+      await call('PUT', url, [204], { headers: await authed(auth, 'PUT', url), body: { enc: sealed.enc, ct: sealed.ct } });
+    },
+    async claimKeyEscrow(session, x) {
+      const b = await call('POST', `${accountOrigin}/v1/key-escrow/claim`, [200], { headers: bearer(session), body: { deviceId: x.deviceId, Hx: x.Hx } });
+      if (!isObj(b) || !str(b.aikPub, 44) || !B64_KEY32.test(b.aikPub) || !str(b.enc, 44) || !B64_KEY32.test(b.enc) || !str(b.ct, 64) || !/^[A-Za-z0-9+/]{64}$/.test(b.ct)) shape();
+      const r = b as { aikPub: string; enc: string; ct: string };
+      return { aikPub: r.aikPub, enc: r.enc, ct: r.ct };
+    },
+    async joinByKeyEscrow(session, deviceId, list) {
+      await call('POST', `${accountOrigin}/v1/key-escrow/join`, [200], { headers: bearer(session), body: { deviceId, deviceList: list } });
+    },
+    async keyEscrowPub(session) {
+      const b = await call('GET', `${accountOrigin}/v1/key-escrow/pub`, [200], { headers: bearer(session) });
+      if (!isObj(b) || !str(b.pub, 44) || !B64_KEY32.test(b.pub)) shape();
+      return { pub: (b as { pub: string }).pub };
+    },
+    async resetByKeyEscrow(session, x) {
+      await call('POST', `${accountOrigin}/v1/key-escrow/reset`, [200], { headers: bearer(session), body: { deviceId: x.deviceId, aikPub: x.aikPub, deviceList: x.deviceList, enc: x.enc, ct: x.ct } });
     },
     async pcLinks(auth) {
       const url = `${accountOrigin}/v1/pc-links`;

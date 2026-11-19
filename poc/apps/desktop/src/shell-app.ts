@@ -69,7 +69,7 @@ import { DeviceManager } from './remote-devices.ts';
 import { engineShareStore, ShareSync } from './share-sync.ts';
 import { PcLinkHost } from './remote-pclink.ts';
 import { phoneReceiver } from './phone-receive.ts';
-import { closeAction, shouldStayAwake, StayAwake } from './phone-presence.ts';
+import { closeAction, shouldStartPhones, shouldStayAwake, StayAwake } from './phone-presence.ts';
 import type { VaultDesktopKeys } from './remote-keys.ts';
 import { qrSvgDataUrl } from './remote-qr.ts';
 import { PairWindow } from './pair-window.ts';
@@ -1350,11 +1350,33 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     resetKeys: () => {
       remoteKeys = null;
     },
+    onRekey: () => void host.rpc('share.resend').catch(() => undefined),
     log: (n, d) => log.event(n, d),
   });
   // 새 PC 연결 중(link_* 단계)에는 쓰던 PC의 답을 몇 초마다 본다. 단계가 바뀌면 화면에 알리고, 끝나면 멈춘다
   let linkTimer: ReturnType<typeof setInterval> | null = null;
+  // 로그인돼 있으면 계정 열쇠를 계정 서비스에 맡겨 둔다(ADR-050: 다음 새 PC가 쓰던 PC 없이 이메일 인증만으로 붙는다). 앱을 켤 때마다 한 번
+  let keyDeposited = false;
+  const depositKey = (v: AccountView): void => {
+    if (v.step === 'signed_out') keyDeposited = false;
+    if (keyDeposited || v.step !== 'signed_in') return;
+    keyDeposited = true;
+    void account.depositKey().then((r) => {
+      // 잠깐의 실패는 다음 로그인 화면 갱신 때 다시 해 본다
+      if (r !== 'stored' && r !== 'already' && r !== 'request.not_found' && r !== 'skipped') keyDeposited = false;
+      // 다른 PC가 계정 열쇠를 새로 걸었으면 이 PC는 로그인 화면으로 돌아가 있다(account.key_changed)
+      if (r === 'account.cert_invalid') send({ type: 'account', account: account.view() });
+    });
+  };
   const watchLink = <T extends AccountView>(v: T): T => {
+    depositKey(v);
+    // 로그인(코드 확인·비밀번호·재설정·새 PC 연결 끝)으로 기기 신원이 생기면 저장된 폰을 지킨다.
+    // 전에는 앱을 켤 때만 start()해서, 같은 실행에서 로그아웃→다시 로그인하면 다시 켤 때까지 폰이 "PC 꺼짐"으로 보였다.
+    if (shouldStartPhones({ signedIn: !!account.device(), running: !!phoneLink })) {
+      void Promise.resolve(phones()?.start())
+        .then(() => syncAwake())
+        .catch((e: Error) => log.event('main.phone_link', { step: 'start', result: e.message.slice(0, 40) }));
+    }
     const linking = v.step.startsWith('link_');
     if (linking && !linkTimer) {
       linkTimer = setInterval(() => {
@@ -1372,7 +1394,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     return v;
   };
   let accountReady: Promise<unknown> | null = null;
-  const accountInit = () => (accountReady ??= account.init());
+  const accountInit = () => (accountReady ??= account.init().then((v) => (depositKey(v), v)));
   // 엔진 → 게이트웨이 인증(gateway-auth.ts): gateway 범위 기기 토큰으로 만든 헤더만 auth 포트로 간다. 로그인 전이면 account.signed_out.
   // 내준 헤더의 경로(활동 기록 근거). 번호를 붙여 최근 200개만 둔다.
   let gwSeq = 0;
@@ -1428,9 +1450,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       onPaired: (r) => {
         pairedThisRun.push(r);
         // 수신 배선(phone-link.ts): 기록을 보관하고 이 폰의 우편함을 지킨다
-        void phones()
-          ?.add(r)
-          .catch((e: Error) => log.event('main.phone_link', { step: 'add', result: e.message.slice(0, 40) }));
+        const link = phones();
+        // 받을 준비가 안 됐으면(클라우드 포트·기기 신원 없음) 폰은 연결됐다고 믿는데 PC는 우편함을 지키지 않는다. 조용히 넘어가지 않고 남긴다
+        if (!link) log.event('main.phone_link', { step: 'add', result: account.device() ? 'no_cloud' : 'signed_out' });
+        void link?.add(r).catch((e: Error) => log.event('main.phone_link', { step: 'add', result: e.message.slice(0, 40) }));
         send({ type: 'account', account: account.view() });
       },
     });

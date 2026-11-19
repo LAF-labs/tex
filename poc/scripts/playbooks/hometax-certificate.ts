@@ -109,8 +109,15 @@ export interface CertDoc {
   menuCode: string | null;
   /** 양식 제목(form 랜드마크 이름) */
   formTitle: string;
-  /** 제출 버튼(서류마다 다르다: H-03 작성완료, H-08 신청하기) */
+  /** 제출 버튼(서류마다 다르다: H-03·H-09 작성완료, H-08 신청하기). 게이트 승인 뒤 무장 구간에서 누른다 */
   submit: { name: string; css: string | null };
+  /**
+   * 신청 확인 레이어(실화면 2026-11-18, H-03·H-09): [작성완료]는 「…작성이 완료되었어요. 신청하시겠습니까?」 레이어(UTECAAA0A016)를 열 뿐이고
+   * 신청은 그 레이어의 [신청하기]다. 있으면 submit.signFlow.openTargets로 같은 무장 구간 안에서 [신청하기]를 한 번 누른다(H-01 확인 창 [인증하기]와 같은 모양).
+   */
+  confirmLayer?: { apply: { name: string; css: string }; root: string };
+  /** 패키지 판(없으면 CERT_VERSION) */
+  version?: string;
   /** 메뉴·양식 캡처 메모(캡처했으면 없음) */
   menuCapture?: string;
   formCapture?: string;
@@ -122,7 +129,9 @@ export const CERT_DOCS: readonly CertDoc[] = [
   {
     code: 'H-03', id: 'hometax.cert.biz_registration', docType: 'biz_registration_cert', name: '사업자등록증명',
     title: '사업자등록증명 발급', confirm: '사업자등록증명을 발급할까요?', fields: [],
-    menuCode: '4315010800', formTitle: '사업자등록증명 발급 신청', submit: { name: '작성완료', css: '#mf_txppWframe_btn_wrtCmpl' },
+    menuCode: '4315010800', formTitle: '사업자등록증명 발급 신청',
+    submit: { name: '작성완료', css: '#mf_txppWframe_btn_wrtCmpl' },
+    confirmLayer: { apply: { name: '신청하기', css: '#mf_txppWframe_UTECAAA0A016_wframe_btn_sbms' }, root: '#mf_txppWframe_UTECAAA0A016' }, version: '1.0.1',
   },
   {
     code: 'H-08', id: 'hometax.cert.vat_tax_base', docType: 'vat_tax_base_cert', name: '부가가치세 과세표준증명',
@@ -145,7 +154,9 @@ export const CERT_DOCS: readonly CertDoc[] = [
     fields: [
       { input: 'fiscalYear', inputDef: { type: 'string', required: true }, fieldKey: 'fiscalYear', label: '과세년도', role: 'textbox', css: '#mf_txppWframe_ibx_txyr' },
     ],
-    menuCode: '4315011800', formTitle: '표준재무제표증명(개인/법인) 신청', submit: { name: '작성완료', css: '#mf_txppWframe_btn_wrtCmpl' },
+    menuCode: '4315011800', formTitle: '표준재무제표증명(개인/법인) 신청',
+    submit: { name: '작성완료', css: '#mf_txppWframe_btn_wrtCmpl' },
+    confirmLayer: { apply: { name: '신청하기', css: '#mf_txppWframe_UTECAAA0A016_wframe_btn_sbms' }, root: '#mf_txppWframe_UTECAAA0A016' }, version: '1.0.1',
   },
 ];
 
@@ -193,6 +204,10 @@ export const SUBMIT_TO = ['금융기관', '관공서', '조합/협회', '거래�
 const RECEIVE = '인터넷발급(프린터출력)';
 const COPIES = '1매';
 const ALERT = 'hometax.cert.alert';
+const CONFIRM_LAYER = 'hometax.cert.confirm.root';
+const CONFIRM_APPLY = 'hometax.cert.confirm.apply';
+/** 신청 확인 레이어의 [신청하기]를 기다리는 상한(submit.signFlow.maxWaitMs) */
+const CONFIRM_WAIT_MS = 30_000;
 
 /** 양식: 공통 칸(서류·신청인·발급유형·용도·제출처·주민번호 공개·수령방법·수량) + 서류별 칸 + 제출 버튼 + 메뉴 차단 알림 */
 function formEntries(doc: CertDoc): Record<string, TplEntry> {
@@ -228,8 +243,21 @@ function formEntries(doc: CertDoc): Record<string, TplEntry> {
       candidates: [...(doc.submit.css ? [{ kind: 'css' as const, value: doc.submit.css }] : []), role('button', doc.submit.name)], expect: { visible: true, enabled: true },
       role: 'button', namePattern: lit(doc.submit.name), landmark: FORM, commits: true, commitEffect: 'issue_document',
     },
-    capture: `[${doc.submit.name}]을 유효한 값으로 누른 뒤: 확인창·전자서명 창이 뜨는지, wqAction actionId(HAR → commitEndpoints). 접수가 실제로 생기므로 사용자 승인 뒤`,
+    ...(doc.confirmLayer ? {} : { capture: `[${doc.submit.name}]을 유효한 값으로 누른 뒤: 확인창·전자서명 창이 뜨는지, wqAction actionId(HAR → commitEndpoints). 접수가 실제로 생기므로 사용자 승인 뒤` }),
   };
+  const layer = doc.confirmLayer;
+  if (layer) {
+    // 레이어는 [작성완료] 때 새로 그려지고 닫으면 DOM에서 빠진다. 위치를 가정하지 않게 자기 자신을 랜드마크로 둔다
+    out[CONFIRM_LAYER] = { entry: { candidates: [{ kind: 'css', value: layer.root }], role: 'generic', namePattern: '^$', landmark: CONFIRM_LAYER, commits: false } };
+    out[CONFIRM_APPLY] = {
+      entry: {
+        candidates: [{ kind: 'css', value: layer.apply.css }, role('button', layer.apply.name)], expect: { visible: true, enabled: true },
+        role: 'button', namePattern: lit(layer.apply.name), landmark: CONFIRM_LAYER, commits: true, commitEffect: 'issue_document',
+        reviewNote: { by: 'cert-docs', reason: '[작성완료]가 연 신청 확인 레이어(UTECAAA0A016)의 [신청하기]가 실제 신청이다(실화면 2026-11-18). submit 무장 구간에서만 누른다' },
+      },
+      capture: `[${layer.apply.name}]을 누른 뒤: 전자서명 창이 뜨는지(뜨면 signFlow readyTarget·doneTarget을 더한다), wqAction actionId(HAR → commitEndpoints). 접수가 실제로 생기므로 사용자 승인 뒤`,
+    };
+  }
   // 메뉴 차단 알림(.w2window.msg). id(mf_wfHeader_info<숫자>)는 매번 바뀌어 css 후보를 쓸 수 없다 → 역할·이름
   out[ALERT] = {
     entry: { candidates: [role('dialog', '알림')], role: 'dialog', namePattern: '^알림$', landmark: 'hometax.page.root', commits: false },
@@ -311,8 +339,12 @@ function steps(doc: CertDoc): Step[] {
     },
     ...dateEq,
     { id: 's20', type: 'gate', card: 'cert.confirm', authorizes: ['s21'], waitMs: 600000 },
-    // 확인 대화상자·전자서명 창이 뜨는지는 캡처로 확인한다(뜨면 expectConfirm·signFlow를 더한다, 정식 버전)
-    { id: 's21', type: 'submit', target: 'hometax.cert.form.issueButton', intent: '$intent.id', verify: 's30', onFail: { retry: 0, then: 'handoff' } },
+    // 레이어 있는 서류(H-03·H-09)는 [작성완료] 뒤 같은 무장 구간에서 레이어의 [신청하기]를 한 번 누른다(signFlow.openTargets, 사람 몫 없음).
+    // [신청하기] 뒤 전자서명 창이 뜨는지는 아직 캡처 전이다(뜨면 readyTarget·doneTarget을 더한다). H-08은 양식의 [신청하기] 하나다
+    {
+      id: 's21', type: 'submit', target: 'hometax.cert.form.issueButton', intent: '$intent.id', verify: 's30', onFail: { retry: 0, then: 'handoff' },
+      ...(doc.confirmLayer ? { signFlow: { method: '$profile.signMethod', openTargets: [CONFIRM_APPLY], maxWaitMs: CONFIRM_WAIT_MS } } : {}),
+    },
     {
       id: 's30', type: 'verify',
       lookup: {
@@ -322,7 +354,7 @@ function steps(doc: CertDoc): Step[] {
         window: 'today', baseline: 'pre_gate_snapshot', notCommittedPolicy: { minElapsedMs: 60000, lookups: 2 }, bind: { approvalNo: 'issueNo' },
       },
       failSignals: [{ css: '#errorDialog', text: '^(발급|신청)(이|에) 실패했습니다.*$' }],
-      // 발급 안 됨이면 게이트를 지배하는 체크포인트(s10a: 양식 주소 또는 홈)로 돌아가 다시 채운다
+      // 발급 안 됨이면 게이트를 지배하는 체크포인트(s10a: 양식 주소 또는 홈)로 돌아가 다시 채운다. 같은 실행에서 두 번째면 조율기가 멈춘다(NOT_COMMITTED_RETRIES)
       on: { committed: 's32', not_committed: 's10a', unknown: 'handoff' },
     },
     // 홈택스 민원증명 PDF 경로는 실측 전이다(R2 §4·R10 §1). 인쇄 경로로 두고 캡처 결과로 정한다
@@ -353,9 +385,9 @@ const strings = (doc: CertDoc): Record<string, string> => ({
   'cert.block.personalOnly': '^.*해당 화면은 개인사업자는 이용할 수 없습니다\\..*$',
 });
 
-function manifest(id: string, kind: 'playbook' | 'lookup', title: string, lookupsUsed: unknown[], bundles: unknown[], effects: string[]) {
+function manifest(id: string, kind: 'playbook' | 'lookup', title: string, lookupsUsed: unknown[], bundles: unknown[], effects: string[], version = CERT_VERSION) {
   return {
-    id, version: CERT_VERSION, kind, portal: 'hometax', title, profileKinds: ['business'], engineRange: '>=1.0.0 <2.0.0', domains: DOMAINS, effects,
+    id, version, kind, portal: 'hometax', title, profileKinds: ['business'], engineRange: '>=1.0.0 <2.0.0', domains: DOMAINS, effects,
     bundlesUsed: bundles, lookupsUsed, contentDigests: { playbook: ZERO, selectors: ZERO, strings: ZERO }, createdAt: '2026-11-09T00:00:00+09:00', signatures: SIGS,
   };
 }
@@ -364,9 +396,9 @@ function manifest(id: string, kind: 'playbook' | 'lookup', title: string, lookup
 export function certPackage(doc: CertDoc): PackageFiles {
   const entries = { ...pageEntries(), ...menuEntries(doc), ...formEntries(doc) };
   return {
-    manifest: manifest(doc.id, 'playbook', 'cert.title', [{ id: LOOKUP_ID, version: CERT_VERSION, digest: ZERO }], [], ['issue_document']),
+    manifest: manifest(doc.id, 'playbook', 'cert.title', [{ id: LOOKUP_ID, version: CERT_VERSION, digest: ZERO }], [], ['issue_document'], doc.version),
     playbook: {
-      ir: 2, id: doc.id, version: CERT_VERSION, portal: 'hometax', profileKinds: ['business'], effects: ['issue_document'], inputs: inputs(doc),
+      ir: 2, id: doc.id, version: doc.version ?? CERT_VERSION, portal: 'hometax', profileKinds: ['business'], effects: ['issue_document'], inputs: inputs(doc),
       preconditions: [{ profileHas: 'signMethod' }, { profileHas: 'bizNo' }],
       steps: steps(doc),
       postconditions: [{ varSet: 'issueNo' }, { artifact: 'pdf' }],

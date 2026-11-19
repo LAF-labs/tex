@@ -34,6 +34,7 @@ export type CodefClientType = 'B' | 'P';
  * - password_wrong·password_locked: 인증서 비밀번호
  * - cert_not_registered: 이 인증서가 그 은행에 등록되지 않음(타기관 인증서 등록 안내)
  * - cert_expired: 만료·폐기, cert_kind: 개인/기업 용도가 맞지 않음
+ * - identity_required: 은행이 본인인증을 먼저 요구(CF-12831 "본인인증 후 서비스 이용이 가능합니다"). 사람이 그 은행 인터넷뱅킹에서 본인인증을 한 번 마치면 된다
  * - two_way_required: 추가 인증 필요(인증서 로그인에서는 드묾 — 지금은 지원하지 않고 파일 올리기 안내)
  * - bank_error: 은행이 거절(원문은 보이지 않는다), bank_busy: 일시 오류·시간 초과
  * - session_lost: connectedId가 CODEF에 없다(다시 연결), codef_off: 서버에 CODEF 설정 없음, unavailable: 네트워크·CODEF 장애
@@ -45,6 +46,7 @@ export type CodefFailure =
   | 'cert_expired'
   | 'cert_kind'
   | 'two_way_required'
+  | 'identity_required'
   | 'bank_error'
   | 'bank_busy'
   | 'session_lost'
@@ -78,6 +80,8 @@ const MAP: Record<string, CodefFailure> = {
   'CF-12808': 'cert_expired',
   'CF-12810': 'cert_kind',
   'CF-03002': 'two_way_required',
+  // 2026-11-18 실기기: 인증서 비밀번호까지 맞았는데 계정 등록이 이 코드로 거절됐다(CODEF 오류코드 표: 본인인증 후 서비스 이용 가능)
+  'CF-12831': 'identity_required',
   'CF-04008': 'session_lost',
   'CF-04019': 'session_lost',
   'CF-04014': 'session_lost',

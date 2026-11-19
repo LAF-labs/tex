@@ -8,7 +8,7 @@ import { chacha20poly1305 } from '@noble/ciphers/chacha.js';
 import type { EventLog } from '@sax/platform';
 import type { KeyStore } from '../keystore.ts';
 import {
-  AIK_PURPOSES, CRYPTO_MSG_MAX, NOISE_CONTEXTS, RK_LINK_INFO, RK_SEALS_PER_DAY, SHARE_EPOCH_MAX, SHARE_KEY_INFO_PREFIX, SHARE_SIGN_CONTEXT, SHARE_SIGN_INFO, SHARE_SIGN_MSG_MAX, VD_PURPOSES,
+  AIK_PURPOSES, CRYPTO_MSG_MAX, NOISE_CONTEXTS, RK_ESCROW_INFO, RK_LINK_INFO, RK_SEALS_PER_DAY, SHARE_EPOCH_MAX, SHARE_KEY_INFO_PREFIX, SHARE_SIGN_CONTEXT, SHARE_SIGN_INFO, SHARE_SIGN_MSG_MAX, VD_PURPOSES,
   type HpkeOpenParams, type NoiseDhParams, type RkImportParams, type RkSealParams, type ShareKeyParams, type SignAikParams, type SignShareParams, type SignVdParams, type VaultPublicKeys,
 } from '../protocol.ts';
 
@@ -89,6 +89,7 @@ function x25519(priv: KeyObject, remotePub: Uint8Array): Uint8Array {
 }
 
 const isBytes = (x: unknown, min: number, max: number): x is Uint8Array => x instanceof Uint8Array && x.length >= min && x.length <= max;
+const isRkInfo = (x: unknown): x is typeof RK_LINK_INFO | typeof RK_ESCROW_INFO => x === RK_LINK_INFO || x === RK_ESCROW_INFO;
 
 // ───────────────────────── HPKE(RFC 9180) Base 개봉 ─────────────────────────
 
@@ -356,7 +357,7 @@ export class VaultCrypto {
    */
   async rkSeal(x: unknown): Promise<{ enc: Uint8Array; ct: Uint8Array }> {
     const p = x as Partial<RkSealParams> | undefined;
-    if (!isBytes(p?.recipient, 32, 32) || p?.info !== RK_LINK_INFO || !isBytes(p?.aad, 32, 32)) throw new Error('bad_params');
+    if (!isBytes(p?.recipient, 32, 32) || !isRkInfo(p?.info) || !isBytes(p?.aad, 32, 32)) throw new Error('bad_params');
     const now = this.now();
     const recent = this.rkSeals.filter((t) => now - t < 86_400_000);
     if (recent.length >= RK_SEALS_PER_DAY) {
@@ -367,11 +368,11 @@ export class VaultCrypto {
     const rk = await this.o.keyStore.get(CRYPTO_KEY_ITEMS.rk, 32);
     if (!rk) throw new Error('vault.keystore_mismatch');
     try {
-      const out = hpkeSealBase(p.recipient!, enc.encode(RK_LINK_INFO), p.aad!, rk);
+      const out = hpkeSealBase(p.recipient!, enc.encode(p.info), p.aad!, rk);
       this.rkSeals.length = 0;
       this.rkSeals.push(...recent, now);
       this.audit('rkSeal');
-      this.o.log.event('vault.rk_sealed');
+      this.o.log.event('vault.rk_sealed', { to: p.info === RK_ESCROW_INFO ? 'escrow' : 'pc' });
       return out;
     } finally {
       rk.fill(0);
@@ -384,13 +385,13 @@ export class VaultCrypto {
    */
   async rkImport(x: unknown): Promise<Uint8Array> {
     const p = x as Partial<RkImportParams> | undefined;
-    if (!isBytes(p?.enc, 32, 32) || !isBytes(p?.ct, 48, 48) || p?.info !== RK_LINK_INFO || !isBytes(p?.aad, 32, 32) || !isBytes(p?.aikPub, 32, 32)) throw new Error('bad_params');
+    if (!isBytes(p?.enc, 32, 32) || !isBytes(p?.ct, 48, 48) || !isRkInfo(p?.info) || !isBytes(p?.aad, 32, 32) || !isBytes(p?.aikPub, 32, 32)) throw new Error('bad_params');
     const link = this.link;
     if (!link) throw new Error('no_link_key');
     this.audit('rkImport');
     let rk: Uint8Array;
     try {
-      rk = hpkeOpenBase(link.priv, link.pub, p.enc!, enc.encode(RK_LINK_INFO), p.aad!, p.ct!);
+      rk = hpkeOpenBase(link.priv, link.pub, p.enc!, enc.encode(p.info), p.aad!, p.ct!);
     } catch (e) {
       this.o.log.event('vault.rk_import_failed', { reason: 'open' });
       throw e;

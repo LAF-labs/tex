@@ -17,6 +17,7 @@ export * from './acctclaim.ts';
 export * from './devhosts.ts';
 export * from './pairing.ts';
 export * from './pclink.ts';
+export * from './escrow.ts';
 export * from './qbundle.ts';
 export * from './qr.ts';
 export * from './queue.ts';

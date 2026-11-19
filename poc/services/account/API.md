@@ -185,6 +185,21 @@ PC가 2대 이상인 계정에서 홈택스 발급은 잠금을 잡은 PC 하나
 
 새 PC가 정지·폐기되면 그 신청도 바로 지운다. 답한 PC가 사라져 멈춘 신청은 새 PC가 hello를 다시 올려 새로 시작한다.
 
+## 계정 열쇠 보관(ADR-050)
+
+쓰던 PC 없이 로그인한 새 PC가 이메일 인증만으로 붙게 한다(대표 결정 2026-11-18). 로그인된 PC가 계정 루트키(RK)를 이 서비스의 보관 키(`KEY_ESCROW_KEY`의 X25519 공개키)로 HPKE 봉인해 맡기고, 새 PC는 계정 세션으로 받아 금고에 넣은 뒤 자기를 더한 AIK 서명 목록을 올린다. **이 서비스는 맡긴 열쇠를 열 수 있다**(받기 호출 동안 평문 RK가 메모리에 있다). `KEY_ESCROW_KEY`가 없으면 넷 다 `404 request.not_found`이고 새 PC는 아래 "새 PC 연결 우편함"으로 붙는다. 봉인은 RFC 9180 Base(DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305), info `SAX-rk-escrow-v1`.
+
+| 메서드·경로 | 인증 | 요청 | 응답 | 오류 |
+|---|---|---|---|---|
+| `GET /v1/key-escrow` | 기기:devlist | — | `200 {pub, stored}` | `pub`은 보관 키 공개키(b64 32B). `stored`는 이 계정의 지금 AIK·지금 보관 키로 맡긴 줄이 있을 때만 true |
+| `PUT /v1/key-escrow` | 기기:devlist(활성 데스크톱) | `{enc(b64 32B), ct(b64 48B)}` | `204` | aad는 `SHA-256("SAX-rk-escrow-store-v1" ‖ AIK_pub)`. 열어서 나온 AIK 공개키가 계정의 AIK와 다르면 `400 request.param_rejected`. 다시 올리면 바꾼다 |
+| `POST /v1/key-escrow/claim` | 세션 | `{deviceId(uuid4), Hx(b64 32B)}` | `200 {aikPub, enc, ct}` | `deviceId`는 내 계정의 신청 중이거나 활성인 데스크톱(`404 account.device_not_found`). 맡긴 줄이 없거나 열리지 않으면 `409 account.escrow_missing`. 패스키 계정은 `403 account.passkey_required`. 계정당 하루 6번. 응답은 `Hx`로 봉인한 RK이고 aad는 `SHA-256("SAX-rk-escrow-claim-v1" ‖ AIK_pub ‖ utf8(deviceId) ‖ Hx)` |
+| `POST /v1/key-escrow/join` | 세션 | `{deviceId(uuid4), deviceList}` | `200 {listVersion}` | 검사는 `PUT /v1/device-list`와 같다(AIK 서명, 버전, 신청한 키, 한도). 항목이 정확히 하나 늘고 폐기 레코드가 그대로여야 한다(아니면 400). 성공하면 그 데스크톱이 활성이 되고 연결 우편함의 신청은 지운다 |
+| `GET /v1/key-escrow/pub` | 세션 | — | `200 {pub}` | 보관 키 공개키. 아직 기기 토큰이 없는 PC(첫 등록, 열쇠 새로 걸기)가 자기 열쇠를 봉인하는 데 쓴다 |
+| `POST /v1/key-escrow/reset` | 세션 | `{deviceId(uuid4), aikPub, deviceList, enc, ct}` | `200 {listVersion}` | 개정 1: 맡긴 열쇠가 없는 계정에 이 PC의 열쇠를 새 계정 열쇠로 건다. 지금 보관 키로 열리는 맡긴 열쇠가 있으면 `409 account.aik_already_pinned`. 봉인을 연 AIK가 `aikPub`이 아니면 400. 목록은 새 AIK 서명, 버전 +1, 폐기 레코드 없음, 항목은 계정의 활성·정지 데스크톱 전부와 이 PC(빠지거나 폰이 있으면 400). 계정의 폰은 폐기하고 공유 기록 서버 사본(`share_rows`·`share_tasks`)과 PC 연결 신청을 지운다. 알림 메일 `aik_pinned`(폰이 있었으면 `device_revoked`). 한도는 claim과 같이 센다 |
+
+`POST /v1/aik`는 `escrow {enc, ct}`를 함께 받는다(선택). 첫 PC가 등록과 같은 요청으로 열쇠를 맡긴다. 보관 기능이 꺼진 서버는 이 필드를 보지 않는다.
+
 ## 프로필 슬롯·사업자 HMAC(B-28, C-09)
 
 | 메서드·경로 | 인증 | 요청 | 응답 | 오류 |

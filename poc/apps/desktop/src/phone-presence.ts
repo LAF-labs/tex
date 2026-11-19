@@ -45,3 +45,12 @@ export class StayAwake {
     this.#log(want);
   }
 }
+
+/**
+ * 계정 화면이 바뀔 때(로그인·로그아웃·새 PC 연결 끝) 폰 수신을 켤지.
+ * 기기 신원이 있는데 수신이 꺼져 있으면 켠다. 전에는 앱을 켤 때만 켜서, 같은 실행에서 로그아웃 → 다시 로그인하면
+ * 앱을 다시 켤 때까지 폰이 "PC 꺼짐"으로 보였다(로그아웃은 수신을 멈추고 버린다).
+ */
+export function shouldStartPhones(o: { signedIn: boolean; running: boolean }): boolean {
+  return o.signedIn && !o.running;
+}

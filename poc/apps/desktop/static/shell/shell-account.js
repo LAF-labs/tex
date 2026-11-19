@@ -16,6 +16,7 @@ const ERR = {
   'account.passkey_required': '이 계정은 패스키로 로그인해야 해요. 패스키 로그인은 곧 지원해요',
   'account.device_limit': '이 계정에는 PC가 3대 연결돼 있어요. 쓰던 PC의 설정 > 기기 연결에서 하나를 끊은 뒤 다시 로그인해 주세요',
   // 새 PC 연결(ADR-048 결정 3)이 끝나지 못했을 때. 화면은 로그인 처음으로 돌아온다
+  'account.key_changed': '다른 PC에서 이 계정에 새로 로그인했어요. 이메일로 다시 로그인하면 이어서 쓸 수 있어요',
   'account.link_rejected': '쓰던 PC에서 연결을 거절했어요. 다시 하려면 다시 로그인해 주세요',
   'account.link_expired': '시간이 지나 연결을 마치지 못했어요. 다시 로그인해 주세요',
   'account.link_mismatch': '쓰던 PC의 답이 맞지 않아 연결하지 않았어요. 다시 로그인해 주세요',

@@ -16,6 +16,7 @@ export const CODEF_SOURCE_CODES: Record<CodefFailure, string> = {
   cert_kind: 'source.cert_kind',
   cert_missing: 'source.cert_missing',
   two_way_required: 'source.needs_user',
+  identity_required: 'source.needs_user',
   account_password_required: 'source.needs_user',
   cancelled: 'source.cancelled',
   bank_error: 'source.bank_error',

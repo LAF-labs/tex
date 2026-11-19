@@ -371,6 +371,7 @@ describe('CODEF 원천: 오류 갈래(사람 말 코드)', () => {
     ['CF-12805', 'cert_not_registered', 'createAsErrorList'],
     ['CF-12810', 'cert_kind', 'createCode'],
     ['CF-03002', 'two_way_required', 'createCode'],
+    ['CF-12831', 'identity_required', 'createCode'],
     ['CF-12100', 'bank_error', 'createCode'],
     ['CF-55555', 'rejected', 'createCode'],
   ];

@@ -48,6 +48,12 @@ export const VERIFY_ID_COLUMN = 'approvalNo';
 export const VERIFY_FAILS_IN_A_ROW = 3;
 /** 다시 조회하는 간격: 첫 간격부터 두 배씩, 상한(D03 §5.6 10·20·40초). */
 export const VERIFY_INTERVALS = Object.freeze({ firstMs: 10_000, capMs: 40_000 });
+/**
+ * 사후 부수효과 확인(baseline:none, 골든 s33 메일 발송)은 첫 조회 전과 조회 사이를 첫 간격의 이 배수로 둔다(운영 10초 → 30초).
+ * 홈택스 메일 발송 결과는 발급 뒤 수십 초 걸려 생긴다(실화면 2026-11-17: 공급받는자 메일 도착 뒤 공급자 메일 41초). 곧바로·10초마다 조회하면
+ * 조회 창만 여러 번 열린다(대표 실기기 피드백 2026-11-18 "발급 뒤 확인이 5~10번"). 상한(maxMs)과 판정 규칙은 그대로다.
+ */
+export const POST_EFFECT_SPACING = 3;
 
 export interface VerifyJudgement {
   result: VerifyResult;
@@ -223,9 +229,12 @@ export async function judgeVerify(d: VerifyDeps, s: StepOf<'verify'>): Promise<V
   if (!b0) return { result: 'unknown' };
   const dispatch = d.book.dispatch(s.id);
   const t0 = dispatch?.at ?? d.clock.now();
-  let wait = iv.firstMs;
+  const postEffect = s.lookup.baseline === 'none';
+  // 사후 확인은 상한 안에 적어도 두 번 보도록 간격을 상한의 1/3 이하로 둔다(maxMs 120초 → 30초마다, 50초 → 약 17초마다)
+  let wait = postEffect ? Math.min(iv.firstMs * POST_EFFECT_SPACING, Math.floor(maxMs / 3)) : iv.firstMs;
   let zeros = 0;
   let fails = 0;
+  if (postEffect) await d.clock.sleep(Math.min(wait, maxMs));
   while (d.clock.now() - t0 < maxMs) {
     const r = await lookupIds(d, s, 'verify');
     if (!r.ok) {
@@ -255,7 +264,7 @@ export async function judgeVerify(d: VerifyDeps, s: StepOf<'verify'>): Promise<V
       }
     }
     await d.clock.sleep(wait);
-    wait = Math.min(wait * 2, iv.capMs);
+    if (!postEffect) wait = Math.min(wait * 2, iv.capMs);
   }
   return { result: 'unknown' };
 }

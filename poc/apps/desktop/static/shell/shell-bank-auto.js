@@ -33,16 +33,30 @@ export const CONSENT_CHECKS = [
   ['keep', '(읽음) 인증서 보관 고지 — 공동인증서는 은행에서 조회 밖의 일도 할 수 있는 접근매체예요. CODEF에는 조회하는 동안만 등록하고 조회가 끝나면 바로 지워요. [이 PC에 기억]을 고르면 인증서 비밀번호가 이 PC 키체인에 남아요.'],
 ];
 
+/** 받을 돈 계좌 기록 동의(shell-bank.js 계좌 추가 동의와 같은 내용, bank.consent). 자동 연결 중에 없으면 이 카드에서 받는다 */
+export const BANK_CONSENT_LINES = [
+  '가져온 거래내역과 계좌번호는 이 PC에 암호화해 저장해요. 우리 서버와 AI 모델로 보내지 않아요.',
+  '거래내역에는 입금하신 분의 이름처럼 다른 사람의 정보도 들어 있어요. 사업 거래 확인에만 써 주세요.',
+  '앱은 돈을 보내거나 이체하지 않아요.',
+  '언제든 받을 돈 > 내 계좌에서 계좌와 거래내역을 지울 수 있어요.',
+];
+
 /** 실패 코드 → 사람 말(엔진 CodefFailure). 표에 없으면 일반 문장. 코드는 화면에 보이지 않는다 */
-export function failText(code, bank) {
+export function failText(code, bank, clientType) {
   const b = bankName(bank || '0020');
+  // CF-12805: 인증서가 고른 뱅킹(기업/개인)에 등록돼 있지 않다. 1인 사업자는 개인 인터넷뱅킹에만 인증서를 등록한 경우가 많다(2026-11-18 실기기: 우리은행·사업자로 거절)
+  const notRegistered =
+    clientType === 'P'
+      ? `이 인증서가 ${b} 개인 인터넷뱅킹에 등록돼 있지 않아요. 사업자 계좌를 기업 인터넷뱅킹으로 쓰신다면 [사업자로 다시]를 눌러 주세요. 아니면 ${b} 인터넷뱅킹에서 [인증센터 > 타기관 인증서 등록]을 한 번 해 주세요.`
+      : `이 인증서가 ${b} 기업 인터넷뱅킹에 등록돼 있지 않아요. 평소 개인 인터넷뱅킹으로 사업자 계좌를 보신다면 [개인 뱅킹으로 다시]를 눌러 주세요. 기업 인터넷뱅킹을 쓰신다면 그곳에서 [인증센터 > 타기관 인증서 등록]을 한 번 해 주세요.`;
   return (
     {
       password_wrong: '인증서 비밀번호가 맞지 않아요. 다시 넣어 주세요. 여러 번 틀리면 인증서가 잠길 수 있어요.',
       password_locked: '인증서 비밀번호를 여러 번 틀려 은행에서 막혔어요. 은행 인터넷뱅킹에서 먼저 풀어 주세요.',
       cert_expired: '인증서가 만료됐거나 폐기됐어요. 갱신한 인증서로 다시 연결해 주세요.',
-      cert_not_registered: `이 인증서가 ${b}에 등록되지 않았어요. ${b} 인터넷뱅킹에서 [인증센터 > 타기관 인증서 등록]을 한 번 해 주세요.`,
+      cert_not_registered: notRegistered,
       cert_kind: '이 인증서는 이 업무에 쓸 수 없어요. 사업자 계좌면 [사업자], 개인 계좌면 [개인]을 골라 다시 해 주세요.',
+      identity_required: `${b}이 본인인증을 먼저 요구해요. ${b} 인터넷뱅킹이나 앱에 이 인증서로 한 번 로그인해 본인인증을 마친 뒤 다시 [자동 연결]을 눌러 주세요. 거래하는 은행이 ${b}이 아니면 은행을 바꿔 다시 해 주세요.`,
       two_way_required: '은행이 추가 인증을 요구해요. 지금은 자동 연결로 할 수 없어요. 거래내역 파일을 올려 주세요.',
       bank_error: '은행이 조회를 거절했어요. 잠시 뒤 다시 하거나 거래내역 파일을 올려 주세요.',
       bank_busy: '은행 응답이 늦어요. 잠시 뒤 다시 해 주세요.',
@@ -119,6 +133,12 @@ export function createBankAuto(ctx) {
     if (!r.ok) return fail(r);
     await toCerts();
   }
+  /** 받을 돈 계좌 기록 동의(bank.consent, 받을 돈 화면과 같은 동의)를 남기고 고른 인증서로 이어서 연결한다 */
+  async function agreeBank() {
+    const r = await ask('bank.consent');
+    if (r && r.ok === false) return fail(r);
+    await connect();
+  }
   async function toCerts() {
     go({ step: 'certs', certs: null, error: null });
     const r = await ask('bankAuto.certs');
@@ -131,6 +151,8 @@ export function createBankAuto(ctx) {
     if (!s.certId) return;
     go({ step: 'working', phase: 'password', error: null });
     const r = await ask('bankAuto.connect', { certId: s.certId, bank: s.bank, clientType: s.clientType });
+    // 받을 돈의 계좌 기록 동의가 없으면 다른 화면으로 보내지 않고 이 카드에서 받는다(2026-11-18 실기기: [받을 돈 보기]로 가면 [계좌 추가]를 눌러야 동의가 나와 막혔다)
+    if (!r.ok && r.code === 'bank_consent_required') return go({ step: 'bankConsent', phase: null, error: null });
     if (!r.ok) return fail(r);
     go({ step: 'accounts', session: r.sessionId, accounts: r.accounts, pick: (r.accounts.find((a) => a.usable) || {}).key || null, phase: null });
   }
@@ -205,6 +227,14 @@ export function createBankAuto(ctx) {
             CONSENT_CHECKS.map(([k, t]) => h('label', { class: 'auth-row' }, h('input', { type: 'checkbox', checked: !!s.checks[k], 'data-bank-check': k, onchange: (e) => go({ checks: { ...s.checks, [k]: e.target.checked } }) }), h('span', { class: 'opt-main sx-body-sm' }, t))),
             h('div', { class: 'sx-actions' }, btn('동의하고 인증서 고르기', agree, 'sx-btn-primary', { disabled: !CONSENT_CHECKS.every(([k]) => s.checks[k]), 'data-bank-consent': '' }), btn('파일로만 쓸게요', upload, 'sx-btn-quiet'), btn('그만두기', () => load(), 'sx-btn-quiet')),
           );
+        case 'bankConsent':
+          return h(
+            'div',
+            { class: 'sx-card', 'data-bank-auto': 'bank-consent', onkeydown: esc(() => load()) },
+            h('h3', { class: 'sx-card-title' }, '받을 돈 맞추기에 쓸 계좌 기록 동의'),
+            h('ul', { class: 'sx-body-sm' }, BANK_CONSENT_LINES.map((t) => h('li', {}, t))),
+            h('div', { class: 'sx-actions' }, btn('동의하고 이어서 연결', agreeBank, 'sx-btn-primary', { 'data-bank-consent-go': '' }), btn('그만두기', () => load(), 'sx-btn-quiet')),
+          );
         case 'certs':
           return h(
             'div',
@@ -267,12 +297,16 @@ export function createBankAuto(ctx) {
         case 'error': {
           // 오류 = 확인 필요 알림 한 줄 + [다시 시도]. 그 아래 조용한 단추로 닫기와 파일 길
           const e = s.error || {};
+          // 인증서가 고른 뱅킹에 등록되지 않았으면 다른 뱅킹(기업↔개인)으로 같은 인증서를 한 번에 다시 해 본다
+          const other = s.clientType === 'P' ? 'B' : 'P';
           const retry =
             e.code === 'bank_consent_required'
               ? bankLink()
-              : btn('다시 시도', s.status && s.status.connected ? refresh : e.code === 'password_wrong' ? connect : toCerts, 'sx-btn-quiet', { 'data-bank-retry': '' });
+              : e.code === 'cert_not_registered' && s.certId
+                ? btn(other === 'P' ? '개인 뱅킹으로 다시' : '사업자로 다시', () => ((s.clientType = other), void connect()), 'sx-btn-quiet', { 'data-bank-switch-type': other })
+                : btn('다시 시도', s.status && s.status.connected ? refresh : e.code === 'password_wrong' ? connect : toCerts, 'sx-btn-quiet', { 'data-bank-retry': '' });
           return [
-            h('div', { class: 'sx-note is-attention', role: 'alert', 'data-bank-auto': 'error', 'data-code': e.code || '' }, icon('warn'), h('div', {}, failText(e.code, s.status?.bank || s.bank)), retry),
+            h('div', { class: 'sx-note is-attention', role: 'alert', 'data-bank-auto': 'error', 'data-code': e.code || '' }, icon('warn'), h('div', {}, failText(e.code, s.status?.bank || s.bank, s.clientType)), retry),
             h('div', { class: 'sx-actions' }, btn('닫기', () => load(), 'sx-btn-quiet'), fileLink()),
           ];
         }
