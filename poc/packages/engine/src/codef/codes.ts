@@ -125,6 +125,11 @@ export class CodefError extends Error {
   hint: string | null = null;
   /** 어느 뱅킹(B 기업·P 개인)에서 난 실패인가(둘 다 해 봤을 때 화면 문구용) */
   clientType: CodefClientType | null = null;
+  /**
+   * 화면에 보이는 실패 말고 다른 뱅킹에서 사람이 할 수 있는 일(코드만, 값 없음).
+   * 개인 뱅킹이 계좌번호를 묻고 기업 뱅킹이 은행 본인인증을 요구하면, 계좌번호 카드에 "은행에서 한 번 로그인" 길도 같이 보인다(2026-11-19 실기기: 우리은행)
+   */
+  also: { clientType: CodefClientType; code: CodefFailure } | null = null;
   withClientType(t: CodefClientType): this {
     this.clientType = t;
     return this;
@@ -136,4 +141,16 @@ export class CodefError extends Error {
     this.retryAt = retryAt;
     this.param = param && /^[A-Za-z_]{1,120}$/.test(param) ? param : null;
   }
+}
+
+/** 엔진 RPC 실패 결과({ok:false}). 화면이 사람 말을 고를 코드만 담는다(값·원문 메시지·빠진 키·단서는 로그 전용) */
+export function codefFailResult(e: CodefError): Record<string, unknown> {
+  return {
+    ok: false,
+    code: e.code,
+    ...(e.cf ? { cf: e.cf } : {}),
+    ...(e.retryAt ? { retryAt: e.retryAt } : {}),
+    ...(e.clientType ? { clientType: e.clientType } : {}),
+    ...(e.also ? { also: { clientType: e.also.clientType, code: e.also.code } } : {}),
+  };
 }

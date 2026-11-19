@@ -4,8 +4,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
 // 정적 JS 모듈(타입 없음). document는 그릴 때만 쓴다
-const { failText } = (await import('../apps/desktop/static/shell/shell-bank-auto.js')) as unknown as {
+const { failText, otherWayText, withdrawOk, WITHDRAW_LEN_TEXT } = (await import('../apps/desktop/static/shell/shell-bank-auto.js')) as unknown as {
   failText: (code: string, bank?: string, clientType?: 'B' | 'P') => string;
+  otherWayText: (also: unknown, bank?: string) => string | null;
+  withdrawOk: (digits: string) => boolean;
+  WITHDRAW_LEN_TEXT: string;
 };
 const src = fs.readFileSync(new URL('../apps/desktop/static/shell/shell-bank-auto.js', import.meta.url), 'utf8');
 
@@ -43,6 +46,38 @@ describe('자동 연결 카드', () => {
   });
   it('은행이 계좌번호를 같이 확인하자고 하면 계좌번호 칸 하나', () => {
     assert.match(src, /case 'withdraw':/);
-    assert.match(src, /r\.code === 'withdraw_account_required'\) return go\(\{ step: 'withdraw'/);
+    assert.match(src, /r\.code === 'withdraw_account_required'\)\s*return go\(\{ step: 'withdraw'/);
+  });
+});
+
+// 2026-11-19 실기기(라프·우리은행): 계좌번호 칸에 4자리를 넣고 세 번 실패했는데 번호는 은행에 가지도 않았고 화면은 "은행이 받지 않았어요"였다.
+// 기업 뱅킹 본인인증(CF-12831) 안내도 계좌번호 카드에 가려 보이지 않았다.
+describe('계좌번호 카드: 덜 넣은 번호·다른 길', () => {
+  it('계좌번호는 숫자 10~16자리만 보낸다', () => {
+    assert.equal(withdrawOk('0200'), false);
+    assert.equal(withdrawOk('100212345'), false);
+    assert.equal(withdrawOk('1002123456789'), true);
+    assert.equal(withdrawOk('12345678901234567'), false);
+    assert.match(WITHDRAW_LEN_TEXT, /10~16자리/);
+  });
+  it('덜 넣은 번호는 비밀번호를 묻기 전에 칸에서 알린다(은행이 받지 않았다고 말하지 않는다)', () => {
+    const connect = src.slice(src.indexOf('async function connect()'), src.indexOf('function landed('));
+    const check = connect.indexOf('!withdrawOk(withdraw)) return go({ msg: WITHDRAW_LEN_TEXT })');
+    assert.ok(check > 0, '길이 확인이 connect 안에 있다');
+    assert.ok(check < connect.indexOf("go({ step: 'working', phase: 'password'"), '금고 창을 열기 전에 막는다');
+    assert.match(connect, /msg: withdrawOk\(withdraw\) \? `\$\{bankName\(s\.bank\)\}이 이 계좌번호를 받지 않았어요/);
+  });
+  it('기업 뱅킹이 본인인증을 요구하면 계좌번호 대신 은행에서 한 번 로그인하는 길도 한 줄로', () => {
+    assert.match(otherWayText({ clientType: 'B', code: 'identity_required' }, '0020')!, /또는 우리은행 기업 인터넷뱅킹에 이 인증서로 한 번 로그인한 뒤, 칸을 비운 채 \[계속\]/);
+    assert.match(otherWayText({ clientType: 'B', code: 'banking_kind' }, '0020')!, /우리은행 기업 인터넷뱅킹/);
+    assert.match(otherWayText({ clientType: 'B', code: 'cert_not_registered' }, '0004')!, /국민은행 인터넷뱅킹에서 \[인증센터 > 타기관 인증서 등록\]/);
+    assert.match(src, /'data-bank-other-way'/);
+  });
+  it('사람이 할 일이 아니면 줄을 더하지 않고, 화면 글에 코드가 없다', () => {
+    assert.equal(otherWayText(null, '0020'), null);
+    assert.equal(otherWayText({ clientType: 'B', code: 'bank_error' }, '0020'), null);
+    for (const code of ['identity_required', 'banking_kind', 'cert_not_registered']) {
+      for (const clientType of ['B', 'P']) assert.doesNotMatch(otherWayText({ clientType, code }, '0020') ?? '', /CF-\d|clientType|CODEF|identity_required/);
+    }
   });
 });

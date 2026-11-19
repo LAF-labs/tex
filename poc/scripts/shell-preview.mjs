@@ -183,7 +183,8 @@ const handlers = {
   // 자동 연결 장면(bankAuto): 동의 → 인증서 → (은행이 SMS 인증번호 요구) → 보유계좌. S.bankAuto = 'sms' | 'identity'
   'bankAuto.consent': () => ({ ok: true }),
   'bankAuto.certs': () => ({ certs: [{ id: '0123456789abcdef', owner: '김하늘', usage: 'yessign 범용', expiresOn: '2027-03-01', usable: true, issuance: true }] }),
-  'bankAuto.connect': (p) => (S.bankAuto === 'withdraw' && !p.withdrawAccount ? { ok: false, code: 'withdraw_account_required', cf: 'CF-12401', clientType: 'P' } : S.bankAuto === 'identity' ? { ok: false, code: 'identity_required', cf: 'CF-12831', clientType: 'B' } : { ok: true, sessionId: 'cs1', bankName: '우리은행', step: 'sms', accounts: [] }),
+  // withdraw: 개인 뱅킹은 계좌번호, 기업 뱅킹은 본인인증(2026-11-19 실기기: 라프·우리은행)
+  'bankAuto.connect': (p) => (S.bankAuto === 'withdraw' && !p.withdrawAccount ? { ok: false, code: 'withdraw_account_required', cf: 'CF-12401', clientType: 'P', also: { clientType: 'B', code: 'identity_required' } } : S.bankAuto === 'identity' ? { ok: false, code: 'identity_required', cf: 'CF-12831', clientType: 'B' } : { ok: true, sessionId: 'cs1', bankName: '우리은행', step: 'sms', accounts: [] }),
   'bankAuto.sms': (p) =>
     p.code === '000000'
       ? { ok: true, sessionId: 'cs2', bankName: '우리은행', step: 'sms', accounts: [] }
@@ -752,6 +753,10 @@ scenes.bankAuto = async (win) => {
   await js(win, `document.querySelector('[data-bank-next]').click()`);
   await sleep(300);
   await shot(win, '75-bankauto-withdraw');
+  // 덜 넣은 번호(4자리)는 금고 창을 열지 않고 칸에서 바로 알린다
+  await js(win, `(() => { const i = document.querySelector('[data-bank-withdraw]'); i.value = '0200'; i.dispatchEvent(new Event('input')); document.querySelector('[data-bank-withdraw-go]').click(); })()`);
+  await sleep(300);
+  await shot(win, '76-bankauto-withdraw-short');
   S.bankAuto = 'sms';
 };
 

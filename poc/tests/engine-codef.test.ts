@@ -9,7 +9,7 @@ import type { AddressInfo } from 'node:net';
 import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import { ColumnCipher, openDatabase, ProfileRepo, syntheticBizNo, type Db } from '@sax/db';
 import { Egress, EgressError, decodeCodefBody, encodeCodefBody } from '../packages/net/src/index.ts';
-import { bankServicePort, CODEF_SOURCE_CODES, CodefClient, CodefError, CodefLink, codefTxnSource, memoryCodefStore, type CodefBankPort, type CodefEvent, type CodefSealPort, type SealResult } from '../packages/engine/src/codef/index.ts';
+import { bankServicePort, CODEF_SOURCE_CODES, CodefClient, CodefError, codefFailResult, CodefLink, codefTxnSource, memoryCodefStore, type CodefBankPort, type CodefEvent, type CodefSealPort, type SealResult } from '../packages/engine/src/codef/index.ts';
 import { BankService, type RefreshJob } from '../packages/engine/src/bank/service.ts';
 import { SourceError, type SourceProgress } from '../packages/engine/src/bank/source.ts';
 
@@ -651,6 +651,28 @@ describe('CODEF: 은행이 출금계좌번호를 요구하면(우리은행 개�
     mock.scenario.needWithdraw = FAKE_ACCOUNT;
     mock.scenario.createByType = { B: 'CF-12831' };
     await assert.rejects(link.connect({ certId: CERT }), (e: unknown) => e instanceof CodefError && e.code === 'withdraw_account_required' && e.clientType === 'P');
+  });
+  it('기업 뱅킹 본인인증도 함께 알리고(also), 마지막 뱅킹의 거절도 로그에 남는다(2026-11-19 실기기: 라프·우리은행)', async () => {
+    const { link, events } = await setup();
+    mock.scenario.needWithdraw = FAKE_ACCOUNT;
+    mock.scenario.createByType = { B: 'CF-12831' };
+    let caught: CodefError | null = null;
+    await link.connect({ certId: CERT }).catch((e: unknown) => void (caught = e as CodefError));
+    const e = caught as CodefError | null;
+    assert.ok(e instanceof CodefError);
+    assert.equal(e.code, 'withdraw_account_required');
+    assert.deepEqual(e.also, { clientType: 'B', code: 'identity_required' });
+    assert.ok(events.some((x) => x.phase === 'next_banking' && x.clientType === 'P' && x.code === 'withdraw_account_required'));
+    assert.ok(events.some((x) => x.phase === 'banking_failed' && x.clientType === 'B' && x.cf === 'CF-12831'), '마지막 뱅킹(기업)의 거절도 남는다');
+    // 화면으로 가는 결과에는 코드만(값·빠진 키·단서 없음)
+    const r = codefFailResult(e);
+    assert.deepEqual(r, { ok: false, code: 'withdraw_account_required', cf: 'CF-12401', clientType: 'P', also: { clientType: 'B', code: 'identity_required' } });
+  });
+  it('다른 뱅킹의 실패가 사람이 할 일이 아니면 also를 붙이지 않는다', async () => {
+    const { link } = await setup();
+    mock.scenario.needWithdraw = FAKE_ACCOUNT;
+    mock.scenario.createByType = { B: 'CF-12100' };
+    await assert.rejects(link.connect({ certId: CERT }), (e: unknown) => e instanceof CodefError && e.code === 'withdraw_account_required' && e.also === null);
   });
   it('사람이 넣은 계좌번호로 같은 비밀번호로 이어 간다(금고 창 한 번)', async () => {
     const { link, seal } = await setup();

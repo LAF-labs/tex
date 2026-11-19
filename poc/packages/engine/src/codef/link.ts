@@ -91,14 +91,14 @@ export const CODEF_REFRESH_COOLDOWN_MS = 15 * 60_000;
 /** 같은 인증서 비밀번호가 하루 이만큼 틀리면 그날은 더 보내지 않는다(호출 아낌 + 은행 잠금 전) */
 export const CODEF_PW_FAIL_MAX = 3;
 
-export type CodefPhase = 'password' | 'connecting' | 'accounts' | 'sms' | 'fetching' | 'done' | 'error' | 'next_banking' | 'order';
+export type CodefPhase = 'password' | 'connecting' | 'accounts' | 'sms' | 'fetching' | 'done' | 'error' | 'next_banking' | 'banking_failed' | 'order';
 export interface CodefEvent {
   phase: CodefPhase;
   code?: CodefFailure;
   cf?: string;
   /** CF-12401에서 빠진 계정 등록 키 이름 */
   param?: string;
-  /** next_banking: 이 뱅킹(P 개인·B 기업)이 안 돼서 다음 뱅킹으로 넘어간다 */
+  /** next_banking: 이 뱅킹(P 개인·B 기업)이 안 돼서 다음 뱅킹으로 넘어간다. banking_failed: 마지막 뱅킹도 안 됐다(로그 전용) */
   clientType?: CodefClientType;
   /** order: 해 볼 뱅킹 순서('PB' 등) */
   order?: string;
@@ -171,7 +171,11 @@ const RANK: readonly CodefFailure[] = ['withdraw_account_required', 'identity_re
 function worst(f: { e: CodefError; clientType: CodefClientType }[]): CodefError {
   for (const c of RANK) {
     const hit = f.find((x) => x.e.code === c);
-    if (hit) return hit.e.withClientType(hit.clientType);
+    if (!hit) continue;
+    // 다른 뱅킹에도 사람이 할 일이 있으면 함께 알린다(계좌번호 카드가 기업 뱅킹 본인인증 안내를 가리지 않게, 2026-11-19 실기기)
+    const other = f.find((x) => x.clientType !== hit.clientType && RANK.includes(x.e.code));
+    if (other) hit.e.also = { clientType: other.clientType, code: other.e.code };
+    return hit.e.withClientType(hit.clientType);
   }
   const last = f[f.length - 1]!;
   return last.e.withClientType(last.clientType);
@@ -291,7 +295,11 @@ export class CodefLink {
             this.emit({ phase: 'next_banking', clientType, code: e.code, ...(e.cf ? { cf: e.cf } : {}), ...(e.param ? { param: e.param } : {}), ...(e.hint ? { hint: e.hint } : {}) });
             continue;
           }
-          if (e instanceof CodefError) failures.push({ e, clientType });
+          if (e instanceof CodefError) {
+            failures.push({ e, clientType });
+            // 마지막 뱅킹의 거절도 원인이 로그에 남아야 한다(화면에는 하나만 보여 이 뱅킹의 코드가 가려진다. 2026-11-19 실기기: 기업 CF-12831이 로그에 없었다)
+            this.emit({ phase: 'banking_failed', clientType, code: e.code, ...(e.cf ? { cf: e.cf } : {}), ...(e.param ? { param: e.param } : {}), ...(e.hint ? { hint: e.hint } : {}) });
+          }
           throw failures.length ? worst(failures) : e;
         }
         // 쓰기 전에 PC DB에 먼저 적는다. 지우면 빠지고, 앱이 그 사이 꺼지면 다음 실행의 sweep이 지운다
