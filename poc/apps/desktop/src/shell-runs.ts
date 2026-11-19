@@ -4,7 +4,8 @@ import { attestSelfCheck, gateSelfCheck, type AttestRequest, type GateRequest } 
 import { actionText, ISSUED_OR_UNKNOWN, kstToday, summarize } from './approval-gate.ts';
 import type { AttestAnswerResult, AttestWithdrawn, EngineHost, GateAnswerResult } from './engine-host.ts';
 import { certDocByCode, type CertCode } from './cert-docs.ts';
-import { cleanItem, dayOffset, SIGN_LABEL, emptyPending, hm, parseAmount, split, type Counterparty, type Doc, type Drafts, type Pending, type RunView, type StepState, type VatMode } from './shell-model.ts';
+import { cleanItem, splitVat, type Vat } from '@sax/chat-core';
+import { dayOffset, SIGN_LABEL, emptyPending, hm, parseAmount, type Counterparty, type Doc, type Drafts, type Pending, type RunView, type StepState } from './shell-model.ts';
 import { emailOk } from './onboarding.ts';
 import type { ResumeItem } from './run-resume.ts';
 import type { DraftExtraValues } from './agent-chat.ts';
@@ -621,8 +622,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
   }
 
   /** item: 문장에서 뽑았거나 되묻기에서 받은 품목. 없으면 거래처의 저장 품목(추정). */
-  createDraft(cp: Counterparty, amount: number, vat: VatMode | null, item?: string | null, extra: DraftExtraValues = {}): RunView {
-    const s = split(amount, vat ?? 'separate');
+  createDraft(cp: Counterparty, amount: number, vat: Vat | null, item?: string | null, extra: DraftExtraValues = {}): RunView {
+    const s = splitVat(amount, vat ?? 'separate');
     const run: RunView = {
       id: `run-${randomUUID().slice(0, 8)}`,
       doc: 'H-01',
@@ -709,7 +710,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     r.dupToday = [...this.runs.values()].some((x) => x.id !== r.id && (x.status === 'done' || x.inDoubt === true) && x.writeDate === today && x.counterparty.id === r.counterparty.id && x.total === r.total);
   }
 
-  updateDraft(id: string, patch: { vat?: VatMode; amount?: number; amountText?: string; item?: string; email?: string; counterpartyId?: string } & DraftExtraValues): RunView {
+  updateDraft(id: string, patch: { vat?: Vat; amount?: number; amountText?: string; item?: string; email?: string; counterpartyId?: string } & DraftExtraValues): RunView {
     if (patch.amountText !== undefined) {
       const t = patch.amountText.trim();
       const v = parseAmount(/^[\d,]+$/.test(t) ? `${t}원` : t);
@@ -765,7 +766,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
       if (!emailOk(v)) throw new Error('bad_email');
       r.email = { ...r.email, value: v };
     }
-    Object.assign(r, split(r.amount, r.vat));
+    Object.assign(r, splitVat(r.amount, r.vat));
     this.markDup(r);
     this.markDate(r);
     this.emit('update', r);

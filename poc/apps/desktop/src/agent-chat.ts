@@ -3,6 +3,7 @@
 // - 모델에 돌려주는 도구 결과는 ref·status·fields·needs뿐이다(C-10). 값·행·개수·이름은 화면 쪽 결과(AgentTurnResult)에만 실린다.
 // - 초안 포트에는 준비·발급 메서드가 없다. 어떤 모델 출력으로도 run.prepare가 시작되지 않는다(발급은 카드 버튼 IPC 하나뿐).
 // - 문장·토큰·값을 로그에 남기지 않는다.
+import { cleanItem, fillWithJosa, finalOf, fixJosa, koDate, splitVat, won } from '@sax/chat-core';
 import { draftDate, issueDateRule, lineSupply, parseQuantity } from '@sax/engine';
 import { TurnRecorder } from '@sax/engine';
 import type { AgentReply, DomainCall, DraftExtra, ReactionId, RouteStep, ScreenFrame, ShownReply, StepParams, StepResult, ToolOutput, TurnEvent, Vat } from '@sax/engine';
@@ -10,8 +11,6 @@ import { CHAT_ERROR_TEXT } from './chat-reply.ts';
 
 /** 대화가 열 수 있는 앱 안 화면(@sax/chat-core OPEN_SCREENS) */
 export type OpenScreen = Extract<DomainCall, { tool: 'open_screen' }>['screen'];
-import { fillWithJosa, finalOf, fixJosa } from './josa.ts';
-import { cleanItem, split } from './shell-model.ts';
 
 type SlotField = NonNullable<ToolOutput['fields']>[number];
 type ToolNeed = NonNullable<ToolOutput['needs']>[number];
@@ -225,9 +224,8 @@ const TOOL_PHASE: Record<DomainCall['tool'], Exclude<AgentPhase, 'thinking'>> = 
 };
 
 const out = (status: ToolOutput['status'], ref: string | null = null, needs: ToolNeed[] | null = null): ToolOutput => ({ ref, status, fields: null, needs });
-const won = (n: number) => `${n.toLocaleString('en-US')}원`;
 const validAmount = (n: number) => Number.isInteger(n) && n > 0 && n <= AMOUNT_MAX;
-const supplyOf = (total: number) => split(total, 'included').supply;
+const supplyOf = (total: number) => splitVat(total, 'included').supply;
 /** 행 금액의 합(공급가는 행마다 나눈 값을 더한다: 표의 행과 같은 값). 금액 모르는 행이 있으면 null. */
 const sumOf = (rows: ReadonlyArray<{ total: number | null }>, field: 'supply' | 'total'): number | null =>
   rows.some((r) => r.total === null) ? null : rows.reduce((a, r) => a + (field === 'total' ? r.total! : supplyOf(r.total!)), 0);
@@ -245,12 +243,6 @@ function tally(rows: ReadonlyArray<{ total: number | null }>): string {
 export function monthOf(today: string, offset: number): string {
   const n = Number(today.slice(0, 4)) * 12 + Number(today.slice(5, 7)) - 1 + offset;
   return `${Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}`;
-}
-
-/** 날짜는 "10월 15일", 올해가 아니면 "2025년 12월 3일" */
-export function koDate(date: string, today: string): string {
-  const md = `${Number(date.slice(5, 7))}월 ${Number(date.slice(8, 10))}일`;
-  return date.slice(0, 4) === today.slice(0, 4) ? md : `${Number(date.slice(0, 4))}년 ${md}`;
 }
 
 /** 화면 표 한 줄. 승인번호·PDF·메일은 원장·문서함 값이고 화면에만 간다(엔진·모델에는 ref와 슬롯 집계만 간다). */

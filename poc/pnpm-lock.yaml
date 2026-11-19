@@ -202,6 +202,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@sax/chat-core':
+        specifier: workspace:*
+        version: link:../../packages/chat-core
       '@sax/daemon':
         specifier: workspace:*
         version: link:../../packages/daemon

@@ -2,7 +2,8 @@
 // 다시 시작하는 것은 커밋 전 일뿐이다: 승인 전 실행(준비·사람 차례·승인 대기)과 묶음 승인으로 차례를 기다리는 초안.
 // 승인을 보낸 뒤(거부 우선 창·발급 중·게이트 뒤 사람 차례)는 다시 시작하지 않고 상호·합계만 남겨 다음 기동에 안내 한 줄을 낸다.
 // 저장은 엔진의 암호화 DB(settings, resume.save·resume.take, main 전용)다. 평문 파일을 쓰지 않는다.
-import type { RunView, VatMode } from './shell-model.ts';
+import type { Vat } from '@sax/chat-core';
+import type { RunView } from './shell-model.ts';
 
 /** 이보다 오래된 이어 하기는 버린다(반나절 넘게 꺼져 있었으면 사람이 다시 말한다). */
 export const RESUME_MAX_MS = 6 * 3_600_000;
@@ -13,7 +14,7 @@ export interface ResumeItem {
   counterpartyId: string;
   amount: number;
   /** 고르지 않았던 부가세·저장 품목에서 온 품목은 null(다시 추정한다). */
-  vat: VatMode | null;
+  vat: Vat | null;
   item: string | null;
   /** 카드에서 고친 받는 이메일(장부 값과 다를 때만). */
   email?: string;

@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import type { Counterparty as DbCounterparty, PortalProfileKey, Profile as DbProfile } from '@sax/db';
+import type { Vat } from '@sax/chat-core';
 import type { EnginePortal } from '@sax/engine/protocol';
 import type { Channel, Revocation, TrustRoot } from '@sax/updater';
 import type { Egress } from '@sax/net';
@@ -44,7 +45,7 @@ import { barBounds, browserPanelWidth, SHELL } from './shell-layout.ts';
 import { EmbeddedBrowser, keepDrawingWhenHidden } from './embedded-browser.ts';
 import { engineIntentResolver, INTENT_UNAVAILABLE_TEXT, MODEL_CONSENT_FIRST_TEXT, routed, type IntentResolver } from './intent-route.ts';
 import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder } from './chat-reply.ts';
-import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, type SetupItem, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, type VatMode, EMPTY_REQUEST_TEXT } from './shell-model.ts';
+import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, type SetupItem, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, EMPTY_REQUEST_TEXT } from './shell-model.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { readPastRuns, type PastRun } from './run-history.ts';
 import { pendingWork, RunResumeStore } from './run-resume.ts';
@@ -2109,7 +2110,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 인자(거래처·금액·부가세)는 로컬 파서가 뽑는다(D01 §5.1). 시연(fixture)은 시연 모델(4초 상한) → 실패하면 정규식(e2e가 기댄다).
     'request.send': async (p) => {
       sendByUser = gesture.within(performance.now(), 2_000);
-      const vat = p.vat === 'separate' || p.vat === 'included' ? (p.vat as VatMode) : null;
+      const vat = p.vat === 'separate' || p.vat === 'included' ? (p.vat as Vat) : null;
       if (!termsOk()) throw new Error('onboarding_terms');
       await needLogin();
       const text = String(p.text ?? '').slice(0, 2000);

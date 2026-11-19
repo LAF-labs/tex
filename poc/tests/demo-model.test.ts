@@ -9,7 +9,8 @@ import { after, before, describe, it } from 'node:test';
 import { Egress, EgressError } from '@sax/net';
 import { DemoEgress } from '@sax/net/demo';
 import { DEFAULT_MODEL, DemoModel, demoModelConfig, mergeParsed, requestBody, toParsed } from '../apps/desktop/src/demo-model.ts';
-import { interpret, parseRegex, type Counterparty, type Drafts, type Parsed, type RunView, type VatMode } from '../apps/desktop/src/shell-mock.ts';
+import { interpret, parseRegex, type Counterparty, type Drafts, type Parsed, type RunView } from '../apps/desktop/src/shell-mock.ts';
+import type { Vat } from '@sax/chat-core';
 
 const NAMES = ['A상사', 'B상사', 'C테크'];
 const reply = (o: unknown) => ({ choices: [{ message: { content: typeof o === 'string' ? o : JSON.stringify(o) } }] });
@@ -143,7 +144,7 @@ describe('demo-model 송신', () => {
 describe('모델이 뽑은 구조로 interpret', () => {
   const CPS = NAMES.map((name, i) => ({ id: `cp-${i}`, name, bizNo: String(i), rep: '', email: '', item: '지난 품목', status: '', checkedOn: '', lastIssuedOn: null })) as Counterparty[];
   const drafts = () => {
-    const made: Array<{ cp: string; amount: number; vat: VatMode | null; item?: string | null }> = [];
+    const made: Array<{ cp: string; amount: number; vat: Vat | null; item?: string | null }> = [];
     const d: Drafts = {
       pending: { cp: null, asked: null, amount: null },
       counterparties: CPS,

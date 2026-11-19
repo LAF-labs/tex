@@ -1,4 +1,4 @@
-// @sax/chat-core 대조 시험(ADR-047 결정 4): 폰이 쓰는 순수 코어가 PC의 원본(데스크톱 값 공간 함수, @sax/model 툴셋, Node API)과 같은 결과를 내는가.
+// @sax/chat-core 대조 시험(ADR-047 결정 4): 폰이 쓰는 순수 코어가 PC의 원본(@sax/model 툴셋, Node API)과 같은 결과를 내는가.
 // 폰 앱에는 이 패키지의 고정 사본이 들어가므로, 여기서 어긋나면 폰과 PC가 같은 문장을 다르게 다룬다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -11,23 +11,14 @@ import {
   CHAT_PHONE_TOOLS,
   PHONE_PREFIX_EST_TOKENS,
   PHONE_TOOL_ARGS,
-  cleanItem,
   estimateTokens,
-  fillWithJosa,
-  finalOf,
-  fixJosa,
-  koDate,
   kstDate,
-  splitVat,
   validPhoneToolCall,
   won,
 } from '@sax/chat-core';
 import * as engine from '@sax/engine';
 import { CHAT_DIGEST, CHAT_PHONE, toolsetPrefix } from '@sax/model';
 import { Redactor, utf8Length, wasMinted } from '@sax/redaction';
-import { koDate as desktopKoDate } from '../apps/desktop/src/agent-chat.ts';
-import * as desktopJosa from '../apps/desktop/src/josa.ts';
-import { cleanItem as desktopCleanItem, split as desktopSplit } from '../apps/desktop/src/shell-model.ts';
 
 // Ajv는 @sax/model의 의존이다(시험 패키지에는 없다). 툴셋 스키마를 검증하는 그 Ajv로 대조한다.
 const Ajv2020 = (createRequire(new URL('../packages/model/package.json', import.meta.url))('ajv/dist/2020.js') as { default: new (o: { strict: boolean }) => { compile(schema: object): (v: unknown) => boolean } }).default;
@@ -58,26 +49,9 @@ describe('chat-core: 순수 TS(폰에 그대로 들어간다)', () => {
   });
 });
 
-describe('chat-core: 데스크톱 값 공간 함수와 같은 결과', () => {
-  it('조사 맞추기(josa.ts)', () => {
-    for (const v of ['한빛전자', '서울', '가나다라', 'ABC', '550,000원', '3', '7', '']) {
-      assert.equal(finalOf(v), desktopJosa.finalOf(v), v);
-      for (const rest of ['은 좋아요', '는 좋아요', '이에요.', '예요.', '으로 해요', '로 해요', '을 봐요', '가게에', '이었어요', '였어요', '과 함께', ' 그대로']) assert.equal(fixJosa(v, rest), desktopJosa.fixJosa(v, rest), `${v}|${rest}`);
-    }
-    const re = /\[[A-Z]+_\d+\]/g;
-    const vals: Record<string, string> = { '[NAME_1]': '한빛전자', '[NAME_2]': '서울상사', '[AMT_1]': '550,000원' };
-    for (const t of ['[NAME_1]는 [AMT_1]이에요.', '[NAME_2]와 [NAME_1]을 봤어요', '[NAME_9]는 몰라요', '토큰 없음']) {
-      assert.equal(fillWithJosa(t, re, (m) => vals[m[0]] ?? null), desktopJosa.fillWithJosa(t, re, (m) => vals[m[0]] ?? null), t);
-    }
-  });
-
-  it('부가세 나누기·품목 정리·날짜·금액 표기', () => {
-    for (const n of [1, 9, 10, 11, 1000, 1100, 550000, 605000, 999999, 1234567, 33_000_000]) {
-      for (const v of ['separate', 'included'] as const) assert.deepEqual(splitVat(n, v), desktopSplit(n, v), `${n} ${v}`);
-      assert.equal(won(n), `${n.toLocaleString('en-US')}원`);
-    }
-    for (const s of ['컨설팅', '  컨설팅   용역 ', '<b>자문</b>', '12345', '', 'a\u0000b', 'x'.repeat(300)]) assert.equal(cleanItem(s), desktopCleanItem(s), JSON.stringify(s));
-    for (const [d, today] of [['2026-11-03', '2026-11-16'], ['2025-12-31', '2026-01-01'], ['2026-01-09', '2026-11-16']] as const) assert.equal(koDate(d, today), desktopKoDate(d, today));
+describe('chat-core: 금액·날짜 표기와 엔진 재수출', () => {
+  it('금액·날짜 표기', () => {
+    for (const n of [1, 9, 10, 11, 1000, 1100, 550000, 605000, 999999, 1234567, 33_000_000]) assert.equal(won(n), `${n.toLocaleString('en-US')}원`);
     // KST 날짜: UTC 15시가 한국 자정이다
     assert.equal(kstDate(Date.UTC(2026, 10, 15, 14, 59)), '2026-11-15');
     assert.equal(kstDate(Date.UTC(2026, 10, 15, 15, 0)), '2026-11-16');

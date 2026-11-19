@@ -6,7 +6,8 @@ import type { ReactionId, RouteStep, ScreenFrame, StepParams, StepResult } from 
 import { kstToday } from './approval-gate.ts';
 import type { AgentChatPorts, AgentPhase, CashFlowValues, DraftCard, DraftExtraValues, DraftPatch, IssuedRow, OpenScreen, ReceivableRow } from './agent-chat.ts';
 import { INVOICE_PLAYBOOK } from './run-history.ts';
-import type { Counterparty, RunView, VatMode } from './shell-model.ts';
+import type { Vat } from '@sax/chat-core';
+import type { Counterparty, RunView } from './shell-model.ts';
 
 /** 엔진 db.query.runs.history 한 행에서 쓰는 칸(run-history.ts RunHistoryRow) */
 interface HistoryRow {
@@ -28,7 +29,7 @@ export const AGENT_HISTORY_LIMIT = 200;
 export interface AgentRuns {
   list(): RunView[];
   readonly counterparties: Counterparty[];
-  createDraft(cp: Counterparty, amount: number, vat: VatMode | null, item?: string | null, extra?: DraftExtraValues): RunView;
+  createDraft(cp: Counterparty, amount: number, vat: Vat | null, item?: string | null, extra?: DraftExtraValues): RunView;
   updateDraft(id: string, patch: DraftPatch): RunView;
   discardDraft(id: string): RunView;
 }

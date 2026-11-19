@@ -8,7 +8,8 @@ import { describe, it } from 'node:test';
 import { buildGateRequest, type GateField } from '@sax/engine/gate';
 import { AUTH_SIGN_METHOD } from '../apps/desktop/src/onboarding.ts';
 import { SIGN_LABEL } from '../apps/desktop/src/shell-model.ts';
-import { g24Candidates, interpret, MockStore, parseAmount, split, type Counterparty } from '../apps/desktop/src/shell-mock.ts';
+import { splitVat } from '@sax/chat-core';
+import { g24Candidates, interpret, MockStore, parseAmount, type Counterparty } from '../apps/desktop/src/shell-mock.ts';
 import { HANDOFF_LOGIN, HANDOFF_SIGN, HANDOFF_SIGN_TTL, handoffTurn, NOTE, REGATE_NOTE, ShellRuns, SIGN_BY_AUTH, SIGN_NOW_DEFAULT, STOP_AFTER_SIGN_NOTE } from '../apps/desktop/src/shell-runs.ts';
 
 const CPS: Counterparty[] = [
@@ -59,10 +60,10 @@ describe('셸 목업', () => {
   });
 
   it('부가세: 세액은 공급가의 10%에서 원 미만 버림, 포함 금액은 공급가 + 세액 = 합계', () => {
-    assert.deepEqual(split(3_300_000, 'separate'), { supply: 3_300_000, tax: 330_000, total: 3_630_000 });
-    assert.deepEqual(split(3_300_000, 'included'), { supply: 3_000_000, tax: 300_000, total: 3_300_000 });
+    assert.deepEqual(splitVat(3_300_000, 'separate'), { supply: 3_300_000, tax: 330_000, total: 3_630_000 });
+    assert.deepEqual(splitVat(3_300_000, 'included'), { supply: 3_000_000, tax: 300_000, total: 3_300_000 });
     for (const total of [105, 1_234_567, 999_999, 550_001]) {
-      const s = split(total, 'included');
+      const s = splitVat(total, 'included');
       assert.equal(s.supply + s.tax, total);
       assert.equal(s.tax, Math.floor(s.supply / 10), `합계 ${total}`);
     }
