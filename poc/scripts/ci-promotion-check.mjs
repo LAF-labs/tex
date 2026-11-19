@@ -28,8 +28,6 @@ export const DEFAULT_ENTRIES = [
   'apps/desktop/src/shell.ts',
   'packages/vault/src/entry.ts',
   'packages/engine/src/entry.ts',
-  'apps/mobile/src/index.ts',
-  'apps/mobile/App.tsx',
   'services/*/src/index.ts',
   'services/*/src/main.ts',
   'services/*/src/server.ts',

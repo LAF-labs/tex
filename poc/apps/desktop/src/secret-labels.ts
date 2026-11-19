@@ -1,6 +1,3 @@
-// 금고가 부르는 비밀 입력 창(ADR-025 결정 10, N-44·N-11 PoC 부분). 창 개시 판정·라벨·페이지는 main 내장 표에서만 고른다.
-// 렌더러는 창을 열 수 없고 라벨 문자열을 넘기지 못한다. Electron 없이 시험한다(창 생성은 secret-window.ts).
-
 import type { OneShotBind, SecretKind } from '@sax/vault';
 
 export type { SecretKind } from '@sax/vault';
@@ -18,16 +15,7 @@ export const SECRET_LABELS: Record<SecretKind, string> = {
   portal_password: '홈택스 비밀번호',
 };
 
-/** 창 아래 고정 문구(위장 창과 구별하는 단서는 OS 제목줄이다). */
-export const SECRET_FIXED_NOTE = '앱은 대화창 안에서 비밀번호·카드 번호를 묻지 않아요.';
-
 const isKind = (k: unknown): k is SecretKind => typeof k === 'string' && Object.hasOwn(SECRET_LABELS, k);
-
-/** OS 제목줄 문구. 표에 없는 종류는 던진다. */
-export function secretTitle(kind: string): string {
-  if (!isKind(kind)) throw new Error('unknown_secret_kind');
-  return `금고 · ${SECRET_LABELS[kind]}`;
-}
 
 /** secret.needed 데이터 모양 검사. 하나라도 어긋나면 null(창을 열지 않는다). */
 export function parseSecretNeeded(d: unknown): SecretNeeded | null {
@@ -77,19 +65,3 @@ export class SecretWindowCoordinator {
     return n;
   }
 }
-
-const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-
-/** 비밀 창 페이지(main이 만든다). 값은 이스케이프한 텍스트로만. kind·scope는 금고 결속값과 같은 값만 싣는다. */
-export function secretPageHtml(req: SecretInputBind, profileName: string): string {
-  return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
-<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="bundle.css"><link rel="stylesheet" href="secret.css"><title>${esc(secretTitle(req.kind))}</title></head>
-<body data-kind="${req.kind}" data-scope="${req.scope}">
-<p class="ctx">${esc(`세금계산서 발급 · 홈택스 · ${profileName}`)}</p>
-<form id="f"><label for="v">${esc(SECRET_LABELS[req.kind])}</label><input id="v" type="password" autocomplete="off" spellcheck="false" autofocus><button>금고에 넘기기</button></form>
-<p class="note">${esc(req.kind === 'cert_password' ? '이 창의 입력은 금고로 바로 가요. 이 PC 금고에 기억해 두고 다음 발급부터는 묻지 않아요.' : '이 창의 입력은 금고로 바로 가요. 저장하지 않고 이번 실행에서 한 번만 써요.')}</p>
-<p class="note">${esc(SECRET_FIXED_NOTE)}</p>
-<p id="msg" role="status"></p><script src="secret.js"></script></body></html>`;
-}
-
