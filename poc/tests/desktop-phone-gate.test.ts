@@ -8,8 +8,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import {
-  CAP, CTX, MemoryRelay, approveSignBytes, b64, ecdsaDerToRaw, fromB64, hpkeOpen, issueCmd, monotonicClock, openMobileSession, pxEnrollMessage, pxIdOf, ulid, validPxPub, verifyApprove,
-  x25519Keygen, type CmdAckBody, type GateRequestBody, type GateResponseBody, type Link, type PxAckBody, type PxEnrollBody, type RelayLink, type RunEventBody,
+  CAP, CTX, MemoryRelay, approveSignBytes, validateEnvelope as validate, b64, ecdsaDerToRaw, fromB64, hpkeOpen, issueCmd, monotonicClock, openMobileSession, pxEnrollMessage, pxIdOf, ulid, validPxPub, verifyApprove,
+  x25519Keygen, type Channel, type CmdAckBody, type GateRequestBody, type GateResolvedBody, type GateResponseBody, type Link, type PxAckBody, type PxEnrollBody, type RelayLink, type RunEventBody,
 } from '@sax/remote';
 import { buildGateRequest, remotePresenceRefusal, type GateRequest } from '@sax/engine/gate';
 import { kstToday } from '../apps/desktop/src/approval-gate.ts';
@@ -17,7 +17,7 @@ import { ApprovalLog, BAD_SIG_MAX, PHONE_GATE_TTL_MS, PhoneGate, REMOTE_PER_DAY,
 import { CmdLog, PhoneIssue } from '../apps/desktop/src/phone-issue.ts';
 import { PhoneLink, PhoneStore, type TokenSeal } from '../apps/desktop/src/phone-link.ts';
 import { phoneReceiver } from '../apps/desktop/src/phone-receive.ts';
-import { APPROVE_CAPS, phoneSession, SESSION_CAPS } from '../apps/desktop/src/phone-session.ts';
+import { APPROVE_CAPS, phoneSession, SESSION_CAPS, sinkFor } from '../apps/desktop/src/phone-session.ts';
 import type { Counterparty, RunView } from '../apps/desktop/src/shell-model.ts';
 import { pairOnce, pairWorld, until } from './remote-support.ts';
 
@@ -58,10 +58,12 @@ function gateReq(over: { first?: boolean; firstEmail?: boolean; card?: string } 
 
 class Sink implements GateSink {
   sent: GateRequestBody[] = [];
+  resolved: GateResolvedBody[] = [];
   fail = false;
-  send(_t: 'gate.request', body: GateRequestBody): unknown {
+  send(t: 'gate.request' | 'gate.resolved', body: GateRequestBody | GateResolvedBody): unknown {
     if (this.fail) throw new Error('closed');
-    this.sent.push(body);
+    if (t === 'gate.resolved') this.resolved.push(body as GateResolvedBody);
+    else this.sent.push(body as GateRequestBody);
     return null;
   }
 }
@@ -308,6 +310,84 @@ describe('승인 요청 중계와 답 검증(PhoneGate)', () => {
     assert.equal(w.gate.codeOf('run-2'), 'pc_key');
     assert.equal(w.st.approved, 0);
   });
+
+  it('v1.11: 폰에 보낸 게이트가 닫히면 gate.resolved로 알린다(누가 닫았는지와 함께, 한 번만)', async () => {
+    const w = await world();
+    w.gate.attach(PAIR, w.sink);
+    const req = gateReq();
+    await w.gate.offer('run-1', req, w.on);
+    const g = w.sink.sent[0]!;
+    // 다른 게이트의 닫힘은 이 게이트를 닫지 않는다
+    w.gate.close('run-1', 'other-req', 'pc');
+    assert.deepEqual(w.sink.resolved, []);
+    w.gate.close('run-1', req.reqId, 'pc');
+    w.gate.close('run-1', req.reqId, 'stopped');
+    assert.deepEqual(w.sink.resolved, [{ runId: g.runId, reqId: g.reqId, by: 'pc' }]);
+    assert.equal(await w.gate.answer(PAIR, w.answerOf(g)), 'no_request');
+
+    // 만료와 중지
+    await w.gate.offer('run-2', gateReq(), w.on);
+    w.gate.close('run-2', undefined, 'expired');
+    await w.gate.offer('run-3', gateReq(), w.on);
+    w.gate.close('run-3', undefined, 'stopped');
+    assert.deepEqual(w.sink.resolved.slice(1).map((x) => [x.reqId, x.by]), [[w.sink.sent[1]!.reqId, 'expired'], [w.sink.sent[2]!.reqId, 'stopped']]);
+  });
+
+  it('v1.11: 폰이 답하면 phone으로 알리고, 보내지 않은 게이트(이유를 단 것, 세션 없음)는 알리지 않는다', async () => {
+    const w = await world();
+    w.gate.attach(PAIR, w.sink);
+    await w.gate.offer('run-1', gateReq(), w.on);
+    assert.equal(await w.gate.answer(PAIR, w.answerOf(w.sink.sent[0]!)), 'approved');
+    await w.gate.offer('run-2', gateReq(), w.on);
+    assert.equal(await w.gate.answer(PAIR, w.answerOf(w.sink.sent[1]!, 'deny')), 'denied');
+    assert.deepEqual(w.sink.resolved.map((x) => x.by), ['phone', 'phone']);
+    // 폰으로 보내지 않은 게이트
+    await w.gate.offer('run-3', gateReq({ first: true }), w.on);
+    w.gate.close('run-3', undefined, 'pc');
+    // 세션이 없을 때 닫힌 게이트: 보낼 곳이 없고, 다시 붙어도 다시 보내지 않는다
+    await w.gate.offer('run-4', gateReq(), w.on);
+    w.gate.detach(PAIR, w.sink);
+    w.gate.close('run-4', undefined, 'pc');
+    w.gate.attach(PAIR, w.sink);
+    assert.equal(w.sink.resolved.length, 2);
+    assert.equal(w.sink.sent.length, 3);
+    // 보내다 던져도 게이트는 닫힌다
+    await w.gate.offer('run-5', gateReq(), w.on);
+    w.sink.fail = true;
+    w.gate.close('run-5', undefined, 'pc');
+    w.sink.fail = false;
+    assert.equal(await w.gate.answer(PAIR, w.answerOf(w.sink.sent[3]!)), 'no_request');
+  });
+});
+
+describe('v1.11 sync.v1: 폰 기능에 맞춰 보내기(phone-session sinkFor)', () => {
+  const fake = () => {
+    const out: [string, Record<string, unknown>][] = [];
+    return { out, ch: { send: (type: string, body: Record<string, unknown>) => void out.push([type, body]) } as unknown as Channel };
+  };
+  const ev = { runId: PHONE_RUN, event: 'phase', at: NOW, phase: 'approve', rev: 3 } as RunEventBody;
+  const res: GateResolvedBody = { runId: PHONE_RUN, reqId: ulid(NOW), by: 'pc' };
+  it('sync.v1을 알린 폰에는 rev와 gate.resolved를 그대로 보낸다', () => {
+    const f = fake();
+    const s = sinkFor(f.ch, new Set([CAP.issue, CAP.sync]));
+    s.send('run.event', ev);
+    s.send('gate.resolved', res);
+    assert.deepEqual(f.out, [['run.event', ev], ['gate.resolved', res]]);
+  });
+  it('모르는 폰에는 rev를 빼고 gate.resolved는 보내지 않는다(옛 스키마가 받지 않는다)', () => {
+    const f = fake();
+    const s = sinkFor(f.ch, new Set([CAP.issue, CAP.approve]));
+    s.send('run.event', ev);
+    s.send('gate.resolved', res);
+    const plain: Partial<RunEventBody> = { ...ev };
+    delete plain.rev;
+    assert.deepEqual(f.out, [['run.event', plain]]);
+    assert.ok(validate({ v: 1, type: 'run.event', id: ulid(NOW), pairId: ulid(NOW), from: 'desktop', to: 'mobile', seq: 1, ts: NOW, ttl: 60, body: ev }));
+    assert.ok(validate({ v: 1, type: 'gate.resolved', id: ulid(NOW), pairId: ulid(NOW), from: 'desktop', to: 'mobile', seq: 1, ts: NOW, ttl: 60, body: res }));
+    assert.ok(!validate({ v: 1, type: 'gate.resolved', id: ulid(NOW), pairId: ulid(NOW), from: 'mobile', to: 'desktop', seq: 1, ts: NOW, ttl: 60, body: res }));
+    assert.ok(!validate({ v: 1, type: 'gate.resolved', id: ulid(NOW), pairId: ulid(NOW), from: 'desktop', to: 'mobile', seq: 1, ts: NOW, ttl: 60, body: { ...res, by: 'someone' } }));
+    assert.ok(!validate({ v: 1, type: 'run.event', id: ulid(NOW), pairId: ulid(NOW), from: 'desktop', to: 'mobile', seq: 1, ts: NOW, ttl: 60, body: { ...ev, rev: 0 } }));
+  });
 });
 
 // ---- 라이브 세션 ----
@@ -427,6 +507,10 @@ describe('라이브 세션: 등록 → 발급 명령 → 폰 승인', () => {
     // PC에서 폰 승인을 끄면 새 키를 바로 받지 않고, 다시 허용하면 그 키를 받는다
     assert.equal(await link.revokePx(phone.pairId), true);
     assert.equal(link.px(phone.pairId), null);
+    // 설정 > 기기 연결 줄: 꺼 둠(paused)과 아직 키 없음(off)을 나눠 보인다. 기기 ID로 줄과 맞춘다
+    assert.equal(link.list()[0]!.approver, 'paused');
+    assert.equal(link.list()[0]!.deviceId, w.phone.keys.deviceId);
+    assert.equal(await link.revokePx(phone.pairId), false);
     assert.ok(!gate.canApprove(phone.pairId));
     const k2 = pxKey();
     ch.send('px.enroll', await enroll(k2));

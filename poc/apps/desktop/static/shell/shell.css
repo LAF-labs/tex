@@ -413,6 +413,10 @@ body.bar-active .rs-waiting { display: inline-flex; }
 .modal-note { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--radius-md); background: var(--surface-tint); color: var(--ink-2); font-size: 13px; line-height: 20px; }
 .modal-note svg { flex: none; width: 16px; height: 16px; margin-top: 2px; }
 .modal-acts { display: flex; justify-content: flex-end; gap: 6px; }
+.dev-modal { max-width: 400px; }
+.dev-modal .modal-title .sx-body-sm { line-height: 22px; }
+.dev-modal .modal-acts { margin-top: 4px; }
+.dev-modal .modal-acts > .sx-btn { flex: 1; }
 .doc-review { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
 .doc-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-3); }
 .doc-hint { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

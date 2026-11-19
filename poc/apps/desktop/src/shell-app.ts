@@ -14,6 +14,7 @@ import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { findInstalledChrome, pageAddress, SESSION_IDLE_REPORT_MS } from '@sax/vault';
 import { execFile } from 'node:child_process';
 import { app, autoUpdater as nativeUpdater, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, ShareMenu, shell as desktop } from 'electron';
+import { deviceModel } from './device-model.ts';
 import { AccountantPack, isPackMonth, packAsk } from './accountant-pack.ts';
 import { ACTION_TEXT, actionText, issueLocalApproval, kstToday, verifyLocalApproval, verifyLocalAttestation, type LocalApproval } from './approval-gate.ts';
 import { CERT_DOCS_SHOWN, certDocByCode, certInputsFor, type CertDocDef } from './cert-docs.ts';
@@ -62,10 +63,11 @@ import type { AccountClient, BillingView, CloudPorts, DeviceAuth, PcLinkVault, V
 import { PairingHost, type PairView } from './remote-pairing.ts';
 import { buildPhoneCopy } from './phone-copy.ts';
 import { ApprovalLog, PhoneGate } from './phone-gate.ts';
+import { PhoneWaker } from './phone-wake.ts';
 import { CmdLog, PhoneIssue } from './phone-issue.ts';
-import { DESKTOP_CAPS, PhoneLink, PhoneStore, type TokenSeal } from './phone-link.ts';
+import { DESKTOP_CAPS, PhoneLink, PhoneStore, type PhoneView, type TokenSeal } from './phone-link.ts';
 import { APPROVE_CAPS, phoneSession, SESSION_CAPS } from './phone-session.ts';
-import { DeviceManager } from './remote-devices.ts';
+import { DeviceManager, type DeviceView } from './remote-devices.ts';
 import { engineShareStore, ShareSync } from './share-sync.ts';
 import { PcLinkHost } from './remote-pclink.ts';
 import { phoneReceiver } from './phone-receive.ts';
@@ -636,7 +638,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     void refresh().catch(() => {});
   });
   runs.on('gate-closed', (runId: string, reqId: string, reason: string) => {
-    phoneGate?.close(runId, reqId);
+    // 엔진이 닫은 게이트(승인은 여기로 오지 않는다): 대기 만료만 expired, 나머지(중지·신호·실행 끝)는 stopped
+    phoneGate?.close(runId, reqId, reason === 'expired' ? 'expired' : 'stopped');
     bar.close(reason, reqId);
   });
 
@@ -874,7 +877,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 보내기 전에 표시한다. 보낸 뒤 엔진이 끝나면 발급됐는지 모르는 쪽(in_doubt)으로 다룬다.
     const sendApproval = async (approval: LocalApproval, note?: string) => {
       // 이 게이트는 여기서 답했다. 뒤에 오는 폰의 답은 받지 않는다(ADR-052 결정 5).
-      phoneGate?.close(runId, req.reqId);
+      phoneGate?.close(runId, req.reqId, 'pc');
       runs.approved(runId, note);
       // 이 건이 "다시 시작할 일"에서 빠진 것이 DB에 닿은 뒤 보낸다(보낸 뒤 꺼지면 다시 시작하지 않고 안내만).
       await saveResume().catch(() => {});
@@ -1343,6 +1346,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     pending: new PendingCodeFile(appPaths(root ?? defaultAppRoot()).userData),
     platform: process.platform === 'darwin' ? 'macos' : 'windows',
     deviceName: opts.remote?.deviceName ?? (process.platform === 'darwin' ? 'Mac PC' : 'Windows PC'),
+    // 계정 기기 목록의 이름은 모델 이름으로(예: "MacBook Pro", 2026-11-19 대표). 기기 토큰을 받을 때 알린다
+    model: deviceModel,
     pairing: opts.remote?.pairing !== false,
     // 새 PC 연결(ADR-048 결정 3): 금고의 계정 열쇠 넘기기. 넘겨받은 뒤에는 금고 공개키를 다시 읽는다(AIK가 바뀐다)
     linkVault: async () => linkVaultOf(await keysOf()),
@@ -1511,15 +1516,37 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       onDraft: () => pushBoard(), // 초안은 update 이벤트 없이 생긴다
       cmds: new CmdLog(path.join(appPaths(root ?? defaultAppRoot()).userData, 'remote-cmds.json')),
       log: (n, d) => log.event(n, d ?? {}),
+      wake: (pairId, kind) => void phoneWaker.wake(pairId, kind),
     });
     return phoneIssue;
   };
+  // 폰 깨우기(ADR-053, phone-wake.ts): 폰 앱이 뒤에 있을 때 내용 없는 알림(종류만). 클라우드 연결이 없으면 부르지 않는다.
+  const wakeClient = opts.remote?.keys ? (opts.remote.cloud?.account ?? null) : null;
+  const phoneWaker = new PhoneWaker({
+    deviceOf: (pairId) => phoneLink?.deviceOf(pairId) ?? null,
+    call: wakeClient
+      ? async (deviceId, kind) => {
+          const d = account.device();
+          if (!d) throw Object.assign(new Error('account'), { code: 'account.signed_out' });
+          try {
+            return await wakeClient.wakePhone(d.auth, deviceId, kind);
+          } catch (e) {
+            if ((e as { code?: unknown }).code !== 'account.unauthorized' && (e as { code?: unknown }).code !== 'push.unauthorized') throw e;
+            d.clearToken();
+            return wakeClient.wakePhone(d.auth, deviceId, kind);
+          }
+        }
+      : null,
+    log: (n, d) => log.event(n, d),
+  });
   // 폰 승인(ADR-052): 폰이 맡긴 발급의 커밋 게이트를 그 폰에 보내고, 답의 서명을 연결 기록의 승인 키로 검증한다.
   const phoneGateOf = (): PhoneGate => {
     phoneGate ??= new PhoneGate({
       px: (pairId) => phoneLink?.px(pairId) ?? null,
       tracked: (id) => phoneIssue?.trackedOf(id) ?? null,
       poke: (id) => phoneIssue?.poke(id),
+      wake: (pairId, kind) => void phoneWaker.wake(pairId, kind),
+      attached: (pairId) => phoneWaker.forget(pairId),
       approvals: new ApprovalLog(path.join(appPaths(root ?? defaultAppRoot()).userData, 'remote-approvals.json')),
       log: (n, d) => log.event(n, d ?? {}),
     });
@@ -1528,7 +1555,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   runs.on('update', (run) => {
     phoneIssue?.update(run);
     // 승인 대기를 벗어난 실행의 게이트는 닫는다(끝·중지·다음 단계)
-    if (run.status !== 'waiting') phoneGate?.close(run.id);
+    if (run.status !== 'waiting') phoneGate?.close(run.id, undefined, run.status === 'issuing' || run.status === 'done' ? 'pc' : 'stopped');
   });
   const phones = (): PhoneLink | null => {
     if (phoneLink) return phoneLink;
@@ -1550,7 +1577,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       },
       joinMailbox: opts.remote?.relayClient ? undefined : (id, tok) => live.joinMailbox(id, tok, 'desktop'),
       queue: (id, tok) => cloud.mailboxQueue!(id, tok, auth),
-      deleteMailbox: (id, w) => cloud.relay.deleteMailbox(auth, id, w),
+      deleteMailbox: (id, w, peer) => cloud.relay.deleteMailbox(auth, id, w, peer),
       receiver: () =>
         phoneReceiver((m, p) => host.rpc(m, p), {
           onReceipt: () => pushBoard(),
@@ -1601,6 +1628,15 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   // 기기 관리(remote-devices.ts, ADR-048 결정 6): 계정의 PC·폰을 보고 끊는다. 끊은 폰의 연결 기록·우편함도 같이 지운다.
   let deviceMgr: DeviceManager | null = null;
+  /** 기기 목록의 폰 줄에 이 PC에서 본 폰 승인 상태를 붙인다(같은 폰과 연결한 기록이 없으면 붙이지 않는다) */
+  const withApproval = (devices: DeviceView[]): Array<DeviceView & { approval?: PhoneView['approver'] }> => {
+    const phones = phoneLink?.list() ?? [];
+    return devices.map((d) => {
+      if (d.role !== 'mobile') return d;
+      const x = phones.find((ph) => ph.deviceId === d.deviceId);
+      return x ? { ...d, approval: x.approver } : d;
+    });
+  };
   const devicesOf = (): DeviceManager => {
     const client = opts.remote?.cloud?.account;
     if (!client || !account.device()) throw new Error('account_required');
@@ -2428,7 +2464,17 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 설정 > 기기 연결(ADR-048 결정 6). 목록은 읽기만(보기 전에 서버와 목록을 맞춘다), 끊기·나가기는 실제 입력 뒤에만.
     'devices.list': async () => {
       await accountInit();
-      return { devices: await devicesOf().list() };
+      return { devices: withApproval(await devicesOf().list()) };
+    },
+    // 폰 승인 끄기·다시 허용(ADR-052). 연결은 그대로 두고 승인 키만 지우거나 다시 받는다. 실제 입력 뒤에만
+    'devices.px': async (p) => {
+      needGesture(3_000);
+      await accountInit();
+      const id = String(p.deviceId);
+      const pairs = (phoneLink?.list() ?? []).filter((x) => x.deviceId === id);
+      if (!pairs.length) throw new Error('device.not_phone');
+      for (const x of pairs) await (p.on === true ? phoneLink!.allowPx(x.pairId) : phoneLink!.revokePx(x.pairId));
+      return { devices: withApproval(await devicesOf().list()) };
     },
     'devices.unlink': async (p) => {
       needGesture(3_000);

@@ -14,12 +14,19 @@ type Listener = (req: http.IncomingMessage, res: http.ServerResponse) => Promise
 /** 네 서비스 조립. 정지 알림은 같은 배포 안이면 함수 호출(푸시 토큰 삭제), 룸 호스트는 계정의 STOP_HOOK_URLS(서명 HTTP) */
 export async function buildCloud(env: NodeJS.ProcessEnv = process.env) {
   let push: Awaited<ReturnType<typeof buildPush>> | null = null;
-  const account = await buildAccount(serviceEnv('ACCOUNT', env), { stopHooks: [{ stopped: async (id) => void (await push?.svc.remove(id)) }] }, { migrate: false });
+  let relayRef: Awaited<ReturnType<typeof buildRelay>> | null = null;
+  // 정지 알림: 푸시 토큰 삭제, 그 폰의 우편함 자리 비우기(릴레이 v2)
+  const stopped = async (id: string) => {
+    await push?.svc.remove(id);
+    await relayRef?.svc.freePeer(id);
+  };
+  const account = await buildAccount(serviceEnv('ACCOUNT', env), { stopHooks: [{ stopped }] }, { migrate: false });
   const directory: DeviceDirectory = { get: (id) => account.svc.deviceRecord(id) };
   const suspender: DeviceSuspender = { suspend: async (id) => void (await account.svc.autoSuspend(id)) };
   const gateway = await buildGateway(serviceEnv('GATEWAY', env), { directory, suspender }, { migrate: false });
   // 함수 인스턴스는 메모리 룸·라이브 연결을 이어 갈 수 없어 stateful: false(룸·WSS는 룸 호스트)
   const relay = await buildRelay(serviceEnv('RELAY', env), { migrate: false, stateful: false }, { directory });
+  relayRef = relay;
   push = await buildPush(serviceEnv('PUSH', env), { directory }, { migrate: false });
   const trust = (e: NodeJS.ProcessEnv) => e.TRUST_PROXY === '1';
   const services: { router: Router; listener: Listener }[] = [

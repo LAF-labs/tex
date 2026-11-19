@@ -24,6 +24,11 @@
 | `OPENROUTER_ZDR` | openrouter | `true`만 | ZDR 엔드포인트만(R14 ①). 다른 값·없음이면 기동 거부 |
 | `OPENROUTER_DATA_COLLECTION` | openrouter | `deny`만 | 데이터 수집 공급자 제외(R14 ①). 다른 값·없음이면 기동 거부 |
 | `OPENROUTER_PROVIDERS` | openrouter | 슬러그 `a,b`(1~8개, 중복 금지) | 공급자 고정(`only` + `allow_fallbacks:false`). 비면 기동 거부 |
+| `GW_RESPOND_PROVIDER` | 아니오(`base`) | `base` \| `anthropic` | 생성 호출(대화, 폰 대화, 요약, 선택자 수리, 예상 밖 화면 판정, 브라우저 에이전트, 화면 보기)의 공급사. `base`는 `GW_PROVIDER`가 다 한다(지금까지와 같다). `anthropic`이면 생성만 Anthropic Messages API로 보내고, **L1 판정(`/v1/decide`, jev)과 결정 모델 고르기(`decision_pick`)는 `GW_PROVIDER`에 그대로 둔다**(ADR-051 판정 단의 확률·임계값 계약과 평가 기준선 유지). 대표 결정 2026-11-19: 시험 기간에는 조직 크레딧을 쓰려고 `anthropic`. 되돌릴 때는 이 값을 지우고 재배포한다. 다른 값이면 기동 거부 |
+| `ANTHROPIC_API_KEY` ⚿ | anthropic | | Anthropic Console(platform.claude.com) API 키. 서버 환경 변수만, 저장소·클라이언트·메시지 금지. 넣기와 끄기는 [`set-anthropic-key.sh`](../deploy/set-anthropic-key.sh)(키를 화면에 보이지 않게 받아 Vercel `GATEWAY__ANTHROPIC_API_KEY`와 `GATEWAY__GW_RESPOND_PROVIDER=anthropic`을 넣는다) |
+| `ANTHROPIC_MODEL_RESPOND` | 아니오(`claude-opus-5-5`) | `claude-…` | anthropic일 때 대화·요약·선택자 수리 모델(`MODEL_RESPOND` 대신) |
+| `ANTHROPIC_MODEL_AGENT` | 아니오(`ANTHROPIC_MODEL_RESPOND`) | `claude-…` | anthropic일 때 예상 밖 화면 판정·브라우저 에이전트·화면 보기 모델(`MODEL_AGENT`·`MODEL_VISION` 대신). 화면 보기 사진도 이 모델로 간다 |
+| `ANTHROPIC_BASE_URL` | 아니오(`https://api.anthropic.com`) | `https://…` | 시험용 주소 바꾸기 |
 | `PROVIDER_BASE_URL` | openai-compat | `https://…` | 공급사 주소 |
 | `PROVIDER_API_KEY` ⚿ | openai-compat | | 공급사 API 키 |
 | `MODEL_DECIDE` / `MODEL_RESPOND` | 예 | 모델 ID | 판정·응답 모델(클라이언트가 정하지 않는다). OpenRouter 운영의 `MODEL_DECIDE`는 `~typesafe/jev-latest`(L1을 `/api/alpha/decisions`로). PC는 응답 model이 `typesafe/jev-`로 시작해야 받고, 그 계열의 임계값 프로필을 쓴다 |
@@ -49,3 +54,5 @@
 | `PORT` / `HOST` | 아니오(`8081` / `0.0.0.0`) | | |
 
 OpenRouter 라우팅 설정은 코드 상수가 아니다. 위 세 값은 운영 환경 설정에서만 오고, 게이트웨이는 요청마다 `provider:{zdr:true, data_collection:"deny", only:[…], allow_fallbacks:false, require_parameters:true}`를 실은 뒤 이벤트 `upstream_zdr_pinned`(개수만, 값·내용 없음)를 남긴다. 응답이 고정 목록 밖 공급자를 밝히면 결과를 버린다(`upstream_provider_mismatch`). 예외: `page_judge`·`browser_agent`(`MODEL_AGENT`) 호출은 provider 필드 없이 보내고 이벤트 `upstream_unpinned`를 남긴다(위 `MODEL_AGENT` 줄). OpenRouter에는 Decisions(L1 보정 확률) 엔드포인트가 없다. `openrouter` 단독이면 `/v1/decide`는 상류를 부르지 않고 `503 gateway.upstream_error`를 낸다. 운영은 `openai+openrouter`로 판정만 OpenAI `/v1/decisions`에 직결한다(D04 확률·임계값 계약 유지, 팀장 결정 2026-11-05).
+
+`GW_RESPOND_PROVIDER=anthropic`일 때: 머리말은 system 블록 하나로 캐시하고(`cache_control`), 툴셋 `effort`는 `output_config.effort`, 출력 스키마는 `output_config.format`(json_schema), 도구는 `strict:true`로 보낸다. Anthropic 구조화 출력이 받지 않는 제약(`maxLength`·`maximum`·`maxItems`·`pattern` 등)은 빼고 보내며, PC·폰이 받은 출력과 도구 인자를 원래 스키마로 다시 검사한다. 응답의 assistant 내용 원본(사고 블록 서명 포함)은 첫 출력 항목 `reasoning.anthropic_content`에 실려 PC·폰이 다음 턴에 그대로 되돌려 보낸다(태그 검증은 그대로). 안전 분류기 거절은 서버 쪽 대체(`fallbacks:"default"`)가 먼저 받고, 그래도 거절이면 지금처럼 `refusal`이다. 일 한도 단가(`LIMIT_PRICES`)는 바꾸지 않는다: 시험 중 실제 비용은 한도 계산보다 크다(월 토큰 한도 `GW_MONTHLY_TOKENS`가 상한).

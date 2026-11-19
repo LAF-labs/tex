@@ -16,7 +16,8 @@ export const SUITES: HelloBody['suites'] = ['noise-25519-chachapoly-blake2b'];
 /** v1.8: issue = 폰 발급 명령(cmd.run hometax.invoice.issue)·cmd.ack·run.event 진행 칸, copy = phone.copy(ADR-046 결정 2·5). */
 /** v1.9: share = 계정 공유 기록 열쇠(share.key, ADR-048 결정 5)를 받는다(폰) / 준다(PC). */
 /** v1.10: approve = 폰 승인(px.enroll·px.ack·gate.request·gate.response·gate.refresh, ADR-052). 폰은 승인 키로 서명할 수 있을 때, PC는 중계·검증할 수 있을 때 알린다. */
-export const CAP = { receipt: 'receipt.v1', receiptV2: 'receipt.v2', cash: 'cash.v1', issue: 'issue.v1', copy: 'copy.v1', share: 'share.v1', approve: 'approve.v1' } as const;
+/** v1.11: sync = run.event.rev와 gate.resolved(폰과 PC 연결 끊김에 강하게)를 받는다(폰) / 보낸다(PC). */
+export const CAP = { receipt: 'receipt.v1', receiptV2: 'receipt.v2', cash: 'cash.v1', issue: 'issue.v1', copy: 'copy.v1', share: 'share.v1', approve: 'approve.v1', sync: 'sync.v1' } as const;
 const ZERO_HASH = '0'.repeat(64);
 
 export const sessionPrologue = (pairId: string): Uint8Array => concat(utf8(CTX.session), utf8(pairId));

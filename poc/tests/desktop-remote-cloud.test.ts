@@ -316,6 +316,7 @@ describe('계정 화면 경로(#224 비밀번호 로그인이 실제 앱에서 n
       acquireIssueLock: [auth],
       renewIssueLock: [auth, 'L'.repeat(43)],
       releaseIssueLock: [auth, 'L'.repeat(43)],
+      wakePhone: [auth, uuid4(), 'approve'],
       putShareRow: [auth, { rowId: 'R'.repeat(22), kind: 'issue', epoch: 0, body: 'A'.repeat(728) }],
       shareRows: [auth, 7],
       shareTasks: [auth],
