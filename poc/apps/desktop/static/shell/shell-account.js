@@ -12,7 +12,7 @@ const ERR = {
   'account.code_invalid': '코드가 맞지 않아요. 메일의 6자리를 다시 확인해 주세요',
   'account.code_locked': '여러 번 틀려서 이 코드는 막혔어요. 코드를 다시 받아 주세요',
   'account.code_expired': '코드 시간이 지났어요. 코드를 다시 받아 주세요',
-  'account.aik_already_pinned': '이 계정에는 이미 등록된 PC가 있어요. 두 번째 PC 연결은 곧 지원해요',
+  'account.aik_already_pinned': '이 계정에는 이미 PC가 등록돼 있어요. 다시 로그인하면 이어서 연결해요',
   'account.passkey_required': '이 계정은 패스키로 로그인해야 해요. 패스키 로그인은 곧 지원해요',
   'account.device_limit': '이 계정에는 PC가 3대 연결돼 있어요. 쓰던 PC의 설정 > 기기 연결에서 하나를 끊은 뒤 다시 로그인해 주세요',
   // 새 PC 연결(ADR-048 결정 3)이 끝나지 못했을 때. 화면은 로그인 처음으로 돌아온다
