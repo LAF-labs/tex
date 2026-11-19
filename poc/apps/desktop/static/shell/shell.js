@@ -271,6 +271,7 @@ const act = {
   },
   // 핸드오프 [다 했어요]·[직접 발급함]: 재개·확인으로만 간다(발급하지 않는다). main이 실제 입력 뒤 3초 안에만 받는다.
   resume: (id) => handoffCall('run.resume', id),
+  retryCert: (id) => handoffCall('run.retryCert', id),
   manualDone: (id) => handoffCall('run.manualDone', id),
   // [홈택스 창 보기]: 실행 Chrome 창을 앞으로(main → 금고). 발급·재개와 무관하다.
   showBrowser: async (id) => {

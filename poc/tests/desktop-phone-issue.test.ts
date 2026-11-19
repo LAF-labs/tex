@@ -166,6 +166,33 @@ describe('셸 실행 → 폰 단계', () => {
   });
 });
 
+describe('PhoneIssue 인증서 다시 시도', () => {
+  it('새 실행이 대신한 끝은 보내지 않고, relink 뒤 새 실행 진행을 같은 runId로 보낸다. 폰 cmd.resume은 공동인증서 실패 차례에서만 받는다', async () => {
+    const retried: string[] = [];
+    const x = await issueWorld({ retryCert: async (id) => void retried.push(id) });
+    const sink = new Sink();
+    x.p.attach('p', sink);
+    const ack = await x.p.handle('p', sink, issueCmd(ulid(NOW), req));
+    const r = x.runs.get('run-1')!;
+    // 차례가 아닐 때의 cmd.resume은 받지 않고 지금 상태를 다시 보낸다
+    x.runs.set('run-1', { ...r, status: 'preparing', steps: run({ at: 0 }).steps });
+    assert.equal(await x.p.resume('p', sink, { runId: ack.runId! }), false);
+    const turn = { ...r, status: 'turn' as const, steps: run({ at: 0 }).steps, handoff: { phase: 'login', afterGate: false, kind: 'login' as const, code: 'login.simple_auth' } };
+    x.runs.set('run-1', turn);
+    assert.equal(await x.p.resume('p', sink, { runId: ulid() }), false, '모르는 runId');
+    assert.equal(await x.p.resume('p', sink, { runId: ack.runId! }), true);
+    assert.deepEqual(retried, ['run-1']);
+    const n = sink.events.length;
+    x.p.update({ ...turn, status: 'stopped', replaced: true, handoff: null });
+    assert.equal(sink.events.length, n, '대신한 끝은 보내지 않는다');
+    x.runs.set('run-2', run({ id: 'run-2', at: 0 }));
+    x.p.relink('run-1', 'run-2');
+    assert.deepEqual(x.p.trackedOf('run-2'), { pairId: 'p', runId: ack.runId });
+    assert.equal(x.p.trackedOf('run-1'), null);
+    assert.equal(sink.events.at(-1)!.event, 'phase');
+  });
+});
+
 describe('PhoneIssue', () => {
   it('맞는 명령은 초안을 만들고 준비를 시작한 뒤 pc_only로 답한다. 같은 cmdId는 다시 시작하지 않는다', async () => {
     const x = await issueWorld();

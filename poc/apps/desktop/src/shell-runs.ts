@@ -472,6 +472,12 @@ interface Batch {
   halted: boolean;
 }
 export const RESUMED_NOTE = '앱이 다시 켜져 멈췄던 건을 같은 내용으로 이어서 해요. 앞 시도는 승인 전이라 아무것도 발급하지 않았어요.';
+/** 공동인증서 로그인이 안 돼 같은 값으로 한 번 더 해 본다(2026-11-19 대표: "실패했을 경우 당연히 인증서로 다시 시도해 봐야지"). */
+export const CERT_RETRY_NOTE = '공동인증서 로그인이 안 돼 같은 내용으로 한 번 더 이어서 준비해요. 앞 시도는 로그인 단계라 아무것도 발급하지 않았어요.';
+/** 공동인증서 로그인 실패 핸드오프 코드(H-01 s7e). 엔진이 간편인증 화면까지 열어 두고 기다린다. */
+export const CERT_LOGIN_FAILED = 'login.simple_auth';
+/** 다시 해도 공동인증서 로그인이 안 됐다: 인증서로 한 번 더, 또는 간편인증(아래 홈택스 화면이나 폰에서). */
+export const CERT_FAILED_TWICE = { text: '공동인증서로 두 번 로그인하지 못했어요. 인증서로 다시 해 보거나 간편인증으로 로그인해 주세요', note: '간편인증은 아래 홈택스 화면에서 인증 앱을 고르고 휴대폰에서 승인한 뒤 [간편인증 마치고 이어서]를 눌러 주세요. 아무것도 발급하지 않았어요.' };
 export const WAKE_RESUMED_NOTE = '맥이 잠들었다 깨어나 멈춘 건을 같은 내용으로 다시 시작했어요. 앞 시도는 승인 전이라 아무것도 발급하지 않았어요.';
 /** 맥이 깨어난 뒤 이 안에 승인 전 단계에서 멈춘 실행은 같은 값으로 한 번 다시 시작한다. */
 const WAKE_RESUME_MS = 5 * 60_000;
@@ -489,6 +495,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
   private readonly endCodes = new Map<string, string>();
   /** run.start 전후로 [중지]가 온 실행. 시작 중에는 엔진에 실행이 없어 run.stop이 아무것도 멈추지 못한다. */
   private readonly starting = new Set<string>();
+  /** 끝나면 같은 값으로 인증서 로그인을 다시 시도할 실행(retryCert). */
+  private readonly certRetry = new Set<string>();
   private readonly stopEarly = new Set<string>();
   /** 엔진 상태가 InDoubt인 실행(종료가 아님). 카드는 확인 필요로 보이지만 end·state가 더 온다. */
   private readonly liveInDoubt = new Set<string>();
@@ -1227,6 +1235,47 @@ export class ShellRuns extends EventEmitter implements Drafts {
   }
 
   /** [중지]·[취소]: 초안이면 바로, 실행 중이면 엔진에 알린다(커밋 구간이면 엔진이 거부). */
+  /**
+   * [인증서로 다시 시도]: 공동인증서 로그인 실패로 기다리는 실행을 멈추고, 끝나면 같은 값의 새 초안으로 인증서 로그인부터 다시 준비한다.
+   * 로그인 단계(게이트 앞)의 그 차례에서만 받는다. 새 초안은 'restart' 사건으로 알린다(폰이 맡긴 건은 폰 추적을 새 실행으로 옮긴다).
+   */
+  async retryCert(id: string): Promise<RunView> {
+    const r = this.runs.get(id);
+    if (!r) throw new Error('no_run');
+    if (r.status !== 'turn' || r.handoff?.code !== CERT_LOGIN_FAILED || r.handoff.afterGate) throw new Error('not_cert_turn');
+    this.certRetry.add(id);
+    try {
+      return await this.stop(id);
+    } catch (e) {
+      this.certRetry.delete(id);
+      throw e;
+    }
+  }
+
+  /** 멈춘 실행을 같은 값으로 인증서 로그인부터 다시 준비한다(retryCert 끝). */
+  private certRetryAfter(r: RunView): void {
+    if (!this.certRetry.delete(r.id) || r.inDoubt || r.result) return;
+    r.redo = true;
+    // 앞 카드는 조용히 접는다(새 카드가 이어서 한다). 폰 추적은 끝을 보내지 않고 새 실행으로 옮긴다(phone-issue relink).
+    r.replaced = true;
+    r.stoppedNote = '같은 내용으로 다시 로그인해요. 아무것도 발급하지 않았어요.';
+    setImmediate(() => {
+      let d: RunView;
+      try {
+        d = this.redraft(r.id);
+      } catch (e) {
+        this.src.log?.('main.cert_retry_failed', { why: (e as Error).message.slice(0, 60) });
+        return;
+      }
+      d.certRetryOf = r.id;
+      d.resumedFrom = r.id;
+      d.notices = [CERT_RETRY_NOTE];
+      this.emit('update', d);
+      this.emit('restart', { from: r.id, to: d.id });
+      void (this.src.prepare ? this.src.prepare(d.id) : this.prepare(d.id)).catch((e: Error) => this.src.log?.('main.cert_retry_failed', { why: e.message.slice(0, 60) }));
+    });
+  }
+
   async stop(id: string): Promise<RunView> {
     const r = this.runs.get(id);
     if (!r) throw new Error('no_run');
@@ -1387,6 +1436,23 @@ export class ShellRuns extends EventEmitter implements Drafts {
       r.status = 'turn';
       r.handoff = { phase: e.phase, afterGate: i > PHASES.indexOf('gate'), kind: t.kind, ...(e.code ? { code: e.code } : {}) };
       r.turn = { text: t.text, note: t.note };
+      // 공동인증서 로그인 실패: 처음이면 사람에게 묻지 않고 같은 값으로 인증서 로그인을 한 번 더 해 본다. 두 번째면 사람이 고른다.
+      // 이때는 사람 차례로 보이지 않는다(준비 중 그대로, 폰에도 차례를 보내지 않는다).
+      if (e.code === CERT_LOGIN_FAILED && !r.certRetryOf && !r.batch && !r.rehearsal && i < PHASES.indexOf('gate')) {
+        r.status = 'preparing';
+        r.handoff = null;
+        r.turn = null;
+        this.step(r, e.phase, 'now', '공동인증서로 다시 로그인하는 중');
+        this.emit('update', r);
+        this.src.log?.('main.cert_retry', { why: 'auto' });
+        this.certRetry.add(r.id);
+        void this.stop(r.id).catch((x: Error) => {
+          this.certRetry.delete(r.id);
+          this.src.log?.('main.cert_retry_failed', { why: x.message.slice(0, 60) });
+        });
+        return;
+      }
+      if (e.code === CERT_LOGIN_FAILED) r.turn = { text: CERT_FAILED_TWICE.text, note: CERT_FAILED_TWICE.note };
       this.step(r, e.phase, 'attention', t.kind === 'sign' ? '홈택스 창에서 서명 중' : '직접 해 주세요');
       this.emit('update', r);
       return;
@@ -1530,6 +1596,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     // 브라우저가 닫혀 끝난 제출 전 실행(멈춤·연결 끊김 실패 어느 쪽이든): 같은 문구와 [다시 시작]
     if (!r.result && !r.inDoubt && !pastGate && (r.browserClosed || this.clock() - this.goneAt < 10_000)) this.markClosed(r);
     this.batchAfter(r, code);
+    this.certRetryAfter(r);
     this.emit('update', r);
     this.wakeAfter(r, code);
   }

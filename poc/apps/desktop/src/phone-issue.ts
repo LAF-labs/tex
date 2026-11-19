@@ -74,7 +74,7 @@ export function eventOf(r: RunView, runId: string, cmdId: string, at: number, ap
 /** 사람 차례 까닭(폰에 보내는 코드). 엔진 코드는 패키지 규칙 모양(소문자·점·밑줄)일 때만 그대로, 아니면 종류만(turn.login·turn.sign·turn.other). */
 const TURN_CODE = /^[a-z][a-z0-9_]*(\.[a-z0-9_]+){1,3}$/;
 export function turnCode(h: NonNullable<RunView['handoff']>): string {
-  if (h.code && TURN_CODE.test(h.code) && h.code.length <= 64) return h.code;
+  if (h.code && TURN_CODE.test(h.code) && h.code.length <= 40) return h.code;
   return `turn.${h.kind ?? 'other'}`;
 }
 
@@ -118,6 +118,11 @@ export class CmdLog {
   }
 }
 
+/** cmd.resume 본문(schema __body6): 폰 쪽 runId 하나. */
+export interface CmdResumeBody {
+  runId: string;
+}
+
 /** 셸 실행 쪽(ShellRuns 일부와 shell-app의 준비 함수) */
 export interface PhoneIssuePorts {
   counterparty: (ref: string) => Counterparty | null;
@@ -125,6 +130,8 @@ export interface PhoneIssuePorts {
   /** [홈택스에서 준비](shell-app prepareNow). 막히면 던진다(초안 카드에 이유가 남고 PC에서 다시 누를 수 있다). */
   prepare: (id: string) => Promise<unknown>;
   anyActive: () => boolean;
+  /** [인증서로 다시 시도](ShellRuns.retryCert). 없으면 폰의 cmd.resume을 받지 않는다. */
+  retryCert?: (id: string) => Promise<unknown>;
   get: (id: string) => RunView | undefined;
   /** 초안이 생겼다(판·대화에 카드를 그린다). */
   onDraft?: (run: RunView) => void;
@@ -180,10 +187,20 @@ export class PhoneIssue {
     if (this.#sinks.get(pairId) === sink) this.#sinks.delete(pairId);
   }
 
-  /** 셸 실행이 바뀔 때(ShellRuns 'update'). 폰이 시킨 건이면 단계가 바뀐 때만 보낸다. */
+  /** 셸 실행이 바뀔 때(ShellRuns 'update'). 폰이 시킨 건이면 단계가 바뀐 때만 보낸다. 새 실행이 대신한 끝(replaced)은 보내지 않는다(relink를 기다린다). */
   update(r: RunView): void {
     const t = this.#runs.get(r.id);
-    if (t) this.#emit(r, t, false);
+    if (t && !(r.replaced && phaseOf(r) === 'stopped')) this.#emit(r, t, false);
+  }
+
+  /** 같은 값의 새 실행이 이어서 한다(ShellRuns 'restart', 인증서 로그인 다시 시도). 폰 쪽 runId·cmdId는 그대로 둔다. */
+  relink(from: string, to: string): void {
+    const t = this.#runs.get(from);
+    if (!t) return;
+    this.#runs.delete(from);
+    this.#runs.set(to, t);
+    const r = this.#o.get(to);
+    if (r) this.#emit(r, t, false);
   }
 
   /** 이 셸 실행을 맡긴 폰과 폰 쪽 runId. 폰이 시작한 실행이 아니면 null. */
@@ -214,6 +231,31 @@ export class PhoneIssue {
       return;
     }
     if (ev.event === 'end') this.#runs.delete(r.id);
+  }
+
+  /**
+   * 폰 cmd.resume(폰 [인증서로 다시 시도]). 그 폰이 맡긴 건이 공동인증서 로그인 실패 차례(login.simple_auth)일 때만 다시 시도한다.
+   * 답은 따로 없다: 다시 준비하면 진행(run.event)이 이어서 가고, 받지 않으면 지금 상태를 한 번 다시 보낸다.
+   */
+  async resume(pairId: string, sink: PhoneSink, body: CmdResumeBody): Promise<boolean> {
+    const at = [...this.#runs].find(([, t]) => t.pairId === pairId && t.runId === body?.runId);
+    if (!at) return (this.#log('resume_unknown'), false);
+    const [id, t] = at;
+    const r = this.#o.get(id);
+    const ok = !!r && !!this.#o.retryCert && r.status === 'turn' && r.handoff?.code === 'login.simple_auth' && !r.handoff.afterGate;
+    if (ok) {
+      try {
+        await this.#o.retryCert!(id);
+        this.#log('resume_cert');
+        return true;
+      } catch {
+        // 다시 시도하지 못했다: 지금 상태를 다시 보낸다
+      }
+    }
+    this.#log('resume_refused');
+    this.#sinks.set(pairId, sink);
+    if (r) this.#emit(r, t, true);
+    return false;
   }
 
   /** 폰 cmd.run 하나. 답(cmd.ack)을 sink로 보내고 그 답을 돌려준다. */

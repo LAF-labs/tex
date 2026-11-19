@@ -11,7 +11,7 @@ const DESK = path.resolve(import.meta.dirname, '../apps/desktop');
 const { tokensCss, bundleCss, loadTokens } = await import(`${DESK}/dist/shell-tokens.js`);
 const { MockStore, seedTimeline, QUICK, PROFILES, dayOffset, mockBundle, MOCK_SETTINGS } = await import(`${DESK}/dist/shell-mock.js`);
 const { buildBoard } = await import(`${DESK}/dist/board.js`);
-const { REGATE_NOTE, NOTE, HANDOFF_LOGIN, REHEARSAL_NEXT, LOGIN_NOW, STEP_LABELS, STEP_NOW, handoffTurn, REPLACING_NOTE, REPLACED_NOTE, QUEUED_NOTE } = await import(`${DESK}/dist/shell-runs.js`);
+const { REGATE_NOTE, NOTE, HANDOFF_LOGIN, REHEARSAL_NEXT, LOGIN_NOW, STEP_LABELS, STEP_NOW, handoffTurn, CERT_FAILED_TWICE, CERT_RETRY_NOTE, REPLACING_NOTE, REPLACED_NOTE, QUEUED_NOTE } = await import(`${DESK}/dist/shell-runs.js`);
 const { OnboardingFlow, initialOnbState } = await import(`${DESK}/dist/onboarding.js`);
 const { MockOnboardingPorts } = await import(`${DESK}/dist/onboarding-mock.js`);
 const { buildCardHtml, barCss, barPalette, summarize, BAR_CSP } = await import(`${DESK}/dist/approval-gate.js`);
@@ -309,6 +309,11 @@ const scenes = {
     await sleep(300);
     ev(win, { type: 'run', run: { ...mkRun('turn', { done: 2, attentionAt: 2, note: '직접 해 주세요' }), handoff: { phase: 'input', afterGate: false }, turn: handoffTurn('input') } });
     await shot(win, '30-handoff');
+    // 공동인증서 로그인 실패: 처음은 같은 값으로 다시(안내 한 줄), 두 번째는 [인증서로 다시 시도]·[간편인증 마치고 이어서]
+    ev(win, { type: 'run', run: { ...mkRun('preparing', { done: 0, now: true, note: '공동인증서로 다시 로그인하는 중' }), notices: [CERT_RETRY_NOTE] } });
+    await shot(win, '30b-cert-retry');
+    ev(win, { type: 'run', run: { ...mkRun('turn', { done: 0, attentionAt: 0, note: '직접 해 주세요' }), notices: [CERT_RETRY_NOTE], handoff: { phase: 'login', afterGate: false, kind: 'login', code: 'login.simple_auth' }, turn: CERT_FAILED_TWICE } });
+    await shot(win, '30c-cert-failed');
     ev(win, { type: 'run', run: { ...mkRun('waiting', { done: 4, now: true, confirmed: true, note: '아래 [승인하고 발급]을 기다려요' }), regate: { reason: 'date_changed', note: REGATE_NOTE.date_changed } } });
     await shot(win, '31-regate');
     ev(win, { type: 'run', run: { ...mkRun('issuing', { done: 6, now: true, confirmed: true }), verifyAttempt: 3 } });
