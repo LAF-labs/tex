@@ -14,6 +14,7 @@ import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { findInstalledChrome, pageAddress, SESSION_IDLE_REPORT_MS } from '@sax/vault';
 import { execFile } from 'node:child_process';
 import { app, autoUpdater as nativeUpdater, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, ShareMenu, shell as desktop } from 'electron';
+import { deviceModel } from './device-model.ts';
 import { AccountantPack, isPackMonth, packAsk } from './accountant-pack.ts';
 import { ACTION_TEXT, actionText, issueLocalApproval, kstToday, verifyLocalApproval, verifyLocalAttestation, type LocalApproval } from './approval-gate.ts';
 import { CERT_DOCS_SHOWN, certDocByCode, certInputsFor, type CertDocDef } from './cert-docs.ts';
@@ -63,9 +64,9 @@ import { PairingHost, type PairView } from './remote-pairing.ts';
 import { buildPhoneCopy } from './phone-copy.ts';
 import { ApprovalLog, PhoneGate } from './phone-gate.ts';
 import { CmdLog, PhoneIssue } from './phone-issue.ts';
-import { DESKTOP_CAPS, PhoneLink, PhoneStore, type TokenSeal } from './phone-link.ts';
+import { DESKTOP_CAPS, PhoneLink, PhoneStore, type PhoneView, type TokenSeal } from './phone-link.ts';
 import { APPROVE_CAPS, phoneSession, SESSION_CAPS } from './phone-session.ts';
-import { DeviceManager } from './remote-devices.ts';
+import { DeviceManager, type DeviceView } from './remote-devices.ts';
 import { engineShareStore, ShareSync } from './share-sync.ts';
 import { PcLinkHost } from './remote-pclink.ts';
 import { phoneReceiver } from './phone-receive.ts';
@@ -1343,6 +1344,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     pending: new PendingCodeFile(appPaths(root ?? defaultAppRoot()).userData),
     platform: process.platform === 'darwin' ? 'macos' : 'windows',
     deviceName: opts.remote?.deviceName ?? (process.platform === 'darwin' ? 'Mac PC' : 'Windows PC'),
+    // 계정 기기 목록의 이름은 모델 이름으로(예: "MacBook Pro", 2026-11-19 대표). 기기 토큰을 받을 때 알린다
+    model: deviceModel,
     pairing: opts.remote?.pairing !== false,
     // 새 PC 연결(ADR-048 결정 3): 금고의 계정 열쇠 넘기기. 넘겨받은 뒤에는 금고 공개키를 다시 읽는다(AIK가 바뀐다)
     linkVault: async () => linkVaultOf(await keysOf()),
@@ -1601,6 +1604,15 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   // 기기 관리(remote-devices.ts, ADR-048 결정 6): 계정의 PC·폰을 보고 끊는다. 끊은 폰의 연결 기록·우편함도 같이 지운다.
   let deviceMgr: DeviceManager | null = null;
+  /** 기기 목록의 폰 줄에 이 PC에서 본 폰 승인 상태를 붙인다(같은 폰과 연결한 기록이 없으면 붙이지 않는다) */
+  const withApproval = (devices: DeviceView[]): Array<DeviceView & { approval?: PhoneView['approver'] }> => {
+    const phones = phoneLink?.list() ?? [];
+    return devices.map((d) => {
+      if (d.role !== 'mobile') return d;
+      const x = phones.find((ph) => ph.deviceId === d.deviceId);
+      return x ? { ...d, approval: x.approver } : d;
+    });
+  };
   const devicesOf = (): DeviceManager => {
     const client = opts.remote?.cloud?.account;
     if (!client || !account.device()) throw new Error('account_required');
@@ -2428,7 +2440,17 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 설정 > 기기 연결(ADR-048 결정 6). 목록은 읽기만(보기 전에 서버와 목록을 맞춘다), 끊기·나가기는 실제 입력 뒤에만.
     'devices.list': async () => {
       await accountInit();
-      return { devices: await devicesOf().list() };
+      return { devices: withApproval(await devicesOf().list()) };
+    },
+    // 폰 승인 끄기·다시 허용(ADR-052). 연결은 그대로 두고 승인 키만 지우거나 다시 받는다. 실제 입력 뒤에만
+    'devices.px': async (p) => {
+      needGesture(3_000);
+      await accountInit();
+      const id = String(p.deviceId);
+      const pairs = (phoneLink?.list() ?? []).filter((x) => x.deviceId === id);
+      if (!pairs.length) throw new Error('device.not_phone');
+      for (const x of pairs) await (p.on === true ? phoneLink!.allowPx(x.pairId) : phoneLink!.revokePx(x.pairId));
+      return { devices: withApproval(await devicesOf().list()) };
     },
     'devices.unlink': async (p) => {
       needGesture(3_000);

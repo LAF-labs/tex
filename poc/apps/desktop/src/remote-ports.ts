@@ -82,7 +82,7 @@ export interface AccountClient {
    * POST /v1/device-tokens: AIK 인증서 + DPoP(Vd) → 15분 토큰. @sax/remote requestDeviceToken과 같다.
    * scopes가 있으면 본문에 실어 그 범위만 달라고 한다(게이트웨이 전용 토큰, ADR-040 예정). 실제로 준 범위는 응답 scopes다.
    */
-  deviceToken(cert: SignedCert, dpop: DpopSigner, scopes?: readonly string[]): Promise<DeviceToken>;
+  deviceToken(cert: SignedCert, dpop: DpopSigner, scopes?: readonly string[], model?: string): Promise<DeviceToken>;
   /** 구독 상태(기기 토큰, 데스크톱만). */
   billing(auth: DeviceAuth): Promise<BillingView>;
   /** POST /v1/billing/checkout(기기 토큰) → 결제 창 주소(계정 origin의 /v1/billing/card?ref=…만 받는다). main이 기본 브라우저로 연다. */
@@ -186,6 +186,8 @@ export interface ServerDevice {
   Vx: string;
   /** 삭제 유예 끝(ms). 없으면 null */
   deleteAfter: number | null;
+  /** 마지막으로 기기 토큰을 받은 시각(ms). 서버가 아직 모르면 null */
+  lastSeenAt: number | null;
 }
 
 /** 서버가 준 공유 기록 줄 하나. deviceId·at(서버가 받은 시각)은 서버 값이고 줄 안의 dev·at과 다를 수 있다(믿는 것은 줄 안의 값). */

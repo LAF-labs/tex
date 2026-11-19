@@ -490,33 +490,57 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     assert.equal((await e.req('PUT', '/v1/device-list', { headers: bearer(s), body: { deviceList: { listVersion: 3, entries: [entry(pc.aik, pc.d, 1)], revoked: [] } } })).json.error, 'account.unauthorized');
   });
 
-  it('폐기: 나중에 붙은 PC가 등록 7일 안에 끊으면 폰은 바로 정지되고 7일 뒤 폐기, 7일이 지나면 즉시(ADR-048 결정 6)', async () => {
+  it('폐기: 나중에 붙은 PC가 등록 7일 안에 끊어도 폰은 유예 없이 바로 폐기하고 자리를 비운다(ADR-048 결정 6, 2026-11-19 개정)', async () => {
     const { pc, d2, ps, state } = await fleet(e, 'rev@example.com');
     const [p1, p2] = ps as [Device, Device];
     const call2 = caller(e, pc.aik, d2);
     const keep = [entry(pc.aik, pc.d, 1), entry(pc.aik, d2, 2)];
     const r = await call2('PUT', '/v1/device-list', { deviceList: { listVersion: 3, entries: [...keep, entry(pc.aik, p2, 2)], revoked: [revokeRec(pc.aik, p1.id, e.clock.now())] } });
     assert.equal(r.status, 200, r.text);
-    const deleteAfter = e.clock.now() + 7 * D;
-    // 자리는 아직 차 있지만(폐기 전) 토큰·우편함·푸시는 바로 멈춘다
-    assert.equal((await state(p1.id)).state, 'suspended');
-    assert.equal((await state(p1.id)).deleteAfter, deleteAfter);
-    assert.deepEqual(e.stopped, [p1.id]);
-    assert.ok(e.mail.outbox.some((m) => m.kind === 'device_suspended'));
-    const c1 = cert(pc.aik, p1, e.clock.now() + 90 * D);
-    assert.equal((await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c1), p1.V, e.clock.now()) }, body: { cert: c1 } })).json.error, 'account.device_suspended');
-    // 유예 중 목록을 다시 올려도 유예는 다시 시작하지 않는다
-    e.clock.advance(3 * D);
-    assert.equal((await call2('PUT', '/v1/device-list', { deviceList: { listVersion: 4, entries: [...keep, entry(pc.aik, p2, 2)], revoked: [revokeRec(pc.aik, p1.id, e.clock.now())] } })).status, 200);
-    assert.equal((await state(p1.id)).deleteAfter, deleteAfter);
-    e.clock.advance(4 * D);
-    await e.svc.sweep();
     assert.equal((await state(p1.id)).state, 'revoked');
-    // 두 번째 PC도 7일이 넘었으니 이번에는 즉시
-    const r2 = await call2('PUT', '/v1/device-list', { deviceList: { listVersion: 5, entries: keep, revoked: [revokeRec(pc.aik, p1.id, 1), revokeRec(pc.aik, p2.id, e.clock.now())] } });
-    assert.equal(r2.status, 200, r2.text);
-    assert.equal((await state(p2.id)).state, 'revoked');
-    assert.equal(e.stopped.at(-1), p2.id);
+    assert.equal((await state(p1.id)).deleteAfter, null);
+    assert.deepEqual(e.stopped, [p1.id]);
+    assert.ok(e.mail.outbox.some((m) => m.kind === 'device_revoked'));
+    assert.ok(!e.mail.outbox.some((m) => m.kind === 'device_suspended'));
+    const c1 = cert(pc.aik, p1, e.clock.now() + 90 * D);
+    assert.equal((await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c1), p1.V, e.clock.now()) }, body: { cert: c1 } })).status >= 400, true);
+    // 같은 폐기 레코드를 다시 올려도 그대로다
+    assert.equal((await call2('PUT', '/v1/device-list', { deviceList: { listVersion: 4, entries: [...keep, entry(pc.aik, p2, 2)], revoked: [revokeRec(pc.aik, p1.id, e.clock.now())] } })).status, 200);
+    assert.equal((await state(p1.id)).state, 'revoked');
+  });
+
+  it('폐기: 예전 규칙으로 정지·유예 중이던 폰도 다음 목록 갱신 때 바로 폐기된다', async () => {
+    const { pc, d2, ps, state } = await fleet(e, 'rev-old@example.com');
+    const [p1, p2] = ps as [Device, Device];
+    const call2 = caller(e, pc.aik, d2);
+    const keep = [entry(pc.aik, pc.d, 1), entry(pc.aik, d2, 2)];
+    // 예전 규칙이 남긴 상태를 흉내 낸다: 정지 + 7일 뒤 폐기 예약
+    await e.db.run("UPDATE devices SET state = 'suspended', delete_after = $1 WHERE device_id = $2", [e.clock.now() + 7 * D, p1.id]);
+    const r = await call2('PUT', '/v1/device-list', { deviceList: { listVersion: 3, entries: [...keep, entry(pc.aik, p2, 2)], revoked: [revokeRec(pc.aik, p1.id, e.clock.now())] } });
+    assert.equal(r.status, 200, r.text);
+    assert.equal((await state(p1.id)).state, 'revoked');
+    assert.equal((await state(p1.id)).deleteAfter, null);
+  });
+
+  it('기기 토큰: 모델 이름을 알리면 기기 이름이 바뀌고 마지막 접속이 적힌다(10분 안에는 다시 쓰지 않는다, 2026-11-19 대표)', async () => {
+    const { pc, s, ps } = await fleet(e, 'seen@example.com', 1);
+    const p1 = ps[0]!;
+    const c1 = cert(pc.aik, p1, e.clock.now() + 90 * D);
+    const tok = (model?: string) => e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c1), p1.V, e.clock.now()) }, body: { cert: c1, ...(model ? { model } : {}) } });
+    const row = async () => ((await e.req('GET', '/v1/devices', { headers: bearer(s) })).json.devices as Array<Record<string, unknown>>).find((d) => d.deviceId === p1.id)!;
+    assert.equal((await row()).lastSeenAt, null);
+    const t0 = e.clock.now();
+    assert.equal((await tok('iPhone 16 Pro\u0007')).status, 200);
+    assert.equal((await row()).name, 'iPhone 16 Pro');
+    assert.equal((await row()).lastSeenAt, t0);
+    e.clock.advance(60_000);
+    assert.equal((await tok()).status, 200);
+    assert.equal((await row()).lastSeenAt, t0, '10분 안에는 시각을 다시 쓰지 않는다');
+    assert.equal((await row()).name, 'iPhone 16 Pro', '모델을 안 알리면 이름은 그대로');
+    e.clock.advance(11 * 60_000);
+    assert.equal((await tok()).status, 200);
+    assert.equal((await row()).lastSeenAt, e.clock.now());
+    assert.equal((await tok('x'.repeat(41))).status, 400);
   });
 
   it('폐기: 계정의 첫 PC는 가입 첫 주에도 유예 없이 즉시 끊는다(ADR-048 결정 6)', async () => {

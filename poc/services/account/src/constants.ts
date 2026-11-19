@@ -71,6 +71,8 @@ export const DEVICE = {
   /** 기기 인증서 수명(D08 §4.1 90일) + 하루 여유 */
   certMaxDays: 91,
   deviceTokensPerHour: 60,
+  /** 마지막 접속 시각을 다시 쓰는 간격(목록에는 날짜만 보인다) */
+  lastSeenWriteMs: 10 * 60_000,
   /** 검증 전 IP당 시도(같은 사무실 NAT 뒤 여러 기기) */
   deviceTokenAttemptsPerIpHour: 600,
   /** 기기 토큰으로 하는 다른 기기 정지(ADR-048 결정 6), 요청 기기당 하루 */

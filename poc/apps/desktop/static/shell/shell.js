@@ -2516,14 +2516,20 @@ function renderModal() {
   const pw = state.view === 'docs' && !!state.docImport && !state.docBusy;
   const login = !pw && !!state.login;
   const pair = !pw && !login && pairModalOpen();
-  const open = pw || login || pair;
+  const dev = !pw && !login && !pair && state.view === 'settings' && state.setTab === 'devices' ? devices.modal() : null;
+  const open = pw || login || pair || !!dev;
   // 처음 띄울 때와 창 안에 있던 포커스는 새 입력 칸으로 옮긴다(다시 그릴 때마다 칸을 새로 만든다)
   const a = document.activeElement;
   const focus = !root.firstChild || !a || a === document.body || root.contains(a);
   const shake = pair && !!state.pairShake;
   state.pairShake = false;
-  root.replaceChildren(...(pw ? [passwordModal()] : login ? [loginScreen(loginCtx())] : pair ? [pairModal(state.pair, PAIR_ACT, state.pairBusy, Date.now(), shake)] : []));
+  root.replaceChildren(...(pw ? [passwordModal()] : login ? [loginScreen(loginCtx())] : pair ? [pairModal(state.pair, PAIR_ACT, state.pairBusy, Date.now(), shake)] : dev ? [dev] : []));
   $('#app').inert = open;
+  if (dev) {
+    // 처음 띄울 때는 [취소]에 둔다(끊기는 되돌릴 수 없어서 Enter 한 번으로 끊기지 않게)
+    if (focus) root.querySelector('[data-act=device-confirm-back], [data-act=px-confirm-back]')?.focus();
+    return;
+  }
   if (pair) {
     // 6자리 칸: 처음 띄울 때·틀린 뒤는 첫 빈 칸에. 끝 화면은 주 단추에.
     if (focus || shake) (root.querySelector('.sas-box:not(:disabled)') ? root.querySelectorAll('.sas-box')[Math.min(state.pairCode.length, 5)] : root.querySelector('.modal-acts .sx-btn-primary:not(:disabled)'))?.focus();
@@ -2897,6 +2903,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && $('#modal').firstChild) {
     if (state.login) closeLogin();
     else if ($('#modal [data-pair-modal]')) PAIR_ACT.cancel();
+    else if ($('#modal [data-device-confirm]')) devices.close();
     else cancelPassword();
     return;
   }

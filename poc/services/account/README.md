@@ -23,7 +23,7 @@
 | oauth_codes | code_hash, account_id, auth_method, client_id, redirect_uri, code_challenge, expires_at, auth_at | 루프백 인가 코드(해시, 60초). auth_at은 **D09 추가 필요**: 원래 세션 인증 시각 |
 | passkeys | credential_id, account_id, public_key, alg, sign_count, created_at | **D09 추가 필요**: 패스키 공개키·카운터 |
 | webauthn_challenges | challenge_hash, account_id, kind, expires_at | 패스키 챌린지(해시, 5분) |
-| devices | device_id, account_id, role, platform, name, sx, vx, registered_at, attest_signal, state, email_hold_until, delete_after, revoke_record | 기기 목록, 상태, 72시간 대기, 7일 삭제 유예 |
+| devices | device_id, account_id, role, platform, name, sx, vx, registered_at, attest_signal, state, email_hold_until, delete_after, revoke_record, last_seen_at | 기기 목록, 상태, 72시간 대기, 7일 삭제 유예, 마지막 접속 |
 | device_events | account_id, role, kind, day | 기기 교체 이력(KST 일 단위, 30일) |
 | issue_locks | account_id, device_id, hold_id, expires_at | 발급 잠금(ADR-048 결정 7). 잡고 있는 동안만 한 줄, 놓으면 삭제. 무엇을 몇 번 발급했는지는 없음 |
 | pc_links | device_id, account_id, hello, challenge, reveal, grant_msg, created_at, expires_at | 새 PC 연결 우편함(ADR-048 결정 3). 공개키·난수·AIK 서명 목록·인증서와 RK 봉인문(서버는 열 수 없다). 끝나면 삭제, 7일 뒤 정리 |
