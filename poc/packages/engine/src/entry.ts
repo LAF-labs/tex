@@ -188,7 +188,8 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
     bank: () => codefBank,
     onEvent: (e) => {
       log.event('engine.codef', { phase: e.phase, ...(e.code ? { code: e.code } : {}), ...(e.cf ? { cf: e.cf } : {}), ...(e.param ? { param: e.param } : {}), ...(e.clientType ? { clientType: e.clientType } : {}), ...(e.order ? { order: e.order } : {}), ...(e.hint ? { hint: e.hint } : {}) });
-      const { hint: _h, ...shown } = e;
+      const shown = { ...e };
+      delete shown.hint;
       parentPort.postMessage({ t: 'ev', name: 'codef', data: shown });
     },
   });

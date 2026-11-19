@@ -235,7 +235,8 @@ export class CodefClient {
     const path = clientType === 'B' ? '/v1/kr/bank/b/account/account-list' : '/v1/kr/bank/p/account/account-list';
     const body: Json = { connectedId, organization: org };
     if (answer) {
-      const { method: _m, ...info } = answer.twoWay;
+      const info: Json = { ...answer.twoWay };
+      delete info.method;
       Object.assign(body, { smsAuthNo: answer.smsAuthNo, is2Way: true, twoWayInfo: info });
     }
     const r = await this.call(path, body);

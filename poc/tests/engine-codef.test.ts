@@ -398,7 +398,8 @@ describe('CODEF 원천: 오류 갈래(사람 말 코드)', () => {
       const { link, events } = await setup();
       mock.scenario[how] = cf;
       await assert.rejects(link.connect({ certId: CERT }), (e: unknown) => e instanceof CodefError && e.code === code && e.cf === cf);
-      const { hint: _h, ...last } = events.at(-1)!;
+      const last = { ...events.at(-1)! };
+      delete last.hint;
       assert.deepEqual(last, { phase: 'error', code, cf });
       assert.equal(mock.live.size, 0);
     });
