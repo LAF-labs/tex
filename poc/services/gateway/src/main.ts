@@ -6,7 +6,7 @@ import { gatewayRouter } from './app.ts';
 import { codefFromEnv, type CodefTokenSource } from './codef.ts';
 import { DAILY, LIMIT_PRICES, ZERO_PRICES, type Prices } from './constants.ts';
 import { MockNtsSource, OdcloudNtsSource, type BizStatusSource } from './nts.ts';
-import { MockProvider, OpenAICompatProvider, OpenRouterProvider, SplitProvider, UpstageSystemOneStub, parseAgentPrivacy, parseOpenRouterRouting, type ModelProvider } from './providers.ts';
+import { AnthropicProvider, GenerationSplitProvider, MockProvider, OpenAICompatProvider, OpenRouterProvider, SplitProvider, UpstageSystemOneStub, parseAgentPrivacy, parseOpenRouterRouting, type ModelProvider } from './providers.ts';
 import { GatewayService, type DeviceSuspender } from './service.ts';
 
 export const MIGRATIONS_DIR = fileURLToPath(new URL('../migrations/', import.meta.url));
@@ -66,7 +66,36 @@ function openRouterFromEnv(env: NodeJS.ProcessEnv, onEvent?: (e: string) => void
   return new OpenRouterProvider({ apiKey: env.OPENROUTER_API_KEY ?? fail('OPENROUTER_API_KEY'), routing, onEvent, agentPrivacy });
 }
 
+/** Anthropic 쪽 기본 모델(GW_RESPOND_PROVIDER=anthropic일 때만 쓴다). 바꾸려면 ANTHROPIC_MODEL_RESPOND·ANTHROPIC_MODEL_AGENT */
+export const ANTHROPIC_DEFAULT_MODEL = 'claude-opus-5-5';
+
+/**
+ * 생성 호출 공급사(GW_RESPOND_PROVIDER). 없거나 `base`면 GW_PROVIDER가 다 한다(지금까지와 같다).
+ * `anthropic`이면 대화·에이전트·화면 보기 같은 생성만 Anthropic으로, 판정(jev)과 결정 모델 고르기는 GW_PROVIDER에 둔다.
+ */
+export function respondProviderKind(env: NodeJS.ProcessEnv): 'base' | 'anthropic' {
+  const v = env.GW_RESPOND_PROVIDER;
+  return v === undefined || v === '' || v === 'base' ? 'base' : v === 'anthropic' ? 'anthropic' : fail('GW_RESPOND_PROVIDER');
+}
+
 export function providerFromEnv(env: NodeJS.ProcessEnv, onEvent?: (e: string) => void): ModelProvider {
+  const base = baseProviderFromEnv(env, onEvent);
+  if (respondProviderKind(env) === 'base') return base;
+  return new GenerationSplitProvider(base, new AnthropicProvider({ apiKey: env.ANTHROPIC_API_KEY || fail('ANTHROPIC_API_KEY'), ...(env.ANTHROPIC_BASE_URL ? { baseUrl: env.ANTHROPIC_BASE_URL } : {}), onEvent }));
+}
+
+/** 생성 모델 이름. anthropic이면 Anthropic 모델로 바꾼다(판정·결정 모델은 그대로) */
+export function generationModels(env: NodeJS.ProcessEnv): { respond: string; agent?: string; vision?: string } {
+  if (respondProviderKind(env) === 'anthropic') {
+    const respond = env.ANTHROPIC_MODEL_RESPOND || ANTHROPIC_DEFAULT_MODEL;
+    const agent = env.ANTHROPIC_MODEL_AGENT || respond;
+    if (![respond, agent].every((m) => /^claude-[a-z0-9.-]{1,60}$/.test(m))) fail('ANTHROPIC_MODEL');
+    return { respond, agent, vision: agent };
+  }
+  return { respond: env.MODEL_RESPOND ?? fail('MODEL_RESPOND'), ...(env.MODEL_AGENT ? { agent: env.MODEL_AGENT } : {}), ...(env.MODEL_VISION ? { vision: env.MODEL_VISION } : {}) };
+}
+
+function baseProviderFromEnv(env: NodeJS.ProcessEnv, onEvent?: (e: string) => void): ModelProvider {
   switch (env.GW_PROVIDER) {
     case 'openrouter':
       return openRouterFromEnv(env, onEvent);
@@ -119,7 +148,7 @@ export async function buildGateway(env: NodeJS.ProcessEnv = process.env, deps: G
     sidKey: key32(env.SAFETY_ID_KEY, 'SAFETY_ID_KEY'),
     tagKey: key32(env.REPLAY_TAG_KEY, 'REPLAY_TAG_KEY'),
     scopeKey: key32(env.RUN_SCOPE_KEY, 'RUN_SCOPE_KEY'),
-    models: { decide: env.MODEL_DECIDE ?? fail('MODEL_DECIDE'), respond: env.MODEL_RESPOND ?? fail('MODEL_RESPOND'), ...(env.MODEL_AGENT ? { agent: env.MODEL_AGENT } : {}), ...(env.MODEL_VISION ? { vision: env.MODEL_VISION } : {}), ...(env.MODEL_DECISION ? { decision: env.MODEL_DECISION } : {}) },
+    models: { decide: env.MODEL_DECIDE ?? fail('MODEL_DECIDE'), ...generationModels(env), ...(env.MODEL_DECISION ? { decision: env.MODEL_DECISION } : {}) },
     monthlyTokens: env.GW_MONTHLY_TOKENS === undefined ? undefined : positiveInt(env.GW_MONTHLY_TOKENS, 'GW_MONTHLY_TOKENS'),
     daily: {
       trialKrw: env.GW_DAILY_KRW_TRIAL === undefined ? DAILY.trialKrw : positiveInt(env.GW_DAILY_KRW_TRIAL, 'GW_DAILY_KRW_TRIAL'),
