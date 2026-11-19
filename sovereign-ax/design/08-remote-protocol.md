@@ -239,7 +239,9 @@ pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
 | `cmd.ack` | PC→폰 | `{cmdId, state(accepted\|start_gate\|pc_only\|rejected), runId?, reason?}` | v1.8. 폰 `cmd.run`을 받았다는 답. `accepted`·`start_gate`·`pc_only`(PC 화면에서 승인할 거래처)는 `runId` 필수(뒤따르는 `gate.request`·`run.event`를 이 값으로 잇는다), `rejected`는 `reason`(`playbook_unavailable`·`input_invalid`·`counterparty_unknown`·`duplicate`·`pc_busy`·`hometax_paused`) 필수. 폰은 답이 없으면 같은 `cmdId`로 다시 보낸다(중복은 PC가 `duplicate`로 답한다) |
 | `run.event` | PC→폰 | D03 §9 이벤트 사용자용 서브셋. v1.8에서 `cmdId?`·`phase?`(prepare·login·readback·approve·issue·verify·done·stopped)·`attempt?`·`deadline?`·`result?{approvalNo, total, emailSent, docId}`를 더한다 | 값 없음. `result`는 발급이 끝난 뒤 한 번만 싣고 승인번호·합계·메일 발송 여부·보관 문서 ID뿐이다 |
 | `gate.request` | PC→폰 | `{runId, stepId, reqId, cardId, gateKind, effects[](필수, 시작 게이트는 빈 배열 가능), fields[{key: fieldKey, value}], cardHashInputs, actionHash, requiredSigAlg, challenge(32B), exp(120s), queuedAt?}` | 카드 필드는 **readback 값**이고 라벨은 `fieldKey`로 앱이 내장 사전에서 렌더링한다(B-24·B-29). 폰은 표시한 `fields`로 `cardHash`를 직접 계산하고 `cardHashInputs`와 함께 `actionHash`(D03 §3)를 다시 계산해 **일치할 때만** 승인 버튼을 활성화한다 |
-| `gate.response` | 폰→PC | `{runId, stepId, reqId, decision, actionHash, sigAlg, sig = Sign("SAX-approve-v1"‖pair_id‖reqId‖challenge‖actionHash‖decision)}` | 생체 인증 후 서명. 비가역 카드(`requiredSigAlg = p256`)는 `sigAlg = p256`(`Px`)만 받는다. PC가 챌린지·exp·서명·actionHash·`gate_requests` 단일 사용을 검증 → gateToken 발급 |
+| `gate.response` | 폰→PC | `{runId, stepId, reqId, decision, actionHash, sigAlg, sig = Sign("SAX-approve-v1"‖CBOR([pairId, reqId, challenge, actionHash, decision]))}` (칸 묶기는 ADR-052 결정 4: 결정적 CBOR, `p256`은 r‖s 64바이트) | 생체 인증 후 서명. 비가역 카드(`requiredSigAlg = p256`)는 `sigAlg = p256`(`Px`)만 받는다. PC가 챌린지·exp·서명·actionHash·`gate_requests` 단일 사용을 검증 → gateToken 발급 |
+| `px.enroll` · `px.ack` | 폰→PC · PC→폰 | `{pxPub, hw, sig}` · `{state(enrolled\|needs_pc\|rejected), pxId}` | v1.10(ADR-052 결정 2). 폰이 `approve.v1` 세션마다 승인 키(`Px`) 공개키를 알리고 PC가 그 폰의 연결 기록에 받는다(자동 등록, 서버에 올리지 않는다). §4.2의 msg3·`Cert_M` 경로는 구현하지 않았고 이것으로 대신한다 |
+| `gate.refresh` | 폰→PC | `{runId, reqId}` | v1.10. 120초 챌린지가 지났을 때 새 `gate.request`(같은 `reqId`, 새 챌린지)를 청한다 |
 | `consent.request` | PC→폰 | `{reqId, scheduleId, playbookId, major, effects[], docType, profileRef, mode, challenge, exp}` | 데몬 스케줄 동의(B-27) |
 | `consent.response` | 폰→PC | `{reqId, decision, consentHash, sigAlg, sig = Sign("SAX-consent-v1"‖pair_id‖reqId‖challenge‖consentHash‖decision)}` | `gate.response`와 문맥 분리. 결과는 `schedules.consent_json.deviceSig` |
 | `human.request` | PC→폰 | `{runId, stepId, reqId, kind, prompt, imageChunks?, imageSha256?(captcha 필수), ttl, vaultChallenge?, origin?, secretKind?}` | `secret`은 이미지 없음·`vaultChallenge` 필수. 캡차 이미지는 ≤ 200KB를 16KB 청크로 나눠 보낸다(Noise 프레임 상한 65,535B) |
@@ -261,6 +263,7 @@ pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
   - `remote.newCounterpartyRequiresLocal`(기본 true): 처음 쓰는 거래처·이메일 수신자(원장 `irreversible_log`의 `committed` 행에 그 사업자번호·이메일 HMAC이 없는 것, ADR-021. 렌더러가 고칠 수 있는 `counterparties.local_approved_at`은 쓰지 않는다)는 원격 승인 불가.
   - `remote.notifyOnIrreversible`(기본 `["desktop","email"]`): 원격 승인으로 비가역 행위가 일어나면 PC 화면 알림과 계정 이메일로 알린다.
   - 정책은 이 값들을 **더 엄격하게만** 바꿀 수 있다(앱 내장 하한).
+- **구현(ADR-052, 2026-11-19)**: 등록은 라이브 세션의 `px.enroll`로 자동이다(대표 결정). iPhone은 `hw = ios_se`(App Attest 없음)로 받고 Android는 Key Attestation 검증기 전까지 받지 않는다. 폰 승인은 그 폰이 `cmd.run`으로 맡긴 세금계산서 발급에만 열리고, 검증자는 PC main이다(챌린지 1회용, 하루 한도, 승인 기록 `remote-approvals.json`). PC 승인 바는 폰 발급 명령에도 저절로 뜬다(위 "자동으로 뜨지 않는다"는 아직 구현 전). 이메일 알림은 다음 PR이다.
 - 폰 분실·PC 꺼짐 상황의 긴급 정지는 계정 웹의 '기기 긴급 정지'(§9.3)다.
 - SP-2: 국내 대상 기기의 SE/StrongBox P-256 커버리지(특히 중저가 Android의 StrongBox 유무, TEE 대체 허용 여부)를 측정해 90% 미만이면 미지원 기기 UX를 확정한다.
 

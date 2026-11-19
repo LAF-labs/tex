@@ -17,6 +17,9 @@ import {
   CAP,
   fromB64,
   makeQBundle,
+  pxIdOf,
+  PX_HW,
+  verifyPxEnroll,
   QBUNDLE_DAYS,
   qbundleWindow,
   type DesktopPairResult,
@@ -24,6 +27,9 @@ import {
   type MailboxTokens,
   type NoiseStatic,
   type PairRecord,
+  type PxAckBody,
+  type PxEnrollBody,
+  type PxHw,
   type RelayLink,
   type RelayQueue,
   type ShareKeyBody,
@@ -38,6 +44,24 @@ const DAY = 86_400_000;
 const FILE_VERSION = 1;
 /** 폰 앱이 hello에서 보는 PC 기능. receipt.v2 = 종이 세금계산서 값(paperInvoice)을 받아 꾸러미에 넣는다. */
 export const DESKTOP_CAPS: readonly string[] = Object.freeze([CAP.receipt, CAP.receiptV2, CAP.cash]);
+
+/** 이 PC가 받는 승인 키 종류(ADR-052 결정 1). Android는 Key Attestation 검증기가 생긴 뒤에 더한다. */
+export const PX_ACCEPTED_HW: readonly PxHw[] = Object.freeze(['ios_se'] as const);
+
+/** 받은 승인 키(Px). pub은 SEC1 비압축 65바이트(b64). */
+export interface PxRecord {
+  pub: string;
+  hw: PxHw;
+  enrolledAt: number;
+  /** auto: 폰의 등록 알림을 바로 받음 · pc: 폰 승인을 껐다가 PC에서 다시 허용 */
+  via: 'auto' | 'pc';
+}
+/** 폰 승인을 꺼 둔 동안 폰이 청한 키(PC에서 다시 허용해야 받는다). */
+export interface PxPending {
+  pub: string;
+  hw: PxHw;
+  askedAt: number;
+}
 
 export interface PhoneRecord {
   pairId: string;
@@ -59,6 +83,11 @@ export interface PhoneRecord {
   qbundleSeq: number;
   qbundleValidTo: number;
   lastSeenAt: number | null;
+  /** 폰 승인 키(ADR-052). 없으면 이 폰은 승인 기기가 아니다. */
+  px?: PxRecord;
+  pxPending?: PxPending;
+  /** PC에서 이 폰의 승인을 껐다(revokePx). 켜져 있으면 등록 알림을 바로 받지 않는다. */
+  pxOff?: boolean;
 }
 
 interface FileShape {
@@ -89,6 +118,19 @@ const isRec = (r: unknown): r is PhoneRecord => {
   );
 };
 
+const isPxKey = (k: { pub?: unknown; hw?: unknown } | undefined): boolean =>
+  !!k && typeof k === 'object' && typeof k.pub === 'string' && k.pub.length === 88 && PX_HW.includes(k.hw as PxHw);
+/** 승인 키 칸이 모양에 맞지 않으면 그 칸만 버린다(연결은 살리고 폰 승인만 꺼진다). */
+const cleanPx = (r: PhoneRecord): PhoneRecord => {
+  const out = { ...r };
+  const px = r.px as Partial<PxRecord> | undefined;
+  if (!(isPxKey(px) && Number.isSafeInteger(px?.enrolledAt) && (px?.via === 'auto' || px?.via === 'pc'))) delete out.px;
+  const pend = r.pxPending as Partial<PxPending> | undefined;
+  if (!(isPxKey(pend) && Number.isSafeInteger(pend?.askedAt))) delete out.pxPending;
+  if (r.pxOff !== true) delete out.pxOff;
+  return out;
+};
+
 /** remote-phones.json. 쓰기는 임시 파일 → rename(반쯤 쓴 파일이 남지 않게). 같은 객체 안에서 쓰기를 줄 세운다. */
 export class PhoneStore {
   #file: string;
@@ -106,7 +148,7 @@ export class PhoneStore {
     try {
       const j = JSON.parse(raw) as Partial<FileShape>;
       if (j.v !== FILE_VERSION || !Array.isArray(j.phones)) return [];
-      return j.phones.filter(isRec);
+      return j.phones.filter(isRec).map(cleanPx);
     } catch {
       return [];
     }
@@ -152,6 +194,8 @@ export interface PhoneView {
   pairedAt: number;
   online: boolean;
   lastSeenAt: number | null;
+  /** 폰 승인: on = 승인 키를 받았다 · asked = PC에서 꺼 두었고 폰이 다시 청했다 · off */
+  approver: 'on' | 'asked' | 'off';
 }
 
 /** 라이브 세션 한 번에 붙는 PC 쪽 기능. peerCaps는 폰 hello의 capabilities. */
@@ -313,7 +357,97 @@ export class PhoneLink {
   }
 
   list(): PhoneView[] {
-    return this.#recs.map((r) => ({ pairId: r.pairId, name: r.name, platform: r.platform, pairedAt: r.pairedAt, online: this.#runs.get(r.pairId)?.online ?? false, lastSeenAt: r.lastSeenAt }));
+    return this.#recs.map((r) => ({ pairId: r.pairId, name: r.name, platform: r.platform, pairedAt: r.pairedAt, online: this.#runs.get(r.pairId)?.online ?? false, lastSeenAt: r.lastSeenAt, approver: this.#pxUsable(r) ? 'on' : r.pxPending ? 'asked' : 'off' }));
+  }
+
+  // ---- 폰 승인 키(ADR-052 결정 2·3) ----
+
+  #pxUsable(r: PhoneRecord): boolean {
+    return !!r.px && PX_ACCEPTED_HW.includes(r.px.hw);
+  }
+
+  /** 지금 이 폰의 승인 키(검증할 때마다 다시 읽는다: 폐기가 바로 듣는다). 없거나 받지 않는 종류면 null. */
+  px(pairId: string): { pub: Uint8Array; hw: PxHw; deviceId: string } | null {
+    const r = this.#recs.find((x) => x.pairId === pairId);
+    if (!r?.px || !this.#pxUsable(r)) return null;
+    try {
+      return { pub: fromB64(r.px.pub), hw: r.px.hw, deviceId: r.deviceId };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 폰의 등록 알림(px.enroll). 연결된 폰이 Vm으로 서명한 알림이면 바로 받는다(대표 결정 2026-11-19 "자동 등록").
+   * 키가 바뀌었으면(생체 재등록 등) 새 키로 바꾼다. PC에서 이 폰의 승인을 꺼 두었으면 "허용 대기"로 적고 needs_pc.
+   * 서명(Vm)·키 모양·기기 종류가 틀리면 rejected이고 아무것도 적지 않는다.
+   */
+  async enrollPx(pairId: string, body: PxEnrollBody): Promise<PxAckBody> {
+    const rec = this.#recs.find((x) => x.pairId === pairId);
+    let pub: Uint8Array;
+    let sig: Uint8Array;
+    try {
+      pub = fromB64(body.pxPub);
+      sig = fromB64(body.sig);
+    } catch {
+      return { state: 'rejected', pxId: '0'.repeat(16) };
+    }
+    const pxId = pxIdOf(pub);
+    const done = (state: PxAckBody['state']): PxAckBody => {
+      this.#log('main.phone_px', { result: state });
+      return { state, pxId };
+    };
+    if (!rec || !verifyPxEnroll(fromB64(rec.Vm), rec.pairId, rec.deviceId, pub, body.hw, sig)) return done('rejected');
+    if (!PX_ACCEPTED_HW.includes(body.hw) || (body.hw === 'ios_se') !== (rec.platform === 'ios')) return done('rejected');
+    const key = b64(pub);
+    if (rec.px?.pub === key && rec.px.hw === body.hw) return done('enrolled');
+    const now = this.#now();
+    if (!rec.pxOff) {
+      this.#log('main.phone_px', { result: rec.px ? 'replaced' : 'new' });
+      const next = { ...rec, px: { pub: key, hw: body.hw, enrolledAt: now, via: 'auto' as const } };
+      delete next.pxPending;
+      await this.#replace(rec, next);
+      this.#o.onChange?.();
+      return done('enrolled');
+    }
+    if (rec.pxPending?.pub !== key || rec.pxPending.hw !== body.hw) {
+      await this.#persist(rec, { pxPending: { pub: key, hw: body.hw, askedAt: now } });
+      this.#o.onChange?.();
+    }
+    return done('needs_pc');
+  }
+
+  /** PC에서 다시 허용: 꺼 둔 폰 승인을 켠다. 그동안 폰이 청한 키가 있으면 바로 받고, 없으면 다음 등록 알림을 받는다. 꺼 둔 적이 없으면 false. */
+  async allowPx(pairId: string): Promise<boolean> {
+    const rec = this.#recs.find((x) => x.pairId === pairId);
+    if (!rec?.pxOff) return false;
+    const next = { ...rec };
+    if (rec.pxPending && PX_ACCEPTED_HW.includes(rec.pxPending.hw)) next.px = { pub: rec.pxPending.pub, hw: rec.pxPending.hw, enrolledAt: this.#now(), via: 'pc' };
+    delete next.pxPending;
+    delete next.pxOff;
+    await this.#replace(rec, next);
+    this.#log('main.phone_px', { result: 'allowed' });
+    this.#o.onChange?.();
+    return true;
+  }
+
+  /** 폰 승인 끄기: 연결은 두고 승인 키와 청한 키를 지운다. 이 폰은 다시 연결하거나 PC에서 허용해야 승인할 수 있다. */
+  async revokePx(pairId: string): Promise<boolean> {
+    const rec = this.#recs.find((x) => x.pairId === pairId);
+    if (!rec || rec.pxOff) return false;
+    const next: PhoneRecord = { ...rec, pxOff: true };
+    delete next.px;
+    delete next.pxPending;
+    await this.#replace(rec, next);
+    this.#log('main.phone_px', { result: 'revoked' });
+    this.#o.onChange?.();
+    return true;
+  }
+
+  /** 칸을 지워야 하는 갱신: 같은 객체를 고친다(돌고 있는 루프가 이 객체를 들고 있다). */
+  #replace(rec: PhoneRecord, next: PhoneRecord): Promise<void> {
+    for (const k of ['px', 'pxPending', 'pxOff'] as const) if (!(k in next)) delete rec[k];
+    return this.#persist(rec, next);
   }
 
   /** 모든 수신을 멈춘다(앱 종료). 기록은 그대로다. 진행 중이던 저장까지 끝나기를 기다리려면 idle()을 본다. */

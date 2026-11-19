@@ -62,9 +62,10 @@ import { IssueLockHost } from './issue-lock-host.ts';
 import type { AccountClient, BillingView, CloudPorts, DeviceAuth, PcLinkVault, VaultKeysFactory } from './remote-ports.ts';
 import { PairingHost, type PairView } from './remote-pairing.ts';
 import { buildPhoneCopy } from './phone-copy.ts';
+import { ApprovalLog, PhoneGate } from './phone-gate.ts';
 import { CmdLog, PhoneIssue } from './phone-issue.ts';
 import { DESKTOP_CAPS, PhoneLink, PhoneStore, type TokenSeal } from './phone-link.ts';
-import { phoneSession, SESSION_CAPS } from './phone-session.ts';
+import { APPROVE_CAPS, phoneSession, SESSION_CAPS } from './phone-session.ts';
 import { DeviceManager } from './remote-devices.ts';
 import { engineShareStore, ShareSync } from './share-sync.ts';
 import { PcLinkHost } from './remote-pclink.ts';
@@ -506,6 +507,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (!embedded || !browserAvailable || win.isDestroyed()) return SHELL.panel;
     return browserPanelWidth(win.getContentSize()[0]!, browserWant, browserShown, bar.active);
   };
+  // 폰 발급 명령과 폰 승인(아래 원격 배선에서 만든다. 게이트 처리기가 먼저 정의돼 여기 둔다)
+  let phoneIssue: PhoneIssue | null = null;
+  let phoneGate: PhoneGate | null = null;
+  const REMOTE_APPROVED_NOTE = '폰에서 승인했어요. 2초 안에 [중지]하면 발급하지 않아요';
   const bar: ApprovalBar = new ApprovalBar(win, key, (w, h, wide, height) => barBounds(w, h, wide, height, panelNow()), { log });
   const send = (ev: ShellEvent) => {
     if (!win.isDestroyed()) wc.send(IPC.event, ev);
@@ -630,7 +635,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     pushBoard();
     void refresh().catch(() => {});
   });
-  runs.on('gate-closed', (_runId: string, reqId: string, reason: string) => bar.close(reason, reqId));
+  runs.on('gate-closed', (runId: string, reqId: string, reason: string) => {
+    phoneGate?.close(runId, reqId);
+    bar.close(reason, reqId);
+  });
 
   // 금고가 부르는 비밀 입력 창(ADR-025 결정 10). 열린 창은 하나, 활성 실행의 요청만, 라벨은 main 내장 표.
   const secrets = new SecretWindowCoordinator((runId) => runs.isActive(runId));
@@ -926,6 +934,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     }
     // 보내기 전에 표시한다. 보낸 뒤 엔진이 끝나면 발급됐는지 모르는 쪽(in_doubt)으로 다룬다.
     const sendApproval = async (approval: LocalApproval, note?: string) => {
+      // 이 게이트는 여기서 답했다. 뒤에 오는 폰의 답은 받지 않는다(ADR-052 결정 5).
+      phoneGate?.close(runId, req.reqId);
       runs.approved(runId, note);
       // 이 건이 "다시 시작할 일"에서 빠진 것이 DB에 닿은 뒤 보낸다(보낸 뒤 꺼지면 다시 시작하지 않고 안내만).
       await saveResume().catch(() => {});
@@ -936,6 +946,21 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 여러 건 묶음의 뒤 건: 처음 승인 카드의 클릭(main 관찰)을 이 게이트에 쓴다. 되읽기 값이 그때 카드 값과 같을 때만(batchAutoApprove).
     if (runs.batchAutoApprove(runId, req)) return void sendApproval(issueLocalApproval(key, req, 'click+batch'), BATCH_AUTO_NOTE);
     const gr = runs.get(runId);
+    // 폰이 맡긴 발급이면 그 폰에도 승인을 청한다(ADR-052). PC 승인 바는 아래에서 그대로 뜨고, 먼저 답한 쪽이 이긴다.
+    // 폰 서명은 PhoneGate가 검증하고 기록한 뒤 여기로 온다. 바를 먼저 내려 PC 클릭이 겹치지 않게 한다.
+    void phoneGate
+      ?.offer(runId, req, {
+        approve: async () => {
+          bar.close('remote_approved', req.reqId);
+          const name = runs.get(runId)?.counterparty.name ?? '';
+          runNotify('gate', runId, '폰에서 승인했어요', `세금계산서${name ? ` ${name}` : ''} 발급을 시작해요`);
+          await sendApproval(issueLocalApproval(key, req, 'remote+px'), REMOTE_APPROVED_NOTE);
+        },
+        deny: async () => {
+          await runs.stop(runId).catch((e: Error) => log.event('main.phone_deny_stop_failed', { error: e.message.slice(0, 80) }));
+        },
+      })
+      .catch((e: Error) => log.event('main.phone_gate_offer_failed', { error: e.message.slice(0, 80) }));
     // 묶음은 바를 띄울 때 찍는다(2~N건 줄과 그때 초안 값). 클릭 때 초안이 달라졌으면 묶음 승인으로 받지 않는다(batchApproved).
     const offer = runs.batchOffer(runId);
     // 알림 글은 바가 그릴 글과 같게: 중복 경고 카드는 묶음 글자가 아니다(approval-bar open과 같은 조건)
@@ -1495,9 +1520,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   let phoneLink: PhoneLink | null = null;
   // 폰 발급 명령(v1.8): 초안을 만들고 [홈택스에서 준비]를 바로 시작한다. 승인은 PC 승인 바(폰 승인 중계 전까지 pc_only).
-  let phoneIssue: PhoneIssue | null = null;
   const phoneIssueOf = (): PhoneIssue => {
     phoneIssue ??= new PhoneIssue({
+      approver: (pairId) => phoneGateOf().canApprove(pairId),
+      approveCode: (id) => phoneGate?.codeOf(id),
       counterparty: (ref) => cps.find((c) => c.id === ref) ?? null,
       createDraft: (cp, supply, item) => runs.createDraft(cp, supply, 'separate', item),
       prepare: (id) => prepareNow(id),
@@ -1509,7 +1535,22 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     });
     return phoneIssue;
   };
-  runs.on('update', (run) => phoneIssue?.update(run));
+  // 폰 승인(ADR-052): 폰이 맡긴 발급의 커밋 게이트를 그 폰에 보내고, 답의 서명을 연결 기록의 승인 키로 검증한다.
+  const phoneGateOf = (): PhoneGate => {
+    phoneGate ??= new PhoneGate({
+      px: (pairId) => phoneLink?.px(pairId) ?? null,
+      tracked: (id) => phoneIssue?.trackedOf(id) ?? null,
+      poke: (id) => phoneIssue?.poke(id),
+      approvals: new ApprovalLog(path.join(appPaths(root ?? defaultAppRoot()).userData, 'remote-approvals.json')),
+      log: (n, d) => log.event(n, d ?? {}),
+    });
+    return phoneGate;
+  };
+  runs.on('update', (run) => {
+    phoneIssue?.update(run);
+    // 승인 대기를 벗어난 실행의 게이트는 닫는다(끝·중지·다음 단계)
+    if (run.status !== 'waiting') phoneGate?.close(run.id);
+  });
   const phones = (): PhoneLink | null => {
     if (phoneLink) return phoneLink;
     const cloud = opts.remote?.cloud;
@@ -1558,10 +1599,17 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         }
       },
       appVersion: app.getVersion(),
-      capabilities: () => [...DESKTOP_CAPS, ...SESSION_CAPS],
+      capabilities: () => [...DESKTOP_CAPS, ...SESSION_CAPS, ...APPROVE_CAPS],
       session: phoneSession({
         issue: phoneIssueOf(),
-        copy: () => buildPhoneCopy({ counterparties: () => cps, runs: () => runs.list(), bank: (m, p) => bank.call(m, p ?? {}) }),
+        copy: (pairId) =>
+          buildPhoneCopy({
+            counterparties: () => cps,
+            runs: () => runs.list(),
+            bank: (m, p) => bank.call(m, p ?? {}),
+            approval: async () => ({ approver: !!phoneLink?.px(pairId), left: await phoneGateOf().leftToday() }),
+          }),
+        approve: { gate: phoneGateOf(), enroll: (pairId, body) => (phoneLink ? phoneLink.enrollPx(pairId, body) : Promise.resolve({ state: 'rejected' as const, pxId: '0'.repeat(16) })) },
         log: (n, d) => log.event(n, d ?? {}),
       }),
       log: (n, d) => log.event(n, d ?? {}),

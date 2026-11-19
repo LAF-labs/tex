@@ -39,7 +39,10 @@ describe('H-01 승인 경계(ADR-021)', () => {
     // 넷째 인자는 민원증명 카드 제목(서류 이름, PR #272). 승인 근거는 그대로 바의 클릭뿐
     assert.ok(onGate.includes('bar.open(req, gr?.auth, offer, runs.get(runId)?.cert?.name)') && onGate.includes("o.decision === 'approve'") && onGate.includes('host.answerGate(approval)') && onGate.includes('await sendApproval(o.approval)'));
     // 바 밖의 승인 근거는 여러 건 묶음의 뒤 건뿐이다: 같은 묶음의 처음 승인 카드 클릭 뒤, 되읽기 값이 그때 카드 값과 같을 때(batchAutoApprove).
-    assert.equal(count(onGate, 'issueLocalApproval('), 1);
+    // 그리고 폰 승인(ADR-052): PhoneGate가 폰의 하드웨어 키 서명을 검증하고 기록한 뒤 부르는 approve 처리기 안에서만(remote+px).
+    assert.equal(count(onGate, 'issueLocalApproval('), 2);
+    assert.ok(between(onGate, '?.offer(runId, req, {', 'deny: async').includes("await sendApproval(issueLocalApproval(key, req, 'remote+px'), REMOTE_APPROVED_NOTE);"));
+    assert.equal(count(src, "'remote+px'"), 1);
     // 묶음 승인은 바가 묶음 글자로 그린 카드의 클릭일 때만(중복 경고 카드 등은 이 건만)
     assert.ok(onGate.includes('if (offer && o.batch === offer.count && !runs.batchApproved(runId, offer)) send({ type: \'say\', text: BATCH_CHANGED_NOTE });'));
     assert.ok(onGate.includes("if (runs.batchAutoApprove(runId, req)) return void sendApproval(issueLocalApproval(key, req, 'click+batch'), BATCH_AUTO_NOTE);"));

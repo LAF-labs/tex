@@ -84,6 +84,22 @@ const SAMPLES: Record<string, { from: 'desktop' | 'mobile'; body: object; bad: o
     body: { shareSignPub: b64(new Uint8Array(32).fill(7)), shareKeys: [{ epoch: 0, shareKey: b64(new Uint8Array(32).fill(1)) }, { epoch: 1, shareKey: b64(new Uint8Array(32).fill(2)) }] },
     bad: { shareSignPub: b64(new Uint8Array(32)), shareKeys: [{ epoch: 0, shareKey: b64(new Uint8Array(32)), rk: b64(new Uint8Array(32)) }] },
   },
+  // v1.10(ADR-052): 폰 승인 키 등록 알림·답, 승인 요청 다시 받기
+  'px.enroll': {
+    from: 'mobile',
+    body: { pxPub: b64(new Uint8Array(65).fill(4)), hw: 'ios_se', sig: b64(new Uint8Array(64).fill(9)) },
+    bad: { pxPub: b64(new Uint8Array(33).fill(2)), hw: 'software', sig: b64(new Uint8Array(64)) },
+  },
+  'px.ack': {
+    from: 'desktop',
+    body: { state: 'enrolled', pxId: '0123456789abcdef' },
+    bad: { state: 'ok', pxId: 'xyz' },
+  },
+  'gate.refresh': {
+    from: 'mobile',
+    body: { runId: '01JD0000000000000000000000', reqId: '01JD0000000000000000000001' },
+    bad: { runId: '01JD0000000000000000000000' },
+  },
 };
 
 function env(type: string, from: 'desktop' | 'mobile', body: object): Envelope {
@@ -120,7 +136,7 @@ describe('메시지 종류마다 왕복·거부', () => {
       assert.equal(validateEnvelope(env(t, s.from, s.bad)), false, `${t} bad should fail`);
       assert.throws(() => encodeEnvelope(env(t, s.from, s.bad)));
       // 방향이 정해진 종류는 반대 방향을 거부한다(Phase 1 새 종류)
-      if (t.startsWith('receipt.') || t.startsWith('cash.') || t === 'share.key') assert.equal(validateEnvelope(env(t, s.from === 'mobile' ? 'desktop' : 'mobile', s.body)), false);
+      if (t.startsWith('receipt.') || t.startsWith('cash.') || t === 'share.key' || t.startsWith('px.') || t === 'gate.refresh') assert.equal(validateEnvelope(env(t, s.from === 'mobile' ? 'desktop' : 'mobile', s.body)), false);
     });
   }
 });
