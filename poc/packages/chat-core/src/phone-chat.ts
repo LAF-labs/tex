@@ -476,8 +476,8 @@ export class PhoneChat {
    * 입력은 PC 엔진 chat.route와 같은 꼴(기기·오늘·화면·진행 중인 발급·되물은 칸·앞 대화 두 턴·이번 문장)이다.
    */
   private async route(st: State, s: Session, copy: PhoneCopy | null, now: number, user: RedactedText, cards: Array<PhoneDraft & { name: string }>): Promise<RouteAck | null> {
-    const route = this.ports.model.route;
-    if (!route) return null;
+    const model = this.ports.model;
+    if (!model.route) return null;
     let input: RedactedText;
     try {
       const recs = copyRecords(copy);
@@ -493,7 +493,8 @@ export class PhoneChat {
     if (new TextEncoder().encode(input).length > PHONE_ROUTE_MAX_BYTES) return null;
     try {
       s.token ??= await this.ports.model.runToken(s.id);
-      const answers = await route({ text: input, runToken: s.token });
+      // 메서드로 부른다(PhoneGateway는 클래스라 떼어 부르면 this를 잃는다)
+      const answers = await model.route!({ text: input, runToken: s.token });
       return answers ? routeAck(answers) : null;
     } catch {
       s.token = null;

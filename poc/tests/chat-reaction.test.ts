@@ -6,6 +6,7 @@ import { describe, it } from 'node:test';
 import {
   CHAT_ROUTE_BUNDLE,
   PhoneChat,
+  PhoneGateway,
   REACTIONS,
   REACTION_IDS,
   TurnRecorder,
@@ -181,6 +182,32 @@ function phone(first: Record<string, RouteAnswer> | null | 'throw') {
 }
 
 describe('폰 대화(PhoneChat): PC와 같은 판정 → 반응', () => {
+  it('실제 PhoneGateway(클래스)로 /v1/decide를 부르고 판정 답으로 반응만 닫는다', async () => {
+    const paths: string[] = [];
+    const gw = new PhoneGateway({
+      origin: 'https://tax.example',
+      authHeaders: async () => ({ Authorization: 'DPoP t', DPoP: 'p' }),
+      fetch: async (url, init) => {
+        const path = url.slice('https://tax.example'.length);
+        paths.push(path);
+        const body = init.body ? (JSON.parse(init.body) as Record<string, unknown>) : {};
+        const out =
+          path === '/v1/run-tokens'
+            ? { runToken: `rt_${'x'.repeat(30)}` }
+            : path === '/v1/decide'
+              ? (assert.equal(body.bundleId, CHAT_ROUTE_BUNDLE.id), assert.equal(body.bundleDigest, CHAT_ROUTE_BUNDLE.digest), { answers: [{ type: 'choice', name: 'reply_mode', choice: 'reaction_only', confidence: 0.95 }, { type: 'choice', name: 'reaction', choice: 'pray', confidence: 0.95 }, { type: 'predicate', name: 'mentions_tax_advice', probability: 0.01 }] })
+              : { status: 'completed', output: [] };
+        return { status: 200, text: async () => JSON.stringify(out) };
+      },
+    });
+    let id = 0;
+    let saved: string | null = null;
+    const chat = new PhoneChat({ model: gw, store: { load: async () => saved, save: async (d) => void (saved = d) }, copy: () => COPY, now: () => T0, newId: () => `01KB${String(++id).padStart(22, '0')}`, randomHex: () => '0'.repeat(32) });
+    const r = await chat.send('고마워');
+    assert.deepEqual([r.kind, r.kind === 'reaction' && r.reaction], ['reaction', 'pray']);
+    assert.deepEqual(paths, ['/v1/run-tokens', '/v1/decide']);
+  });
+
   it('반응만: 대화 모델을 부르지 않고, 사용자 말에 반응을 붙여 남긴다. 판정 입력에 원값이 없다', async () => {
     const t = phone(ANS('reaction_only', 'thumbs_up'));
     const r = await t.chat.send('한빛전자 건 확인했어');
