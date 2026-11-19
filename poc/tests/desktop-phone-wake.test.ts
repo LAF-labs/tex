@@ -278,6 +278,36 @@ describe('PhoneIssue: 폰이 맡긴 일에 새 소식이 생기면 update로 깨
     assert.equal(wakes.length, 3);
   });
 
+  it('폰에서 거절해 멈춘 실행은 그 멈춤으로 깨우지 않는다(사장님이 방금 거절했다, 실기기 11/19)', async () => {
+    const dir = await tmp();
+    const runs = new Map<string, RunView>();
+    const wakes: string[] = [];
+    const p = new PhoneIssue({
+      counterparty: () => CP,
+      createDraft: () => {
+        const r = baseRun('run-1');
+        runs.set(r.id, r);
+        return r;
+      },
+      prepare: async () => {},
+      anyActive: () => false,
+      get: (id) => runs.get(id),
+      cmds: new CmdLog(path.join(dir, 'remote-cmds.json')),
+      now: () => NOW,
+      wake: (pair, kind) => void wakes.push(`${pair}:${kind}`),
+    });
+    const live = new IssueSink();
+    p.attach(PAIR, live);
+    await p.handle(PAIR, live, issueCmd(ulid(NOW), { counterpartyRef: CP.id, supply: 800_000, tax: 80_000, item: '과일', day: TODAY }));
+    const r = runs.get('run-1')!;
+    p.deniedByPhone('run-1');
+    p.detach(PAIR, live);
+    const stopped = { ...r, status: 'stopped', steps: steps(4) } as RunView;
+    runs.set('run-1', stopped);
+    p.update(stopped);
+    assert.deepEqual(wakes, []);
+  });
+
   it('wakeWorthy', () => {
     const ev = { runId: ulid(), cmdId: ulid(), at: NOW, status: 'x' };
     assert.equal(wakeWorthy({ ...ev, event: 'end', phase: 'stopped' } as never), true);

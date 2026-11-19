@@ -185,6 +185,8 @@ interface Tracked {
   simpleReq?: string;
   /** v1.11 run.event.rev: 이 실행에 보낸 run.event 수(보낼 때마다 1씩 올린다) */
   rev: number;
+  /** 폰에서 거절해 멈춘 실행: 그 멈춤 소식으로는 깨우지 않는다(사장님이 방금 본 일) */
+  deniedByPhone?: boolean;
 }
 
 /** PC 하나에 하나. 폰마다 지금 세션(sink)을 붙였다 뗀다. */
@@ -239,6 +241,12 @@ export class PhoneIssue {
     return t ? { pairId: t.pairId, runId: t.runId } : null;
   }
 
+  /** 폰에서 거절했다(phone-gate deny). 곧 오는 멈춤은 폰이 이미 아는 소식이라 깨우지 않는다. */
+  deniedByPhone(shellRunId: string): void {
+    const t = this.#runs.get(shellRunId);
+    if (t) t.deniedByPhone = true;
+  }
+
   /** 승인 단계 이유가 바뀌었다(phone-gate). 지금 상태를 다시 본다(달라졌을 때만 보낸다). */
   poke(shellRunId: string): void {
     const t = this.#runs.get(shellRunId);
@@ -254,7 +262,7 @@ export class PhoneIssue {
     const sink = this.#sinks.get(t.pairId);
     if (!sink) {
       // 바뀐 소식인데 폰이 앱을 닫아 두었다: 깨운다(같은 소식은 key가 같아 한 번만)
-      if (!force && wakeWorthy(ev)) this.#o.wake?.(t.pairId, 'update');
+      if (!force && wakeWorthy(ev) && !(t.deniedByPhone && ev.event === 'end')) this.#o.wake?.(t.pairId, 'update');
       return;
     }
     // 폰은 적용한 것보다 크지 않은 rev를 버린다(늦게 온 옛 이벤트가 새 상태를 덮지 않게). sync.v1을 모르는 폰에는 phone-session이 뺀다.
