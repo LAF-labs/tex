@@ -93,7 +93,9 @@ describe('chat_phone 머리말', () => {
   it('폰에 없는 도구는 도구로 적지 않고, PC가 꺼져 있음·맡기기·defer·세무 판단·데이터 규칙을 적는다', () => {
     for (const t of PHONE_OMITTED_TOOLS) assert.ok(!p.includes(t), t);
     assert.doesNotMatch(p, /판정기다/);
-    assert.match(p, /PC는 꺼져 있다/);
+    assert.match(p, /PC: 꺼짐/);
+    assert.match(p, /PC: 켜짐/);
+    assert.match(p, /앱 판단: 세금계산서 발급 요청/);
     assert.match(p, /발급·전송 도구는 없다/);
     assert.match(p, /kind defer/);
     assert.match(p, /# 세무 판단/);

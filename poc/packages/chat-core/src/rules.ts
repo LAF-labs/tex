@@ -299,3 +299,48 @@ export function typoAliases(text: string, cps: Array<{ recordId: string; name: s
     ...[...asks].map((alias) => ({ recordId: null, alias })),
   ];
 }
+
+// ── 발급 의도(사장님이 "세금계산서"라고 말하지 않아도) ──
+
+/** 발급을 시키는 말. 사장님들이 실제로 쓰는 말: 끊다·떼다·발급·발행·끊어 주다, 줄임말(세계·계산서), 띄어 쓴 꼴 */
+const ISSUE_VERB_RE = /(?:끊|떼|뗴|발급|발행|세금\s?계산서|세계|계산서|전자\s?세금|세금계산|tax\s?invoice)/iu;
+/** 시키는 끝말(해 줘·하자·할게·해·부탁·ㄱㄱ). 끊어/떼/발급 뒤에 오거나 금액 뒤에 바로 온다. */
+const ASK_END_RE = /^\s?(?:줘|주|줄|달|해|하|할|자|게|께|ㄱ|고고|부탁|드|요청|좀|요|\?|$)/u;
+/** 발급이 아니라 조회·취소·질문으로 읽히는 말. 이게 있으면 발급 의도로 보지 않는다. */
+const NOT_ISSUE_RE = /(?:끊은|끊었|뗀|뗐|발급한|발급했|발행한|발행했|발급된|발급 된|기록|내역|목록|보여|알려|얼마|몇\s?건|몇 개|언제|있어\?|있나|했어\?|했나|됐어|됐나|취소|수정|정정|지워|삭제|받을\s?돈|못\s?받|입금|매출|합계|어떻게|뭐야|무슨|왜)/u;
+/** 금액만 말하고 시키는 꼴: "[AMT_1] 해 줘", "[AMT_1]짜리 하나", "[NAME_1] [AMT_1]" */
+const AMOUNT_ASK_RE = /\[AMT_\d+\]\s?(?:짜리|어치|만큼|으로|로)?\s?(?:하나|한 장|한장|한 건|한건)?\s?(?:해|좀|부탁|ㄱㄱ|고고|요청|줘|주세요)/u;
+
+export interface IssueIntent {
+  /** 세금계산서를 만들어 달라는 말로 읽힌다 */
+  issue: boolean;
+  /** 문장에 금액 토큰이 있다 */
+  amount: boolean;
+  /** 문장에 거래처 이름 토큰이 있다 */
+  counterparty: boolean;
+}
+
+/**
+ * 가린 사용자 문장(토큰이 든 글)에서 발급 의도를 읽는다. 모델이 놓쳐도 앱이 발급 흐름(카드 만들기·되묻기)으로 잇게 하는 안전망이다.
+ * - "[AMT_1] 끊어줘", "[NAME_1] [AMT_1] 떼 줘", "[AMT_1] 발급해줘", "계산서 [AMT_1]", "[NAME_1] [AMT_1] 해 줘" → 발급
+ * - "지난주 끊은 거 보여 줘", "[NAME_1] 발급한 거 얼마야", "발급 취소해 줘" → 발급 아님(조회·취소)
+ * 이름 없이 "[AMT_1]"만 있고 시키는 말도 없으면 발급으로 보지 않는다("[AMT_1] 들어왔어?" 같은 말).
+ */
+export function issueIntent(masked: string): IssueIntent {
+  const t = masked.replace(/\s+/g, ' ').trim();
+  const amount = /\[AMT_\d+\]/u.test(t);
+  const counterparty = /\[NAME_\d+\]/u.test(t);
+  const base = { amount, counterparty };
+  if (!t || NOT_ISSUE_RE.test(t)) return { issue: false, ...base };
+  const verb = ISSUE_VERB_RE.exec(t);
+  if (verb) {
+    const after = t.slice(verb.index + verb[0].length).replace(/^\s?(?:[어아여을를]|어\s?서)?/u, '');
+    // "계산서"·"세계" 같은 이름말은 시키는 끝말이 없어도 금액·거래처와 함께면 발급이다("[NAME_1] 계산서 [AMT_1]")
+    const noun = /계산서|세계|전자|tax/iu.test(verb[0]);
+    if (ASK_END_RE.test(after) || (noun && (amount || counterparty))) return { issue: true, ...base };
+  }
+  if (amount && AMOUNT_ASK_RE.test(t)) return { issue: true, ...base };
+  // 거래처와 금액만 말한 문장("[NAME_1] [AMT_1]", "[NAME_1]에 [AMT_1]요")은 이 앱에서 발급을 시키는 말이다
+  if (amount && counterparty && t.replace(/\[(?:AMT|NAME)_\d+\]/gu, '').replace(/[\s.,!~]/gu, '').length <= 3) return { issue: true, ...base };
+  return { issue: false, ...base };
+}

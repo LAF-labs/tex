@@ -663,7 +663,7 @@ describe('게이트웨이: 폰 대화 직접 호출(ADR-047, chat 범위)', () =
     assert.deepEqual(tools.map((t) => t.name), CHAT_PHONE_TOOLS.map((t) => t.name));
     assert.ok(tools.every((t) => t.strict));
     assert.match(String(sent.prompt_cache_key), /^acct:[0-9a-f]{32}:t:chat_phone$/);
-    assert.match(JSON.stringify((sent.input as unknown[])[0]), /PC는 꺼져 있다/);
+    assert.match(JSON.stringify((sent.input as unknown[])[0]), /PC: 꺼짐/);
     const tagged = (r.json.output as Array<{ item: Record<string, unknown>; tag: string }>)[0]!;
     e.provider.respondOutput = [{ type: 'message', content: [{ type: 'output_text', text: '{"kind":"ask","text":"금액을 알려 주세요.","show":["d1"],"ask":"amount"}' }] }];
     const turn = await e.call('/v1/respond', phoneBody(rt, { replay: [tagged, { type: 'function_call_output', call_id: 'call_p1', output: '{"ref":"d1","status":"needs_input","fields":null,"needs":["amount"]}' }] }), phone);
