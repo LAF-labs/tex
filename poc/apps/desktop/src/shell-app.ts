@@ -227,10 +227,15 @@ export interface ShellOptions {
    */
   agent?: {
     step(p: StepParams): Promise<StepResult>;
+    /** 판정(chat.route, ADR-056). 없으면 판정 없이 돈다. */
+    route?(p: Record<string, unknown>): Promise<unknown>;
     /** 확인용: 대화 에이전트가 읽는 원장 발급 이력(db.query.runs.history) 자리. 없으면 엔진에 묻는다. */
     history?(p: Record<string, unknown>): Promise<unknown>;
   };
 }
+
+/** 말풍선 반응(ADR-056)을 켰는가. 반응 알약 화면(static/shell/shell.js reactTo)과 같은 커밋에서 켠다. */
+export const CHAT_REACTIONS_ON = false;
 
 /** ShellOptions.remote. */
 export interface RemoteWiring {
@@ -1213,7 +1218,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   let agentCreated: RunView[] = [];
   const agent = new AgentChat(
     agentPorts({
-      rpc: (m, p) => (m === 'chat.step' && opts.agent ? opts.agent.step(p as unknown as StepParams) : m === 'db.query.runs.history' && opts.agent?.history ? opts.agent.history(p) : host.rpc(m, p)),
+      rpc: (m, p) => (m === 'chat.step' && opts.agent ? opts.agent.step(p as unknown as StepParams) : m === 'chat.route' && opts.agent?.route ? opts.agent.route(p) : m === 'db.query.runs.history' && opts.agent?.history ? opts.agent.history(p) : host.rpc(m, p)),
+      // 판정(ADR-056)은 반응 알약 화면이 들어오는 PR에서 켠다(그 전에는 렌더러가 반응 답을 그리지 못한다). 켤 때: 제품 엔진과, 판정을 넘긴 e2e 가짜만.
+      route: CHAT_REACTIONS_ON && (!opts.agent || !!opts.agent.route),
+      // 반응은 답보다 먼저 사용자 말풍선에 붙는다(일을 맡긴 말의 접수 표시). 이모지 이름만 간다.
+      onReaction: (reaction) => send({ type: 'chat-reaction', reaction }),
       profileId: () => businessId,
       runs,
       // 사업자 등록·발급 인증, 그리고 Chrome(U6, #301). 빠졌으면 초안 카드를 만들지 않고 할 일을 보인다(옛 길 setupGate와 같은 규칙).
@@ -2149,8 +2158,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         // 한 요청에서 초안이 둘 이상이면 한 카드로 묶고 첫 건만 시작한다. 뒤 건은 앞 건이 끝나면 차례로 시작한다(ShellRuns batchNext).
         const batched = runs.makeBatch(agentCreated.map((x) => x.id));
         if (sendByUser) for (const run of batched ? agentCreated.filter((x) => x.batch?.index === 0) : agentCreated) autoPrepare(run.id);
-        log.event('main.agent', r.kind === 'agent' ? { result: 'ok', filtered: r.filtered ?? 'none', show: r.show.length, ask: r.ask?.kind ?? 'none', ms: Math.round(performance.now() - t0) } : { result: r.code, ms: Math.round(performance.now() - t0) });
+        log.event('main.agent', r.kind === 'agent' ? { result: 'ok', filtered: r.filtered ?? 'none', show: r.show.length, ask: r.ask?.kind ?? 'none', ms: Math.round(performance.now() - t0) } : r.kind === 'reaction' ? { result: 'reaction', reaction: r.reaction, ms: Math.round(performance.now() - t0) } : { result: r.code, ms: Math.round(performance.now() - t0) });
         if (r.kind === 'unavailable') return { kind: 'unavailable', text: r.text, retry: r.retry, via: 'model', note: null, sent };
+        if (r.kind === 'reaction') return { kind: 'reaction', reaction: r.reaction, via: 'model', note: null, sent };
         // 카드는 지금 실행 값으로 싣는다(렌더러가 그린다). 버린 초안은 목록에 없어 빠지고, 그 카드는 update 이벤트로 "취소함"이 된다.
         type Shown = { type: 'card'; run: RunView } | Extract<(typeof r.show)[number], { type: 'table' }>;
         const show = r.show.flatMap((x): Shown[] => {

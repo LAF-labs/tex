@@ -39,7 +39,7 @@ const ISSUED: IssuedRow[] = [
   { counterpartyId: 'cpA', counterparty: 'A상사', date: '2026-09-03', total: 2_200_000 },
   { counterpartyId: null, counterparty: 'C테크', date: '2026-11-02', total: null },
 ];
-const PORT_KEYS = ['step', 'profileId', 'drafts', 'issued', 'receivables', 'payables', 'cashFlow', 'counterparties', 'today', 'onProgress', 'now'];
+const PORT_KEYS = ['step', 'profileId', 'drafts', 'issued', 'receivables', 'payables', 'cashFlow', 'counterparties', 'today', 'onProgress', 'now', 'route', 'onReaction', 'onEvent', 'newId'];
 const DRAFT_KEYS = ['list', 'setupMissing', 'create', 'update', 'discard'];
 
 type Handler = (p: StepParams) => StepResult;

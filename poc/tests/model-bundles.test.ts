@@ -21,7 +21,7 @@ import {
 
 const root = path.resolve(import.meta.dirname, '..');
 const catalog = BundleCatalog.load();
-const EXPECTED = ['amount_parse_check_v1', 'doc_meta_check_v1', 'form_ready_v2', 'intent_route_v1', 'issue_result_v2', 'popup_class_v1', 'recovery_v1', 'screen_state_v2'];
+const EXPECTED = ['amount_parse_check_v1', 'chat_route_v1', 'doc_meta_check_v1', 'form_ready_v2', 'intent_route_v1', 'issue_result_v2', 'popup_class_v1', 'recovery_v1', 'screen_state_v2'];
 
 function get(id: string): LoadedBundle {
   const b = catalog.get(id);
@@ -179,7 +179,9 @@ describe('결과 매핑(첫 일치 승리, 로컬 계산)', () => {
   });
 
   it('리뷰 회귀(핵심 질문): 매핑이 참조하는 choice의 refusal만 번들 전체 unknown, 참조하지 않는 보조 choice는 그 질문만 unknown', () => {
-    for (const b of catalog.list()) assert.deepEqual([...coreQuestions(b.def)].sort(), b.def.questions.filter((q) => q.type === 'choice').map((q) => q.name).sort(), b.wireId); // 현 8종은 모든 choice가 핵심
+    // chat_route_v1은 받는 방식(reply_mode)만 핵심이다: act·domain·reaction을 거절해도 그 질문만 unknown이다(ADR-056)
+    const CORE: Record<string, string[]> = { chat_route_v1: ['reply_mode'] };
+    for (const b of catalog.list()) assert.deepEqual([...coreQuestions(b.def)].sort(), CORE[b.wireId] ?? b.def.questions.filter((q) => q.type === 'choice').map((q) => q.name).sort(), b.wireId);
     const def = structuredClone(get('popup_class_v1').def);
     def.questions.push({ type: 'choice', name: 'aux_tone', instructions: '보조 분류', onRefusal: 'unknown', choices: [{ value: 'formal', description: 'x' }, { value: 'unknown', description: 'x' }] });
     assert.deepEqual([...coreQuestions(def)], ['popup']);

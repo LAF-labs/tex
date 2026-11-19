@@ -4,7 +4,8 @@
 // - 초안 포트에는 준비·발급 메서드가 없다. 어떤 모델 출력으로도 run.prepare가 시작되지 않는다(발급은 카드 버튼 IPC 하나뿐).
 // - 문장·토큰·값을 로그에 남기지 않는다.
 import { draftDate, issueDateRule, lineSupply, parseQuantity } from '@sax/engine';
-import type { AgentReply, DomainCall, DraftExtra, ScreenFrame, ShownReply, StepParams, StepResult, ToolOutput, Vat } from '@sax/engine';
+import { TurnRecorder } from '@sax/engine';
+import type { AgentReply, DomainCall, DraftExtra, ReactionId, RouteStep, ScreenFrame, ShownReply, StepParams, StepResult, ToolOutput, TurnEvent, Vat } from '@sax/engine';
 import { CHAT_ERROR_TEXT } from './chat-reply.ts';
 
 /** 대화가 열 수 있는 앱 안 화면(@sax/chat-core OPEN_SCREENS) */
@@ -151,6 +152,17 @@ export interface AgentChatPorts {
   /** KST YYYY-MM-DD */
   today(): string;
   onProgress(phase: AgentPhase): void;
+  /**
+   * 엔진 rpc 'chat.route'(ADR-056): chat.step 앞의 판정. 없거나 던지면 판정 없이 늘 하던 대로 돈다.
+   * reaction_only면 반응 하나로 턴을 닫고(chat.step을 부르지 않는다), react_then_work면 반응을 먼저 달고 도구 루프를 돈다.
+   */
+  route?(p: { text: string; frame: ScreenFrame; profileId: string }): Promise<RouteStep>;
+  /** 사용자 말풍선에 반응을 단다(턴 이벤트 reaction). 이 턴의 사용자 말에 붙는다. */
+  onReaction?(reaction: ReactionId): void;
+  /** 턴 이벤트(ADR-054). 화면·평가·운영 신호가 듣는다. 기기 밖으로 내보내지 않는다. */
+  onEvent?(e: TurnEvent): void;
+  /** 턴·메시지 id(ULID). 없으면 시각과 순번으로 만든다. */
+  newId?(): string;
   /** 대화가 고른 앱 안 화면을 연다(open_screen). 렌더러가 답을 그린 뒤 그 화면으로 간다. */
   openScreen?(screen: OpenScreen): void;
   now?: () => number;
@@ -170,7 +182,9 @@ export type AgentTurnResult =
   /** setup: 이 턴에 내 사업장·발급 인증이 빠져 카드를 못 만들었다(화면이 등록 버튼을 둔다). */
   /** unknown: 사장님이 쓴 거래처 이름이 장부에 없다(U8-1). 화면은 text와 그 이름으로 [거래처 추가]를 둔다. */
   | { kind: 'agent'; text: string; show: AgentShow[]; ask: null | { kind: AgentAsk; chips: Array<{ label: string; text: string }> }; filtered: AgentReply['filtered']; setup?: true; unknown?: { name: string; text: string } }
-  | { kind: 'unavailable'; code: string; text: string; retry: boolean };
+  | { kind: 'unavailable'; code: string; text: string; retry: boolean }
+  /** 판정이 반응만 하라고 했다(ADR-056). 답 문장이 없다. 화면은 사용자 말풍선에 반응을 달고 점 셋을 거둔다. */
+  | { kind: 'reaction'; reaction: ReactionId };
 
 interface Result {
   kind: ResultKind;
@@ -247,6 +261,7 @@ export class AgentChat {
   private readonly ports: AgentChatPorts;
   private session: Session | null = null;
   private seq = 0;
+  private turns = 0;
 
   constructor(ports: AgentChatPorts) {
     this.ports = ports;
@@ -263,6 +278,45 @@ export class AgentChat {
     s.said = text;
     const created: string[] = [];
     this.ports.onProgress('thinking');
+    const n = ++this.turns;
+    const id = () => this.ports.newId?.() ?? `t${this.now().toString(36)}${n}`;
+    const rec = new TurnRecorder(id(), () => this.now(), this.ports.onEvent);
+    const msgId = id();
+    rec.emit({ type: 'turn.start', device: 'pc', msgId });
+    const end = (r: AgentTurnResult): AgentTurnResult => {
+      rec.emit(r.kind === 'unavailable' ? { type: 'turn.end', status: 'failed', code: r.code } : { type: 'turn.end', status: 'completed' });
+      return r;
+    };
+    // 판정(ADR-056): 받는 방식만 정한다. 실패하면 판정 없이 늘 하던 대로(막는 문이 아니다).
+    if (this.ports.route) {
+      let route: RouteStep | null = null;
+      try {
+        s.lastAt = this.now();
+        route = await this.ports.route({ text, frame: this.frame(s), profileId });
+        s.lastAt = this.now();
+      } catch (e) {
+        const err = e as { code?: unknown; message?: unknown } | null;
+        const code = [err?.code, err?.message].find((c): c is string => typeof c === 'string' && Object.hasOwn(AGENT_ERROR_TEXT, c));
+        // 나쁜 입력(비밀 모양·너무 긴 문장)은 chat.step도 똑같이 막으니 여기서 바로 답한다
+        if (code === 'chat.secret_rejected' || code === 'bad_text' || code === 'chat.input_too_large') return end({ kind: 'unavailable', code, ...AGENT_ERROR_TEXT[code]! });
+      }
+      if (route) {
+        rec.emit({ type: 'route', act: route.act, domain: route.domain, mode: route.mode, band: route.band, unsure: route.unsure, failed: route.failed });
+        if (route.reaction && route.mode !== 'answer') {
+          rec.emit({ type: 'reaction', msgId, reaction: route.reaction });
+          this.ports.onReaction?.(route.reaction);
+        }
+        if (route.mode === 'reaction_only' && route.reaction) {
+          rec.emit({ type: 'path', path: 'reaction', tools: [] });
+          return end({ kind: 'reaction', reaction: route.reaction });
+        }
+      }
+    }
+    rec.emit({ type: 'path', path: 'tools', tools: [] });
+    return end(await this.loop(s, text, profileId, created, rec));
+  }
+
+  private async loop(s: Session, text: string, profileId: string, created: string[], rec: TurnRecorder): Promise<AgentTurnResult> {
     let phase: AgentPhase = 'thinking';
     let setup = false;
     try {
@@ -279,7 +333,9 @@ export class AgentChat {
         const outputs: Array<{ callId: string; output: ToolOutput }> = [];
         for (const { callId, ...call } of r.calls) {
           if (TOOL_PHASE[call.tool] !== phase) this.ports.onProgress((phase = TOOL_PHASE[call.tool]));
+          rec.emit({ type: 'tool.start', tool: call.tool, args: {} });
           const output = await this.exec(s, call, created);
+          rec.emit({ type: 'tool.end', tool: call.tool, status: output.status, ref: output.ref, runId: null });
           if (output.status === 'setup_missing') setup = true;
           outputs.push({ callId, output });
         }

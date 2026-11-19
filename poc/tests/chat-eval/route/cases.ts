@@ -10,8 +10,15 @@
 // - lookup: 기록·돈·연결 상태를 묻기만. app_help: 앱 쓰는 법·할 수 있는 일(기능 하나면 그 domain).
 // - smalltalk·tax_advice·other는 domain none. 일을 시키며 세무 판단을 같이 물으면 act는 일, mentions_tax_advice 참.
 // - other: 앱이 하지 않는 일, 지시 주입, 대화에 적은 비밀, 뜻 없는 글자.
+// 받는 방식 reply(ADR-056, chat_route_v1 reply_mode):
+// - reaction_only: 감사·수고 인사·확인·동의·끝내는 말뿐(묻는 것도 시키는 것도 없음). 말풍선에 이모지 하나.
+// - react_then_work: 일을 맡기는 말(task, 바꾸거나 답하는 followup). 👀 먼저, 결과만 말한다.
+// - answer: 그 밖(조회 질문, 처음 인사, 잡담, 도움말, 세무, 기타). 감사에 질문이 섞이면 answer, 일이 섞이면 react_then_work.
+//   기본값은 act로 정하고(task·followup → react_then_work, 나머지 → answer), 반응만인 말은 사례에 reply로 적는다.
 
 export type Act = 'task' | 'lookup' | 'followup' | 'app_help' | 'smalltalk' | 'tax_advice' | 'other';
+export type Reply = 'reaction_only' | 'react_then_work' | 'answer';
+export const REPLIES: readonly Reply[] = ['reaction_only', 'react_then_work', 'answer'];
 export type Domain = 'invoice' | 'records' | 'cert_doc' | 'bank' | 'auth' | 'phone_link' | 'counterparty' | 'pack' | 'capture' | 'settings' | 'none';
 export const ACTS: readonly Act[] = ['task', 'lookup', 'followup', 'app_help', 'smalltalk', 'tax_advice', 'other'];
 export const DOMAINS: readonly Domain[] = ['invoice', 'records', 'cert_doc', 'bank', 'auth', 'phone_link', 'counterparty', 'pack', 'capture', 'settings', 'none'];
@@ -41,6 +48,8 @@ export interface RouteCase {
   domain: Domain;
   corrects: boolean;
   advice: boolean;
+  /** 받는 방식(ADR-056) */
+  reply: Reply;
   src: 'seed' | 'made';
   /** 말투 갈래(보고서에서 갈래별로 본다) */
   style: string;
@@ -57,13 +66,15 @@ function g(act: Act, domain: Domain, base: Opt, says: Say[]): void {
     const n = (seen.get(k) ?? 0) + 1;
     seen.set(k, n);
     const ctx: RouteCtx = { device: 'pc', cards: [], pending: null, asked: null, prev: [], ...base.ctx, ...o.ctx };
-    out.push({ id: `${k}.${String(n).padStart(2, '0')}`, say, ctx, act, domain, corrects: o.corrects ?? base.corrects ?? false, advice: o.advice ?? base.advice ?? act === 'tax_advice', src: o.src ?? base.src ?? 'made', style: o.style ?? base.style ?? 'plain' });
+    const reply = o.reply ?? base.reply ?? (act === 'task' || act === 'followup' ? 'react_then_work' : 'answer');
+    out.push({ id: `${k}.${String(n).padStart(2, '0')}`, say, ctx, act, domain, corrects: o.corrects ?? base.corrects ?? false, advice: o.advice ?? base.advice ?? act === 'tax_advice', reply, src: o.src ?? base.src ?? 'made', style: o.style ?? base.style ?? 'plain' });
   }
 }
 const card = (cp: string, o: Partial<RouteCard> = {}): RouteCard => ({ cp, amount: true, vat: null, item: true, ...o });
 const PHONE: Opt = { ctx: { device: 'phone' } };
 const seed = (say: string, o: Opt = {}): Say => [say, { src: 'seed', ...o }];
 const st = (say: string, style: string, o: Opt = {}): Say => [say, { style, ...o }];
+const ACK: Opt = { reply: 'reaction_only' };
 
 // ── task · invoice: 새 세금계산서 ──
 g('task', 'invoice', {}, [
@@ -433,9 +444,9 @@ g('app_help', 'capture', {}, [st('영수증은 어떻게 올려?', 'phone', PHON
 g('smalltalk', 'none', {}, [
   seed('안녕하세요 처음 써봐요'),
   seed('안녕'),
-  st('고마워', 'plain'),
-  st('수고했어', 'plain'),
-  st('감사합니다~', 'polite'),
+  st('고마워', 'plain', ACK),
+  st('수고했어', 'plain', ACK),
+  st('감사합니다~', 'polite', ACK),
   st('오늘 점심 뭐 먹지', 'plain'),
   st('점심 메뉴 추천해줘', 'plain'),
   st('날씨 좋다', 'plain'),
@@ -443,7 +454,7 @@ g('smalltalk', 'none', {}, [
   st('주말 잘 보내', 'plain'),
   st('ㅋㅋㅋㅋ', 'slang'),
   st('ㅎㅇ', 'slang'),
-  st('ㄱㅅ', 'slang'),
+  st('ㄱㅅ', 'slang', ACK),
   st('좋은 아침입니다', 'polite'),
   st('밥 묵었나', 'dialect'),
   st('오늘 장사 잘 됐어', 'plain'),
@@ -451,16 +462,62 @@ g('smalltalk', 'none', {}, [
   st('너 이름이 뭐야', 'plain'),
   st('잘 자', 'plain'),
   st('오 빠르네', 'plain'),
-  st('좋아 잘했어', 'plain'),
+  st('좋아 잘했어', 'plain', ACK),
   st('아 배고파', 'plain'),
   st('커피 한잔 하고 올게', 'plain'),
   st('안녕', 'phone', PHONE),
-  st('고마워요', 'phone', PHONE),
+  st('고마워요', 'phone', PHONE, ACK),
   st('오늘 비 온대?', 'plain'),
   st('잠깐만', 'plain'),
   st('응', 'short'),
-  st('알겠어', 'short', { ctx: { prev: [['한빛상사 110만원 세금계산서', '한빛상사 앞으로 확인 카드를 만들었어요.']] } }),
-  st('좋아요 고마워요', 'short', { ctx: { cards: [card('한빛상사')], prev: [['한빛상사 110만원 세금계산서', '한빛상사 앞으로 확인 카드를 만들었어요.']] } }),
+  st('알겠어', 'short', { ...ACK, ctx: { prev: [['한빛상사 110만원 세금계산서', '한빛상사 앞으로 확인 카드를 만들었어요.']] } }),
+  st('좋아요 고마워요', 'short', { ...ACK, ctx: { cards: [card('한빛상사')], prev: [['한빛상사 110만원 세금계산서', '한빛상사 앞으로 확인 카드를 만들었어요.']] } }),
+]);
+
+// ── 받는 방식(ADR-056): 맞장구·끝내는 말은 반응만, 감사에 질문이 섞이면 답, 일이 섞이면 반응 + 도구 ──
+const DONE: Opt['ctx'] = { prev: [['대한테크 33만원 세금계산서', '대한테크 세금계산서를 발급했어요. 승인번호는 아래에 있어요.']] };
+const SHOWN: Opt['ctx'] = { prev: [['지난달 매출 얼마야', '지난달 발급은 4건, 합계 520만원이에요.']] };
+const CARD_OPEN: Opt['ctx'] = { cards: [card('한빛상사', { vat: 'separate' })], prev: [['한빛상사 110만원 끊어줘', '한빛상사 앞으로 확인 카드를 만들었어요.']] };
+g('smalltalk', 'none', { reply: 'reaction_only', style: 'ack' }, [
+  ['확인했어요', { ctx: SHOWN }],
+  ['오케이', { ctx: CARD_OPEN }],
+  ['굿', { ctx: DONE }],
+  ['ㅇㅋ', { ctx: SHOWN, style: 'ack_slang' }],
+  ['됐다 이제', { ctx: DONE }],
+  ['다 됐네 고마워', { ctx: DONE }],
+  ['수고 많았어요', { ctx: DONE, style: 'ack_polite' }],
+  ['감사감사', { ctx: DONE, style: 'ack_slang' }],
+  ['네 알겠습니다', { ctx: SHOWN, style: 'ack_polite' }],
+  ['좋아 그대로 해', { ctx: CARD_OPEN }],
+  ['완벽해', { ctx: CARD_OPEN }],
+  ['그럼 됐어', { ctx: SHOWN }],
+  ['고마워!! 덕분에 살았다', { ctx: DONE }],
+  ['확인', { ctx: { ...SHOWN, device: 'phone' }, style: 'ack_phone' }],
+  ['ok 고마워요', { ctx: { ...DONE, device: 'phone' }, style: 'ack_phone' }],
+  ['알았어 수고', { ctx: DONE, style: 'ack_slang' }],
+  ['ㄳㄳ', { ctx: DONE, style: 'ack_slang' }],
+  ['네네 확인했습니다 감사해요', { ctx: SHOWN, style: 'ack_polite' }],
+]);
+// 감사·확인에 질문이 섞임 → 답(반응만이면 질문을 놓친다)
+g('lookup', 'records', { style: 'ack_question' }, [
+  ['고마워 근데 지난달 합계는 얼마였어?', { ctx: DONE }],
+  ['수고했어 혹시 받을 돈 남은 거 있어?', { ctx: DONE }],
+  ['확인했어요 그럼 이번 달은 몇 건이에요?', { ctx: SHOWN }],
+  ['감사해요~ 대한테크 건 메일은 갔나요?', { ctx: { ...DONE, device: 'phone' } }],
+]);
+g('app_help', 'capture', { style: 'ack_question' }, [['고마워요 영수증은 어떻게 올려요?', PHONE]]);
+g('tax_advice', 'none', { style: 'ack_question' }, [['감사해요 근데 이거 경비 처리 돼요?', { ctx: DONE }]]);
+// 감사·확인에 새 일이 섞임 → 반응(👀) + 도구
+g('task', 'invoice', { style: 'ack_task' }, [
+  ['알겠어 그럼 한빛식품 22만원도 끊어줘', { ctx: DONE }],
+  ['고마워 다음은 스마일카페 33만원 부탁해', { ctx: DONE }],
+]);
+g('task', 'bank', { style: 'ack_task' }, [['확인했어 이제 은행 연결해줘', { ctx: SHOWN }]]);
+g('followup', 'invoice', { style: 'ack_task', corrects: true }, [['좋아 근데 부가세는 포함으로 바꿔줘', { ctx: CARD_OPEN }]]);
+// 되물었는데 값 없이 맞장구 → 답(앱이 다시 묻는다)
+g('followup', 'invoice', { style: 'ack_asked', reply: 'answer' }, [
+  ['알겠어', { ctx: { cards: [card('한빛상사', { item: false })], asked: 'item', prev: [['한빛상사 110만원 끊어줘', '품목은 뭐로 적을까요?']] } }],
+  ['응', { ctx: { asked: 'amount', prev: [['대한테크 세금계산서 끊어줘', '금액은 얼마로 할까요?']] } }],
 ]);
 
 // ── tax_advice ──

@@ -13,6 +13,7 @@ const GW = 'https://gw.test.invalid';
 const catalog = BundleCatalog.load();
 const SCREEN = catalog.get('screen_state_v2')!;
 const FORM = catalog.get('form_ready_v2')!;
+const ROUTE = catalog.get('chat_route_v1')!;
 
 interface Env {
   s: Stack;
@@ -698,6 +699,20 @@ describe('게이트웨이: 폰 대화 직접 호출(ADR-047, chat 범위)', () =
     assert.deepEqual(await e.call('/v1/respond', phoneBody(pcRt)).then((r) => [r.status, r.json.error]), [403, 'account.scope_denied']);
     assert.equal(e.provider.responds.length + e.provider.decides.length, 0);
     assert.equal(e.nts.calls, 0);
+  });
+
+  it('폰은 대화 판정 번들 chat_route_v1만 부른다(ADR-051 대표 결정 2, ADR-056). PC의 대화 실행 토큰은 폰에서 무효', async () => {
+    const rt = await e.runToken(phone, chatId());
+    const ok = await e.call('/v1/decide', decideBody(rt, ROUTE, '기기: 폰\n사용자: 고마워'), phone);
+    assert.equal(ok.status, 200, ok.text);
+    assert.equal(e.provider.decides.length, 1);
+    for (const b of [SCREEN, FORM, catalog.get('intent_route_v1')!]) {
+      const r = await e.call('/v1/decide', decideBody(rt, b), phone);
+      assert.deepEqual([r.status, r.json.error], [403, 'account.scope_denied'], b.wireId);
+    }
+    const pcRt = await e.runToken(e.pc, chatId());
+    assert.equal((await e.call('/v1/decide', decideBody(pcRt, ROUTE, '사용자: 고마워'), phone)).json.error, 'gateway.run_token_invalid');
+    assert.equal(e.provider.decides.length, 1);
   });
 
   it('역할과 범위는 짝이다: chat만 가진 폰 토큰만 통과하고, PC의 실행 토큰은 폰이 쓸 수 없다', async () => {

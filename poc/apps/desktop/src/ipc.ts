@@ -325,6 +325,8 @@ export type ShellEvent =
   | { type: 'pair'; pair: unknown }
   /** 대화 에이전트 진행 단계(생각 중·장부 보는 중·카드 만드는 중). 문장·값은 싣지 않는다. */
   | { type: 'chat-progress'; phase: 'thinking' | 'reading' | 'drafting' }
+  /** 판정이 고른 사용자 말풍선 반응(ADR-056). 허용 목록의 이름만 온다. */
+  | { type: 'chat-reaction'; reaction: 'thumbs_up' | 'eyes' | 'check' | 'pray' }
   /** 대화가 고른 앱 안 화면을 연다(open_screen). 화면 이름만 온다. */
   | { type: 'open-screen'; screen: string }
   /** 계좌 자동조회 진행(phase·실패 코드·새 줄 수만) */

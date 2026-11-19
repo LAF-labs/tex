@@ -1,10 +1,11 @@
 // 대화 판정 평가 A층 러너(ADR-051 6절, 1단계). 같은 라벨 세트(cases.ts)를 세 대상에 돌려 기준선을 잰다.
 //   draft  = jev + 판정 초안 번들(chat_route_draft.json, 머리말 _common + chat_route_draft.ko.txt). 3단계 chat_route_v1의 출발점.
+//   v1     = jev + 제품 번들 chat_route_v1(ADR-056: 초안 질문 + 받는 방식 reply_mode·반응 reaction). PC 엔진 chat.route·폰이 부르는 것.
 //   intent = jev + 지금 제품 번들 intent_route_v1(개인 프로필 대화가 쓰는 판정). 플레이북을 act(거친 셋)·domain으로 옮겨 본다.
 //   agent  = 지금 PC 사업자 대화 chat_agent(생성 모델 한 번, 도구 8개). 첫 출력(부른 도구·답 종류)을 act·domain으로 옮겨 본다.
 // 와이어는 게이트웨이 정본 함수(systemOneDecideBody·systemOneAnswers·openAIResponsesBody)를 그대로 쓰고, 가림은 제품 규칙(registerChatRecords)이다.
 //   set -a; . ./.env.local; set +a
-//   node --conditions=development tests/chat-eval/route/run.ts --target=draft|intent|agent [--estimate] [--limit=N] [--jobs=6] [--cap=1] [--out=/abs.json]
+//   node --conditions=development tests/chat-eval/route/run.ts --target=v1|draft|intent|agent [--estimate] [--limit=N] [--jobs=6] [--cap=1] [--out=/abs.json]
 //   jev 모델: --jev=typesafe/jev-1.14(기본). agent 모델: EVAL_MODEL(필수), EVAL_PROVIDERS(선택, run.ts와 같음).
 // --estimate는 모델을 부르지 않고 입력 크기로 예상 비용만 적는다. --fake는 늘 같은 답을 내는 가짜 상류로 배선만 본다.
 // 키·응답 원문은 남기지 않는다. 보고서에는 사례 ID·라벨·고른 값·확률·지연·입력 토큰만 들어간다(문장은 가상 장부라 cases.ts에 있다).
@@ -16,10 +17,12 @@ import { Redactor } from '@sax/redaction';
 import { openAIResponsesBody, systemOneAnswers, systemOneDecideBody } from '../../../services/gateway/src/providers.ts';
 import { SEED } from '../cases.ts';
 import { ROUTE_CASES, type RouteCase } from './cases.ts';
-import { scoreRoute, type RouteRow } from './score.ts';
+import { scoreReply, scoreRoute, type RouteRow } from './score.ts';
 
 const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3);
-const TARGET = (arg('target') ?? 'draft') as 'draft' | 'intent' | 'agent';
+const TARGET = (arg('target') ?? 'draft') as 'v1' | 'draft' | 'intent' | 'agent';
+/** 상태 줄을 싣는 판정(초안·제품 번들) */
+const ROUTED = TARGET === 'draft' || TARGET === 'v1';
 const FAKE = process.argv.includes('--fake');
 const ESTIMATE = process.argv.includes('--estimate');
 const KEY = FAKE || ESTIMATE ? '' : (process.env.OPENROUTER_API_KEY ?? '');
@@ -35,7 +38,7 @@ const PRICE = { jev: 0.042, agentIn: 0.3, agentCached: 0.006, agentOut: 1.2 };
 /** 보고서의 원 환산(가정) */
 export const KRW_PER_USD = 1450;
 
-if (!['draft', 'intent', 'agent'].includes(TARGET)) throw new Error('--target=draft|intent|agent');
+if (!['v1', 'draft', 'intent', 'agent'].includes(TARGET)) throw new Error('--target=v1|draft|intent|agent');
 if (!FAKE && !ESTIMATE && (!KEY || (TARGET === 'agent' && !AGENT_MODEL))) {
   console.error('OPENROUTER_API_KEY가 필요합니다(agent는 EVAL_MODEL도). 배선만 볼 때는 --fake, 비용만 볼 때는 --estimate.');
   process.exit(2);
@@ -47,7 +50,8 @@ const common = fs.readFileSync(new URL('../../../packages/model/bundles/prefixes
 const draftDef = JSON.parse(fs.readFileSync(new URL('./chat_route_draft.json', import.meta.url), 'utf8')) as { questions: Question[] };
 const draftPrefix = `${common}\n\n${fs.readFileSync(new URL('./chat_route_draft.ko.txt', import.meta.url), 'utf8').trim()}`;
 const intent = catalog.get('intent_route_v1')!;
-const BUNDLE = TARGET === 'draft' ? { prefix: draftPrefix, questions: draftDef.questions } : { prefix: intent.prefixText, questions: intent.def.questions };
+const v1 = catalog.get('chat_route_v1')!;
+const BUNDLE = TARGET === 'draft' ? { prefix: draftPrefix, questions: draftDef.questions } : TARGET === 'v1' ? { prefix: v1.prefixText, questions: v1.def.questions } : { prefix: intent.prefixText, questions: intent.def.questions };
 
 // ── 입력(가린 문장 + 상태 줄) ──
 const RECS = [
@@ -161,11 +165,11 @@ async function post(url: string, body: unknown): Promise<Record<string, unknown>
 }
 
 async function judge(c: RouteCase): Promise<RouteRow> {
-  const input = TARGET === 'draft' ? draftInput(c) : intentInput(c);
+  const input = ROUTED ? draftInput(c) : intentInput(c);
   const t0 = performance.now();
   let d: Record<string, unknown>;
   if (FAKE) {
-    const fake = TARGET === 'draft' ? { act: { choice: 'task', confidence: 0.9, probabilities: { task: 0.9, other: 0.1 } }, domain: { choice: 'invoice', confidence: 0.9 }, corrects_previous: { noul: 0.1 }, mentions_tax_advice: { noul: 0.05 } } : { playbook: { choice: 'hometax.invoice.issue', confidence: 0.9 }, mentions_tax_advice: { noul: 0.05 } };
+    const fake = TARGET === 'v1' ? { act: { choice: 'task', confidence: 0.9 }, domain: { choice: 'invoice', confidence: 0.9 }, corrects_previous: { noul: 0.1 }, mentions_tax_advice: { noul: 0.05 }, reply_mode: { choice: 'react_then_work', confidence: 0.9 }, reaction: { choice: 'eyes', confidence: 0.9 } } : TARGET === 'draft' ? { act: { choice: 'task', confidence: 0.9, probabilities: { task: 0.9, other: 0.1 } }, domain: { choice: 'invoice', confidence: 0.9 }, corrects_previous: { noul: 0.1 }, mentions_tax_advice: { noul: 0.05 } } : { playbook: { choice: 'hometax.invoice.issue', confidence: 0.9 }, mentions_tax_advice: { noul: 0.05 } };
     d = { answers: fake, usage: { input_tokens: Math.round(Buffer.byteLength(BUNDLE.prefix + input) / 2) } };
   } else {
     if (spentUsd > COST_CAP) throw new Error('cost_cap');
@@ -176,6 +180,7 @@ async function judge(c: RouteCase): Promise<RouteRow> {
   const inputTokens = Number((d.usage as { input_tokens?: number } | undefined)?.input_tokens ?? 0);
   spentUsd += (inputTokens * PRICE.jev) / 1e6;
   const a = Object.fromEntries((systemOneAnswers(d.answers, BUNDLE.questions) as Decision[]).map((x) => [x.name, x]));
+  if (TARGET === 'v1') return { id: c.id, act: pickOf(a.act), domain: pickOf(a.domain), corrects: predOf(a.corrects_previous), advice: predOf(a.mentions_tax_advice), reply: pickOf(a.reply_mode), reaction: pickOf(a.reaction), ms, inputTokens, model: String(d.model ?? JEV) } as RouteRow;
   if (TARGET === 'draft') return { id: c.id, act: pickOf(a.act), domain: pickOf(a.domain), corrects: predOf(a.corrects_previous), advice: predOf(a.mentions_tax_advice), ms, inputTokens, model: String(d.model ?? JEV) } as RouteRow;
   const pb = pickOf(a.playbook);
   const [act, domain] = pb.got ? (PLAYBOOK_MAP[pb.got] ?? ['other', 'none']) : [null, null];
@@ -231,7 +236,7 @@ function estimate(cases: readonly RouteCase[]): { calls: number; inputTokens: nu
       inputTokens += t;
       usd += (t * PRICE.agentIn + 300 * PRICE.agentOut) / 1e6;
     } else {
-      const t = tok(BUNDLE.prefix) + tok(JSON.stringify(BUNDLE.questions)) + tok(TARGET === 'draft' ? draftInput(c) : intentInput(c));
+      const t = tok(BUNDLE.prefix) + tok(JSON.stringify(BUNDLE.questions)) + tok(ROUTED ? draftInput(c) : intentInput(c));
       inputTokens += t;
       usd += (t * PRICE.jev) / 1e6;
     }
@@ -259,8 +264,9 @@ async function main() {
   }
   const rows = await pool(cases, JOBS, async (c) => {
     const r = await (TARGET === 'agent' ? agent(c) : judge(c)).catch((e: Error): RouteRow => ({ id: c.id, act: { got: null, conf: null }, domain: { got: null, conf: null }, corrects: null, advice: null, ms: 0, inputTokens: 0, error: e.message.slice(0, 120) }));
-    const okAct = TARGET === 'draft' || TARGET === 'agent' ? r.act.got === c.act : null;
-    if (process.env.EVAL_VERBOSE || r.error) console.log(`${r.error ? 'ERR ' : okAct === false || r.domain.got !== c.domain ? 'MISS' : 'ok  '} ${c.id} ${c.act}/${c.domain} → ${r.act.got}/${r.domain.got} ${r.act.conf?.toFixed(2) ?? ''} ${r.error ?? ''}`);
+    const okAct = TARGET !== 'intent' ? r.act.got === c.act : null;
+    const okReply = r.reply ? r.reply.got === c.reply : true;
+    if (process.env.EVAL_VERBOSE || r.error) console.log(`${r.error ? 'ERR ' : okAct === false || r.domain.got !== c.domain || !okReply ? 'MISS' : 'ok  '} ${c.id} ${c.act}/${c.domain}/${c.reply} → ${r.act.got}/${r.domain.got}/${r.reply?.got ?? '-'} ${r.act.conf?.toFixed(2) ?? ''} ${r.reply?.conf?.toFixed(2) ?? ''} ${r.reaction?.got ?? ''} ${r.error ?? ''}`);
     return r;
   });
   const opts = { fineAct: TARGET !== 'intent', domain: true, corrects: TARGET !== 'intent', advice: true };
@@ -272,6 +278,7 @@ async function main() {
     costUsd: Number(spentUsd.toFixed(4)),
     costKrw: Math.round(spentUsd * KRW_PER_USD),
     score: scoreRoute(ROUTE_CASES, rows, opts),
+    reply: scoreReply(ROUTE_CASES, rows),
   };
   console.log(JSON.stringify(summary, null, 2));
   fs.mkdirSync(path.dirname(OUT), { recursive: true });

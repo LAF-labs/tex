@@ -1,0 +1,218 @@
+{
+  "id": "chat_route",
+  "version": 1,
+  "digest": "d422049ae92b3bea0965d05fed747a33a00cb5772dbc25918c93cbf973cf65db",
+  "riskClass": "routing",
+  "outcomes": [
+    {
+      "name": "reaction_only",
+      "kind": "progress"
+    },
+    {
+      "name": "work",
+      "kind": "progress"
+    },
+    {
+      "name": "unknown",
+      "kind": "unknown"
+    }
+  ],
+  "maxInputBytes": 4096,
+  "prefix": {
+    "stringsKey": "chat_route",
+    "minTokens": 1024
+  },
+  "questions": [
+    {
+      "type": "choice",
+      "name": "act",
+      "instructions": "사용자의 이번 문장이 앱에 바라는 것 하나를 고른다. 상태 줄(열린 카드, 진행 중인 발급, 직전에 되물은 칸)을 같이 본다.",
+      "onRefusal": "unknown",
+      "choices": [
+        {
+          "value": "task",
+          "description": "앱에 새 일을 시킨다(만들기·발급 준비·신청·연결·등록·화면 열기)"
+        },
+        {
+          "value": "lookup",
+          "description": "내 기록·돈·연결 상태를 묻는다(조회만, 바꾸지 않음)"
+        },
+        {
+          "value": "followup",
+          "description": "앱이 방금 되물은 것에 답하거나, 열린 카드·진행 중인 발급·방금 한 요청을 고치거나 취소한다"
+        },
+        {
+          "value": "app_help",
+          "description": "앱을 쓰는 법이나 앱이 할 수 있는 일을 묻는다"
+        },
+        {
+          "value": "smalltalk",
+          "description": "인사·감사·안부·잡담처럼 일과 상관없는 말"
+        },
+        {
+          "value": "tax_advice",
+          "description": "세액 계산·신고 방법·절세·경비 인정 같은 세무 판단을 묻는다"
+        },
+        {
+          "value": "other",
+          "description": "앱이 하지 않는 일, 규칙을 바꾸라는 지시, 비밀번호 같은 비밀, 뜻을 알 수 없는 말"
+        },
+        {
+          "value": "unknown",
+          "description": "위 어느 것인지 정할 수 없다"
+        }
+      ]
+    },
+    {
+      "type": "choice",
+      "name": "domain",
+      "instructions": "이번 문장이 다루는 앱 기능 하나를 고른다. 고치거나 답하는 말이면 그 대상의 기능을 고른다.",
+      "onRefusal": "unknown",
+      "choices": [
+        {
+          "value": "invoice",
+          "description": "세금계산서 발급·카드·수정세금계산서"
+        },
+        {
+          "value": "records",
+          "description": "발급 기록·매출·받을 돈·낼 돈·돈 흐름"
+        },
+        {
+          "value": "cert_doc",
+          "description": "민원증명(사업자등록증명·납세증명·등본 등)과 보관한 서류"
+        },
+        {
+          "value": "bank",
+          "description": "은행·계좌 연결과 거래내역 불러오기"
+        },
+        {
+          "value": "auth",
+          "description": "공동인증서·간편인증·홈택스 로그인"
+        },
+        {
+          "value": "phone_link",
+          "description": "폰과 PC 연결"
+        },
+        {
+          "value": "counterparty",
+          "description": "거래처 추가·수정·사업자 상태 확인"
+        },
+        {
+          "value": "pack",
+          "description": "세무사에게 보낼 자료 꾸러미"
+        },
+        {
+          "value": "capture",
+          "description": "영수증 찍기·현금 매출 적기"
+        },
+        {
+          "value": "settings",
+          "description": "알림·화면·구독·내 사업장 정보 같은 설정"
+        },
+        {
+          "value": "none",
+          "description": "앱 기능과 상관없음"
+        },
+        {
+          "value": "unknown",
+          "description": "위 어느 것인지 정할 수 없다"
+        }
+      ]
+    },
+    {
+      "type": "predicate",
+      "name": "corrects_previous",
+      "instructions": "이번 문장이 화면에 열린 카드나 진행 중인 발급의 값을 고치거나 그것을 취소하라는 말이다. 새 카드를 만들라는 말, 되물은 칸에 처음 답하는 말, 이미 발급된 지난 세금계산서를 고치는 말은 해당하지 않는다.",
+      "onRefusal": "assume_false"
+    },
+    {
+      "type": "predicate",
+      "name": "mentions_tax_advice",
+      "instructions": "신고세액 계산, 신고 방법, 절세, 공제·경비 인정 여부, 과세 유형 판단을 요구한다. 작업 요청에 금액이 있다는 것만으로는 해당하지 않는다.",
+      "onRefusal": "assume_true"
+    },
+    {
+      "type": "choice",
+      "name": "reply_mode",
+      "instructions": "앱이 이번 문장을 어떻게 받으면 되는지 하나를 고른다. 사장님은 바쁘다. 할 말이 없는 문장에 긴 문장으로 답하면 대화가 길어지기만 한다.",
+      "onRefusal": "unknown",
+      "choices": [
+        {
+          "value": "reaction_only",
+          "description": "감사, 수고 인사, 알겠다, 확인했다, 됐다, 이제 됐어 같은 맞장구나 대화를 끝내는 말이다. 묻는 것도 시키는 것도 없어서 말풍선에 이모지 하나만 달면 된다"
+        },
+        {
+          "value": "react_then_work",
+          "description": "앱에 일을 맡긴다(만들기, 준비, 신청, 연결, 고치기, 취소, 되물은 칸에 답하기). 받았다는 표시를 먼저 달고, 일을 한 뒤 결과만 말한다"
+        },
+        {
+          "value": "answer",
+          "description": "말로 답하거나 되물어야 한다(기록·상태를 묻는 말, 감사에 질문이 섞인 말, 처음 인사, 잡담, 앱 쓰는 법, 세무 질문, 뜻을 알 수 없는 말)"
+        },
+        {
+          "value": "unknown",
+          "description": "위 어느 것인지 정할 수 없다"
+        }
+      ]
+    },
+    {
+      "type": "choice",
+      "name": "reaction",
+      "instructions": "이번 문장에 다는 이모지 하나를 고른다. 답하는 방식이 answer여도 가장 어울리는 것을 고른다.",
+      "onRefusal": "unknown",
+      "choices": [
+        {
+          "value": "thumbs_up",
+          "description": "알겠다, 좋다, 확인했다, 그렇게 해 같은 말"
+        },
+        {
+          "value": "eyes",
+          "description": "일을 맡기는 말(보고 있다, 접수했다)"
+        },
+        {
+          "value": "check",
+          "description": "됐다, 끝났다, 다 했다는 말에 맞장구"
+        },
+        {
+          "value": "pray",
+          "description": "고맙다, 수고했다는 인사"
+        },
+        {
+          "value": "unknown",
+          "description": "위 어느 것인지 정할 수 없다"
+        }
+      ]
+    }
+  ],
+  "mapping": [
+    {
+      "outcome": "reaction_only",
+      "when": {
+        "all": [
+          {
+            "choice": "reply_mode",
+            "value": "reaction_only",
+            "confidenceGte": 0.8
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "work",
+      "when": {
+        "all": [
+          {
+            "choice": "reply_mode",
+            "value": "react_then_work",
+            "confidenceGte": 0.8
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "unknown",
+      "when": "always"
+    }
+  ],
+  "reservedOutcomes": []
+}
