@@ -135,6 +135,8 @@ export class ShareService {
         return this.sent(q.rowId, q.seq ?? null);
       case 'share.dropped':
         return this.dropped(q.rowId, q.reason);
+      case 'share.resend':
+        return this.resend();
       case 'db.query.share.cursor':
         return { cursor: this.cursor() };
       case 'share.apply':
@@ -353,6 +355,15 @@ export class ShareService {
     if (typeof rowId !== 'string' || !ROW_ID.test(rowId) || typeof reason !== 'string' || !REASON.test(reason)) fail('share.bad_request');
     this.db.prepare(`UPDATE share_out SET state = 'dropped', reason = ?, updated_at = ? WHERE row_id = ? AND state = 'pending'`).run(reason, this.now().toISOString(), rowId);
     return { ok: true };
+  }
+
+  /**
+   * 계정 열쇠가 바뀌었다(ADR-050 개정 1): 앞 열쇠로 올린 줄은 서버에서 지워졌을 수 있으니 올린 줄을 모두 다시 올릴 줄로 돌린다.
+   * 서버에 그대로 있는 줄은 올릴 때 "이미 있음"으로 끝난다. 버린 줄은 그대로 둔다.
+   */
+  resend(): { rows: number } {
+    const n = this.db.prepare(`UPDATE share_out SET state = 'pending', seq = NULL, updated_at = ? WHERE state = 'sent'`).run(this.now().toISOString()).changes;
+    return { rows: n };
   }
 
   // ---- 받기 ----

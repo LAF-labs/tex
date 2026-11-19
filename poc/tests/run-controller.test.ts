@@ -761,6 +761,19 @@ describe('verify 스텝(M2-3, D02 §4.4, D03 §5.3·§5.6)', () => {
     assert.equal((await p).state, 'Aborted');
   });
 
+  it('같은 verify가 두 번째 not_committed면 게이트 앞으로 다시 돌지 않고 핸드오프(verify.not_committed_repeat, 2026-11-18 증명 신청 루프)', async () => {
+    const h = mkv({ verifyStep: judge('not_committed') });
+    const p = h.c.start();
+    await h.atGate();
+    h.approve();
+    await h.atGate(2);
+    h.approve();
+    const r = await p;
+    assert.deepEqual([r.state, r.code], ['HandedOff', 'verify.not_committed_repeat']);
+    assert.equal(h.rec.published.length, 2, '세 번째 게이트는 열지 않는다');
+    assert.deepEqual(h.rec.journal.filter(([t]) => t === 'verify.not_committed_repeat').map(([, p]) => p.count), ['2']);
+  });
+
   it('커밋 구간의 unknown → InDoubt(원장 in_doubt, 토큰 폐기). on.unknown(handoff)으로 가지 않는다', async () => {
     const h = mkv({ verifyStep: judge('unknown') });
     const p = h.c.start();

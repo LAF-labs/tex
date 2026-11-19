@@ -1,7 +1,7 @@
 {
  "ir": 2,
  "id": "hometax.cert.biz_registration",
- "version": "1.0.0",
+ "version": "1.0.1",
  "portal": "hometax",
  "profileKinds": [
   "business"
@@ -497,6 +497,13 @@
    "onFail": {
     "retry": 0,
     "then": "handoff"
+   },
+   "signFlow": {
+    "method": "$profile.signMethod",
+    "openTargets": [
+     "hometax.cert.confirm.apply"
+    ],
+    "maxWaitMs": 30000
    }
   },
   {

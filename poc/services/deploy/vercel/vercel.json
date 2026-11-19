@@ -73,6 +73,10 @@
       "destination": "/api/sax?__p=/v1/pc-links"
     },
     {
+      "source": "/v1/key-escrow",
+      "destination": "/api/sax?__p=/v1/key-escrow"
+    },
+    {
       "source": "/v1/auth/:path*",
       "destination": "/api/sax?__p=/v1/auth/:path*"
     },
@@ -111,6 +115,10 @@
     {
       "source": "/v1/pc-links/:path*",
       "destination": "/api/sax?__p=/v1/pc-links/:path*"
+    },
+    {
+      "source": "/v1/key-escrow/:path*",
+      "destination": "/api/sax?__p=/v1/key-escrow/:path*"
     },
     {
       "source": "/v1/run-tokens",

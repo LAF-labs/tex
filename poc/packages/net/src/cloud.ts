@@ -55,6 +55,13 @@ export const CLOUD_ROUTES: ReadonlyArray<{ name: string; method: CloudMethod; pa
   { name: 'pcLinks.reveal', method: 'POST', path: new RegExp(`^/v1/pc-links/${UUID4}/reveal$`) },
   { name: 'pcLinks.challenge', method: 'POST', path: new RegExp(`^/v1/pc-links/${UUID4}/challenge$`) },
   { name: 'pcLinks.grant', method: 'POST', path: new RegExp(`^/v1/pc-links/${UUID4}/grant$`) },
+  // 계정 열쇠 맡기기(ADR-050): 로그인된 PC는 기기 토큰으로 맡기고, 새 PC는 세션으로 받아 스스로 목록에 들어간다
+  { name: 'keyEscrow.get', method: 'GET', path: /^\/v1\/key-escrow$/ },
+  { name: 'keyEscrow.put', method: 'PUT', path: /^\/v1\/key-escrow$/ },
+  { name: 'keyEscrow.claim', method: 'POST', path: /^\/v1\/key-escrow\/claim$/ },
+  { name: 'keyEscrow.pub', method: 'GET', path: /^\/v1\/key-escrow\/pub$/ },
+  { name: 'keyEscrow.reset', method: 'POST', path: /^\/v1\/key-escrow\/reset$/ },
+  { name: 'keyEscrow.join', method: 'POST', path: /^\/v1\/key-escrow\/join$/ },
   // 발급 잠금(ADR-048 결정 7, 데스크톱 기기 토큰): 계정에 하나, 잡은 PC만 홈택스 발급에 들어간다
   { name: 'issueLock.get', method: 'GET', path: /^\/v1\/issue-lock$/ },
   { name: 'issueLock.acquire', method: 'POST', path: /^\/v1\/issue-lock\/acquire$/ },

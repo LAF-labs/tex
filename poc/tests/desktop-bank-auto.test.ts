@@ -65,4 +65,41 @@ describe('계좌 자동조회 main', () => {
     assert.deepEqual(await b.handlers['bankAuto.choose']({ sessionId: 's', key: 'a0' }), { ok: true, accountId: 'acct-1', profileId: 'prof-1' });
     assert.ok(!calls.some(([m]) => m.startsWith('bank.')), 'main은 돈 맞추기를 직접 부르지 않는다');
   });
+  it('실패는 단계와 코드를 로그에 남긴다(화면은 던진 오류를 "연결이 안 돼요" 하나로 뭉친다)', async () => {
+    const logs: Array<[string, Record<string, string | number>]> = [];
+    const results: Record<string, unknown> = { 'codef.status': { ok: false, code: 'codef_off' }, 'codef.refresh': { ok: false, code: 'bank_error', cf: 'CF-12345' } };
+    const b = bankAutoHandlers({
+      engine: async (m) => {
+        if (m === 'codef.cancel') throw Object.assign(new Error('engine gone: /Users/x/secret'), { code: 'engine_down' });
+        if (m === 'codef.disconnect') throw new Error('password=1234 leaked');
+        return results[m] ?? { ok: true };
+      },
+      certs: async () => [],
+      log: (n, d) => logs.push([n, d]),
+    });
+    await b.handlers['bankAuto.status']();
+    await b.handlers['bankAuto.refresh']();
+    await b.handlers['bankAuto.connect']({ certId: '0123456789abcdef' });
+    await assert.rejects(b.handlers['bankAuto.cancel']());
+    await assert.rejects(b.handlers['bankAuto.disconnect']());
+    await b.handlers['bankAuto.choose']({ sessionId: 's', key: 'k' });
+    assert.deepEqual(logs, [
+      ['main.bank_auto', { step: 'codef.status', result: 'codef_off' }],
+      ['main.bank_auto', { step: 'codef.refresh', result: 'bank_error', cf: 'CF-12345' }],
+      ['main.bank_auto', { step: 'connect', result: 'cert_missing', certs: 0 }],
+      ['main.bank_auto', { step: 'codef.cancel', result: 'threw', why: 'engine_down' }],
+      // 메시지 문자열은 값이 섞일 수 있어 남기지 않는다
+      ['main.bank_auto', { step: 'codef.disconnect', result: 'threw', why: 'other' }],
+    ]);
+  });
+  it('연결 실패 로그에 CODEF 코드와 고른 은행(기관 코드)을 남긴다(2026-11-18 실기기: CF-12831 본인인증 필요)', async () => {
+    const logs: Array<Record<string, string | number>> = [];
+    const b = bankAutoHandlers({
+      engine: async () => ({ ok: false, code: 'identity_required', cf: 'CF-12831' }),
+      certs: async () => [{ id: '0123456789abcdef', owner: '홍길동', usage: 'yessign', expiresOn: '2027-01-01', usable: true }],
+      log: (_n, d) => logs.push(d),
+    });
+    await b.handlers['bankAuto.connect']({ certId: '0123456789abcdef', bank: '0004' });
+    assert.deepEqual(logs, [{ step: 'codef.connect', result: 'identity_required', cf: 'CF-12831', bank: '0004' }]);
+  });
 });

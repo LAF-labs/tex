@@ -116,7 +116,11 @@ export class CodefSealer {
       const enc = publicEncrypt({ key, padding: cc.RSA_PKCS1_PADDING }, pw);
       this.o.log.event('vault.codef_sealed', { remembered: remembered ? 1 : 0 });
       return { ok: true, derFile: Buffer.from(pair.der).toString('base64'), keyFile: Buffer.from(pair.key).toString('base64'), password: enc.toString('base64'), remembered };
-    } catch {
+    } catch (e) {
+      // 'unreadable' 하나로 뭉치기 전에 어디서 깨졌는지 남긴다(Electron BoringSSL에서만 나는 암호 오류 등). 오류 코드·이름만, 메시지는 넣지 않는다
+      const x = e as { code?: unknown; name?: unknown } | null;
+      const why = typeof x?.code === 'string' && /^[A-Z0-9_]{1,48}$/.test(x.code) ? x.code : typeof x?.name === 'string' && /^[A-Za-z]{1,32}$/.test(x.name) ? x.name : 'other';
+      this.o.log.event('vault.codef_seal_error', { why });
       return this.refuse('unreadable');
     } finally {
       pw?.fill(0);

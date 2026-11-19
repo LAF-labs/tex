@@ -90,6 +90,20 @@ describe('RunEnforcer', () => {
     assert.ok(clock.sleeps.every((s) => s <= 100), '100ms씩 나눠 자며 걸쇠를 본다');
   });
 
+  it('beforeStep(type): 포털에 닿는 스텝만 지연, 읽기만 하는 스텝은 걸쇠·정지만 본다(2026-11-18 단계 전환 지연)', async () => {
+    const { e } = make();
+    const t0 = clock.t;
+    for (const t of ['wait', 'assert', 'readback', 'branch', 'repeat', 'extract', 'end', 'save_pdf']) assert.equal(code(await e.beforeStep(t)), 'ok');
+    assert.equal(clock.t, t0, '읽기만 하는 스텝은 자지 않는다');
+    for (const t of ['goto', 'click', 'fill', 'select', 'press', 'pick', 'submit']) {
+      const t1 = clock.t;
+      assert.equal(code(await e.beforeStep(t)), 'ok');
+      assert.equal(clock.t - t1, 1650, t);
+    }
+    const stopped = make({ stop: () => true });
+    assert.equal(code(await stopped.e.beforeStep('wait')), 'run.stopped', '지연 없이도 정지는 본다');
+  });
+
   it('settled: 네비게이션 뒤 안정 대기', async () => {
     const { e } = make();
     await e.settled();

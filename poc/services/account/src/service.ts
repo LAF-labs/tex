@@ -29,6 +29,7 @@ import { TERMS_VERSION, resultPageHtml } from './pg-toss.ts';
 import { PLAN, type DeviceStopHook, type MailSender, type PairingRooms, type NoticeKind, type PaymentEvent, type PaymentGateway } from './adapters.ts';
 import { certSigOk, entrySigOk, opSigOk, revokeSigOk, type AcctOp, type DeviceList, type SignedCert } from './aik.ts';
 import { ACCOUNT, BILLING, DEVICE, ISSUE_LOCK, MS, NOTICE, PASSWORD, PC_LINK, PROFILE, SHARE } from './constants.ts';
+import type { KeyEscrow } from './escrow.ts';
 import { checkPasswordPolicy, withFloor, type CommonPasswords, type PasswordHasher } from './password.ts';
 import { verifyAssertion, verifyRegistration, WebAuthnError, type AssertionInput, type RegistrationInput, type RpConfig } from './webauthn.ts';
 
@@ -132,6 +133,8 @@ export interface AccountDeps {
   /** acct_claim 서명(전용 키 ACCT_CLAIM_SIGNING_KEY). 없으면 GET /v1/acct-claim은 닫힌다(404) */
   acctClaims?: AcctClaimSigner;
   passwords?: PasswordDeps;
+  /** 계정 열쇠 보관(ADR-050, KEY_ESCROW_KEY). 없으면 /v1/key-escrow 경로는 닫히고(404) 새 PC는 쓰던 PC의 승인으로만 붙는다 */
+  escrow?: KeyEscrow;
   /** 빌링키 봉인 키(32B, KMS, BILLING_KEY_SEAL_KEY). 빌링키 방식 PG(payments.billing)면 필수 */
   billingKeySealKey?: Buffer;
   /** 이벤트 로그(이름만, 수·ID 없음). 기기 토큰 발급 기록 등(ADR-040 결정 1) */
@@ -1155,9 +1158,11 @@ export class AccountService {
    * 첫 데스크톱(D09 §2.2): 계정에 AIK가 없고 데스크톱이 없을 때 처음 설치한 데스크톱이 AIK_pub를 1회 등록·고정한다.
    * deviceList는 이 데스크톱 항목 하나(listVersion 1)이고 AIK로 서명돼 있어야 한다.
    */
-  async pinFirstDesktop(s: Session, o: { aikPub: string; deviceList: DeviceList; platform: string; name: string }): Promise<{ deviceId: string }> {
+  async pinFirstDesktop(s: Session, o: { aikPub: string; deviceList: DeviceList; platform: string; name: string; escrow?: { enc: string; ct: string } }): Promise<{ deviceId: string }> {
     const aik = fromB64(o.aikPub, 32);
     if (!aik) fail('request.param_rejected');
+    // 첫 PC는 등록과 같은 요청으로 계정 열쇠를 맡긴다(ADR-050 개정 1: 맡기지 않은 계정이 생기지 않게). 보관 기능이 꺼진 서버는 받지 않고 지나간다
+    const sealed = o.escrow && this.d.escrow ? this.sealedFor(aik!, o.escrow) : null;
     const l = o.deviceList;
     const e = l.entries[0];
     if (l.listVersion !== 1 || l.entries.length !== 1 || l.revoked.length !== 0 || !e || e.entry.role !== 'desktop' || e.entry.list_version !== 1) fail('request.param_rejected');
@@ -1181,6 +1186,7 @@ export class AccountService {
         [e!.entry.device_id, s.accountId, o.platform, o.name, e!.entry.Sx, e!.entry.Vx, now],
       ).catch(() => fail('request.param_rejected'));
       await q.run('UPDATE accounts SET aik_pub = $1, aik_pinned_at = $2, device_list_version = 1, device_list_json = $3 WHERE id = $4', [o.aikPub, now, jcs(l), s.accountId]);
+      if (sealed) await this.storeEscrow(q, s.accountId, o.aikPub, sealed);
       if (!replaced) await q.run("INSERT INTO device_events (account_id, role, kind, day) VALUES ($1, 'desktop', 'add', $2)", [s.accountId, kstDay(now)]);
       return { deviceId: e!.entry.device_id };
     }).then(async (r) => {
@@ -1540,6 +1546,161 @@ export class AccountService {
   private async pcLink(accountId: string, deviceId: string): Promise<{ challenge: string | null; reveal: string | null; grant_msg: string | null }> {
     const l = await this.db.one<{ challenge: string | null; reveal: string | null; grant_msg: string | null }>('SELECT challenge, reveal, grant_msg FROM pc_links WHERE device_id = $1 AND account_id = $2 AND expires_at > $3', [deviceId, accountId, this.now()]);
     return l ?? fail('account.link_not_found');
+  }
+
+  // ---- 계정 열쇠 보관(ADR-050, 대표 결정 2026-11-18) ----
+  // 쓰던 PC 없이 로그인한 새 PC가 이메일 인증만으로 붙는다. 로그인된 PC가 계정 열쇠(RK)를 보관 키로 봉인해 맡기고,
+  // 새 PC는 계정 세션으로 받아 자기 금고에 넣은 뒤 AIK로 서명한 기기 목록을 스스로 올린다(서버는 서명만 본다).
+  // 이 서비스는 맡긴 열쇠를 열 수 있다. 패스키가 있는 계정은 패스키 세션이어야 받는다(기기 추가와 같은 규칙).
+
+  private get escrow(): KeyEscrow {
+    return this.d.escrow ?? fail('request.not_found');
+  }
+
+  /** [로그인된 PC, 기기 토큰] 보관 키의 공개키와, 이 계정의 열쇠가 지금 키로 맡겨져 있는지. */
+  async keyEscrowState(accountId: string): Promise<{ pub: string; stored: boolean }> {
+    const e = this.escrow;
+    const a = await this.account(accountId);
+    const r = await this.db.one<{ aik_pub: string; key_pub: string }>('SELECT aik_pub, key_pub FROM key_escrow WHERE account_id = $1', [accountId]);
+    return { pub: e.publicKey, stored: !!r && !!a.aik_pub && r.aik_pub === a.aik_pub && r.key_pub === e.publicKey };
+  }
+
+  /** [로그인된 PC, 기기 토큰] 맡긴다. 열어서 나온 AIK 공개키가 계정의 AIK와 같을 때만 받는다(다른 열쇠·옛 보관 키로 봉인한 것은 400). */
+  async putKeyEscrow(requester: { accountId: string; deviceId: string }, o: { enc: string; ct: string }): Promise<void> {
+    const e = this.escrow;
+    const enc = fromB64(o.enc, 32);
+    const ct = fromB64(o.ct, 48);
+    if (!enc || !ct) fail('request.param_rejected');
+    await this.db.tx(async (q) => {
+      const a = await q.one<AccountRow>(`SELECT * FROM accounts WHERE id = $1${q.forUpdate}`, [requester.accountId]);
+      if (!a) return fail('account.unauthorized');
+      if (!a.aik_pub) fail('account.aik_not_pinned');
+      await this.requireActiveDesktop(q, requester);
+      if (!e.holds(enc!, ct!, fromB64(a.aik_pub, 32)!)) fail('request.param_rejected');
+      await q.run('DELETE FROM key_escrow WHERE account_id = $1', [requester.accountId]);
+      await q.run('INSERT INTO key_escrow (account_id, aik_pub, key_pub, enc, ct) VALUES ($1, $2, $3, $4, $5)', [requester.accountId, a.aik_pub, e.publicKey, o.enc, o.ct]);
+    });
+    this.d.onEvent?.('account.key_escrow_stored');
+  }
+
+  /**
+   * [새 PC, 세션] 맡긴 열쇠를 이 PC의 넘겨받기 키(Hx)로 다시 봉인해 받는다. 이 PC는 내 계정에 신청 중이거나 활성인 데스크톱이어야 한다
+   * (신청은 POST /v1/devices/enroll이 한도·알림 메일과 함께 한다). 맡긴 열쇠가 없으면 account.escrow_missing.
+   */
+  async claimKeyEscrow(s: Session, deviceId: string, linkPub: string): Promise<{ aikPub: string; enc: string; ct: string }> {
+    const e = this.escrow;
+    const hx = fromB64(linkPub, 32);
+    if (!hx) fail('request.param_rejected');
+    await this.requireStrongSessionIfPasskeys(this.db, s);
+    const a = await this.account(s.accountId);
+    const d = await this.db.one<DeviceRow>('SELECT * FROM devices WHERE device_id = $1 AND account_id = $2', [deviceId, s.accountId]);
+    if (!d || d.role !== 'desktop' || (d.state !== 'pending' && d.state !== 'active')) fail('account.device_not_found');
+    const r = await this.db.one<{ aik_pub: string; enc: string; ct: string }>('SELECT aik_pub, enc, ct FROM key_escrow WHERE account_id = $1', [s.accountId]);
+    if (!a.aik_pub || !r || r.aik_pub !== a.aik_pub) return fail('account.escrow_missing');
+    const out = e.reseal(fromB64(r.enc, 32)!, fromB64(r.ct, 48)!, fromB64(a.aik_pub, 32)!, deviceId, hx!);
+    // 보관 키가 바뀌어 열리지 않는 줄은 없는 것과 같다(로그인된 PC가 다음에 켤 때 다시 맡긴다)
+    if (!out) return fail('account.escrow_missing');
+    this.d.onEvent?.('account.key_escrow_claimed');
+    return { aikPub: a.aik_pub, enc: out.enc.toString('base64'), ct: out.ct.toString('base64') };
+  }
+
+  /**
+   * [새 PC, 세션] 열쇠를 받은 새 PC가 자기를 넣은 AIK 서명 기기 목록을 올린다(아직 활성이 아니라 기기 토큰이 없다).
+   * 검사는 PUT /v1/device-list와 같다: 계정 AIK의 서명, 버전, 신청한 키와 같은 항목, 한도. 서명은 계정 열쇠를 가진 PC만 만들 수 있다.
+   * 이 PC는 방금 붙었으므로 이 PC가 올리는 폐기는 7일 유예에 걸린다(쓰던 기기를 바로 밀어내지 못한다).
+   */
+  async joinByKeyEscrow(s: Session, deviceId: string, l: DeviceList): Promise<{ listVersion: number }> {
+    void this.escrow;
+    await this.requireStrongSessionIfPasskeys(this.db, s);
+    const d = await this.db.one<DeviceRow>('SELECT * FROM devices WHERE device_id = $1 AND account_id = $2', [deviceId, s.accountId]);
+    if (!d || d.role !== 'desktop' || (d.state !== 'pending' && d.state !== 'active')) fail('account.device_not_found');
+    // 이 길로는 자기를 더하기만 한다(폐기 레코드가 늘면 받지 않는다)
+    const cur = (await this.deviceList(s.accountId)).deviceList;
+    if (!cur || l.revoked.length !== cur.revoked.length || l.entries.length !== cur.entries.length + 1) fail('request.param_rejected');
+    const out = await this.updateDeviceList({ accountId: s.accountId, deviceId }, l);
+    await this.db.run('DELETE FROM pc_links WHERE device_id = $1 AND account_id = $2', [deviceId, s.accountId]);
+    this.d.onEvent?.('account.key_escrow_joined');
+    return out;
+  }
+
+  /** 맡기려는 봉인이 지금 보관 키로 열리고, 나온 열쇠의 AIK가 aik인지 본다. 아니면 400. */
+  private sealedFor(aik: Buffer, o: { enc: string; ct: string }): { enc: string; ct: string } {
+    const enc = fromB64(o.enc, 32);
+    const ct = fromB64(o.ct, 48);
+    if (!enc || !ct || !this.escrow.holds(enc, ct, aik)) fail('request.param_rejected');
+    return { enc: o.enc, ct: o.ct };
+  }
+
+  private async storeEscrow(q: Sql, accountId: string, aikPub: string, o: { enc: string; ct: string }): Promise<void> {
+    await q.run('DELETE FROM key_escrow WHERE account_id = $1', [accountId]);
+    await q.run('INSERT INTO key_escrow (account_id, aik_pub, key_pub, enc, ct) VALUES ($1, $2, $3, $4, $5)', [accountId, aikPub, this.escrow.publicKey, o.enc, o.ct]);
+  }
+
+  /** [세션] 보관 키의 공개키. 아직 기기 토큰이 없는 PC(첫 등록, 열쇠 새로 걸기)가 자기 열쇠를 봉인하는 데 쓴다. */
+  keyEscrowPub(): { pub: string } {
+    return { pub: this.escrow.publicKey };
+  }
+
+  /**
+   * [새 PC, 세션] 맡긴 열쇠가 없는 계정에 이 PC의 열쇠를 새 계정 열쇠로 건다(ADR-050 개정 1, 대표 결정 2026-11-18: 쓰던 PC 없이도 늘 로그인된다).
+   * 열쇠를 가진 PC가 맡기기 전의 계정(이 기능 이전에 만든 계정, 보관 키를 잃은 경우)에서만 된다. 맡긴 열쇠가 있으면 account.aik_already_pinned(받아서 붙는다).
+   * - 새 목록은 새 AIK로 서명한 것이고, 계정의 활성·정지 데스크톱 전부와 이 PC만 담는다(이 길로는 PC를 빼지 못한다. 한도 3대는 그대로).
+   * - 다른 PC는 등록이 남는다. 옛 열쇠로 만든 인증서는 더 통하지 않고, 다음에 이메일로 로그인하면 맡긴 새 열쇠를 받아 이어 쓴다.
+   * - 폰은 옛 AIK를 기억하고 있어 따라올 수 없다. 폐기하고(자리를 비운다) PC에서 QR로 다시 연결한다.
+   * - 옛 열쇠로 봉인한 공유 기록 사본은 열 수 없으므로 지운다(순번은 이어 간다). PC들이 자기 장부에서 다시 올린다.
+   * - 첫 PC 여부(aik_pinned_at)는 바꾸지 않는다: 방금 붙은 이 PC가 올리는 폐기는 7일 유예에 걸린다.
+   */
+  async resetByKeyEscrow(s: Session, deviceId: string, o: { aikPub: string; deviceList: DeviceList; enc: string; ct: string }): Promise<{ listVersion: number }> {
+    const aik = fromB64(o.aikPub, 32);
+    if (!aik) fail('request.param_rejected');
+    const sealed = this.sealedFor(aik!, o);
+    const l = o.deviceList;
+    const dropped: string[] = [];
+    await this.db.tx(async (q) => {
+      const a = await q.one<AccountRow>(`SELECT * FROM accounts WHERE id = $1${q.forUpdate}`, [s.accountId]);
+      if (!a) return fail('account.unauthorized');
+      if (!a.aik_pub) fail('account.aik_not_pinned');
+      await this.requireStrongSessionIfPasskeys(q, s);
+      if (a.aik_pub === o.aikPub) fail('account.aik_already_pinned');
+      const held = await q.one<{ aik_pub: string; enc: string; ct: string }>('SELECT aik_pub, enc, ct FROM key_escrow WHERE account_id = $1', [s.accountId]);
+      if (held && held.aik_pub === a.aik_pub && this.escrow.holds(fromB64(held.enc, 32)!, fromB64(held.ct, 48)!, fromB64(a.aik_pub!, 32)!)) fail('account.aik_already_pinned');
+      if (l.listVersion !== Number(a.device_list_version) + 1 || l.revoked.length !== 0) fail('request.param_rejected');
+      const ids = new Set<string>();
+      for (const e of l.entries) {
+        if (ids.has(e.entry.device_id) || e.entry.role !== 'desktop' || e.entry.list_version > l.listVersion || !entrySigOk(aik!, e)) fail('account.aik_signature_invalid');
+        ids.add(e.entry.device_id);
+      }
+      const devices = await q.all<DeviceRow>('SELECT * FROM devices WHERE account_id = $1', [s.accountId]);
+      const byId = new Map(devices.map((d) => [d.device_id, d]));
+      const me = byId.get(deviceId);
+      if (!me || me.role !== 'desktop' || (me.state !== 'pending' && me.state !== 'active')) fail('account.device_not_found');
+      if (!ids.has(deviceId)) fail('request.param_rejected');
+      for (const e of l.entries) {
+        const d = byId.get(e.entry.device_id);
+        if (!d || d.sx !== e.entry.Sx || d.vx !== e.entry.Vx) fail('request.param_rejected');
+        if (d!.device_id !== deviceId && d!.state !== 'active' && d!.state !== 'suspended') fail('request.param_rejected');
+      }
+      for (const d of devices) if (d.role === 'desktop' && (d.state === 'active' || d.state === 'suspended') && !ids.has(d.device_id)) fail('request.param_rejected');
+      const now = this.now();
+      if (me!.state === 'pending') await q.run("UPDATE devices SET state = 'active', email_hold_until = NULL WHERE device_id = $1", [deviceId]);
+      for (const d of devices) {
+        if (d.role !== 'mobile' || d.state === 'revoked') continue;
+        await q.run("UPDATE devices SET state = 'revoked', delete_after = NULL WHERE device_id = $1", [d.device_id]);
+        await q.run("INSERT INTO device_events (account_id, role, kind, day) VALUES ($1, 'mobile', 'remove', $2)", [s.accountId, kstDay(now)]);
+        dropped.push(d.device_id);
+      }
+      await q.run('UPDATE accounts SET aik_pub = $1, device_list_version = $2, device_list_json = $3 WHERE id = $4', [o.aikPub, l.listVersion, jcs(l), s.accountId]);
+      await this.storeEscrow(q, s.accountId, o.aikPub, sealed);
+      await q.run('DELETE FROM share_rows WHERE account_id = $1', [s.accountId]);
+      await q.run('DELETE FROM share_tasks WHERE account_id = $1', [s.accountId]);
+      await q.run('UPDATE share_heads SET epoch = 0 WHERE account_id = $1', [s.accountId]);
+      await q.run('DELETE FROM pc_links WHERE account_id = $1', [s.accountId]);
+    });
+    for (const id of dropped) await this.stopped(id);
+    await this.notify(s.accountId, 'aik_pinned');
+    if (dropped.length) await this.notify(s.accountId, 'device_revoked');
+    this.d.onEvent?.('account.key_escrow_reset');
+    return { listVersion: l.listVersion };
   }
 
   // ---- 발급 잠금(ADR-048 결정 7) ----

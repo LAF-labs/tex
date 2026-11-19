@@ -544,6 +544,12 @@ export interface HpkeOpenParams {
 
 /** RK 봉인 HPKE info(D08 §2.1). @sax/remote CTX.pclinkRk와 같은 글자다. */
 export const RK_LINK_INFO = 'SAX-pclink-rk-v1';
+/**
+ * 계정 열쇠 맡기기의 HPKE info(ADR-050). 쓰던 PC가 계정 서비스의 보관 키로 봉인해 맡기고(rkSeal),
+ * 새 PC가 계정 서비스가 다시 봉인해 준 것을 받는다(rkImport). 쓰던 PC끼리 넘기는 봉인문과 섞이지 않게 글자를 달리한다.
+ */
+export const RK_ESCROW_INFO = 'SAX-rk-escrow-v1';
+export type RkInfo = typeof RK_LINK_INFO | typeof RK_ESCROW_INFO;
 /** crypto.rkSeal 상한: 금고 프로세스가 떠 있는 동안 24시간에 3번(새 PC는 계정당 2대까지 더 붙는다). */
 export const RK_SEALS_PER_DAY = 3;
 /**
@@ -552,7 +558,7 @@ export const RK_SEALS_PER_DAY = 3;
  */
 export interface RkSealParams {
   recipient: Uint8Array;
-  info: typeof RK_LINK_INFO;
+  info: RkInfo;
   aad: Uint8Array;
 }
 /**
@@ -562,7 +568,7 @@ export interface RkSealParams {
 export interface RkImportParams {
   enc: Uint8Array;
   ct: Uint8Array;
-  info: typeof RK_LINK_INFO;
+  info: RkInfo;
   aad: Uint8Array;
   aikPub: Uint8Array;
 }

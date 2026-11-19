@@ -154,8 +154,16 @@ class MemLink implements Link {
     for (const cb of this.#closeCbs.splice(0)) cb();
     const p = this.#peer;
     this.#peer = null;
-    if (p && !p.closed) p.close();
+    // 실제 릴레이(services/relay app.ts)의 우편함은 한쪽이 나가도 다른 쪽 연결을 닫지 않고 {"t":"peer","online":false}만 보낸다
+    if (p && !p.closed) {
+      if (this.relay.mailboxKeepsPeer && this.chan.startsWith('mbx:')) p.detach();
+      else p.close();
+    }
     this.relay.leave(this.chan, this);
+  }
+  /** 상대가 나갔다(내 연결은 그대로). 다음 상대가 오면 connect가 다시 잇는다 */
+  detach() {
+    this.#peer = null;
   }
 }
 
@@ -165,6 +173,14 @@ class MemLink implements Link {
  */
 export class MemoryRelay implements RelayClient {
   faults: Faults = {};
+  /**
+   * 우편함을 실제 릴레이처럼: 한쪽이 나가도 다른 쪽은 붙어 있다(PC는 계속 지키고 폰은 동기화마다 들어왔다 나간다).
+   * 기본(false)은 예전 시험 의미(한쪽이 닫으면 양쪽을 닫는다).
+   */
+  readonly mailboxKeepsPeer: boolean;
+  constructor(o: { mailboxKeepsPeer?: boolean } = {}) {
+    this.mailboxKeepsPeer = o.mailboxKeepsPeer ?? false;
+  }
   readonly observed: { chan: string; frame: Uint8Array }[] = [];
   #chans = new Map<string, { desktop?: MemLink; mobile?: MemLink; used: boolean }>();
   #mailboxes = new Map<string, { read: string; write: string; frozen: boolean }>();

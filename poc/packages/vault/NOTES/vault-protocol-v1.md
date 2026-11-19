@@ -107,6 +107,7 @@ utilityProcess에는 powerMonitor가 없어서 main이 이벤트를 넘긴다.
 - `crypto.rkImport{enc(32B), ct(48B), info:'SAX-pclink-rk-v1', aad(32B), aikPub(32B)}` → `{aik}`. [새 PC] `linkKey`의 키로 연다(없으면 `no_link_key`, 위조는 `open_failed`).
   - 연 RK의 AIK 공개키가 `aikPub`와 다르면 `aik_mismatch`이고 아무것도 바꾸지 않는다. 같으면 쓰던 RK를 `account/rk-prev-<ms>`로 옮기고 `account/rk`를 바꾼다(`vault.rk_imported`). 넘겨받기 키는 지운다.
   - 그 뒤 `crypto.publicKeys`의 `aik`가 바뀐다. main은 키 객체를 새로 만든다.
+- `crypto.rkSeal`·`crypto.rkImport`의 `info`는 `'SAX-rk-escrow-v1'`도 받는다(ADR-050 계정 열쇠 맡기기). 그때 `rkSeal`의 `recipient`는 계정 서비스의 보관 키 공개키이고, `rkImport`의 봉인문은 계정 서비스가 넘겨받기 키로 다시 봉인한 것이다. 상한(24시간 3번)·AIK 대조·보관 항목 옮기기는 같다. `vault.rk_sealed{to:'escrow'|'pc'}`.
 - `crypto.shareKey{epoch(0~64)}` → `{key(32B), signPub(32B)}`. 계정 공유 기록(D07 §10)의 줄 봉인 키 `K_share(e) = HKDF-SHA256(RK, "share/v1/" ‖ e)`와 서명 키 `Ws`의 공개키다.
   - `key`는 금고 밖(main)으로 나간다. 공유 기록 줄만 열고 RK나 다른 키로 거슬러 가지 못한다. main은 쓰고 지우고, 폰에는 종단간 통로로만 준다.
   - `rkImport` 뒤에는 값이 바뀐다(새 계정 열쇠에서 나온다).

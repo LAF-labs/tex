@@ -38,7 +38,15 @@ export const CONTROL_STOPS: ReadonlyMap<string, 'handoff' | 'abort'> = new Map([
   ['human.ttl_expired', 'abort'],
   ['run.aborted', 'abort'],
   ['gate.unavailable', 'handoff'],
+  ['verify.not_committed_repeat', 'handoff'],
 ]);
+
+/**
+ * 한 실행에서 같은 verify가 not_committed로 게이트 앞에 되돌아가도 되는 횟수. 넘으면 다시 돌지 않고 사람에게 넘긴다
+ * (대표 실기기 피드백 2026-11-18: 사업자등록증명이 신청 화면과 처리결과 확인 사이를 계속 돌았다). 같은 화면에서 같은 클릭이 두 번
+ * 신청을 만들지 못했다면 세 번째도 같다고 본다.
+ */
+export const NOT_COMMITTED_RETRIES = 1;
 
 /** sign 방식마다 엔진이 할 then[] 동작(null = 엔진 입력 없음). */
 const SIGN_ACTION: Readonly<Record<string, 'human:secret' | 'secret_fill:security_card' | null>> = { cert: 'human:secret', security_card: 'secret_fill:security_card', simple_auth: null };
@@ -297,6 +305,8 @@ export class RunController {
   /** 지금 무장된 커밋 항목(GuardedActuator.commitArmed)과 그 submit의 expectConfirm. 커밋 구간 안 클릭 직전부터 그 클릭까지만. */
   private armedKey: string | null = null;
   private armedConfirmRe: RegExp | null = null;
+  /** verify id → 이 실행에서 not_committed가 나온 횟수(NOT_COMMITTED_RETRIES). */
+  private readonly notCommitted = new Map<string, number>();
   /** 커밋 가드가 무장됐는가(구간을 나갈 때 푼다). */
   private guardArmed = false;
   private pending: 'abort' | 'downgrade' | null = null;
@@ -812,6 +822,14 @@ export class RunController {
       await this.disarm();
       if (!this.fire({ t: 'verify', result: j.result }, v.id, j.result === 'unknown' ? 'verify.unknown' : null)) return fail('run.state_stop');
       if (this.name() !== 'Running') return fail('run.state_stop');
+    }
+    if (j.result === 'not_committed') {
+      const n = (this.notCommitted.get(v.id) ?? 0) + 1;
+      this.notCommitted.set(v.id, n);
+      if (n > NOT_COMMITTED_RETRIES) {
+        this.i.journal('verify.not_committed_repeat', { stepId: v.id, count: String(n) });
+        return fail('verify.not_committed_repeat');
+      }
     }
     return { t: 'jump', to: v.on[j.result] };
   };

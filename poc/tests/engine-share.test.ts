@@ -179,6 +179,12 @@ describe('계정 공유 기록 장부: 올리기 상태와 받기', () => {
     bad(() => p.svc.handle('share.sent', { rowId: 'x', seq: 1 }));
     bad(() => p.svc.handle('share.sent', { rowId: rows[3]!.rowId, seq: 0 }));
     bad(() => p.svc.handle('share.dropped', { rowId: rows[3]!.rowId, reason: 'Bad Reason' }));
+    // 계정 열쇠가 바뀌면 올린 줄을 다시 올릴 줄로 돌린다(버린 줄은 그대로)
+    assert.deepEqual(p.svc.handle('share.resend', {}), { rows: 2 });
+    assert.deepEqual(p.db.prepare('SELECT state, seq FROM share_out ORDER BY rowid').all(), [
+      { state: 'pending', seq: null }, { state: 'pending', seq: null }, { state: 'dropped', seq: null }, { state: 'pending', seq: null },
+    ]);
+    assert.deepEqual(p.svc.handle('share.resend', {}), { rows: 0 });
   });
 
   it('받은 줄은 한 번만 넣는다. 받은 자리는 내려가지 않고, 돈 요약은 가장 늦은 한 장만 남는다', () => {
