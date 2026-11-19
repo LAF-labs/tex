@@ -4,6 +4,7 @@
 // - 오프라인 해석은 없다(사용자 결정 2026-11-10): 엔진에 명령이 없거나(unknown_method) 판정을 못 하면(decide.unavailable·시간 초과)
 //   의도를 정규식으로 대신 고르지 않고 "연결 안 됨"(INTENT_UNAVAILABLE_TEXT)과 [다시 시도]를 보인다.
 // - 응답은 신뢰하지 않는다: 모양이 다르면 연결 안 됨과 같다. 로그에는 결과 종류·경로만 남긴다(문장 없음).
+import { CHAT_ADVICE_TEXT } from '@sax/chat-core';
 import type { CertCode } from './cert-docs.ts';
 import type { Parsed } from './shell-model.ts';
 
@@ -20,9 +21,6 @@ export type IntentRoute =
   | { outcome: 'route'; playbook: IntentPlaybook; adviceMentioned: boolean; via: 'l0' | 'model' }
   | { outcome: 'refuse_advice'; via: 'model' }
   | { outcome: 'unknown'; via: 'l0' | 'model' };
-
-/** D04 §3 세무 상담 출력 차단 고정 문구. */
-export const ADVICE_TEXT = '세무 판단은 하지 않아요. 세무 대리인과 상담해 주세요.';
 
 /** 판정을 못 했을 때(게이트웨이 불가·시간 초과·모양 다름) 대화에 보이는 문장. 렌더러가 [다시 시도]를 붙인다. */
 export const INTENT_UNAVAILABLE_TEXT = '지금은 답을 받을 수 없어요. 인터넷 연결을 확인하고 [다시 시도]를 눌러 주세요.';
@@ -67,9 +65,9 @@ export type Routed = { parsed: Parsed; note: string | null } | { say: string; no
  * 세무 질문이 섞였으면(adviceMentioned) 작업은 그대로 하고 고정 문구를 같이 보인다(D04 §3).
  */
 export function routed(r: IntentRoute, local: Parsed): Routed {
-  if (r.outcome === 'refuse_advice') return { say: ADVICE_TEXT, note: null };
+  if (r.outcome === 'refuse_advice') return { say: CHAT_ADVICE_TEXT, note: null };
   if (r.outcome === 'unknown') return { parsed: { ...local, intent: 'other' }, note: null };
-  const note = r.adviceMentioned ? ADVICE_TEXT : null;
+  const note = r.adviceMentioned ? CHAT_ADVICE_TEXT : null;
   const p = r.playbook;
   if (p === 'hometax.invoice.issue') return { parsed: { ...local, intent: 'invoice' }, note };
   if (p === 'gov24.resident.copy') return { parsed: { ...local, intent: local.intent === 'resident_abstract' ? 'resident_abstract' : 'resident_copy' }, note };

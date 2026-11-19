@@ -3,8 +3,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { CHAT_ADVICE_TEXT, type DomainCall, type ShownReply, type StepParams, type StepResult, type ToolOutput } from '@sax/engine';
-import { finalOf, fixJosa } from '@sax/chat-core';
-import { CASH_FIELDS as MODEL_CASH_FIELDS, SLOT_FIELDS as MODEL_SLOT_FIELDS, SLOT_PATHS as MODEL_SLOT_PATHS, SLOT_POSITIONS as MODEL_SLOT_POSITIONS } from '@sax/model';
+import { finalOf, fixJosa, SLOT_FIELDS } from '@sax/chat-core';
 import { CHAT_MAP_IDLE_MS as REDACTION_IDLE_MS } from '@sax/redaction';
 import {
   AGENT_CASH_MISSING_TEXT,
@@ -14,11 +13,7 @@ import {
   AGENT_SLOT_MISSING_TEXT,
   AGENT_STEP_MAX,
   AgentChat,
-  CASH_FIELDS,
   CHAT_MAP_IDLE_MS,
-  SLOT_FIELDS,
-  SLOT_PATHS,
-  SLOT_POSITIONS,
   type AgentChatPorts,
   type AgentCounterparty,
   type AgentPhase,
@@ -645,11 +640,7 @@ describe('AgentChat 낼 돈·돈 흐름(11 §2·§3)', () => {
 });
 
 describe('AgentChat 옮겨 둔 상수', () => {
-  it('슬롯 칸·위치·쉬는 시간이 @sax/model·@sax/redaction과 같다', () => {
-    assert.deepEqual([...SLOT_FIELDS], [...MODEL_SLOT_FIELDS]);
-    assert.deepEqual([...SLOT_POSITIONS], [...MODEL_SLOT_POSITIONS]);
-    assert.deepEqual([...SLOT_PATHS], [...MODEL_SLOT_PATHS]);
-    assert.deepEqual([...CASH_FIELDS], [...MODEL_CASH_FIELDS]);
+  it('쉬는 시간이 @sax/redaction과 같다', () => {
     assert.equal(CHAT_MAP_IDLE_MS, REDACTION_IDLE_MS);
   });
 });

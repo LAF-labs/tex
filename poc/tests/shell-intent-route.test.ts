@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
 import { INTENT_DICT } from '../packages/engine/src/l0/rules.ts';
-import { ADVICE_TEXT, engineIntentResolver, INTENT_PLAYBOOKS, INTENT_UNAVAILABLE_TEXT, parseRoute, routed } from '../apps/desktop/src/intent-route.ts';
+import { CHAT_ADVICE_TEXT } from '@sax/chat-core';
+import { engineIntentResolver, INTENT_PLAYBOOKS, INTENT_UNAVAILABLE_TEXT, parseRoute, routed } from '../apps/desktop/src/intent-route.ts';
 import type { Parsed } from '../apps/desktop/src/shell-mock.ts';
 
 const local: Parsed = { intent: 'other', counterparties: ['A상사'], amount: 3_300_000, vat: null, item: null };
@@ -38,10 +39,10 @@ describe('작업 → 화면 해석(인자는 로컬 파서 그대로)', () => {
   });
   it('세무 질문이 섞이면 작업은 그대로, 고정 문구를 같이', () => {
     const r = routed({ outcome: 'route', playbook: 'hometax.invoice.issue', adviceMentioned: true, via: 'model' }, local);
-    assert.deepEqual(r, { parsed: { ...local, intent: 'invoice' }, note: ADVICE_TEXT });
+    assert.deepEqual(r, { parsed: { ...local, intent: 'invoice' }, note: CHAT_ADVICE_TEXT });
   });
   it('세무 상담 거절 → 고정 문구만', () => {
-    assert.deepEqual(routed({ outcome: 'refuse_advice', via: 'model' }, local), { say: ADVICE_TEXT, note: null });
+    assert.deepEqual(routed({ outcome: 'refuse_advice', via: 'model' }, local), { say: CHAT_ADVICE_TEXT, note: null });
   });
   it('등본·초본은 로컬 파서가 초본을 알면 초본', () => {
     const r = routed({ outcome: 'route', playbook: 'gov24.resident.copy', adviceMentioned: false, via: 'l0' }, { ...local, intent: 'resident_abstract' });
@@ -61,7 +62,7 @@ describe('작업 → 화면 해석(인자는 로컬 파서 그대로)', () => {
     assert.deepEqual(routed({ outcome: 'unknown', via: 'model' }, local), { parsed: { ...local, intent: 'other' }, note: null });
   });
   it('화면 문구에 세무사법 금지 표현이 없다(D11 §8.1)', () => {
-    const all = [ADVICE_TEXT, ...INTENT_PLAYBOOKS.map((p) => routed({ outcome: 'route', playbook: p, adviceMentioned: false, via: 'model' }, local)).flatMap((r) => ('say' in r ? [r.say] : []))].join('\n');
+    const all = [CHAT_ADVICE_TEXT, ...INTENT_PLAYBOOKS.map((p) => routed({ outcome: 'route', playbook: p, adviceMentioned: false, via: 'model' }, local)).flatMap((r) => ('say' in r ? [r.say] : []))].join('\n');
     for (const bad of ['세금신고 대행', '절세', '기장대행', '세무대리', '환급 보장', '대신 처리']) assert.ok(!all.includes(bad), bad);
   });
   it('되묻기·안내 문구(shell-model interpret)도 금지 표현이 없고, 제품 화면에 "데모"라고 하지 않는다', () => {

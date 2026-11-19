@@ -4,7 +4,7 @@
 // - 대화: 문장을 여기서 가로채지 않는다. 대화 도구 루프(agent-chat의 receivables 도구)가 receivables()를 부른다. 값은 PC 안에만 있다.
 // 파일 내용·계좌번호·입금자명은 로그에 남기지 않는다(건수·코드만).
 import { randomBytes } from 'node:crypto';
-import { parseBankStatement, parseHometaxIssueList, sniffFormat, type BankMapping, type BankParse, type BankRole } from '@sax/docparse';
+import { BANK_ROLES, parseBankStatement, parseHometaxIssueList, sniffFormat, type BankMapping, type BankParse } from '@sax/docparse';
 import type { SheetOutput } from '@sax/docparse/sandbox';
 import { BANK_CONSENT_VERSION, type BANK_SHELL_METHODS } from './bank-ipc.ts';
 import type { BoardCard } from './board.ts';
@@ -26,7 +26,6 @@ export interface BankHostPorts {
 }
 
 const PENDING_MS = 5 * 60_000;
-const ROLES: readonly BankRole[] = ['date', 'time', 'in', 'out', 'amount', 'kind', 'balance', 'payer', 'memo', 'counter_account'];
 
 /** 미리보기 카드(렌더러로 가는 것). 줄은 앞 8줄 원래 글자 + 읽은 결과 합계만 */
 function preview(token: string, r: BankParse, accounts: Array<{ id: string; last4: string }>) {
@@ -121,7 +120,7 @@ export class BankHost {
     const sheet = auto?.sheet ?? p.out.sheets.find((s) => !s.hidden)?.name ?? '';
     const headerRow = typeof cols.headerRow === 'number' && Number.isInteger(cols.headerRow) && cols.headerRow >= 0 && cols.headerRow < 40 ? cols.headerRow : (auto?.headerRow ?? 0);
     const columns: BankMapping['columns'] = {};
-    for (const role of ROLES) {
+    for (const role of BANK_ROLES) {
       const v = cols[role];
       if (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < 256) columns[role] = v;
     }
