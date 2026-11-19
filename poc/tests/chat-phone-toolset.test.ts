@@ -50,14 +50,14 @@ describe('폰 대화 툴셋 등록(목록 대조)', () => {
     assert.deepEqual([...PHONE_ONLY_TOOLSETS], ['chat_phone']);
   });
 
-  it('chat_phone 도구는 chat_agent 표에서 폰에 없는 것만 뺀 것이다(이름·인자 모양이 PC와 같다)', () => {
+  it('chat_phone 도구는 chat_agent 표에서 폰에 없는 것을 빼고 폰 화면 도구(open_screen)만 더한 것이다(겹치는 도구는 이름·인자 모양이 PC와 같다)', () => {
     const pc = new Map(CHAT_AGENT_TOOLS.map((t) => [t.name as string, t.parameters]));
-    assert.deepEqual(CHAT_PHONE_TOOLS.map((t) => t.name), CHAT_AGENT_TOOLS.map((t) => t.name as string).filter((n) => !(PHONE_OMITTED_TOOLS as readonly string[]).includes(n)));
+    assert.deepEqual(CHAT_PHONE_TOOLS.map((t) => t.name), [...CHAT_AGENT_TOOLS.map((t) => t.name as string).filter((n) => !(PHONE_OMITTED_TOOLS as readonly string[]).includes(n)), 'open_screen']);
     for (const t of CHAT_PHONE.tools) {
       assertStrict(t.parameters as Strict, t.name);
-      assert.deepEqual(t.parameters, pc.get(t.name), t.name);
+      if (t.name !== 'open_screen') assert.deepEqual(t.parameters, pc.get(t.name), t.name);
     }
-    assert.equal(CHAT_PHONE.tools.length, 5);
+    assert.equal(CHAT_PHONE.tools.length, 6);
   });
 
   it('출력 스키마는 strict이고 PC 답 종류에 defer만 더한다. chat_digest는 summary 한 칸', () => {
@@ -93,7 +93,11 @@ describe('chat_phone 머리말', () => {
   it('폰에 없는 도구는 도구로 적지 않고, PC가 꺼져 있음·맡기기·defer·세무 판단·데이터 규칙을 적는다', () => {
     for (const t of PHONE_OMITTED_TOOLS) assert.ok(!p.includes(t), t);
     assert.doesNotMatch(p, /판정기다/);
-    assert.match(p, /PC는 꺼져 있다/);
+    assert.match(p, /PC: 꺼짐/);
+    assert.match(p, /PC: 켜짐/);
+    assert.match(p, /앱 판단: 세금계산서 발급 요청/);
+    assert.match(p, /# 일상 말/);
+    assert.match(p, /점심/);
     assert.match(p, /발급·전송 도구는 없다/);
     assert.match(p, /kind defer/);
     assert.match(p, /# 세무 판단/);

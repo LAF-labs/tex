@@ -4,7 +4,7 @@
 // - 응답은 믿지 않는다: 도구 이름·인자 모양을 표(tables.ts)로 다시 검사한다. 답 문장 검사는 PhoneChat이 한다.
 // - 본문·토큰·헤더를 로그에 남기지 않는다. 오류는 코드만 옮긴다.
 import { wasMinted, type RedactedText } from '@sax/redaction';
-import { CHAT_PHONE_TOOLS, DATE_MONTH_MIN, type ChatPhoneToolName } from './tables.ts';
+import { CHAT_PHONE_TOOLS, DATE_MONTH_MIN, PHONE_SCREENS, type ChatPhoneToolName } from './tables.ts';
 
 export type PhoneChatErrorCode =
   | 'chat.unavailable'
@@ -126,6 +126,7 @@ export const PHONE_TOOL_ARGS: { [K in ChatPhoneToolName]: (a: Record<string, unk
   invoice_draft: (a) => keysAre(a, ['counterparty', 'amount', 'vat', 'item', ...EXTRA_KEYS]) && typeof a.counterparty === 'string' && nullableString(a.amount) && vat(a.vat) && nullableString(a.item) && extraOk(a),
   draft_edit: (a) => keysAre(a, ['draft', 'amount', 'vat', 'item', ...EXTRA_KEYS]) && typeof a.draft === 'string' && nullableString(a.amount) && vat(a.vat) && nullableString(a.item) && extraOk(a),
   draft_discard: (a) => keysAre(a, ['draft']) && typeof a.draft === 'string',
+  open_screen: (a) => keysAre(a, ['screen']) && (PHONE_SCREENS as readonly unknown[]).includes(a.screen),
 };
 const TOOL_NAMES: ReadonlySet<string> = new Set(CHAT_PHONE_TOOLS.map((t) => t.name));
 

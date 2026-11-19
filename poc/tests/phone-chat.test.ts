@@ -122,8 +122,8 @@ describe('폰 대화: 컨텍스트와 가림', () => {
     assert.equal(r.text, '네, 말씀하세요.');
     const text = t.reqs[0]!.text;
     assert.equal(t.reqs[0]!.toolset, 'chat_phone');
-    assert.match(text, /^\[사실\]\n사본: fresh\ninvoice_history\(\[NAME_\d+\]\) = \{"ref":"r1","status":"ok","fields":\["date","supply","total","counterparty","approvalNo"\],"needs":null\}\nreceivables\(\[NAME_\d+\]\) = \{"ref":"r2","status":"ok"/);
-    assert.match(text, /\n\[지금\]\n화면: 열린 카드 없음\n사용자: \[NAME_\d+\]\(\[BIZNO_\d+\]\)에 \[AMT_\d+\] 세금계산서 끊어줘$/);
+    assert.match(text, /^\[사실\]\nPC: 꺼짐\n사본: fresh\ninvoice_history\(\[NAME_\d+\]\) = \{"ref":"r1","status":"ok","fields":\["date","supply","total","counterparty","approvalNo"\],"needs":null\}\nreceivables\(\[NAME_\d+\]\) = \{"ref":"r2","status":"ok"/);
+    assert.match(text, /\n\[지금\]\n화면: 열린 카드 없음\n앱 판단: 세금계산서 발급 요청\n사용자: \[NAME_\d+\]\(\[BIZNO_\d+\]\)에 \[AMT_\d+\] 세금계산서 끊어줘$/);
     assert.ok(!text.includes('[요약]') && !text.includes('[앞 대화]'));
     assertNoRaw(t.reqs);
     assert.deepEqual(t.sessions.length, 1);
@@ -150,7 +150,7 @@ describe('폰 대화: 컨텍스트와 가림', () => {
   it('사본이 없으면 "사본: none"만 싣고 조회 도구는 not_on_phone, 하루 넘은 사본은 stale', async () => {
     const t = rig({ copy: null, script: (r, n) => (r.replay.length ? say(n, 'cannot', 'PC와 한 번 연결해야 볼 수 있어요.') : call(n, 'invoice_history', { counterparty: null })) });
     reply(await t.chat.send('발급 기록 보여줘'));
-    assert.match(t.reqs[0]!.text, /^\[사실\]\n사본: none\n\[지금\]/);
+    assert.match(t.reqs[0]!.text, /^\[사실\]\nPC: 꺼짐\n사본: none\n\[지금\]/);
     assert.equal((t.reqs[1]!.replay[1] as { output: string }).output, '{"ref":null,"status":"not_on_phone","fields":null,"needs":null}');
     const s = rig({ copy: { ...COPY, asOf: T0 - 25 * 3600_000 } });
     reply(await s.chat.send('한빛전자 얼마 남았지'));
