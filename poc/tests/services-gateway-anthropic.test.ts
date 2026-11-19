@@ -8,6 +8,7 @@ import {
   AnthropicProvider,
   GenerationSplitProvider,
   ProviderError,
+  anthropicFallbacks,
   anthropicMessages,
   anthropicSchema,
   generationModels,
@@ -28,7 +29,7 @@ function fakeFetch(replies: Array<{ status?: number; body: unknown }>, sent: Sen
 }
 
 const spec = (t: typeof CHAT_AGENT | typeof CHAT_REPLY | typeof CHAT_PHONE, input: unknown[]): RespondSpec => ({
-  model: 'claude-opus-5-5',
+  model: 'claude-haiku-5-5',
   prefix: 'PREFIX',
   effort: t.effort,
   maxOutputTokens: t.maxOutputTokens,
@@ -50,7 +51,7 @@ describe('게이트웨이: 생성만 Anthropic(GW_RESPOND_PROVIDER)', () => {
     assert.equal(providerFromEnv({ ...ROUTING, GW_RESPOND_PROVIDER: 'anthropic', ANTHROPIC_API_KEY: 'a' }).name, 'openrouter+anthropic');
   });
 
-  it('모델 이름: anthropic이면 Claude 기본(claude-opus-5-5), 바꿀 수 있고, base면 MODEL_*', () => {
+  it('모델 이름: anthropic이면 Claude 기본(claude-haiku-5-5), 바꿀 수 있고, base면 MODEL_*', () => {
     assert.deepEqual(generationModels({ GW_RESPOND_PROVIDER: 'anthropic', MODEL_RESPOND: 'deepseek/x' }), { respond: ANTHROPIC_DEFAULT_MODEL, agent: ANTHROPIC_DEFAULT_MODEL, vision: ANTHROPIC_DEFAULT_MODEL });
     assert.deepEqual(generationModels({ GW_RESPOND_PROVIDER: 'anthropic', ANTHROPIC_MODEL_RESPOND: 'claude-haiku-5-5', ANTHROPIC_MODEL_AGENT: 'claude-sonnet-5-5' }), { respond: 'claude-haiku-5-5', agent: 'claude-sonnet-5-5', vision: 'claude-sonnet-5-5' });
     assert.throws(() => generationModels({ GW_RESPOND_PROVIDER: 'anthropic', ANTHROPIC_MODEL_RESPOND: 'deepseek/x' }), /config_ANTHROPIC_MODEL/);
@@ -74,7 +75,7 @@ describe('게이트웨이: 생성만 Anthropic(GW_RESPOND_PROVIDER)', () => {
 
   it('요청 본문: x-api-key, 머리말 캐시, effort, 출력 스키마, strict 도구(받지 않는 제약은 뺀다)', async () => {
     const sent: Sent[] = [];
-    const p = new AnthropicProvider({ apiKey: 'sk-test', fetchFn: fakeFetch([{ body: { model: 'claude-opus-5-5', stop_reason: 'end_turn', content: [{ type: 'text', text: '{}' }], usage: { input_tokens: 10, output_tokens: 2 } } }], sent) });
+    const p = new AnthropicProvider({ apiKey: 'sk-test', fetchFn: fakeFetch([{ body: { model: 'claude-haiku-5-5', stop_reason: 'end_turn', content: [{ type: 'text', text: '{}' }], usage: { input_tokens: 10, output_tokens: 2 } } }], sent) });
     await p.respond(spec(CHAT_AGENT, [user('안녕')]));
     const s = sent[0]!;
     assert.equal(s.url, 'https://api.anthropic.com/v1/messages');
@@ -82,7 +83,7 @@ describe('게이트웨이: 생성만 Anthropic(GW_RESPOND_PROVIDER)', () => {
     assert.equal(s.headers['anthropic-version'], '2026-10-21');
     assert.equal('authorization' in s.headers, false);
     const b = s.body;
-    assert.equal(b.model, 'claude-opus-5-5');
+    assert.equal(b.model, 'claude-haiku-5-5');
     assert.equal(b.max_tokens, CHAT_AGENT.maxOutputTokens);
     assert.equal('thinking' in b, false, '사고는 모델 기본(적응형)');
     assert.deepEqual(b.system, [{ type: 'text', text: 'PREFIX', cache_control: { type: 'ephemeral' } }]);
@@ -94,6 +95,14 @@ describe('게이트웨이: 생성만 Anthropic(GW_RESPOND_PROVIDER)', () => {
     assert.ok(tools.every((t) => t.strict === true));
     const json = JSON.stringify([b.tools, b.output_config]);
     for (const k of ['"maxLength"', '"maximum"', '"minimum"', '"maxItems"', '"pattern"']) assert.equal(json.includes(k), false, `${k} 없음`);
+    assert.equal('fallbacks' in b, false, 'Haiku에는 서버 쪽 대체가 없다');
+    assert.equal('anthropic-beta' in s.headers, false);
+    assert.ok(anthropicFallbacks('claude-opus-5-5') && anthropicFallbacks('claude-sonnet-5-5') && !anthropicFallbacks('claude-haiku-5-5'));
+    const sent2: Sent[] = [];
+    const q = new AnthropicProvider({ apiKey: 'k', fetchFn: fakeFetch([{ body: { stop_reason: 'end_turn', content: [{ type: 'text', text: '{}' }], usage: {} } }], sent2) });
+    await q.respond({ ...spec(CHAT_REPLY, [user('x')]), model: 'claude-opus-5-5' });
+    assert.equal(sent2[0]!.body.fallbacks, 'default');
+    assert.equal(sent2[0]!.headers['anthropic-beta'], 'server-side-fallback-2026-07-01');
     assert.deepEqual(anthropicSchema({ type: 'object', properties: { maxLength: { type: 'string', maxLength: 3 } }, required: ['maxLength'] }), { type: 'object', properties: { maxLength: { type: 'string' } }, required: ['maxLength'] }, '필드 이름은 지우지 않는다');
   });
 
@@ -108,8 +117,8 @@ describe('게이트웨이: 생성만 Anthropic(GW_RESPOND_PROVIDER)', () => {
       apiKey: 'k',
       fetchFn: fakeFetch(
         [
-          { body: { model: 'claude-opus-5-5', stop_reason: 'tool_use', content: turn1, usage: { input_tokens: 5, cache_read_input_tokens: 100, cache_creation_input_tokens: 7, output_tokens: 9 } } },
-          { body: { model: 'claude-opus-5-5', stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '', signature: 'SIG2' }, { type: 'text', text: '{"reply":"ok"}' }], usage: { input_tokens: 1, output_tokens: 1 } } },
+          { body: { model: 'claude-haiku-5-5', stop_reason: 'tool_use', content: turn1, usage: { input_tokens: 5, cache_read_input_tokens: 100, cache_creation_input_tokens: 7, output_tokens: 9 } } },
+          { body: { model: 'claude-haiku-5-5', stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '', signature: 'SIG2' }, { type: 'text', text: '{"reply":"ok"}' }], usage: { input_tokens: 1, output_tokens: 1 } } },
         ],
         sent,
       ),

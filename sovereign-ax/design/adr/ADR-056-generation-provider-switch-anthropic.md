@@ -12,7 +12,7 @@ L1 판정(`/v1/decide`)과 결정 모델 고르기(`decision_pick`)는 OpenRoute
 ## 결정
 
 1. 게이트웨이에 `GW_RESPOND_PROVIDER`(`base` 기본 | `anthropic`)를 둔다. `anthropic`이면 생성 호출만 Anthropic Messages API로 보내고, 판정과 결정 모델 고르기는 `GW_PROVIDER` 공급사에 그대로 둔다. 기본값은 지금과 같다(값을 지우고 재배포하면 되돌아간다).
-2. 모델은 `ANTHROPIC_MODEL_RESPOND`(기본 `claude-opus-5-5`), `ANTHROPIC_MODEL_AGENT`(기본은 RESPOND와 같다). 툴셋의 effort, 출력 스키마, 도구, 최대 토큰은 그대로 옮긴다. 사고는 모델 기본(적응형)이다.
+2. 모델은 대표 결정(2026-11-19 "jev는 오픈라우터 그대로, 이외는 haiku5.5")에 따라 `ANTHROPIC_MODEL_RESPOND`(기본 `claude-haiku-5-5`), `ANTHROPIC_MODEL_AGENT`(기본은 RESPOND와 같다). 툴셋의 effort, 출력 스키마, 도구, 최대 토큰은 그대로 옮긴다. 사고는 모델 기본(적응형)이다.
 3. PC와 폰은 바꾸지 않는다. 응답의 assistant 내용 원본(사고 블록 서명 포함)은 첫 출력 항목 `reasoning`에 실려 가고, 클라이언트가 지금처럼 태그와 함께 되돌려 보내면 게이트웨이가 그대로 다시 싣는다. 그래서 게이트웨이와 PC 앱을 같은 커밋으로 내는 규칙이 이 변경에는 걸리지 않는다(게이트웨이만 바뀐다).
 4. Anthropic 구조화 출력이 받지 않는 제약(`maxLength`, `maximum`, `maxItems`, `pattern` 등)은 빼고 보낸다. 받은 출력과 도구 인자는 PC와 폰이 원래 스키마로 다시 검사한다(지금과 같다).
 5. 일 한도 단가(`LIMIT_PRICES`)는 바꾸지 않는다. 시험 중 실제 비용은 한도 계산보다 크고, 상한은 계정 월 토큰 한도다.
