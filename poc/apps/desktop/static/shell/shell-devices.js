@@ -2,6 +2,8 @@
 // - 목록: PC 묶음·폰 묶음(각 3대까지). 다른 기기는 [연결 끊기](확인 한 번), 이 PC는 [이 PC 연결 끊기](계정에 남은 마지막 PC면 안내만).
 // - 새 PC 요청: [연결] → 새 PC 화면의 6자리를 넣고 [확인]. 6자리는 이 렌더러에 미리 오지 않는다(사람이 새 PC 화면을 보고 넣는다).
 // - 이 PC가 다른 기기에서 끊겼거나 정지됐으면(account.device_suspended) 목록 대신 안내와 [다시 로그인].
+// - 폰 승인(ADR-052): 승인 키를 받은 폰은 [승인 끄기](같은 줄 안에서 확인 한 번), 꺼 둔 폰은 "폰 승인이 꺼져 있어요" + [다시 허용].
+//   끄면 연결은 그대로 두고 승인 키만 지운다(phone-link revokePx). 다시 허용하면 폰이 청한 키를 바로 받는다(allowPx).
 // 문구는 폰 앱의 연결된 기기 화면(taxoff-mobile src/devices.ts)과 맞춘다. 값은 모두 textContent로 넣는다.
 import { btn, h, icon } from './shell-views.js';
 
@@ -26,6 +28,7 @@ const ERR = {
   gesture_required: '버튼을 다시 눌러 주세요.',
   account_required: '먼저 로그인해 주세요.',
   busy: '처리 중이에요. 잠시 뒤에 다시 해 주세요.',
+  'device.not_phone': '이 PC와 연결된 폰이 아니에요. 폰에서 [PC와 연결]로 다시 연결해 주세요.',
 };
 export const devicesErrText = (code) => ERR[code] ?? (String(code).startsWith('net.') ? '연결하지 못했어요. 인터넷 연결을 확인해 주세요.' : '잠시 뒤에 다시 해 주세요.');
 
@@ -51,6 +54,8 @@ export function createDevices(ctx) {
     msg: null,
     /** 확인 중인 줄: 기기 ID 또는 'self' */
     confirm: null,
+    /** 폰 승인 끄기를 확인 중인 폰의 기기 ID */
+    pxConfirm: null,
     busy: false,
     reqs: [],
     /** 요청마다 넣는 중인 6자리와 그 줄의 안내({ text, bad }) */
@@ -120,6 +125,20 @@ export function createDevices(ctx) {
         s.msg = { text: `${d.name || kindName(d)} 연결을 끊었어요.`, bad: false };
       } catch (e) {
         s.confirm = null;
+        s.msg = { text: devicesErrText(code(e)), bad: true };
+      }
+    });
+
+  /** 폰 승인 끄기·다시 허용. 연결은 그대로다. */
+  const setPx = (d, on) =>
+    act(async () => {
+      const name = d.name || kindName(d);
+      try {
+        s.list = (await ctx.call('devices.px', { deviceId: d.deviceId, on })).devices;
+        s.pxConfirm = null;
+        s.msg = { text: on ? `${name}에서 다시 발급을 승인할 수 있어요.` : `${name}의 폰 승인을 껐어요. 연결은 그대로예요.`, bad: false };
+      } catch (e) {
+        s.pxConfirm = null;
         s.msg = { text: devicesErrText(code(e)), bad: true };
       }
     });
@@ -194,7 +213,7 @@ export function createDevices(ctx) {
       ...acts,
     );
 
-  function deviceRow(d, activePcs) {
+  function deviceRow(d, activePcs, pxPrimary = false) {
     const name = d.name || kindName(d);
     const sub = deviceSub(d, Date.now());
     const attrs = { 'data-device': d.deviceId, 'data-device-state': d.state, ...(d.self ? { 'data-device-self': '' } : {}) };
@@ -208,22 +227,43 @@ export function createDevices(ctx) {
         h('div', { class: 'sx-actions' }, btn('끊기', () => (d.self ? leave() : unlink(d)), 'sx-btn-primary', { disabled: s.busy, 'data-act': d.self ? 'device-leave' : 'device-unlink' }), btn('그만두기', () => set({ confirm: null }), 'sx-btn-quiet', { 'data-act': 'device-confirm-back' })),
       );
     }
+    if (s.pxConfirm === d.deviceId) {
+      return h(
+        'div',
+        { class: 'dev-confirm', ...attrs, 'data-px-confirm': '' },
+        h('p', { class: 'sx-body-sm' }, `${name}의 발급 승인을 끌까요? 연결은 그대로 두고, 이 폰에서는 세금계산서 발급을 승인할 수 없게 돼요. 언제든 [다시 허용]으로 켤 수 있어요.`),
+        h('div', { class: 'sx-actions' }, btn('승인 끄기', () => setPx(d, false), 'sx-btn-primary', { disabled: s.busy, 'data-act': 'px-off' }), btn('그만두기', () => set({ pxConfirm: null }), 'sx-btn-quiet', { 'data-act': 'px-confirm-back' })),
+      );
+    }
+    // 폰 승인 상태(이 PC와 연결한 폰만): 켜짐 → [승인 끄기], 꺼 둠 → [다시 허용]
+    const px = d.role === 'mobile' && d.state === 'active' ? d.approval : undefined;
+    const pxSub = px === 'on' ? ' · 이 폰에서 발급을 승인해요' : px === 'paused' ? ' · 폰 승인이 꺼져 있어요' : px === 'asked' ? ' · 폰 승인이 꺼져 있어요 · 폰이 다시 켜 달라고 했어요' : '';
+    const pxAct =
+      px === 'on'
+        ? btn('승인 끄기', () => set({ pxConfirm: d.deviceId, confirm: null, msg: null }), 'sx-btn-quiet', { disabled: s.busy, 'data-act': 'px-off-open' })
+        : px === 'paused' || px === 'asked'
+          ? btn('다시 허용', () => setPx(d, true), pxPrimary ? 'sx-btn-primary' : 'sx-btn-quiet', { disabled: s.busy, 'data-act': 'px-on' })
+          : null;
     let act = null;
     if (d.self) {
       act = activePcs > 1 ? btn('이 PC 연결 끊기', () => set({ confirm: 'self', msg: null }), 'sx-btn-quiet', { 'data-act': 'device-leave-open' }) : null;
     } else if (d.listed && d.state !== 'pending') {
-      act = btn('연결 끊기', () => set({ confirm: d.deviceId, msg: null }), 'sx-btn-quiet', { 'data-act': 'device-unlink-open' });
+      act = btn('연결 끊기', () => set({ confirm: d.deviceId, pxConfirm: null, msg: null }), 'sx-btn-quiet', { 'data-act': 'device-unlink-open' });
     }
-    return row(attrs, name, d.self && activePcs <= 1 ? `${sub} · ${LAST_PC}` : sub, d.state === 'suspended', act);
+    if (px) attrs['data-px'] = px;
+    return row(attrs, name, d.self && activePcs <= 1 ? `${sub} · ${LAST_PC}` : sub + pxSub, d.state === 'suspended', pxAct, act);
   }
 
   function group(title, list, activePcs, role) {
     const full = list.length >= MAX_PER_ROLE;
+    // 주 단추는 칸에 하나: 꺼 둔 폰이 여럿이면 다시 켜 달라고 청한 폰, 없으면 첫 폰의 [다시 허용]만 채운다
+    const off = list.filter((d) => d.state === 'active' && (d.approval === 'paused' || d.approval === 'asked'));
+    const firstPaused = (off.find((d) => d.approval === 'asked') ?? off[0])?.deviceId;
     return h(
       'article',
       { class: 'sx-card dev-group', 'data-device-group': role, ...(full ? { 'data-device-full': '' } : {}) },
       h('div', { class: 'sx-card-hd' }, h('h2', { class: 'sx-card-title' }, title), h('span', { class: 'sx-meta' }, `${list.length}대 · ${MAX_PER_ROLE}대까지`)),
-      list.length ? h('div', { class: 'dev-rows' }, ...list.map((d) => deviceRow(d, activePcs))) : h('p', { class: 'sx-body-sm is-muted' }, role === 'mobile' ? '아직 연결한 폰이 없어요. 위의 [폰 연결]로 연결해요.' : '연결한 PC가 없어요.'),
+      list.length ? h('div', { class: 'dev-rows' }, ...list.map((d) => deviceRow(d, activePcs, d.deviceId === firstPaused))) : h('p', { class: 'sx-body-sm is-muted' }, role === 'mobile' ? '아직 연결한 폰이 없어요. 위의 [폰 연결]로 연결해요.' : '연결한 PC가 없어요.'),
       full ? h('p', { class: 'sx-meta', 'data-device-full-note': '' }, FULL_NOTE) : null,
     );
   }

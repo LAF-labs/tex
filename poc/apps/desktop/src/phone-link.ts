@@ -194,8 +194,13 @@ export interface PhoneView {
   pairedAt: number;
   online: boolean;
   lastSeenAt: number | null;
-  /** 폰 승인: on = 승인 키를 받았다 · asked = PC에서 꺼 두었고 폰이 다시 청했다 · off */
-  approver: 'on' | 'asked' | 'off';
+  /** 계정 기기 ID(설정 > 기기 연결의 줄과 맞출 때) */
+  deviceId: string;
+  /**
+   * 폰 승인: on = 승인 키를 받았다 · paused = PC에서 꺼 두었다 · asked = 꺼 두었고 폰이 다시 켜 달라고 청했다
+   * · off = 아직 승인 키가 없다(폰이 등록 알림을 보내지 않았다)
+   */
+  approver: 'on' | 'paused' | 'asked' | 'off';
 }
 
 /** 라이브 세션 한 번에 붙는 PC 쪽 기능. peerCaps는 폰 hello의 capabilities. */
@@ -357,7 +362,7 @@ export class PhoneLink {
   }
 
   list(): PhoneView[] {
-    return this.#recs.map((r) => ({ pairId: r.pairId, name: r.name, platform: r.platform, pairedAt: r.pairedAt, online: this.#runs.get(r.pairId)?.online ?? false, lastSeenAt: r.lastSeenAt, approver: this.#pxUsable(r) ? 'on' : r.pxPending ? 'asked' : 'off' }));
+    return this.#recs.map((r) => ({ pairId: r.pairId, name: r.name, platform: r.platform, pairedAt: r.pairedAt, online: this.#runs.get(r.pairId)?.online ?? false, lastSeenAt: r.lastSeenAt, deviceId: r.deviceId, approver: this.#pxUsable(r) ? 'on' : r.pxOff ? (r.pxPending ? 'asked' : 'paused') : 'off' }));
   }
 
   // ---- 폰 승인 키(ADR-052 결정 2·3) ----

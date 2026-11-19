@@ -427,6 +427,10 @@ describe('라이브 세션: 등록 → 발급 명령 → 폰 승인', () => {
     // PC에서 폰 승인을 끄면 새 키를 바로 받지 않고, 다시 허용하면 그 키를 받는다
     assert.equal(await link.revokePx(phone.pairId), true);
     assert.equal(link.px(phone.pairId), null);
+    // 설정 > 기기 연결 줄: 꺼 둠(paused)과 아직 키 없음(off)을 나눠 보인다. 기기 ID로 줄과 맞춘다
+    assert.equal(link.list()[0]!.approver, 'paused');
+    assert.equal(link.list()[0]!.deviceId, w.phone.keys.deviceId);
+    assert.equal(await link.revokePx(phone.pairId), false);
     assert.ok(!gate.canApprove(phone.pairId));
     const k2 = pxKey();
     ch.send('px.enroll', await enroll(k2));

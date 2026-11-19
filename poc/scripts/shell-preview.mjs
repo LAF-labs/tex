@@ -121,6 +121,8 @@ const DEV = {
   full: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(2, 'desktop', 'windows', '집 PC', { ago: 9 }), devRow(5, 'desktop', 'windows', '세무 담당 노트북', { ago: 2 }), devRow(3, 'mobile', 'ios', 'iPhone', { ago: 12 }), devRow(4, 'mobile', 'android', '', { ago: 3 }), devRow(6, 'mobile', 'ios', '직원 아이폰', { ago: 1, state: 'pending', listed: false })],
   suspended: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(2, 'desktop', 'windows', '집 PC', { ago: 9, state: 'suspended', deleteAfter: Date.now() + 5 * DEV_DAY + 3_600_000 }), devRow(3, 'mobile', 'ios', 'iPhone', { ago: 12 }), devRow(4, 'mobile', 'android', '잃어버린 폰', { ago: 30, state: 'suspended', deleteAfter: Date.now() + 1_800_000 })],
   alone: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(3, 'mobile', 'ios', 'iPhone', { ago: 12 })],
+  /** 폰 승인(ADR-052): iPhone은 켜짐, Android는 꺼 두었고 다시 켜 달라고 청함 */
+  px: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(3, 'mobile', 'ios', '사장님 iPhone', { ago: 12, approval: 'on' }), devRow(4, 'mobile', 'android', '', { ago: 3, approval: 'asked' })],
 };
 const req = (stage, o = {}) => ({ deviceId: '00000009-0000-4000-8000-000000000000', name: '새 노트북', platform: 'windows', createdAt: Date.now() - 60_000, stage, triesLeft: stage === 'code' ? 3 : null, ...o });
 const signedIn = { step: 'signed_in', email: 'owner@ganada.example', codeExpiresAt: null, error: null, phones: 2 };
@@ -142,6 +144,7 @@ const handlers = {
   'devices.list': () => (S.devErr ? devFail(S.devErr) : { devices: S.devices }),
   'devices.unlink': (p) => ({ devices: (S.devices = S.devices.filter((d) => d.deviceId !== p.deviceId)) }),
   'devices.leave': () => devFail('account.last_desktop'),
+  'devices.px': (p) => ({ devices: (S.devices = S.devices.map((d) => (d.deviceId === p.deviceId ? { ...d, approval: p.on ? 'on' : 'paused' } : d))) }),
   'pair.view': () => S.pair,
   'pair.open': () => (S.pair = pairQr()),
   'pair.retry': () => (S.pair = pairQr()),
@@ -564,6 +567,7 @@ Object.assign(scenes, {
     await devTab(win);
     await devScroll(win, '[data-device-group=desktop]');
     await shot(win, '73-devices-last-pc');
+
     // 새 PC 요청: 들어옴 → [연결] → 새 PC의 응답 기다림 → 6자리 칸 → 틀림 → 맞음(연결됐어요)
     reset(DEV.normal(), [req('new')]);
     await devTab(win);
@@ -600,6 +604,24 @@ Object.assign(scenes, {
     reset([], [], { devErr: 'account.device_suspended' });
     await devTab(win);
     await shot(win, '82-device-gone');
+  },
+  /** 폰 승인 끄기·다시 허용(ADR-052): 켜짐·다시 켜 달라고 청함 → [승인 끄기] 확인 → 꺼짐 → [다시 허용] */
+  async px(win) {
+    Object.assign(S, { acct: signedIn, devices: DEV.px(), reqs: [], devErr: null, pcMode: 'ok' });
+    await devTab(win);
+    await devScroll(win, '[data-device-group=mobile]');
+    await shot(win, '74-px-states');
+    await js(win, `document.querySelector('[data-act=px-off-open]').click()`);
+    await sleep(150);
+    await shot(win, '74b-px-off-confirm');
+    await js(win, `document.querySelector('[data-act=px-off]').click()`);
+    await sleep(250);
+    await devScroll(win, '[data-device-group=mobile]');
+    await shot(win, '74c-px-paused');
+    await js(win, `document.querySelector('[data-act=px-on]').click()`);
+    await sleep(250);
+    await devScroll(win, '[data-device-group=mobile]');
+    await shot(win, '74d-px-allowed');
   },
   // 폰 연결 칸(S-03): 쉬는 자리 → [폰 연결] → QR(남은 시간) → 폰이 찍음(6자리) → 틀림 → 연결됐어요 · 시간 지남([새 QR]) · 멈춤([다시 시도]) · QR 만드는 중
   async pair(win) {
@@ -670,7 +692,7 @@ Object.assign(scenes, {
   },
 });
 
-const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'pair', 'newPc', ...(EMPTY ? ['empty'] : [])];
+const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'px', 'pair', 'newPc', ...(EMPTY ? ['empty'] : [])];
 const agreed = { version: 'pv', choice: 'agreed', at: '' };
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {
