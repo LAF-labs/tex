@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { CHAT_ADVICE_TEXT, type DomainCall, type ShownReply, type StepParams, type StepResult, type ToolOutput } from '@sax/engine';
-import { finalOf, fixJosa } from '../apps/desktop/src/josa.ts';
+import { finalOf, fixJosa } from '@sax/chat-core';
 import { CASH_FIELDS as MODEL_CASH_FIELDS, SLOT_FIELDS as MODEL_SLOT_FIELDS, SLOT_PATHS as MODEL_SLOT_PATHS, SLOT_POSITIONS as MODEL_SLOT_POSITIONS } from '@sax/model';
 import { CHAT_MAP_IDLE_MS as REDACTION_IDLE_MS } from '@sax/redaction';
 import {

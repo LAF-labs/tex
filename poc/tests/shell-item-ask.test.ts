@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
-import { answersPending, ASK_ITEM_TEXT, cleanItem, extractItem, interpret, parseRegex, type Counterparty } from '../apps/desktop/src/shell-model.ts';
+import { cleanItem } from '@sax/chat-core';
+import { answersPending, ASK_ITEM_TEXT, extractItem, interpret, parseRegex, type Counterparty } from '../apps/desktop/src/shell-model.ts';
 import { NOTE, ShellRuns } from '../apps/desktop/src/shell-runs.ts';
 import { certItem, CP_FIELD_MAX } from '../apps/desktop/src/counterparty-book.ts';
 

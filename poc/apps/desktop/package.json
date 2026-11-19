@@ -9,6 +9,7 @@
     "package:mac": "node ../../scripts/package-win.mjs --mac"
   },
   "dependencies": {
+    "@sax/chat-core": "workspace:*",
     "@sax/daemon": "workspace:*",
     "@sax/db": "workspace:*",
     "@sax/docparse": "workspace:*",

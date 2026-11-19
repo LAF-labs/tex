@@ -9,7 +9,8 @@ import { BrowserWindow, session, type Session } from 'electron';
 import type { EngineHost } from './engine-host.ts';
 import { DEMO_COUNTERPARTIES, DEMO_PROFILE } from './fixture-mode.ts';
 import { hardenSession, hardenWindow } from './harden.ts';
-import { dayOffset, split, ymd, type Doc, type DocStore } from './shell-model.ts';
+import { splitVat } from '@sax/chat-core';
+import { dayOffset, ymd, type Doc, type DocStore } from './shell-model.ts';
 import { demoCerts, SAMPLE_MARK } from './synthetic-certs.ts';
 import type { PastRun } from './run-history.ts';
 import { NOTE } from './shell-runs.ts';
@@ -49,7 +50,7 @@ const HISTORY: Array<[number, string, string, number, SeedStatus]> = [
 export function seedPast(): PastRun[] {
   return HISTORY.map(([d, time, who, supply, status], i) => {
     const day = dayOffset(d);
-    const s = split(supply, 'separate');
+    const s = splitVat(supply, 'separate');
     const runId = `h${i}`;
     // 하루 전 B상사 건은 타임라인 지난 카드와 같은 승인번호(seedTimeline)
     const seq = d === -1 ? '00000123' : String(200 + i).padStart(8, '0');

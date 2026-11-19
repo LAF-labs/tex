@@ -1,6 +1,7 @@
 // 셸 화면 모델과 요청 해석(정규식, 모델 호출 없음). 제품 진입점이 쓰는 부분이다(ADR-035 W-7).
 // 견본 데이터(견본 사업장·서류·대화·꾸러미·정부24 후보)는 shell-mock.ts에 있고 시연 연결(ShellDev, demo-dev.ts)로만 들어온다.
 // 실행 단계·게이트 요청·발급 확정·처음 거래 판정은 엔진(H-01 플레이북·원장)에서 온다(shell-runs.ts). 사업자 프로필·거래처는 DB에서 읽는다.
+import { cleanItem, type Vat } from '@sax/chat-core';
 import { kstToday } from './approval-gate.ts';
 import { CERT_DOCS_SHOWN, certDocByCode, certDocOf, certInputsFor, type CertCode } from './cert-docs.ts';
 
@@ -154,17 +155,6 @@ export function parseAmount(t: string): number | null {
   return null;
 }
 
-export type VatMode = 'separate' | 'included';
-
-/** 세액은 공급가액의 10%에서 원 미만을 버린다. 포함 금액은 공급가 + 세액이 합계와 맞는 공급가를 찾는다. */
-export function split(amount: number, vat: VatMode) {
-  const taxOf = (s: number) => Math.floor(s / 10);
-  if (vat === 'separate') return { supply: amount, tax: taxOf(amount), total: amount + taxOf(amount) };
-  const base = Math.floor((amount * 10) / 11);
-  const supply = [base, base + 1, base - 1].find((s) => s > 0 && s + taxOf(s) === amount) ?? base;
-  return { supply, tax: amount - supply, total: amount };
-}
-
 export type Reply =
   /** text: 카드 앞 한 줄(민원증명: 무엇을 어떤 값으로 떼는지). */
   | { kind: 'draft'; run: RunView; text?: string }
@@ -180,27 +170,15 @@ export interface Pending {
   asked: 'amount' | 'counterparty' | 'item' | null;
   amount: number | null;
   item: string | null;
-  vat: VatMode | null;
+  vat: Vat | null;
 }
 export const emptyPending = (): Pending => ({ cp: null, asked: null, amount: null, item: null, vat: null });
 
-/** 품목 칸 상한(엔진 run.start가 100자에서 자른다). */
-export const ITEM_MAX = 100;
 /** 품목을 물을 때(엔진은 품목이 비면 시작하지 않는다, item_missing). */
 export const ASK_ITEM_TEXT = (cp: string) => `${cp}에 어떤 품목으로 발급할까요? 예: 컨설팅 용역`;
 /** 품목으로 보지 않는 낱말(요청 동사·세금계산서·부가세·때·취소 등). 조사를 뗀 뒤에도 본다. */
 const ITEM_STOP = /^(?:전자)?(?:세금)?계산서|^발급|^발행|^작성|^끊|^보내|^메일|^이메일|^해(?:\s?줘|주세요|요|라|줄래|주라|줘요)?$|^해줘|^줘|^주세요|^부탁|^좀$|^부가세|^vat$|^포함|^별도|^공급가|^합계|^금액|^이번|^이달|^오늘|^어제|^내일|^지난번|^같게|^같은|^그대로|^건$|^원$|^취소|^그만|^아니|^됐어|^몰라|^네$|^응$|^예$/i;
 const PARTICLE = /(?:으로|로|에게|한테|에서|에|을|를|은|는|이|가|의|도|만|과|와|짜리)$/;
-/** 품목 값 정리: 제어 문자·꺾쇠 빼고, 공백 하나로, 상한까지. 글자가 없으면 null. */
-export function cleanItem(s: string): string | null {
-  const v = s
-    .replace(/[\p{Cc}<>]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, ITEM_MAX)
-    .trim();
-  return /[가-힣A-Za-z]/.test(v) ? v : null;
-}
 /**
  * 문장에서 품목 후보를 뽑는다("일호유통에 컨설팅 1000원" → 컨설팅, 되묻기에 "컨설팅 용역으로 해 줘" → 컨설팅 용역).
  * 거래처 이름·금액·요청 낱말·조사를 빼고 남은 낱말이다. 후보는 카드에 추정이 아닌 값으로 보이고 그 자리에서 고칠 수 있다.
@@ -224,7 +202,7 @@ export function extractItem(text: string, cpName: string | null): string | null 
 export interface Drafts {
   readonly pending: Pending;
   readonly counterparties: Counterparty[];
-  createDraft(cp: Counterparty, amount: number, vat: VatMode | null, item?: string | null): RunView;
+  createDraft(cp: Counterparty, amount: number, vat: Vat | null, item?: string | null): RunView;
   /** 민원증명 초안(cert-docs 표의 서류, 신청 값). 대화 전송에 묶여 바로 시작한다(shell-app autoPrepare). */
   createCertDraft(code: CertCode, inputs: Record<string, string>): RunView;
 }
@@ -235,7 +213,7 @@ export interface Parsed {
   /** 문장에 나온 거래처 이름(목록에 있는 것만) */
   counterparties: string[];
   amount: number | null;
-  vat: VatMode | null;
+  vat: Vat | null;
   item: string | null;
   /** intent cert일 때 이 앱이 떼는 민원증명(cert-docs 표). 표에 없는 증명서(지방세 납세증명 등)는 null. */
   cert?: CertCode | null;
@@ -304,7 +282,7 @@ export const CERT_OTHER_TEXT = `그 증명서는 이 앱에서 떼지 못해요.
 /** 받침에 맞춘 목적격 조사(을/를). */
 const objectJosa = (w: string) => ((w.charCodeAt(w.length - 1) - 0xac00) % 28 > 0 ? '을' : '를');
 
-export function interpret(text: string, vat: VatMode | null, profile: Profile['kind'], runs: Drafts, parsed: Parsed = parseRegex(text, runs.counterparties)): Reply {
+export function interpret(text: string, vat: Vat | null, profile: Profile['kind'], runs: Drafts, parsed: Parsed = parseRegex(text, runs.counterparties)): Reply {
   const pending = runs.pending;
   const asked = pending.asked;
   pending.asked = null;
@@ -403,7 +381,7 @@ export interface RunViewBase {
   counterparty: { id: string; name: string; bizNo: string; first: boolean };
   email: { value: string; first: boolean };
   amount: number;
-  vat: VatMode;
+  vat: Vat;
   vatGuessed: boolean;
   supply: number;
   tax: number;

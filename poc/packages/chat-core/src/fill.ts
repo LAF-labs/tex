@@ -1,6 +1,4 @@
 // 값 공간의 작은 규칙: 조사 맞추기, 금액·날짜 표기, 부가세 나누기, 품목 정리.
-// 데스크톱(apps/desktop/src/josa.ts·agent-chat.ts·shell-model.ts)의 같은 함수와 결과가 같아야 한다. 시험(chat-core-parity)이 대조한다.
-// 데스크톱은 이 패키지에 의존하지 않고(렌더러 묶음 경계) 폰은 데스크톱 코드를 못 쓰므로 옮겨 둔다.
 import type { Vat } from './tables.ts';
 
 /** 끝소리: 'none' 받침 없음, 'rieul' ㄹ 받침, 'other' 다른 받침, null 판단 못 함(영문 등). */
