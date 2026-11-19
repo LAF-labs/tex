@@ -182,11 +182,10 @@ body.bp-dragging, body.bp-dragging * { cursor: col-resize !important; user-selec
 /* 대화 말풍선·시간 줄·입력중 점: Muse 12.1 채팅 값 그대로(모서리 22, 여백 11/15, 글자 16/22, 묶음 간격 4, 묶음 사이 16). */
 .chat { --bubble-me: #cbe5ff; --bubble-app: #e9eaeb; --stamp-ink: #00040996; --dot-on: #0007115e; --dot-off: #00071117; }
 .thread-scroll .sx-thread { gap: 16px; }
-.sx-thread > .sx-me, .sx-app:not(:has(> :not(p))), .sx-app:has(> :not(p)) > p:not([class]) { box-sizing: border-box; min-height: 44px; max-width: min(520px, 85%); width: fit-content; padding: 11px 15px; border-radius: 22px; font-size: 16px; line-height: 22px; color: var(--ink); overflow-wrap: anywhere; white-space: pre-wrap; }
+.sx-thread > .sx-me, .sx-app:not(:has(> :not(p))), .sx-app:has(> :not(p)) > p:not([class]) { box-sizing: border-box; min-height: 44px; max-width: 90%; width: fit-content; padding: 11px 15px; border-radius: 22px; font-size: 16px; line-height: 22px; color: var(--ink); overflow-wrap: anywhere; white-space: pre-wrap; }
 .sx-thread > .sx-me { justify-self: end; background: var(--bubble-me); }
-/* Muse는 앱 말풍선을 글 길이와 상관없이 대화 폭 전체로 펼친다(w-full). 사장님 말풍선만 글만큼(최대 520). */
-.sx-app:not(:has(> :not(p))), .sx-app:has(> :not(p)) > p:not([class]) { justify-self: stretch; width: auto; max-width: none; }
-.sx-app:not(:has(> :not(p))) { background: var(--bubble-app); }
+/* 말풍선은 양쪽 모두 글만큼, 맞은편 끝 전에 줄을 바꾼다(최대 90%, 폰과 같음). 카드만 대화 폭 전체(대표 결정 2026-11-19). */
+.sx-app:not(:has(> :not(p))) { justify-self: start; background: var(--bubble-app); }
 .sx-app:not(:has(> :not(p))) > p { margin: 0; }
 .sx-app:not(:has(> :not(p))) > p + p { margin-top: 8px; }
 .sx-app:has(> :not(p)) > p:not([class]) { margin: 0 0 8px; background: var(--bubble-app); }
