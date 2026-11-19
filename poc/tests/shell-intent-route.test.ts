@@ -105,7 +105,7 @@ describe('오프라인 해석 없음·로그인 먼저(사용자 결정 2026-11-
     const before = product.slice(0, product.indexOf('const to = routed('));
     assert.doesNotMatch(before, /interpret\(/);
     assert.doesNotMatch(src, /advice-words|offlineAdviceMentioned/);
-    assert.match(INTENT_UNAVAILABLE_TEXT, /연결하지 못했어요/);
+    assert.match(INTENT_UNAVAILABLE_TEXT, /답을 받을 수 없어요/);
   });
   it('정규식 해석은 시연(fixture)이 해석기를 바꿔 끼우지 않았을 때만', () => {
     assert.match(send, /if \(fixture && !opts\.intent\) return setupGate\(local\) \?\? finishReply\(interpret\(text, vat, profile, runs, local\), 'offline', null, \[\]\);/);
