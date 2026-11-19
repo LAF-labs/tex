@@ -322,7 +322,7 @@ const certLine = (run) => h('div', { class: 'sx-meta', 'data-cert-inputs': '' },
 /** [홈택스 창 보기]: 사람이 할 일이 홈택스 창에 있을 때(로그인·서명·사람 차례). 실행 Chrome 창을 앞으로 올리기만 한다. 다른 주요 단추가 없으면 이것이 주요 단추다. */
 const showBrowserBtn = (run, act, primary = false) => btn('홈택스 창 보기', () => act.showBrowser(run.id), primary ? 'sx-btn-primary' : '', { 'data-act': 'show-browser' });
 
-const INFO_NOTICE = /이 값으로 준비해요|이어서 준비해요/;
+const INFO_NOTICE = /이 값으로 준비해요|이어서 준비해요|한 번 더 로그인해 볼게요/;
 /** 발급 뒤 확인 중 한 줄(main shell-runs verifyNow와 같은 말). */
 const verifyLine = (n) => (n && n > 1 ? `발급 목록 다시 확인 중(${n}번째)` : '발급 목록 확인 중 · 1~2분 걸려요');
 /** 지금 단계 한 줄: 지금 하는 일 문장(main이 단계 메모로 준다)이 있으면 그 문장, 없으면 단계 이름. 할 일 줄이 같은 말을 하면 이름만(withNote false). */
@@ -577,7 +577,11 @@ export function taskCard(run, act) {
         'div',
         { class: 'sx-actions' },
         kind === 'sign' ? showBrowserBtn(run, act, true) : null,
-        kind === 'login' ? btn('이어서', () => act.resume(run.id), 'sx-btn-primary', { 'data-act': 'resume' }) : btn('다 했어요', () => act.resume(run.id), kind === 'sign' ? '' : 'sx-btn-primary', { 'data-act': 'resume' }),
+        // 공동인증서 로그인이 다시 해도 안 됐다(login.simple_auth): [인증서로 다시 시도]가 주요, [이어서]는 아래 화면에서 간편인증을 마친 뒤
+        // 폰이 시작한 간편인증 요청을 보냈다(login.simple_sent): 인증 앱에서 승인한 뒤 [승인했어요](주요)
+        run.handoff.code === 'login.simple_sent' ? btn('승인했어요', () => act.simpleDone(run.id), 'sx-btn-primary', { 'data-act': 'simple-done' }) : null,
+        run.handoff.code === 'login.simple_auth' || run.handoff.code === 'login.simple_sent' ? btn('인증서로 다시 시도', () => act.retryCert(run.id), run.handoff.code === 'login.simple_auth' ? 'sx-btn-primary' : '', { 'data-act': 'retry-cert' }) : null,
+        run.handoff.code === 'login.simple_sent' ? null : kind === 'login' ? btn(run.handoff.code === 'login.simple_auth' ? '간편인증 마치고 이어서' : '이어서', () => act.resume(run.id), run.handoff.code === 'login.simple_auth' ? '' : 'sx-btn-primary', { 'data-act': 'resume' }) : btn('다 했어요', () => act.resume(run.id), kind === 'sign' ? '' : 'sx-btn-primary', { 'data-act': 'resume' }),
         kind === 'other' ? btn('직접 발급함', () => act.manualDone(run.id), '', { 'data-act': 'manual-done' }) : null,
         kind === 'sign' ? null : showBrowserBtn(run, act),
       ),

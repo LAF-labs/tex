@@ -139,7 +139,7 @@ export const SHARE_COMMANDS = ['share.collect', 'share.sent', 'share.dropped', '
  * run.start = H-01 세금계산서, run.startCert {runId, playbookId, inputs} = 홈택스 민원증명(cert.ts CertStartParams, 승인 카드 cert.confirm).
  * run.reverify는 재시작 뒤 원장 in_doubt 행을 발급목록 조회로만 확정한다(run/reverify.ts). 발급·클릭은 없다.
  */
-export const RUN_COMMANDS = ['run.start', 'run.startCert', 'run.stop', 'run.inspect', 'run.resume', 'run.manualDone', 'run.reverify'] as const;
+export const RUN_COMMANDS = ['run.start', 'run.startCert', 'run.stop', 'run.inspect', 'run.resume', 'run.manualDone', 'run.reverify', 'run.simpleAuth'] as const;
 /** 실행 이력(재시작 뒤 활동 기록·결과 카드·지난 실행 안내, run-history.ts). main만 부른다. */
 export const RUN_HISTORY_QUERIES = ['db.query.runs.history'] as const;
 /** 중계 통로로 오면 거부하고 보안 이벤트(security.gate_answer_from_relay)를 남기는 이름. */

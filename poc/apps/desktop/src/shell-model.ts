@@ -437,6 +437,10 @@ export interface RunViewBase {
   batch?: { id: string; index: number; count: number; approved?: boolean; halted?: boolean; skipped?: boolean };
   /** 앱이 다시 켜지거나 맥이 깨어난 뒤 같은 값으로 다시 시작한 실행(앞 실행 id). 카드에 "이어서 해요" 한 줄. */
   resumedFrom?: string;
+  /** 공동인증서 로그인이 안 돼 같은 값으로 인증서 로그인을 다시 시도한 실행(앞 실행 id). 한 번 다시 했으면 다음 실패는 사람이 고른다(인증서로 다시·간편인증). */
+  certRetryOf?: string;
+  /** 폰에서 시작한 간편인증 요청을 보냈다(인증 앱 코드, 승인 마감 main 시계). 차례를 떠나면 의미 없다. */
+  simpleAuth?: { provider: string; deadline: number };
   writeDate: string;
   /** 대화·카드에서 작성일자를 정했다(ADR-049). 없으면 writeDate는 만든 날(KST 오늘)이다. */
   writeDateSet?: boolean;

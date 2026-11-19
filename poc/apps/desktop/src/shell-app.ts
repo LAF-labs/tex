@@ -1513,6 +1513,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       createDraft: (cp, supply, item) => runs.createDraft(cp, supply, 'separate', item),
       prepare: (id) => prepareNow(id),
       anyActive: () => runs.anyActive(),
+      retryCert: (id) => runs.retryCert(id),
+      simpleAuth: (id, op, d) => runs.simpleAuth(id, op, d),
       get: (id) => runs.get(id),
       onDraft: () => pushBoard(), // 초안은 update 이벤트 없이 생긴다
       cmds: new CmdLog(path.join(appPaths(root ?? defaultAppRoot()).userData, 'remote-cmds.json')),
@@ -1553,6 +1555,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     });
     return phoneGate;
   };
+  runs.on('restart', (x: { from: string; to: string }) => phoneIssue?.relink(x.from, x.to));
   runs.on('update', (run) => {
     phoneIssue?.update(run);
     // 승인 대기를 벗어난 실행의 게이트는 닫는다(끝·중지·다음 단계)
@@ -2218,6 +2221,16 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return prepareNow(id);
     },
     'run.stop': (p) => runs.stop(String(p.id)),
+    // [인증서로 다시 시도]: 공동인증서 로그인 실패 차례에서만(멈추고 같은 값으로 인증서 로그인부터 다시)
+    'run.retryCert': (p) => {
+      needGesture(3_000);
+      return runs.retryCert(String(p.id));
+    },
+    // 폰이 시작한 간편인증을 인증 앱에서 승인했다: [인증 완료]를 누르고 이어서
+    'run.simpleDone': (p) => {
+      needGesture(3_000);
+      return runs.simpleAuth(String(p.id), 'complete');
+    },
     'run.resume': (p) => {
       needGesture(3_000);
       return runs.resume(String(p.id));

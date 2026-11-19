@@ -8,7 +8,7 @@
 import { CAP, fitPhoneCopy, type Channel, type CmdRunBody, type Envelope, type GateRefreshBody, type GateResponseBody, type PhoneCopyBody, type PxAckBody, type PxEnrollBody } from '@sax/remote';
 import type { PhoneSessionHook } from './phone-link.ts';
 import type { GateSink, PhoneGate } from './phone-gate.ts';
-import type { PhoneIssue, PhoneSink } from './phone-issue.ts';
+import type { CmdResumeBody, PhoneIssue, PhoneSink } from './phone-issue.ts';
 
 /** PC가 hello에 알리는 v1.8 기능 */
 export const SESSION_CAPS: readonly string[] = Object.freeze([CAP.issue, CAP.copy, CAP.sync]);
@@ -80,6 +80,16 @@ export function phoneSession(o: PhoneSessionOptions): PhoneSessionHook {
           if (!ch.closed) ch.send('px.ack', ack);
         } else if (env.type === 'gate.response') await a.gate.answer(pairId, env.body as GateResponseBody);
         else a.gate.refresh(pairId, env.body as GateRefreshBody);
+        return true;
+      }
+      // 폰 [인증서로 다시 시도]: cmd.resume{runId}. 그 폰이 맡긴 건이 공동인증서 로그인 실패 차례일 때만 받는다(아니면 버린다).
+      if (env.type === 'cmd.resume') {
+        if (caps.get(ch)?.has(CAP.issue)) await o.issue.resume(pairId, ch, env.body as CmdResumeBody);
+        return true;
+      }
+      // 폰 간편인증(human.response): PC가 연 요청(human.request manual simple_auth)에만
+      if (env.type === 'human.response') {
+        if (caps.get(ch)?.has(CAP.issue)) await o.issue.human(pairId, ch, env.body as { runId?: unknown; reqId?: unknown; value?: unknown });
         return true;
       }
       if (env.type !== 'cmd.run') return false;
