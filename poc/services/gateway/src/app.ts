@@ -74,7 +74,7 @@ export function gatewayRouter(o: GatewayAppOpts): Router {
     'POST',
     '/v1/decide',
     async (ctx) => {
-      // 폰은 대화 판정 번들 하나만(ADR-051 대표 결정 2, ADR-056). 한도를 세기 전에 거른다.
+      // 폰은 대화 판정 번들 하나만(ADR-051 대표 결정 2, ADR-057). 한도를 세기 전에 거른다.
       const c = await chatter(ctx);
       if (!decideAllowed(c.role, (ctx.body as { bundleId?: unknown } | null)?.bundleId)) fail('account.scope_denied');
       await limit('l1', c.acc, GATEWAY.l1PerMinute, MIN);

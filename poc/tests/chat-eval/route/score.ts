@@ -18,7 +18,7 @@ export interface RouteRow {
   /** corrects_previous 확률(없으면 null). 생성 모델 하네스는 0·1 */
   corrects: number | null;
   advice: number | null;
-  /** 받는 방식(ADR-056). chat_route_v1 대상만 */
+  /** 받는 방식(ADR-057). chat_route_v1 대상만 */
   reply?: Pick<string>;
   /** 고른 반응 이름(허용 목록 thumbs_up·eyes·check·pray 또는 unknown) */
   reaction?: Pick<string>;

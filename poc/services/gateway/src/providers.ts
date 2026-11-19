@@ -402,6 +402,197 @@ export class OpenRouterProvider implements ModelProvider {
 }
 
 /**
+ * 생성 호출만 다른 공급사로(대표 2026-11-19: 시험 기간에는 OpenRouter 대신 Anthropic 조직 크레딧). 판정(decide)과
+ * 결정 모델 고르기(decision_pick)는 기본 공급사(OpenRouter jev)에 그대로 둔다: ADR-051 판정 단과 평가가 그 계약(확률·임계값)에 묶여 있다.
+ */
+export class GenerationSplitProvider implements ModelProvider {
+  readonly name: string;
+  private readonly base: ModelProvider;
+  private readonly gen: ModelProvider;
+  constructor(base: ModelProvider, gen: ModelProvider) {
+    this.base = base;
+    this.gen = gen;
+    this.name = `${base.name}+${gen.name}`;
+  }
+  decide(s: DecideSpec): Promise<DecideResult> {
+    return this.base.decide(s);
+  }
+  respond(s: RespondSpec): Promise<RespondResult> {
+    return s.decision ? this.base.respond(s) : this.gen.respond(s);
+  }
+}
+
+/** Anthropic 구조화 출력·strict 도구가 받지 않는 제약(숫자·길이·배열 개수·패턴). 빼고 보낸다: PC·폰이 받은 출력과 도구 인자를 원래 스키마로 다시 검사한다. */
+const ANTHROPIC_DROP = new Set(['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minLength', 'maxLength', 'maxItems', 'uniqueItems', 'pattern', 'minProperties', 'maxProperties']);
+export function anthropicSchema(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(anthropicSchema);
+  if (!v || typeof v !== 'object') return v;
+  const out: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+    if (ANTHROPIC_DROP.has(k)) continue;
+    if (k === 'minItems' && typeof x === 'number' && x > 1) continue;
+    // properties·$defs 아래 키는 필드 이름이라 그대로 두고 값만 고친다
+    out[k] = k === 'properties' || k === '$defs' || k === 'definitions' ? Object.fromEntries(Object.entries((x ?? {}) as Record<string, unknown>).map(([n, d]) => [n, anthropicSchema(d)])) : anthropicSchema(x);
+  }
+  return out;
+}
+
+type AnthropicBlock = Record<string, unknown> & { type?: string };
+type AnthropicMessage = { role: 'user' | 'assistant'; content: AnthropicBlock[] };
+
+/**
+ * Responses 꼴 입력(사용자 메시지·이전 출력·function_call_output)을 Anthropic messages로.
+ * 이전 응답의 assistant 내용은 우리가 낸 reasoning 항목(anthropic_content)에 원본 그대로 실려 돌아온다. 그것을 그대로 되돌려
+ * 사고 블록·서명을 바꾸지 않는다(이어지는 대화 검사). 같은 턴의 function_call·message 항목은 그 사본에 이미 있으니 건너뛴다.
+ */
+export function anthropicMessages(input: unknown[]): AnthropicMessage[] | null {
+  const msgs: AnthropicMessage[] = [];
+  const push = (role: 'user' | 'assistant', blocks: AnthropicBlock[]) => {
+    if (!blocks.length) return;
+    const last = msgs[msgs.length - 1];
+    if (last && last.role === role) last.content.push(...blocks);
+    else msgs.push({ role, content: [...blocks] });
+  };
+  let carried = false;
+  for (const raw of input) {
+    if (!raw || typeof raw !== 'object') return null;
+    const it = raw as Record<string, unknown>;
+    if (it.type === 'reasoning') {
+      if (Array.isArray(it.anthropic_content)) {
+        // 앞 턴의 assistant가 끝났다는 표시가 없어도 새 사본은 새 assistant 메시지로 시작한다
+        msgs.push({ role: 'assistant', content: (it.anthropic_content as AnthropicBlock[]).map((b) => ({ ...b })) });
+        carried = true;
+      }
+      continue; // 다른 공급사의 reasoning(암호문)은 읽지 못하므로 버린다
+    }
+    if (it.type === 'function_call') {
+      if (carried) continue;
+      let args: unknown;
+      try {
+        args = JSON.parse(String(it.arguments ?? '{}'));
+      } catch {
+        return null;
+      }
+      push('assistant', [{ type: 'tool_use', id: String(it.call_id), name: String(it.name), input: args }]);
+      continue;
+    }
+    if (it.type === 'function_call_output') {
+      carried = false;
+      push('user', [{ type: 'tool_result', tool_use_id: String(it.call_id), content: String(it.output ?? '') }]);
+      continue;
+    }
+    if (it.type === 'message' && it.role === 'assistant') {
+      if (carried) continue;
+      const text = (Array.isArray(it.content) ? (it.content as Array<Record<string, unknown>>) : []).flatMap((c) => (c.type === 'output_text' ? [String(c.text)] : [])).join('');
+      if (text) push('assistant', [{ type: 'text', text }]);
+      continue;
+    }
+    if (it.role === 'user' && Array.isArray(it.content)) {
+      carried = false;
+      const blocks: AnthropicBlock[] = [];
+      for (const c of it.content as Array<Record<string, unknown>>) {
+        if (c.type === 'input_text') blocks.push({ type: 'text', text: String(c.text) });
+        else if (c.type === 'input_image') {
+          const m = /^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/.exec(String(c.image_url));
+          if (!m) return null;
+          blocks.push({ type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } });
+        } else return null;
+      }
+      push('user', blocks);
+      continue;
+    }
+    return null;
+  }
+  return msgs.length && msgs[0]!.role === 'user' ? msgs : null;
+}
+
+/** Anthropic Messages 본문. 머리말은 system 한 덩어리로 캐시하고, 툴셋 effort·출력 스키마·도구를 그대로 옮긴다. 사고는 모델 기본(적응형)이다. */
+export function anthropicMessagesBody(s: RespondSpec, messages: AnthropicMessage[]): Record<string, unknown> {
+  return {
+    model: s.model,
+    max_tokens: s.maxOutputTokens,
+    system: [{ type: 'text', text: s.prefix, cache_control: { type: 'ephemeral' } }],
+    messages,
+    ...(s.tools.length ? { tools: s.tools.map((x) => ({ name: x.name, input_schema: anthropicSchema(x.parameters), strict: true })), tool_choice: { type: 'auto' } } : {}),
+    output_config: { effort: s.effort, format: { type: 'json_schema', schema: anthropicSchema(s.output.schema) } },
+    metadata: { user_id: s.safetyId },
+    // 안전 분류기가 거절하면 같은 호출 안에서 다른 모델로 다시 돌린다(서버 쪽 대체)
+    fallbacks: 'default',
+  };
+}
+
+/**
+ * Anthropic 답을 Responses 꼴 출력으로. 첫 항목은 assistant 내용 원본을 담은 reasoning 항목(PC·폰은 reasoning을 읽지 않고 되돌려 보낸다),
+ * 그 뒤에 도구 호출(function_call)이나 최종 JSON 글(message) 하나. 거절은 refusal 내용, 길이 상한은 incomplete.
+ */
+export function anthropicResult(model: string, d: Record<string, unknown>): RespondResult {
+  const content = Array.isArray(d.content) ? (d.content as AnthropicBlock[]) : [];
+  const u = (d.usage ?? {}) as Record<string, unknown>;
+  const read = num(u.cache_read_input_tokens);
+  const usage: ProviderUsage = { inputTokens: num(u.input_tokens) + read + num(u.cache_creation_input_tokens), outputTokens: num(u.output_tokens), cachedTokens: read };
+  const m = String(d.model ?? model);
+  const stop = String(d.stop_reason ?? '');
+  if (stop === 'refusal') return { model: m, status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{ type: 'refusal', refusal: '' }] }], usage };
+  if (stop !== 'end_turn' && stop !== 'tool_use') return { model: m, status: 'incomplete', output: [], usage };
+  const output: Array<Record<string, unknown>> = [{ type: 'reasoning', summary: [], anthropic_content: content }];
+  const calls = content.filter((b) => b.type === 'tool_use');
+  if (calls.length) {
+    for (const b of calls) output.push({ type: 'function_call', call_id: String(b.id), name: String(b.name), arguments: JSON.stringify(b.input ?? {}) });
+  } else {
+    const text = content.flatMap((b) => (b.type === 'text' ? [String(b.text ?? '')] : [])).join('');
+    output.push({ type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] });
+  }
+  return { model: m, status: 'completed', output, usage };
+}
+
+/**
+ * Anthropic Messages API(대표 2026-11-19, 조직 크레딧). 키는 ANTHROPIC_API_KEY(서버 환경 변수만). 생성 호출만 받는다:
+ * 판정·결정 모델 고르기는 GenerationSplitProvider가 기본 공급사로 보낸다. 다른 어댑터처럼 리다이렉트 금지, 본문은 메모리에서만.
+ */
+export class AnthropicProvider implements ModelProvider {
+  readonly name = 'anthropic';
+  private readonly o: { baseUrl: string; apiKey: string; timeoutMs: number; fetchFn: typeof fetch; onEvent: (e: string) => void };
+  constructor(o: { apiKey: string; baseUrl?: string; timeoutMs?: number; fetchFn?: typeof fetch; onEvent?: (e: string) => void }) {
+    if (!o.apiKey) throw new Error('config_ANTHROPIC_API_KEY');
+    const baseUrl = (o.baseUrl ?? 'https://api.anthropic.com').replace(/\/$/, '');
+    if (!/^https:\/\//.test(baseUrl) && !/^http:\/\/127\.0\.0\.1[:/]/.test(baseUrl)) throw new Error('config_ANTHROPIC_BASE_URL');
+    this.o = { baseUrl, apiKey: o.apiKey, timeoutMs: o.timeoutMs ?? 30_000, fetchFn: o.fetchFn ?? fetch, onEvent: o.onEvent ?? (() => undefined) };
+  }
+
+  decide(): Promise<DecideResult> {
+    return Promise.reject(new ProviderError('fatal')); // Anthropic에는 확률 판정이 없다
+  }
+
+  async respond(s: RespondSpec): Promise<RespondResult> {
+    if (s.decision) throw new ProviderError('fatal');
+    const messages = anthropicMessages(s.input);
+    if (!messages) throw new ProviderError('fatal');
+    let res: Response;
+    try {
+      res = await this.o.fetchFn(`${this.o.baseUrl}/v1/messages`, {
+        method: 'POST',
+        headers: { 'x-api-key': this.o.apiKey, 'anthropic-version': '2026-10-21', 'anthropic-beta': 'server-side-fallback-2026-07-01', 'content-type': 'application/json' },
+        body: JSON.stringify(anthropicMessagesBody(s, messages)),
+        redirect: 'error',
+        signal: AbortSignal.timeout(s.timeoutMs ?? this.o.timeoutMs),
+      });
+    } catch {
+      throw new ProviderError('retryable');
+    }
+    this.o.onEvent('upstream_anthropic');
+    if (res.status === 429 || res.status >= 500) throw new ProviderError('retryable');
+    if (res.status !== 200) throw new ProviderError('fatal');
+    let d: Record<string, unknown>;
+    try {
+      d = (await res.json()) as Record<string, unknown>;
+    } catch {
+      throw new ProviderError('fatal');
+    }
+    return anthropicResult(s.model, d);
+  }
+}
+
+/**
  * Upstage System One 자리(ADR-015 공급사 중립, D04 §8). 와이어 형식·질문 상한(26 선택지)은 S7 실측 뒤 채운다.
  * 지금은 호출하지 않고 재시도 불가 오류를 낸다(게이트웨이는 503 gateway.upstream_error, 엔진은 unknown).
  */

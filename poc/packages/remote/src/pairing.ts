@@ -88,7 +88,8 @@ export interface DesktopPairingOptions {
   /** 새 기기 목록을 서버에 올린다(7단계). */
   publishDeviceList: (list: DeviceListJson) => Promise<void>;
   /** 우편함 등록(서버는 토큰 해시만 저장). */
-  registerMailbox: (mbxId: Uint8Array, tokRead: Uint8Array, tokWrite: Uint8Array) => Promise<void>;
+  /** peer: 이 우편함으로 이어질 폰의 기기 ID(릴레이 v2 자리 세기) */
+  registerMailbox: (mbxId: Uint8Array, tokRead: Uint8Array, tokWrite: Uint8Array, peer: string) => Promise<void>;
   mbxEpoch?: number;
 }
 
@@ -224,7 +225,7 @@ export class DesktopPairing {
       await this.#o.publishDeviceList(list);
       // 우편함 ID·토큰은 CSPRNG 32B. 핸드셰이크 해시 h에서 파생하지 않는다(C-16).
       const mbxId = randomBytes(32), tokRead = randomBytes(32), tokWrite = randomBytes(32);
-      await this.#o.registerMailbox(mbxId, tokRead, tokWrite);
+      await this.#o.registerMailbox(mbxId, tokRead, tokWrite, phone.deviceId);
       const kvPub = this.#o.keys.kvPublic();
       const mbxEpoch = this.#o.mbxEpoch ?? 0;
       const acctClaim = await this.#o.accountClaim();

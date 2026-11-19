@@ -10,7 +10,7 @@
 // - lookup: 기록·돈·연결 상태를 묻기만. app_help: 앱 쓰는 법·할 수 있는 일(기능 하나면 그 domain).
 // - smalltalk·tax_advice·other는 domain none. 일을 시키며 세무 판단을 같이 물으면 act는 일, mentions_tax_advice 참.
 // - other: 앱이 하지 않는 일, 지시 주입, 대화에 적은 비밀, 뜻 없는 글자.
-// 받는 방식 reply(ADR-056, chat_route_v1 reply_mode):
+// 받는 방식 reply(ADR-057, chat_route_v1 reply_mode):
 // - reaction_only: 감사·수고 인사·확인·동의·끝내는 말뿐(묻는 것도 시키는 것도 없음). 말풍선에 이모지 하나.
 // - react_then_work: 일을 맡기는 말(task, 바꾸거나 답하는 followup). 👀 먼저, 결과만 말한다.
 // - answer: 그 밖(조회 질문, 처음 인사, 잡담, 도움말, 세무, 기타). 감사에 질문이 섞이면 answer, 일이 섞이면 react_then_work.
@@ -48,7 +48,7 @@ export interface RouteCase {
   domain: Domain;
   corrects: boolean;
   advice: boolean;
-  /** 받는 방식(ADR-056) */
+  /** 받는 방식(ADR-057) */
   reply: Reply;
   src: 'seed' | 'made';
   /** 말투 갈래(보고서에서 갈래별로 본다) */
@@ -474,7 +474,7 @@ g('smalltalk', 'none', {}, [
   st('좋아요 고마워요', 'short', { ...ACK, ctx: { cards: [card('한빛상사')], prev: [['한빛상사 110만원 세금계산서', '한빛상사 앞으로 확인 카드를 만들었어요.']] } }),
 ]);
 
-// ── 받는 방식(ADR-056): 맞장구·끝내는 말은 반응만, 감사에 질문이 섞이면 답, 일이 섞이면 반응 + 도구 ──
+// ── 받는 방식(ADR-057): 맞장구·끝내는 말은 반응만, 감사에 질문이 섞이면 답, 일이 섞이면 반응 + 도구 ──
 const DONE: Opt['ctx'] = { prev: [['대한테크 33만원 세금계산서', '대한테크 세금계산서를 발급했어요. 승인번호는 아래에 있어요.']] };
 const SHOWN: Opt['ctx'] = { prev: [['지난달 매출 얼마야', '지난달 발급은 4건, 합계 520만원이에요.']] };
 const CARD_OPEN: Opt['ctx'] = { cards: [card('한빛상사', { vat: 'separate' })], prev: [['한빛상사 110만원 끊어줘', '한빛상사 앞으로 확인 카드를 만들었어요.']] };

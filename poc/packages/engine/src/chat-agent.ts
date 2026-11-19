@@ -183,7 +183,7 @@ export type ShownReply = AgentReply & {
 export type StepResult = { kind: 'tools'; calls: Array<{ callId: string } & DomainCall> } | { kind: 'reply'; reply: ShownReply };
 
 /**
- * chat.route 결과(ADR-056): 판정(jev, chat_route_v1)이 정한 받는 방식. 판정이 실패하거나 확신이 없으면 mode answer, reaction null이다
+ * chat.route 결과(ADR-057): 판정(jev, chat_route_v1)이 정한 받는 방식. 판정이 실패하거나 확신이 없으면 mode answer, reaction null이다
  * (그때 main은 늘 하던 대로 chat.step을 부른다. 판정은 길을 좁히지 막지 않는다).
  * reaction_only면 엔진이 이 말을 대화록에 반응으로 남겼다. main은 chat.step을 부르지 않는다.
  */
@@ -355,7 +355,7 @@ export class ChatAgent {
   }
 
   /**
-   * chat.route(ADR-056): chat.step 앞에서 판정만 한다. 사용자 문장을 정규식으로 읽지 않는다(ADR-051 1절).
+   * chat.route(ADR-057): chat.step 앞에서 판정만 한다. 사용자 문장을 정규식으로 읽지 않는다(ADR-051 1절).
    * 입력 검사는 chat.step start와 같다(나쁜 입력은 던진다). 판정 경로 실패는 던지지 않고 answer로 돌려준다.
    */
   async route(p: { text: string; frame: ScreenFrame; profileId: string }): Promise<RouteStep> {
@@ -880,7 +880,7 @@ export function gatewayChatAgentModel(egress: Egress): ChatAgentModel | null {
 }
 
 /**
- * 판정 포트(ADR-056): jev + chat_route_v1을 게이트웨이 /v1/decide로 부른다. 결과 매핑(outcome)은 쓰지 않고 질문별 답만 쓴다
+ * 판정 포트(ADR-057): jev + chat_route_v1을 게이트웨이 /v1/decide로 부른다. 결과 매핑(outcome)은 쓰지 않고 질문별 답만 쓴다
  * (받는 방식은 @sax/chat-core routeAck가 정한다: PC와 폰이 같은 함수). 인젝션 사전 필터에 걸리면 null(반응하지 않는다).
  */
 export function chatRouteJudge(egress: Egress, opts: { catalog?: BundleCatalog } = {}): ChatAgentModel['route'] | null {

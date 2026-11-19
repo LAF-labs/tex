@@ -153,7 +153,7 @@ export interface AgentChatPorts {
   today(): string;
   onProgress(phase: AgentPhase): void;
   /**
-   * 엔진 rpc 'chat.route'(ADR-056): chat.step 앞의 판정. 없거나 던지면 판정 없이 늘 하던 대로 돈다.
+   * 엔진 rpc 'chat.route'(ADR-057): chat.step 앞의 판정. 없거나 던지면 판정 없이 늘 하던 대로 돈다.
    * reaction_only면 반응 하나로 턴을 닫고(chat.step을 부르지 않는다), react_then_work면 반응을 먼저 달고 도구 루프를 돈다.
    */
   route?(p: { text: string; frame: ScreenFrame; profileId: string }): Promise<RouteStep>;
@@ -183,7 +183,7 @@ export type AgentTurnResult =
   /** unknown: 사장님이 쓴 거래처 이름이 장부에 없다(U8-1). 화면은 text와 그 이름으로 [거래처 추가]를 둔다. */
   | { kind: 'agent'; text: string; show: AgentShow[]; ask: null | { kind: AgentAsk; chips: Array<{ label: string; text: string }> }; filtered: AgentReply['filtered']; setup?: true; unknown?: { name: string; text: string } }
   | { kind: 'unavailable'; code: string; text: string; retry: boolean }
-  /** 판정이 반응만 하라고 했다(ADR-056). 답 문장이 없다. 화면은 사용자 말풍선에 반응을 달고 점 셋을 거둔다. */
+  /** 판정이 반응만 하라고 했다(ADR-057). 답 문장이 없다. 화면은 사용자 말풍선에 반응을 달고 점 셋을 거둔다. */
   | { kind: 'reaction'; reaction: ReactionId };
 
 interface Result {
@@ -287,7 +287,7 @@ export class AgentChat {
       rec.emit(r.kind === 'unavailable' ? { type: 'turn.end', status: 'failed', code: r.code } : { type: 'turn.end', status: 'completed' });
       return r;
     };
-    // 판정(ADR-056): 받는 방식만 정한다. 실패하면 판정 없이 늘 하던 대로(막는 문이 아니다).
+    // 판정(ADR-057): 받는 방식만 정한다. 실패하면 판정 없이 늘 하던 대로(막는 문이 아니다).
     if (this.ports.route) {
       let route: RouteStep | null = null;
       try {

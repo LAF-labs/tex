@@ -656,7 +656,7 @@ describe('chat.step 오타 거래처 별칭', () => {
   });
 });
 
-describe('chat.route 판정(ADR-056): 받는 방식과 반응', () => {
+describe('chat.route 판정(ADR-057): 받는 방식과 반응', () => {
   const route = (a: ChatAgent, pc: FakePc, text: string) => a.route({ text, frame: pc.frame(), profileId });
   const decides = () => mock.calls.filter((c) => c.path === '/v1/decide');
   const withAnswers = async <T,>(answers: Record<string, number | string>, f: () => Promise<T>, confidence = 0.97) => {

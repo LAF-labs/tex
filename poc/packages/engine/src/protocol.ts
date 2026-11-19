@@ -71,7 +71,7 @@ export const INTENT_COMMANDS = ['intent.resolve', 'chat.respond'] as const;
 /**
  * 대화 에이전트 모델 경계(D04 §4 chat_agent, 결정안 agent-chat-design-2026-11-12). main 전용이다(루프·도구 실행은 main AgentChat).
  * chat.step {start:{text, frame, profileId}} | {continue:{outputs}} → {kind:'tools', calls} | {kind:'reply', reply}. 처리는 ChatAgent(chat-agent.ts).
- * chat.route {text, frame, profileId} → {kind:'route', mode, reaction, …}: chat.step 앞의 판정(ADR-056). 판정 실패는 오류가 아니라 mode answer다.
+ * chat.route {text, frame, profileId} → {kind:'route', mode, reaction, …}: chat.step 앞의 판정(ADR-057). 판정 실패는 오류가 아니라 mode answer다.
  * 오류 bad_text·chat.unavailable·chat.bad_response·chat.bad_tool_output·chat.turn_limit·chat.budget_exceeded·chat.quota_exceeded·chat.daily_limit·chat.subscription_required·chat.input_too_large·chat.secret_rejected.
  */
 export const CHAT_AGENT_COMMANDS = ['chat.step', 'chat.route'] as const;

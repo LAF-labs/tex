@@ -58,6 +58,6 @@ export interface ChatMessage {
   ctx?: MaskedText;
   /** app 메시지의 답 종류. defer는 PC를 켜면 이어서 할 일이다. */
   kind?: PhoneReplyKind;
-  /** user 메시지에 앱이 단 반응(ADR-056). 판정이 고른 허용 목록의 이름이다. */
+  /** user 메시지에 앱이 단 반응(ADR-057). 판정이 고른 허용 목록의 이름이다. */
   reaction?: ReactionId;
 }

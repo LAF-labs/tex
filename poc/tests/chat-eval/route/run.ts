@@ -1,6 +1,6 @@
 // 대화 판정 평가 A층 러너(ADR-051 6절, 1단계). 같은 라벨 세트(cases.ts)를 세 대상에 돌려 기준선을 잰다.
 //   draft  = jev + 판정 초안 번들(chat_route_draft.json, 머리말 _common + chat_route_draft.ko.txt). 3단계 chat_route_v1의 출발점.
-//   v1     = jev + 제품 번들 chat_route_v1(ADR-056: 초안 질문 + 받는 방식 reply_mode·반응 reaction). PC 엔진 chat.route·폰이 부르는 것.
+//   v1     = jev + 제품 번들 chat_route_v1(ADR-057: 초안 질문 + 받는 방식 reply_mode·반응 reaction). PC 엔진 chat.route·폰이 부르는 것.
 //   intent = jev + 지금 제품 번들 intent_route_v1(개인 프로필 대화가 쓰는 판정). 플레이북을 act(거친 셋)·domain으로 옮겨 본다.
 //   agent  = 지금 PC 사업자 대화 chat_agent(생성 모델 한 번, 도구 8개). 첫 출력(부른 도구·답 종류)을 act·domain으로 옮겨 본다.
 // 와이어는 게이트웨이 정본 함수(systemOneDecideBody·systemOneAnswers·openAIResponsesBody)를 그대로 쓰고, 가림은 제품 규칙(registerChatRecords)이다.

@@ -701,7 +701,7 @@ describe('게이트웨이: 폰 대화 직접 호출(ADR-047, chat 범위)', () =
     assert.equal(e.nts.calls, 0);
   });
 
-  it('폰은 대화 판정 번들 chat_route_v1만 부른다(ADR-051 대표 결정 2, ADR-056). PC의 대화 실행 토큰은 폰에서 무효', async () => {
+  it('폰은 대화 판정 번들 chat_route_v1만 부른다(ADR-051 대표 결정 2, ADR-057). PC의 대화 실행 토큰은 폰에서 무효', async () => {
     const rt = await e.runToken(phone, chatId());
     const ok = await e.call('/v1/decide', decideBody(rt, ROUTE, '기기: 폰\n사용자: 고마워'), phone);
     assert.equal(ok.status, 200, ok.text);

@@ -179,7 +179,7 @@ describe('결과 매핑(첫 일치 승리, 로컬 계산)', () => {
   });
 
   it('리뷰 회귀(핵심 질문): 매핑이 참조하는 choice의 refusal만 번들 전체 unknown, 참조하지 않는 보조 choice는 그 질문만 unknown', () => {
-    // chat_route_v1은 받는 방식(reply_mode)만 핵심이다: act·domain·reaction을 거절해도 그 질문만 unknown이다(ADR-056)
+    // chat_route_v1은 받는 방식(reply_mode)만 핵심이다: act·domain·reaction을 거절해도 그 질문만 unknown이다(ADR-057)
     const CORE: Record<string, string[]> = { chat_route_v1: ['reply_mode'] };
     for (const b of catalog.list()) assert.deepEqual([...coreQuestions(b.def)].sort(), CORE[b.wireId] ?? b.def.questions.filter((q) => q.type === 'choice').map((q) => q.name).sort(), b.wireId);
     const def = structuredClone(get('popup_class_v1').def);

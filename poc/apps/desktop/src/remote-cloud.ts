@@ -482,14 +482,14 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
       if (!isObj(b) || !int(b.expiresAt)) shape();
       return { expiresAt: (b as { expiresAt: number }).expiresAt };
     },
-    async registerMailbox(auth, mbxId, tokRead, tokWrite) {
+    async registerMailbox(auth, mbxId, tokRead, tokWrite, peer) {
       const url = `${relayHttpOrigin}/v1/mailboxes`;
-      const body = { mbxId: bytes(mbxId, 32), tokRead: bytes(tokRead, 32), tokWrite: bytes(tokWrite, 32) };
+      const body = { mbxId: bytes(mbxId, 32), tokRead: bytes(tokRead, 32), tokWrite: bytes(tokWrite, 32), ...(peer ? { peer } : {}) };
       await call('POST', url, [201], { headers: await authed(auth, 'POST', url), body });
     },
-    async deleteMailbox(auth, mbxId, tokWrite) {
+    async deleteMailbox(auth, mbxId, tokWrite, peer) {
       const url = `${relayHttpOrigin}/v1/mailboxes/${bytes(mbxId, 32)}`;
-      await call('DELETE', url, [204], { headers: { ...(await authed(auth, 'DELETE', url)), 'x-mbx-write': bytes(tokWrite, 32) } });
+      await call('DELETE', url, [204], { headers: { ...(await authed(auth, 'DELETE', url)), 'x-mbx-write': bytes(tokWrite, 32), ...(peer ? { 'x-mbx-peer': peer } : {}) } });
     },
   };
 

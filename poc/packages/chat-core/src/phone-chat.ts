@@ -168,7 +168,7 @@ export interface PhoneChatPorts {
    * 폰 대화는 PC가 켜져 있을 때도 이 폰이 직접 부른다(ADR-047 결정 6: 기기마다 따로).
    */
   pcOnline?(): boolean;
-  /** 판정이 고른 반응을 이 턴의 사용자 말풍선에 단다(ADR-056). 일을 맡긴 말이면 답보다 먼저 온다. */
+  /** 판정이 고른 반응을 이 턴의 사용자 말풍선에 단다(ADR-057). 일을 맡긴 말이면 답보다 먼저 온다. */
   onReaction?(reaction: ReactionId): void;
   /** 턴 이벤트(ADR-054). 기기 밖으로 내보내지 않는다. */
   onEvent?(e: TurnEvent): void;
@@ -196,10 +196,10 @@ export type PhoneTurnResult =
       filtered: ReplyFilter;
       /** 사장님이 쓴 거래처 이름이 폰 사본에 없다 */
       unknown?: { name: string; text: string };
-      /** 이 턴의 사용자 메시지 id와 거기 단 반응(일을 맡긴 말의 접수 표시, ADR-056) */
+      /** 이 턴의 사용자 메시지 id와 거기 단 반응(일을 맡긴 말의 접수 표시, ADR-057) */
       user: { id: string; reaction: ReactionId | null };
     }
-  /** 판정이 반응만 하라고 했다(ADR-056). 답 말이 없다. id는 반응이 붙은 사용자 메시지다. */
+  /** 판정이 반응만 하라고 했다(ADR-057). 답 말이 없다. id는 반응이 붙은 사용자 메시지다. */
   | { kind: 'reaction'; id: string; reaction: ReactionId }
   | { kind: 'unavailable'; code: PhoneChatErrorCode; text: string; retry: boolean };
 
@@ -265,7 +265,7 @@ interface Turn {
   screens: PhoneScreen[];
   /** 발급 의도를 놓친 첫 답 뒤에 한 번 더 부르는 중 */
   retry?: boolean;
-  /** 이번 사용자 말에 단 반응(판정, ADR-056) */
+  /** 이번 사용자 말에 단 반응(판정, ADR-057) */
   reaction: ReactionId | null;
 }
 
@@ -472,7 +472,7 @@ export class PhoneChat {
   }
 
   /**
-   * 판정(ADR-056): 받는 방식과 반응만 고른다. 실패하면 null(판정 없이 늘 하던 대로, 막는 문이 아니다).
+   * 판정(ADR-057): 받는 방식과 반응만 고른다. 실패하면 null(판정 없이 늘 하던 대로, 막는 문이 아니다).
    * 입력은 PC 엔진 chat.route와 같은 꼴(기기·오늘·화면·진행 중인 발급·되물은 칸·앞 대화 두 턴·이번 문장)이다.
    */
   private async route(st: State, s: Session, copy: PhoneCopy | null, now: number, user: RedactedText, cards: Array<PhoneDraft & { name: string }>): Promise<RouteAck | null> {

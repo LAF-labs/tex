@@ -1,8 +1,8 @@
-// 대화 한 턴의 이벤트(ADR-054)와 말풍선 반응(ADR-056). PC 엔진·main과 폰이 같이 쓴다. 순수 함수만 둔다.
+// 대화 한 턴의 이벤트(ADR-054)와 말풍선 반응(ADR-057). PC 엔진·main과 폰이 같이 쓴다. 순수 함수만 둔다.
 // - 반응은 판정(jev, chat_route_v1)이 고른다. 사용자 문장을 정규식으로 읽어 반응을 정하지 않는다(ADR-051 1절).
 // - 이모지는 허용 목록 넷뿐이다. 판정 값(이름)이 목록에 없으면 반응하지 않는다.
 
-/** 반응 허용 목록(ADR-056 결정 2). 키는 판정 선택지 값, 값은 화면 이모지. */
+/** 반응 허용 목록(ADR-057 결정 2). 키는 판정 선택지 값, 값은 화면 이모지. */
 export const REACTIONS = {
   /** 알겠다, 좋다, 확인했다 */
   thumbs_up: '👍',
@@ -72,7 +72,7 @@ export function routeAnswersOf(decisions: unknown): Record<string, RouteAnswer> 
   return out;
 }
 
-// ── 턴 이벤트(ADR-054 결정 2, ADR-056 결정 3) ──
+// ── 턴 이벤트(ADR-054 결정 2, ADR-057 결정 3) ──
 
 export type TurnEndStatus = 'completed' | 'failed' | 'cancelled';
 /** 확률 구간(값을 그대로 남기지 않는다) */

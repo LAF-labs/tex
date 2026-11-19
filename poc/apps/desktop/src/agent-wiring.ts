@@ -41,7 +41,7 @@ export interface AgentWiring {
   /** 대화가 만든 초안. 해석 출처를 적고 이번 달 판을 다시 그린다. */
   onCreated(run: RunView): void;
   onProgress(phase: AgentPhase): void;
-  /** 판정을 부르는가(ADR-056). false면 chat.route를 부르지 않는다(판정 없는 시험·시연). */
+  /** 판정을 부르는가(ADR-057). false면 chat.route를 부르지 않는다(판정 없는 시험·시연). */
   route?: boolean;
   /** 사용자 말풍선 반응(턴 이벤트 reaction) */
   onReaction?(reaction: ReactionId): void;

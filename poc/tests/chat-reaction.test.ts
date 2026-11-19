@@ -1,4 +1,4 @@
-// 말풍선 반응(ADR-056): 판정(jev, chat_route_v1)이 고른 받는 방식으로 PC 대화(AgentChat)와 폰 대화(PhoneChat)가 같은 길을 가는가.
+// 말풍선 반응(ADR-057): 판정(jev, chat_route_v1)이 고른 받는 방식으로 PC 대화(AgentChat)와 폰 대화(PhoneChat)가 같은 길을 가는가.
 // 모델·판정은 가짜다(모의 기준). 실제 jev 판정 정확도는 tests/chat-eval/route 러너가 잰다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

@@ -14,9 +14,11 @@ const b64 = (max: number) => ({ type: 'string', maxLength: max, pattern: '^[A-Za
 const PING = Buffer.from('{"t":"ping"}');
 const PONG = '{"t":"pong"}';
 const id32 = { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' };
+const UUID4 = { type: 'string', pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' };
 
 const V = {
-  mailbox: validator<{ mbxId: string; tokRead: string; tokWrite: string }>({ type: 'object', additionalProperties: false, required: ['mbxId', 'tokRead', 'tokWrite'], properties: { mbxId: id32, tokRead: id32, tokWrite: id32 } }),
+  // peer: 이 우편함으로 이어질 폰의 기기 ID(자리 세기, v2). 예전 PC는 보내지 않는다
+  mailbox: validator<{ mbxId: string; tokRead: string; tokWrite: string; peer?: string }>({ type: 'object', additionalProperties: false, required: ['mbxId', 'tokRead', 'tokWrite'], properties: { mbxId: id32, tokRead: id32, tokWrite: id32, peer: UUID4 } }),
   // intent-envelope.schema.json의 바깥 객체 {v, kind, enc, ct}
   envelope: validator<OuterEnvelope>({ type: 'object', additionalProperties: false, required: ['v', 'kind', 'enc', 'ct'], properties: { v: { enum: [1] }, kind: { const: 'ENV' }, enc: { ...b64(44), minLength: 43 }, ct: { ...b64(RELAY.envelopeCtMax), minLength: 4 } } }),
   ack: validator<{ seq: number }>({ type: 'object', additionalProperties: false, required: ['seq'], properties: { seq: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER } } }),
@@ -136,17 +138,27 @@ export class RelayHub {
       return Array.isArray(v) ? undefined : v;
     };
 
+    // 폰이 이 계정에서 아직 쓰이는지(활성·연결 중). 지워졌거나 정지됐거나 다른 계정이면 아니다
+    const peerAlive = async (acc: string, peer: string) => {
+      const d = await this.o.directory.get(peer);
+      return !!d && d.accountId === acc && d.role === 'mobile' && (d.state === 'active' || d.state === 'pending');
+    };
     r.add('POST', '/v1/mailboxes', async (ctx) => {
       const c = await this.device(ctx);
       if (c.role !== 'desktop') fail('account.scope_denied');
-      await svc.createMailbox(c.dev, V.mailbox(ctx.body));
+      const b = V.mailbox(ctx.body);
+      // 이어질 폰은 같은 계정의 쓰이는 폰이어야 한다(남의 폰 ID로 자리를 만들지 못하게)
+      if (b.peer && !(await peerAlive(c.acc, b.peer))) fail('request.param_rejected');
+      await svc.createMailbox(c.dev, b, (p) => peerAlive(c.acc, p));
       return json(201, { ok: true });
     });
     r.add('DELETE', '/v1/mailboxes/:id', async (ctx) => {
       const c = await this.device(ctx);
       if (c.role !== 'desktop') fail('account.scope_denied');
       const key = await this.mailbox(ctx.ip, ctx.params.id!, tok(ctx, 'x-mbx-write'), 'write');
-      await svc.deleteMailbox(c.dev, key);
+      // x-mbx-peer: 폰을 끊어 지우는 것이면 그 폰의 자리도 비운다(재발급은 보내지 않는다)
+      const peer = ctx.headers['x-mbx-peer'];
+      await svc.deleteMailbox(c.dev, key, typeof peer === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(peer) ? peer : undefined);
       this.closeMailbox(key, CLOSE.gone);
       return json(204, undefined);
     });
@@ -220,6 +232,8 @@ export class RelayHub {
       async (ctx) => {
         await this.o.internal.check(ctx);
         this.o.directory.invalidate?.(ctx.params.id!);
+        // 끊긴·정지된 폰의 우편함 자리를 비운다(PC가 우편함을 지우지 못했어도 자리가 풀린다)
+        await svc.freePeer(ctx.params.id!);
         return json(200, { closed: this.stopDevice(ctx.params.id!) });
       },
       { raw: true },
