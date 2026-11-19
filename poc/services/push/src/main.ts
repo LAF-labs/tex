@@ -23,15 +23,21 @@ export function parseTokenKeys(v: string | undefined): Record<string, Buffer> {
   return out;
 }
 
-/** PUSH_PROVIDER=mock(기본·Phase 1) | sandbox(APNs 샌드박스 + FCM, 자격 증명 주입 필요) */
+/**
+ * PUSH_PROVIDER(ADR-053 결정 5):
+ * - mock(기본): 보내지 않는다.
+ * - sandbox: APNs 샌드박스(apns_dev 토큰)만. 운영 토큰(apns)은 보내지 않는다.
+ * - apns: APNs 운영(apns)과 샌드박스(apns_dev) 둘 다.
+ * FCM은 FCM_PROJECT_ID가 있을 때만 붙인다(Android 깨우기는 다음 단계). APNS_ORIGIN은 받지 않는다(주소는 플랫폼으로 정해진다).
+ */
 export function senderFromEnv(env: NodeJS.ProcessEnv): PushSender {
-  if ((env.PUSH_PROVIDER ?? 'mock') === 'mock') return new MockPushSender();
-  if (env.PUSH_PROVIDER !== 'sandbox') return fail('PUSH_PROVIDER');
-  if (env.APNS_ORIGIN && env.APNS_ORIGIN !== 'https://api.sandbox.push.apple.com') fail('APNS_ORIGIN'); // Phase 1: 운영 APNs 금지
-  return new RoutingSender({
-    apns: new ApnsSender({ teamId: env.APNS_TEAM_ID ?? fail('APNS_TEAM_ID'), keyId: env.APNS_KEY_ID ?? fail('APNS_KEY_ID'), p8: env.APNS_P8 ?? fail('APNS_P8'), topic: env.APNS_TOPIC ?? fail('APNS_TOPIC') }),
-    fcm: new FcmSender({ projectId: env.FCM_PROJECT_ID ?? fail('FCM_PROJECT_ID'), serviceAccountJson: env.FCM_SERVICE_ACCOUNT_JSON ?? fail('FCM_SERVICE_ACCOUNT_JSON') }),
-  });
+  const mode = env.PUSH_PROVIDER ?? 'mock';
+  if (mode === 'mock') return new MockPushSender();
+  if (mode !== 'sandbox' && mode !== 'apns') return fail('PUSH_PROVIDER');
+  if (env.APNS_ORIGIN) fail('APNS_ORIGIN');
+  const apns = new ApnsSender({ production: mode === 'apns', teamId: env.APNS_TEAM_ID ?? fail('APNS_TEAM_ID'), keyId: env.APNS_KEY_ID ?? fail('APNS_KEY_ID'), p8: env.APNS_P8 ?? fail('APNS_P8'), topic: env.APNS_TOPIC ?? fail('APNS_TOPIC') });
+  const fcm = env.FCM_PROJECT_ID ? new FcmSender({ projectId: env.FCM_PROJECT_ID, serviceAccountJson: env.FCM_SERVICE_ACCOUNT_JSON ?? fail('FCM_SERVICE_ACCOUNT_JSON') }) : undefined;
+  return new RoutingSender({ apns, apns_dev: apns, ...(fcm ? { fcm } : {}) });
 }
 
 /** 조립. 상시 서버와 함수 진입점(`@sax/svc-cloud`)이 같은 것을 쓴다. 함수는 DDL을 하지 않는다(migrate: false). directory를 주입하면(같은 배포) 계정 서비스를 함수로 부른다. */

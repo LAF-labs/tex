@@ -135,6 +135,17 @@ export interface PhoneIssuePorts {
   approveCode?: (shellRunId: string) => string | undefined;
   now?: () => number;
   log?: (name: string, data?: Record<string, string | number | boolean>) => void;
+  /** 폰 깨우기(phone-wake PhoneWaker.wake, ADR-053 결정 2). 그 폰 세션이 없을 때 끝·멈춤·사람 차례·PC 승인이 되면 update로 부른다. */
+  wake?: (pairId: string, kind: 'update') => unknown;
+}
+
+/**
+ * 폰이 없을 때 알릴 만한 소식인가(ADR-053 결정 2 update): 발급 끝남, 멈춤, 사람 손이 필요함(핸드오프), PC에서 승인해야 함(pc_*).
+ * 폰 승인으로 가는 승인 단계는 phone-gate가 approve로 깨운다.
+ */
+export function wakeWorthy(ev: RunEventBody): boolean {
+  if (ev.event === 'end' || ev.event === 'turn') return true;
+  return ev.phase === 'approve' && typeof ev.code === 'string' && ev.code.startsWith('pc_');
 }
 
 /** 진행을 받을 곳(그 폰의 라이브 세션 채널) */
@@ -205,7 +216,11 @@ export class PhoneIssue {
     if (!force && key === t.last) return;
     t.last = key;
     const sink = this.#sinks.get(t.pairId);
-    if (!sink) return;
+    if (!sink) {
+      // 바뀐 소식인데 폰이 앱을 닫아 두었다: 깨운다(같은 소식은 key가 같아 한 번만)
+      if (!force && wakeWorthy(ev)) this.#o.wake?.(t.pairId, 'update');
+      return;
+    }
     try {
       sink.send('run.event', ev);
     } catch {

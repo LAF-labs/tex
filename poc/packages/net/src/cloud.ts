@@ -67,6 +67,8 @@ export const CLOUD_ROUTES: ReadonlyArray<{ name: string; method: CloudMethod; pa
   { name: 'issueLock.acquire', method: 'POST', path: /^\/v1\/issue-lock\/acquire$/ },
   { name: 'issueLock.renew', method: 'POST', path: /^\/v1\/issue-lock\/renew$/ },
   { name: 'issueLock.release', method: 'POST', path: /^\/v1\/issue-lock\/release$/ },
+  // 폰 깨우기(ADR-053 결정 2, 데스크톱 기기 토큰 wake 범위): 내용 없는 알림. 본문은 {deviceId, kind}뿐
+  { name: 'push.wake', method: 'POST', path: /^\/v1\/wake$/ },
   // 계정 공유 기록(ADR-048 결정 5, D07 §10, 기기 토큰 share 범위): 암호문 줄 올리기·받기, 맡긴 일 맡기·내려놓기·취소.
   // 이어 받기는 쿼리가 아니라 경로다(after/<순번>). 경로의 ID는 줄 id(무작위 16B)다
   { name: 'share.put', method: 'PUT', path: new RegExp(`^/v1/share/rows/${ID22}$`) },
