@@ -2,7 +2,7 @@
 // - 초안 포트에는 준비·발급이 없다. 여기서도 runs.prepare를 부르지 않는다(발급은 카드 버튼 IPC 하나뿐).
 // - 발급 기록은 엔진 원장(db.query.runs.history) 중 승인번호가 있는 실행만이다. 값은 main 안에서만 쓰고 모델에 가지 않는다(C-10).
 // - 받을 돈은 #284(BankHost.receivables()) 전에는 null(계좌 연결 전)이다.
-import type { StepParams, StepResult } from '@sax/engine';
+import type { ReactionId, RouteStep, ScreenFrame, StepParams, StepResult } from '@sax/engine';
 import { kstToday } from './approval-gate.ts';
 import type { AgentChatPorts, AgentPhase, CashFlowValues, DraftCard, DraftExtraValues, DraftPatch, IssuedRow, OpenScreen, ReceivableRow } from './agent-chat.ts';
 import { INVOICE_PLAYBOOK } from './run-history.ts';
@@ -41,6 +41,10 @@ export interface AgentWiring {
   /** 대화가 만든 초안. 해석 출처를 적고 이번 달 판을 다시 그린다. */
   onCreated(run: RunView): void;
   onProgress(phase: AgentPhase): void;
+  /** 판정을 부르는가(ADR-057). false면 chat.route를 부르지 않는다(판정 없는 시험·시연). */
+  route?: boolean;
+  /** 사용자 말풍선 반응(턴 이벤트 reaction) */
+  onReaction?(reaction: ReactionId): void;
   /** 대화가 고른 앱 안 화면을 연다(open_screen) */
   openScreen?(screen: OpenScreen): void;
   receivables?: () => Promise<ReceivableRow[] | null>;
@@ -81,6 +85,8 @@ export function draftCard(r: RunView): DraftCard {
 export function agentPorts(w: AgentWiring): AgentChatPorts {
   return {
     step: (p: StepParams) => w.rpc('chat.step', p as unknown as Record<string, unknown>) as Promise<StepResult>,
+    ...(w.route === false ? {} : { route: (p: { text: string; frame: ScreenFrame; profileId: string }) => w.rpc('chat.route', p as unknown as Record<string, unknown>) as Promise<RouteStep> }),
+    ...(w.onReaction ? { onReaction: w.onReaction } : {}),
     profileId: () => w.profileId(),
     drafts: {
       list: () => w.runs.list().filter((r) => r.status === 'draft' && !r.cert).map(draftCard),

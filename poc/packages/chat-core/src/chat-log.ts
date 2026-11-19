@@ -4,6 +4,7 @@
 //   규칙으로 다시 가리지 않으므로 처음 보낼 때 가려진 것은 나중에도 똑같이 가려진다(토큰 번호는 세션을 넘어 남지 않는다).
 import { TOKEN_RE, type EntityKind, type Redactor } from '@sax/redaction';
 import type { PhoneReplyKind } from './tables.ts';
+import type { ReactionId } from './turn.ts';
 
 /** 가린 글 한 조각. e는 t에 나온 토큰의 종류(k)·값(v)·묶인 레코드(r)다. */
 export interface MaskedText {
@@ -57,4 +58,6 @@ export interface ChatMessage {
   ctx?: MaskedText;
   /** app 메시지의 답 종류. defer는 PC를 켜면 이어서 할 일이다. */
   kind?: PhoneReplyKind;
+  /** user 메시지에 앱이 단 반응(ADR-057). 판정이 고른 허용 목록의 이름이다. */
+  reaction?: ReactionId;
 }

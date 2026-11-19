@@ -13,8 +13,13 @@ import { CounterpartyRepo, ProfileRepo, type Db } from '@sax/db';
 import {
   AGENT_ASKS,
   AGENT_REPLY_KINDS,
+  BundleCatalog,
   CHAT_AGENT,
+  DefaultModelLayer,
+  GatewayDecideAdapter,
+  L1_MODEL,
   OpenAIResponsesAdapter,
+  ThresholdProfiles,
   SLOT_FIELDS,
   SLOT_MONEY_PATHS,
   gatewayRunToken,
@@ -31,10 +36,11 @@ import {
   type ToolCall,
 } from '@sax/model';
 import type { Egress } from '@sax/net';
-import { AGENT_SHOW_MAX, OPEN_SCREENS, ReplyShapeError, TOOL_NEEDS, braceTokens, checkAgentReply, chatInput, gluedName, parseKrw, registerChatRecords, type OpenScreen, type ToolNeed } from '@sax/chat-core';
+import { AGENT_SHOW_MAX, OPEN_SCREENS, ACK_REPLY_HINT, CHAT_ROUTE_BUNDLE, REACTIONS, REACTION_GTE, capStreak, reactedLine, ReplyShapeError, TOOL_NEEDS, bandOf, braceTokens, checkAgentReply, chatInput, gluedName, parseKrw, registerChatRecords, routeAck, type OpenScreen, type ProbBand, type ReactionId, type ReplyMode, type RouteAnswer, type ToolNeed } from '@sax/chat-core';
 import { CHAT_MAP_IDLE_MS, ChatTokenMaps, TOKEN_RE, detokenize, type Redactor } from '@sax/redaction';
 import { ChatError, chatSecretShaped, errorOf, type ChatErrorCode } from './chat.ts';
 import { INTENT_TEXT_MAX } from './intent.ts';
+import { Judge } from './l0/judge.ts';
 
 /** 한 사용자 턴의 마스킹 입력 상한(바이트). 대화록이 붙어 chat_reply(2048)보다 크다. 넘으면 오래된 턴부터 버린다. */
 export const CHAT_AGENT_INPUT_MAX_BYTES = 8192;
@@ -107,6 +113,7 @@ export const TOOL_STATUSES = ['ok', 'partial', 'empty', 'unknown_counterparty', 
 export type ToolStatus = (typeof TOOL_STATUSES)[number];
 // 대화 경로 가림 규칙·금액 읽기는 @sax/chat-core로 옮겼다(폰과 같은 코드, ADR-047 결정 4). 이름은 여기서 그대로 다시 내보낸다.
 export { draftDate, issueDateRule, lineSupply, parseQuantity, shortDate, type IssueDateRule } from '@sax/chat-core';
+export { REACTIONS, TurnRecorder, turnSignal, type ReactionId, type ReplyMode, type TurnEvent, type TurnSignal } from '@sax/chat-core';
 export { TOOL_NEEDS, chatInput, chatMaskSpans, emailFragmentRes, gluedName, numberShaped, parseKrw, typoAliases, type ToolNeed } from '@sax/chat-core';
 
 /** main이 모델에 돌려주는 도구 결과. 값·행·개수가 없다(C-10). */
@@ -175,6 +182,32 @@ export type ShownReply = AgentReply & {
 };
 export type StepResult = { kind: 'tools'; calls: Array<{ callId: string } & DomainCall> } | { kind: 'reply'; reply: ShownReply };
 
+/**
+ * chat.route 결과(ADR-057): 판정(jev, chat_route_v1)이 정한 받는 방식. 판정이 실패하거나 확신이 없으면 mode answer, reaction null이다
+ * (그때 main은 늘 하던 대로 chat.step을 부른다. 판정은 길을 좁히지 막지 않는다).
+ * reaction_only면 엔진이 이 말을 대화록에 반응으로 남겼다. main은 chat.step을 부르지 않는다.
+ */
+export interface RouteStep {
+  kind: 'route';
+  mode: ReplyMode;
+  reaction: ReactionId | null;
+  /** 맞장구가 이어져 반응만으로 닫지 않았다(반응은 달고 대화 모델이 짧게 답한다) */
+  capped?: boolean;
+  /** 운영 신호·평가용(턴 이벤트 route). 값이 아니라 열거다. */
+  act: string | null;
+  domain: string | null;
+  band: ProbBand;
+  unsure: boolean;
+  failed: boolean;
+}
+/** 판정 입력 상한(chat_route_v1 maxInputBytes와 같다, 시험이 대조) */
+export const CHAT_ROUTE_INPUT_MAX_BYTES = 4096;
+/** 판정 입력에 싣는 앞 대화 턴 수 */
+const ROUTE_PREV_TURNS = 2;
+/** 반응만으로 닫은 턴의 대화록 앱 줄 머리 */
+const REACTED_PREFIX = '(반응 ';
+const ASK_LABEL: Record<AgentAsk, string> = { counterparty: '거래처', amount: '금액', item: '품목', vat: '부가세', which_card: '고칠 카드', date: '작성일' };
+
 /** 대화록 한 턴. agent.text는 채우기 전(토큰·슬롯 그대로) 문장이다. 채운 문장은 이 타입에 들어오지 않는다. agent null은 답 없이 끝난 턴. */
 export interface AgentTurnRecord {
   user: RedactedText;
@@ -186,6 +219,8 @@ export interface ChatAgentModel {
   respond: (req: RespondRequest) => Promise<RespondResult>;
   /** 대화 세션 범위 실행 토큰(게이트웨이 POST /v1/run-tokens) */
   runToken: (chatSessionId: string) => Promise<RunToken>;
+  /** 판정(게이트웨이 /v1/decide, chat_route_v1). 이름 키 답을 돌려준다. 인젝션 사전 필터에 걸렸으면 null. 없으면 chat.route는 늘 answer다. */
+  route?: (input: RedactedText, token: RunToken) => Promise<Record<string, RouteAnswer> | null>;
 }
 
 export interface ChatAgentOptions {
@@ -277,6 +312,10 @@ interface Session {
   token: RunToken | null;
   lastAt: number;
   turn: Turn | null;
+  /** 직전 답이 되물은 칸(판정 상태 줄용) */
+  asked: AgentAsk | null;
+  /** 이번 턴은 맞장구가 이어져 반응만으로 닫지 않았다: chat.step 입력에 짧게 답하라는 한 줄을 싣는다 */
+  ackReply: boolean;
 }
 
 interface Turn {
@@ -315,9 +354,90 @@ export class ChatAgent {
     return this.opts.now?.() ?? Date.now();
   }
 
-  async handle(method: string, p: Record<string, unknown>): Promise<StepResult> {
+  async handle(method: string, p: Record<string, unknown>): Promise<StepResult | RouteStep> {
+    if (method === 'chat.route') return this.route(p as unknown as { text: string; frame: ScreenFrame; profileId: string });
     if (method !== 'chat.step') throw new ChatError('bad_text');
     return this.step(p as unknown as StepParams);
+  }
+
+  /**
+   * chat.route(ADR-057): chat.step 앞에서 판정만 한다. 사용자 문장을 정규식으로 읽지 않는다(ADR-051 1절).
+   * 입력 검사는 chat.step start와 같다(나쁜 입력은 던진다). 판정 경로 실패는 던지지 않고 answer로 돌려준다.
+   */
+  async route(p: { text: string; frame: ScreenFrame; profileId: string }): Promise<RouteStep> {
+    const { text, cards } = this.checkStart(p);
+    if (chatSecretShaped(text)) throw new ChatError('chat.secret_rejected');
+    const fail: RouteStep = { kind: 'route', mode: 'answer', reaction: null, act: null, domain: null, band: 'lt80', unsure: true, failed: true };
+    const route = this.opts.model?.route;
+    if (!route) return fail;
+    const s = this.session(p.profileId);
+    let user: RedactedText;
+    let input: RedactedText;
+    try {
+      const said = chatInput(text);
+      this.register(s.red, said);
+      user = s.red.apply(said, { frame: 'none' }).redacted;
+      const line = (r: AgentTurnRecord) => `사용자: ${r.user}\n앱: ${r.agent ? r.agent.text : '(답 없음)'}`;
+      const prev = s.transcript.slice(-ROUTE_PREV_TURNS);
+      input = s.red.apply(
+        ['기기: PC', this.frameLine(s, cards), '진행 중인 발급: 없음', `직전에 되물은 칸: ${s.asked ? ASK_LABEL[s.asked] : '없음'}`, ...reactedLine(this.streak(s)), ...(prev.length ? ['[앞 대화]', ...prev.map(line)] : []), `사용자: ${user}`].join('\n'),
+        { frame: 'none' },
+      ).redacted;
+    } catch {
+      return fail;
+    }
+    if (Buffer.byteLength(input, 'utf8') > CHAT_ROUTE_INPUT_MAX_BYTES) return fail;
+    let answers: Record<string, RouteAnswer> | null;
+    try {
+      s.token ??= await this.opts.model!.runToken(s.id);
+      answers = await route(input, s.token);
+    } catch {
+      s.token = null;
+      return fail;
+    }
+    if (!answers) return fail;
+    const ack = capStreak(routeAck(answers), this.streak(s));
+    s.ackReply = ack.capped;
+    const pick = (n: string) => {
+      const a = answers![n];
+      return a && a.type === 'choice' ? (a as { value: string; confidence: number }) : null;
+    };
+    const mode = pick('reply_mode');
+    const conf = Math.min(mode?.confidence ?? 0, pick('act')?.confidence ?? 0, pick('domain')?.confidence ?? 0);
+    if (ack.mode === 'reaction_only') {
+      // 대화록에 반응으로 남긴다: 다음 턴 모델이 "고마워"에 답하지 않은 것을 안다
+      this.record(s, { user, agent: { text: `${REACTED_PREFIX}${REACTIONS[ack.reaction!]})`, show: [] } });
+      s.asked = null;
+    }
+    return { kind: 'route', mode: ack.mode, reaction: ack.reaction, capped: ack.capped, act: pick('act')?.value ?? null, domain: pick('domain')?.value ?? null, band: bandOf(mode?.confidence ?? 0), unsure: conf < REACTION_GTE, failed: false };
+  }
+
+  /** 대화록 끝에서 반응만으로 닫은 턴이 몇 번 이어졌나 */
+  private streak(s: Session): number {
+    let n = 0;
+    for (let i = s.transcript.length - 1; i >= 0 && s.transcript[i]!.agent?.text.startsWith(REACTED_PREFIX); i--) n++;
+    return n;
+  }
+
+  /** chat.step start와 chat.route의 입력 검사(나쁜 입력은 던진다) */
+  private checkStart(p: { text: string; frame: ScreenFrame; profileId: string }): { text: string; cards: Array<ScreenFrame['cards'][number] & { cp: NonNullable<ReturnType<CounterpartyRepo['get']>> }> } {
+    const text = p?.text;
+    if (typeof text !== 'string' || !text.trim() || [...text].length > INTENT_TEXT_MAX) throw new ChatError('bad_text');
+    if (typeof p?.profileId !== 'string' || !p.profileId || p.profileId.length > 128) throw new ChatError('bad_text');
+    if (!validFrame(p.frame)) throw new ChatError('chat.bad_tool_output');
+    const cps = new CounterpartyRepo(this.db);
+    const cards = p.frame.cards.map((c) => ({ ...c, cp: cps.get(c.counterpartyId) }));
+    if (cards.some((c) => !c.cp) || new Set(cards.map((c) => c.ref)).size !== cards.length) throw new ChatError('chat.bad_tool_output');
+    return { text, cards: cards as Array<ScreenFrame['cards'][number] & { cp: NonNullable<ReturnType<CounterpartyRepo['get']>> }> };
+  }
+
+  /** 오늘 줄과 화면 줄(가린 글). 달 이름("9월 매출")을 month_offset으로 옮기려면 이번 달을 알아야 한다(chat-eval look-sept). 날짜는 식별자가 아니다. */
+  private frameLine(s: Session, cards: Array<ScreenFrame['cards'][number] & { cp: { name: string } }>): string {
+    const line = cards.length
+      ? `화면: ${cards.map((c) => `카드 ${c.ref}(세금계산서, 거래처 ${s.red.apply(c.cp.name, { frame: 'none' }).redacted}, 금액 ${c.amount ? '있음' : '없음'}, 부가세 ${c.vat ? VAT_LABEL[c.vat] : '미정'}, 품목 ${c.item ? '있음' : '없음'})`).join('; ')}`
+      : '화면: 열린 카드 없음';
+    const kst = new Date(this.now() + 9 * 3600_000);
+    return `오늘: ${kst.getUTCFullYear()}년 ${kst.getUTCMonth() + 1}월 ${kst.getUTCDate()}일\n${line}`;
   }
 
   async step(p: StepParams): Promise<StepResult> {
@@ -329,13 +449,7 @@ export class ChatAgent {
   }
 
   private async start(p: { text: string; frame: ScreenFrame; profileId: string }): Promise<StepResult> {
-    const text = p?.text;
-    if (typeof text !== 'string' || !text.trim() || [...text].length > INTENT_TEXT_MAX) throw new ChatError('bad_text');
-    if (typeof p?.profileId !== 'string' || !p.profileId || p.profileId.length > 128) throw new ChatError('bad_text');
-    if (!validFrame(p.frame)) throw new ChatError('chat.bad_tool_output');
-    const cps = new CounterpartyRepo(this.db);
-    const cards = p.frame.cards.map((c) => ({ ...c, cp: cps.get(c.counterpartyId) }));
-    if (cards.some((c) => !c.cp) || new Set(cards.map((c) => c.ref)).size !== cards.length) throw new ChatError('chat.bad_tool_output');
+    const { text, cards } = this.checkStart(p);
     if (!this.opts.model) throw new ChatError('chat.unavailable');
     if (chatSecretShaped(text)) throw new ChatError('chat.secret_rejected');
     const s = this.session(p.profileId);
@@ -346,12 +460,9 @@ export class ChatAgent {
       const said = chatInput(text);
       this.register(s.red, said);
       user = s.red.apply(said, { frame: 'none' }).redacted;
-      frameLine = cards.length
-        ? `화면: ${cards.map((c) => `카드 ${c.ref}(세금계산서, 거래처 ${s.red.apply(c.cp!.name, { frame: 'none' }).redacted}, 금액 ${c.amount ? '있음' : '없음'}, 부가세 ${c.vat ? VAT_LABEL[c.vat] : '미정'}, 품목 ${c.item ? '있음' : '없음'})`).join('; ')}`
-        : '화면: 열린 카드 없음';
-      // 달 이름("9월 매출")을 month_offset으로 옮기려면 이번 달을 알아야 한다(chat-eval look-sept: 9월에 0을 넣음). 날짜는 식별자가 아니다.
-      const kst = new Date(this.now() + 9 * 3600_000);
-      frameLine = `오늘: ${kst.getUTCFullYear()}년 ${kst.getUTCMonth() + 1}월 ${kst.getUTCDate()}일\n${frameLine}`;
+      frameLine = this.frameLine(s, cards);
+      if (s.ackReply) frameLine = `${frameLine}\n${ACK_REPLY_HINT}`;
+      s.ackReply = false;
     } catch {
       throw new ChatError('chat.unavailable');
     }
@@ -706,6 +817,7 @@ export class ChatAgent {
   private finish(s: Session, r: AgentReply): StepResult {
     const unknownName = r.filtered ? null : (s.turn!.unknownName ?? null);
     this.record(s, { user: s.turn!.user, agent: { text: r.text, show: r.show } });
+    s.asked = r.ask ?? null;
     s.turn = null;
     // 엔진이 닫은 문장(closed)도 이번 턴 토큰을 쓰므로 화면 값을 같이 준다
     return { kind: 'reply', reply: { ...r, values: r.filtered && r.filtered !== 'closed' ? {} : this.values(s, r.text), unknownName } };
@@ -754,7 +866,7 @@ export class ChatAgent {
     }
     if (!s) {
       const id = `chat_${randomUUID()}`;
-      s = { id, profileId, red: this.maps.get(id, profileId), transcript: [], refs: new Set(), cashRefs: new Set(), token: null, lastAt: t, turn: null };
+      s = { id, profileId, red: this.maps.get(id, profileId), transcript: [], refs: new Set(), cashRefs: new Set(), token: null, lastAt: t, turn: null, asked: null, ackReply: false };
       this.current = s;
     }
     s.lastAt = t;
@@ -775,5 +887,33 @@ export class ChatAgent {
 export function gatewayChatAgentModel(egress: Egress): ChatAgentModel | null {
   if (!egress.gatewayGuard) return null;
   const responder = new OpenAIResponsesAdapter({ transport: 'gateway', egress });
-  return { respond: (req) => responder.respond(CHAT_AGENT, req), runToken: (chatSessionId) => gatewayRunToken(egress, { chatSessionId }) };
+  const judge = chatRouteJudge(egress);
+  return {
+    respond: (req) => responder.respond(CHAT_AGENT, req),
+    runToken: (chatSessionId) => gatewayRunToken(egress, { chatSessionId }),
+    ...(judge ? { route: judge } : {}),
+  };
+}
+
+/**
+ * 판정 포트(ADR-057): jev + chat_route_v1을 게이트웨이 /v1/decide로 부른다. 결과 매핑(outcome)은 쓰지 않고 질문별 답만 쓴다
+ * (받는 방식은 @sax/chat-core routeAck가 정한다: PC와 폰이 같은 함수). 인젝션 사전 필터에 걸리면 null(반응하지 않는다).
+ */
+export function chatRouteJudge(egress: Egress, opts: { catalog?: BundleCatalog } = {}): ChatAgentModel['route'] | null {
+  if (!egress.gatewayGuard) return null;
+  const catalog = opts.catalog ?? BundleCatalog.load();
+  if (!catalog.get(CHAT_ROUTE_BUNDLE.id)) return null;
+  const layer = new DefaultModelLayer({ catalog, profiles: ThresholdProfiles.load(), decider: new GatewayDecideAdapter({ egress, model: L1_MODEL }) });
+  const judge = new Judge(layer, new Set());
+  return async (input, token) => {
+    const r = await judge.decide(CHAT_ROUTE_BUNDLE.id, { kind: 'intent', text: '' }, input, token);
+    if (r.injectionHit || r.l0Only) return null;
+    if (r.outcome === 'unknown' && r.reason && !['mapping_unknown', 'core_refusal'].includes(r.reason)) throw new Error(r.reason);
+    const out: Record<string, RouteAnswer> = {};
+    for (const [k, a] of Object.entries(r.raw)) {
+      if (a.type === 'choice') out[k] = { type: 'choice', value: a.value, confidence: a.confidence };
+      else if (a.type === 'predicate') out[k] = { type: 'predicate', probability: a.probability };
+    }
+    return out;
+  };
 }

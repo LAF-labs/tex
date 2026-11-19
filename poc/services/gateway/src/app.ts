@@ -6,7 +6,7 @@ import { DailySalt, DeviceAuth, Router, fail, json, validator, type Ctx, type De
 import { CodefUnavailable, type CodefTokenSource } from './codef.ts';
 import { AGENT_TOOLSETS } from '@sax/model';
 import { GATEWAY } from './constants.ts';
-import { toolsetAllowed, type GatewayService } from './service.ts';
+import { decideAllowed, toolsetAllowed, type GatewayService } from './service.ts';
 
 const MIN = 60_000;
 const id64 = { type: 'string', pattern: '^[A-Za-z0-9_.-]{8,64}$' };
@@ -74,7 +74,9 @@ export function gatewayRouter(o: GatewayAppOpts): Router {
     'POST',
     '/v1/decide',
     async (ctx) => {
-      const c = await device(ctx);
+      // 폰은 대화 판정 번들 하나만(ADR-051 대표 결정 2, ADR-057). 한도를 세기 전에 거른다.
+      const c = await chatter(ctx);
+      if (!decideAllowed(c.role, (ctx.body as { bundleId?: unknown } | null)?.bundleId)) fail('account.scope_denied');
       await limit('l1', c.acc, GATEWAY.l1PerMinute, MIN);
       return json(200, await svc.decide(c, ctx.body));
     },

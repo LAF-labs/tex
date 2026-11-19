@@ -104,6 +104,15 @@ export function gatewayToolsets(): Map<string, ToolsetDef> {
  * 역할이 부를 수 있는 툴셋인가(ADR-047). 폰(mobile)은 폰 대화 툴셋만, 데스크톱은 폰 전용(chat_phone)을 뺀 전부.
  * 라우터가 본문 검증 전에 한 번, 서비스가 검증 뒤에 한 번 더 본다.
  */
+/** 폰(mobile) 토큰이 /v1/decide로 부를 수 있는 번들(ADR-051 대표 결정 2: chat_route_v1 하나만). 다른 번들·실행 범위 판정은 닫혀 있다. */
+export const PHONE_DECIDE_BUNDLES = ['chat_route_v1'] as const;
+
+/** 역할이 이 번들로 판정을 부를 수 있는가. 데스크톱은 전부, 폰은 PHONE_DECIDE_BUNDLES만. */
+export function decideAllowed(role: 'desktop' | 'mobile', bundleId: unknown): boolean {
+  if (typeof bundleId !== 'string') return false;
+  return role === 'mobile' ? (PHONE_DECIDE_BUNDLES as readonly string[]).includes(bundleId) : true;
+}
+
 export function toolsetAllowed(role: 'desktop' | 'mobile', toolset: unknown): boolean {
   if (typeof toolset !== 'string') return false;
   return role === 'mobile' ? (PHONE_TOOLSETS as readonly string[]).includes(toolset) : !(PHONE_ONLY_TOOLSETS as readonly string[]).includes(toolset);
@@ -372,9 +381,9 @@ export class GatewayService {
   // ---------- POST /v1/decide ----------
 
   async decide(who: Who, body: unknown): Promise<{ model: string; answers: unknown; usage: { input_tokens: number; output_tokens: number }; questionsDigest: string }> {
-    if (who.role === 'mobile') fail('account.scope_denied');
     if (!this.v.decide(body)) fail('gateway.param_rejected');
     const b = body as { bundleId: string; bundleDigest: string; input: string; runToken: string };
+    if (!decideAllowed(who.role ?? 'desktop', b.bundleId)) fail('account.scope_denied');
     const bundle: LoadedBundle | undefined = this.d.catalog.get(b.bundleId);
     // 규칙 (2): bundleId@digest가 게이트웨이 번들 집합에 있어야 한다(배포 불일치 감지, 무결성 장치 아님 C-24)
     if (!bundle || !safeEqual(bundle.digest, b.bundleDigest)) fail('gateway.digest_mismatch');
@@ -385,6 +394,7 @@ export class GatewayService {
       fail('gateway.pii_tripwire');
     }
     const rt = this.verifyRunToken(b.runToken, who);
+    if (who.role === 'mobile' && rt.k !== 'chat') fail('gateway.run_token_invalid');
     const used = await this.tokensThisMonth(who.acc);
     const limit = this.d.monthlyTokens ?? GATEWAY.monthlyTokensDefault;
     // 100%를 넘어도 L1은 유지(L2만 중단), 하드 상한(2배) 이후에는 안전 판정 번들만 낮은 속도로(D04 §6 "월 한도 100% 이후 'L1 유지'")

@@ -24,6 +24,30 @@
     "overrides": []
   },
   {
+    "bundle": "chat_route_v1",
+    "bundleDigest": "c81cab9b3a0e1046e7e4367d9b774d1367bf7eb8da09f9f99796e8f450be55b9",
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "status": "initial",
+    "overrides": []
+  },
+  {
+    "bundle": "chat_route_v1",
+    "bundleDigest": "c81cab9b3a0e1046e7e4367d9b774d1367bf7eb8da09f9f99796e8f450be55b9",
+    "provider": "upstage",
+    "model": "solar-decide",
+    "status": "uncalibrated",
+    "overrides": []
+  },
+  {
+    "bundle": "chat_route_v1",
+    "bundleDigest": "c81cab9b3a0e1046e7e4367d9b774d1367bf7eb8da09f9f99796e8f450be55b9",
+    "provider": "openai_compat",
+    "model": "typesafe/jev-",
+    "status": "initial",
+    "overrides": []
+  },
+  {
     "bundle": "doc_meta_check_v1",
     "bundleDigest": "b863c88239fe101d6e757f014c927c39f3e9159a70aedbbd035e6b6cc76109e6",
     "provider": "openai",

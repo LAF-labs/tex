@@ -1,6 +1,6 @@
 // A층 채점(ADR-051 6절): 정확도, 분류별 재현율, 보정(ECE), unsure 비율, 관문 두 개(발급 놓침·일상 말 잘못 열기).
 // 판정 대상(target)마다 같은 꼴의 행을 받는다. 확률이 없는 대상(생성 모델 하네스)은 conf가 null이고 ECE·unsure를 재지 않는다.
-import { ACTS, DOMAINS, type Act, type Domain, type RouteCase } from './cases.ts';
+import { ACTS, DOMAINS, REPLIES, type Act, type Domain, type RouteCase } from './cases.ts';
 
 export type Coarse = 'work' | 'talk' | 'advice';
 export const coarseOf = (a: Act | string): Coarse => (a === 'task' || a === 'lookup' || a === 'followup' ? 'work' : a === 'tax_advice' ? 'advice' : 'talk');
@@ -18,9 +18,74 @@ export interface RouteRow {
   /** corrects_previous 확률(없으면 null). 생성 모델 하네스는 0·1 */
   corrects: number | null;
   advice: number | null;
+  /** 받는 방식(ADR-057). chat_route_v1 대상만 */
+  reply?: Pick<string>;
+  /** 고른 반응 이름(허용 목록 thumbs_up·eyes·check·pray 또는 unknown) */
+  reaction?: Pick<string>;
   ms: number;
   inputTokens: number;
   error?: string;
+}
+
+/** 반응 허용 목록(@sax/chat-core REACTIONS). 채점은 제품 routeAck와 같은 규칙으로 본다. */
+const REACTION_NAMES = new Set(['thumbs_up', 'eyes', 'check', 'pray']);
+/** 제품이 실제로 하는 일(routeAck와 같다): 문턱 넘은 reaction_only·react_then_work, 허용 반응, 세무 판단 아님 */
+export function shownMode(r: RouteRow, c?: Pick<RouteCase, 'ctx'>): 'reaction_only' | 'react_then_work' | 'answer' {
+  const m = r.reply;
+  // 연속 상한(capStreak): 바로 앞이 반응만이었으면 반응만으로 닫지 않는다
+  if (m?.got === 'reaction_only' && (c?.ctx.reacted ?? 0) >= 1) return 'answer';
+  if (!m || m.got === null || m.conf === null || m.conf < SURE || (m.got !== 'reaction_only' && m.got !== 'react_then_work')) return 'answer';
+  if (r.advice === null || r.advice >= 0.5) return 'answer';
+  if (!r.reaction?.got || !REACTION_NAMES.has(r.reaction.got)) return 'answer';
+  return m.got;
+}
+
+export interface ReplyScore {
+  n: number;
+  /** 모델이 고른 reply_mode가 라벨과 같은 비율 */
+  accuracy: number | null;
+  /** 제품이 실제로 한 일(shownMode)이 라벨과 같은 비율 */
+  shownAccuracy: number | null;
+  recall: Record<string, { n: number; recall: number | null }>;
+  ece: number | null;
+  /** 관문(초안): 반응만으로 닫으면 안 되는 말(질문·일)을 반응만으로 닫은 비율. 질문·일을 놓친다. 1% 이하 */
+  wrongClose: number | null;
+  /** 맞장구·끝내는 말을 반응만으로 닫은 비율(대화가 짧아진 비율) */
+  ackClosed: number | null;
+  /** 일을 맡긴 말에 접수 반응을 단 비율 */
+  workAcked: number | null;
+  /** 고른 반응 분포(라벨 받는 방식별) */
+  reactions: Record<string, Record<string, number>>;
+  /** 갈래별(ack·ack_question·ack_task 등) 제품 동작 일치율 */
+  byStyle: Record<string, { n: number; shown: number | null }>;
+}
+
+export function scoreReply(cases: readonly RouteCase[], rows: readonly RouteRow[]): ReplyScore | null {
+  const byId = new Map(cases.map((c) => [c.id, c]));
+  const pair = rows.filter((r) => !r.error && r.reply && byId.has(r.id)).map((r) => ({ r, c: byId.get(r.id)! }));
+  if (!pair.length) return null;
+  const reactions: Record<string, Record<string, number>> = {};
+  for (const { r, c } of pair) {
+    const k = String(r.reaction?.got ?? 'null');
+    (reactions[c.reply] ??= {})[k] = (reactions[c.reply]![k] ?? 0) + 1;
+  }
+  const styles = new Map<string, typeof pair>();
+  for (const x of pair) (styles.get(x.c.style) ?? styles.set(x.c.style, []).get(x.c.style)!).push(x);
+  const notAck = pair.filter((x) => x.c.reply !== 'reaction_only');
+  const ack = pair.filter((x) => x.c.reply === 'reaction_only');
+  const work = pair.filter((x) => x.c.reply === 'react_then_work');
+  return {
+    n: pair.length,
+    accuracy: rate(pair.filter((x) => x.r.reply!.got === x.c.reply).length, pair.length),
+    shownAccuracy: rate(pair.filter((x) => shownMode(x.r, x.c) === x.c.reply).length, pair.length),
+    recall: recall(REPLIES, pair.map((x) => ({ label: x.c.reply, got: x.r.reply!.got }))),
+    ece: ece(pair.filter((x) => x.r.reply!.conf !== null).map((x) => ({ conf: x.r.reply!.conf!, ok: x.r.reply!.got === x.c.reply }))),
+    wrongClose: rate(notAck.filter((x) => shownMode(x.r, x.c) === 'reaction_only').length, notAck.length),
+    ackClosed: rate(ack.filter((x) => shownMode(x.r, x.c) === 'reaction_only').length, ack.length),
+    workAcked: rate(work.filter((x) => shownMode(x.r, x.c) === 'react_then_work').length, work.length),
+    reactions,
+    byStyle: Object.fromEntries([...styles].sort().map(([k, xs]) => [k, { n: xs.length, shown: rate(xs.filter((x) => shownMode(x.r, x.c) === x.c.reply).length, xs.length) }])),
+  };
 }
 
 /** 문턱(ADR-051 2절 ①): act·domain 둘 다 이 값 이상이어야 판정대로 길을 좁힌다. 아래면 unsure(도구 전부). */

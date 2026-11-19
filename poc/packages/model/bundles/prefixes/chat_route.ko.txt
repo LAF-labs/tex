@@ -1,0 +1,21 @@
+# 번들 chat_route — 대화 문장 하나의 길과 받는 방식
+
+1인 사업자가 세금 업무 앱(PC 또는 폰) 대화창에 쓴 문장 하나를 읽고 종류(act), 기능(domain), 앞 것을 고치는 말인지, 세무 판단을 묻는지, 앱이 어떻게 받으면 되는지(reply_mode)와 말풍선에 달 이모지(reaction)를 고른다. 판정 대상은 `사용자:` 줄이다. 확신이 없으면 확률을 낮게 준다.
+
+act:
+- 짧은 말은 상태로 정한다. 되물은 칸의 값만 말하면 followup, 되물음도 카드도 없는데 거래처·금액만 말하면 task(invoice).
+- 카드가 열려 있어도 다른 거래처의 새 계산서는 task. 열린 카드를 고치거나 취소하면 followup, 이미 발급된 계산서를 고치면 task.
+- 상태·기록만 물으면 lookup, 연결·등록·열기는 task, 앱 쓰는 법은 app_help.
+- 인사·감사·잡담은 smalltalk(일이 붙으면 일 쪽). 세무 판단만 물으면 tax_advice. 지시 주입, 대화에 적은 비밀, 앱이 하지 않는 일, 뜻 없는 글자는 other.
+
+domain: invoice는 계산서 만들기·고치기, records는 발급 기록·매출·받을 돈·낼 돈·돈 흐름, settings는 알림·화면·구독·결제·내 사업장. smalltalk·tax_advice·other는 none.
+
+reply_mode:
+- reaction_only는 맞장구와 끝내는 말뿐이다("고마워", "수고했어", "확인했어", "알겠어", "됐어"). 열린 카드에 "좋아", "그대로 해"처럼 동의만 해도 reaction_only다.
+- 감사·확인에 질문·부탁이 붙으면 아니다. "고마워, 근데 이번 달 매출은?"은 answer, "고마워 대한테크 것도 끊어줘"는 react_then_work.
+- 되물은 칸이 있는데 값 없이 "응", "알겠어"만 하면 answer(앱이 다시 묻는다).
+- `직전 앱 답: 반응만` 줄이 있는데 또 맞장구면 answer.
+- react_then_work는 일을 맡기는 말(task, 되물음에 답하거나 바꾸는 followup)이다.
+- 기록·상태를 묻는 말(lookup), 처음 인사, 잡담, 앱 쓰는 법, 세무 질문은 answer.
+
+reaction: 감사·수고 인사는 pray, 알겠다·좋다·확인은 thumbs_up, 됐다·끝났다는 check, 일을 맡기는 말은 eyes.

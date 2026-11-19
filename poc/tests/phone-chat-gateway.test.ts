@@ -119,9 +119,9 @@ describe('폰 대화 끝에서 끝: 폰 코어 → 게이트웨이(chat 범위) 
     const input = second.input as Array<Record<string, unknown>>;
     assert.deepEqual(input.slice(-2).map((x) => x.type), ['function_call', 'function_call_output']);
     assert.match(String(input.at(-1)!.output), /^\{"ref":"d\d+","status":"card_shown","fields":null,"needs":null\}$/);
-    // 계량: 폰 기기 이름으로, 표면은 chat_phone
+    // 계량: 폰 기기 이름으로, 표면은 판정(chat_route_v1, ADR-057) 한 번과 chat_phone 두 번
     const rows = await e.db.all<{ device_id: string; surface: string }>('SELECT device_id, surface FROM call_records ORDER BY at');
-    assert.deepEqual(rows.map((x) => [x.device_id === e.phone.d.id, x.surface]), [[true, 'chat_phone'], [true, 'chat_phone']]);
+    assert.deepEqual(rows.map((x) => [x.device_id === e.phone.d.id, x.surface]), [[true, 'chat_route_v1'], [true, 'chat_phone'], [true, 'chat_phone']]);
     const usage = await e.gateway.usage();
     assert.ok(usage && usage.usedKrw > 0 && usage.limitKrw > 0 && usage.tier === 'trial', JSON.stringify(usage));
   });
@@ -146,7 +146,8 @@ describe('폰 대화 끝에서 끝: 폰 코어 → 게이트웨이(chat 범위) 
   it('폰을 정지하면 받아 둔 토큰이 있어도 바로 끊긴다(chat.device_suspended), 공급사가 실패하면 다시 시도할 수 있는 오류', async () => {
     e.provider.respondOutput = message({ kind: 'smalltalk', text: '네.', show: [], ask: null });
     reply(await e.chat.send('안녕'));
-    e.provider.failures = ['fatal'];
+    // 판정 호출이 먼저 실패해도(반응 없이 늘 하던 대로) 대화 호출이 실패해야 턴이 실패한다
+    e.provider.failures = ['fatal', 'fatal'];
     const f = await e.chat.send('안녕하세요');
     assert.deepEqual([f.kind, f.kind === 'unavailable' && [f.code, f.retry]], ['unavailable', ['chat.unavailable', true]]);
     const token = await e.phone.token();

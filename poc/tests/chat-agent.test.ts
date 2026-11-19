@@ -656,11 +656,96 @@ describe('chat.step 오타 거래처 별칭', () => {
   });
 });
 
+describe('chat.route 판정(ADR-057): 받는 방식과 반응', () => {
+  const route = (a: ChatAgent, pc: FakePc, text: string) => a.route({ text, frame: pc.frame(), profileId });
+  const decides = () => mock.calls.filter((c) => c.path === '/v1/decide');
+  const withAnswers = async <T,>(answers: Record<string, number | string>, f: () => Promise<T>, confidence = 0.97) => {
+    const keep = mock.opts;
+    mock.opts = { ...keep, answers, choiceConfidence: confidence };
+    try {
+      return await f();
+    } finally {
+      mock.opts = keep;
+    }
+  };
+
+  it('반응만: 대화 모델을 부르지 않고, 대화록에 반응으로 남아 다음 턴 모델이 안다. 판정 입력에는 토큰만 나간다', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const r = await withAnswers({ reply_mode: 'reaction_only', reaction: 'pray', act: 'smalltalk', domain: 'none', mentions_tax_advice: 0.02 }, () => route(a, pc, 'A상사 건 고마워'));
+    assert.deepEqual([r.mode, r.reaction, r.act, r.failed], ['reaction_only', 'pray', 'smalltalk', false]);
+    assert.equal(responds().length, 0);
+    const d = decides();
+    assert.equal(d.length, 1);
+    assert.equal(d[0]!.body!.bundleId, 'chat_route_v1');
+    const input = String(d[0]!.body!.input);
+    assert.match(input, /^기기: PC\n오늘: /);
+    assert.match(input, /사용자: \[NAME_\d+\] 건 고마워$/);
+    for (const raw of SECRETS) assert.ok(!input.includes(raw), raw);
+    script(() => reply({ kind: 'answer', text: '네.' }));
+    await say(a, pc, '이번 달 매출은?');
+    assert.match(userText(responds()[0]!.body!), /\[앞 대화\]\n사용자: \[NAME_\d+\] 건 고마워\n앱: \(반응 🙏\)/);
+  });
+
+  it('맞장구가 이어지면(대표 피드백) 두 번째는 반응을 달고 대화 모델이 한 문장으로 답한다. 판정 입력에 연속 줄이 있다', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const thx = { reply_mode: 'reaction_only', reaction: 'pray', act: 'smalltalk', domain: 'none', mentions_tax_advice: 0.02 };
+    const first = await withAnswers(thx, () => route(a, pc, '고마워'));
+    assert.deepEqual([first.mode, first.capped], ['reaction_only', false]);
+    const second = await withAnswers(thx, () => route(a, pc, '고마워'));
+    assert.deepEqual([second.mode, second.reaction, second.capped], ['answer', 'pray', true]);
+    assert.match(String(decides()[1]!.body!.input), /\n직전 앱 답: 반응만 1번 연속\n/);
+    assert.doesNotMatch(String(decides()[0]!.body!.input), /직전 앱 답/);
+    script(() => reply({ kind: 'smalltalk', text: '별말씀을요.' }));
+    await say(a, pc, '고마워');
+    assert.match(userText(responds()[0]!.body!), /앱 판단: 맞장구가 이어짐\(앞 맞장구에는 반응만 했다\)\. 한 문장으로 짧게 답한다\n사용자: 고마워$/);
+    // 말로 답했으니 다음 맞장구는 다시 반응만
+    const third = await withAnswers(thx, () => route(a, pc, '고마워'));
+    assert.deepEqual([third.mode, third.capped], ['reaction_only', false]);
+    script(() => reply({ kind: 'answer', text: '네.' }));
+    await say(a, pc, '이번 달 매출은?');
+    assert.doesNotMatch(userText(responds().at(-1)!.body!), /앱 판단: 맞장구/);
+  });
+
+  it('일 맡기기: 반응(👀)만 돌려주고 대화록은 그대로다(도구 루프는 chat.step이 돈다)', async () => {
+    const a = agent();
+    const r = await withAnswers({ reply_mode: 'react_then_work', reaction: 'eyes', act: 'task', domain: 'invoice', mentions_tax_advice: 0.02 }, () => route(a, new FakePc(), 'A상사 110만원 끊어줘'));
+    assert.deepEqual([r.mode, r.reaction], ['react_then_work', 'eyes']);
+  });
+
+  it('반응하지 않는 때: 확신이 낮다, answer, 세무 판단을 묻는다, 판정 경로가 실패한다', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const low = await withAnswers({ reply_mode: 'reaction_only', reaction: 'pray', mentions_tax_advice: 0.02 }, () => route(a, pc, '고마워'), 0.6);
+    assert.deepEqual([low.mode, low.reaction, low.unsure], ['answer', null, true]);
+    const ans = await withAnswers({ reply_mode: 'answer', reaction: 'pray', mentions_tax_advice: 0.02 }, () => route(a, pc, '고마워, 근데 지난달 합계는?'));
+    assert.deepEqual([ans.mode, ans.reaction], ['answer', null]);
+    const tax = await withAnswers({ reply_mode: 'reaction_only', reaction: 'thumbs_up', mentions_tax_advice: 0.9 }, () => route(a, pc, '알겠어 그럼 경비 되는 거지'));
+    assert.equal(tax.mode, 'answer');
+    const keep = mock.opts;
+    mock.opts = { ...keep, fail: { '/v1/decide': { status: 502, code: 'gateway.upstream_error' } } };
+    try {
+      const f = await route(a, pc, '고마워');
+      assert.deepEqual([f.mode, f.reaction, f.failed], ['answer', null, true]);
+    } finally {
+      mock.opts = keep;
+    }
+  });
+
+  it('나쁜 입력은 chat.step과 같이 막는다(비밀 모양·빈 말)', async () => {
+    const a = agent();
+    await code(route(a, new FakePc(), '인증서 비밀번호는 qwer1234!@ 야'), 'chat.secret_rejected');
+    await code(route(a, new FakePc(), '  '), 'bad_text');
+    assert.equal(decides().length, 0);
+  });
+});
+
 describe('protocol·entry 배선', () => {
   it('chat.step은 main 전용 목록이고 entry가 ChatAgent로 보낸다', () => {
-    assert.deepEqual([...CHAT_AGENT_COMMANDS], ['chat.step']);
+    assert.deepEqual([...CHAT_AGENT_COMMANDS], ['chat.step', 'chat.route']);
     const others = new Set<string>([...READ_QUERIES, ...COMMANDS, ...MAIN_ONLY]);
-    assert.ok(!others.has('chat.step'));
+    assert.ok(!others.has('chat.step') && !others.has('chat.route'));
     const entry = fs.readFileSync(path.join(root, 'packages/engine/src/entry.ts'), 'utf8');
     assert.match(entry, /chatAgent = new ChatAgent\(db, \{ model: gatewayChatAgentModel\(egress\), closeOnCards: true \}\);/);
     assert.match(entry, /if \(CHAT_AGENT\.has\(method\)\) \{\n\s+if \(!chatAgent\) throw new Error\('db_not_ready'\);\n\s+return chatAgent\.handle\(method, params\);/);

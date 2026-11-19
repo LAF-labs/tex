@@ -1,10 +1,12 @@
-// 폰 → 게이트웨이(ADR-047 결정 2). 폰이 부르는 것은 /v1/run-tokens(chatSessionId)·/v1/respond(chat_phone·chat_digest)·/v1/usage 셋뿐이다.
+// 폰 → 게이트웨이(ADR-047 결정 2). 폰이 부르는 것은 /v1/run-tokens(chatSessionId)·/v1/respond(chat_phone·chat_digest)·/v1/usage와
+// /v1/decide(대화 판정 chat_route_v1 하나만, ADR-051 대표 결정 2·ADR-057)뿐이다.
 // - 모델 공급사 키는 게이트웨이에만 있다. 폰은 기기 토큰(chat 범위)과 요청별 DPoP 헤더만 붙인다(헤더는 폰 앱의 devauth가 만든다).
 // - 나가는 글은 마스킹 계층이 만든 것만 보낸다(wasMinted, PC egress와 같은 규칙).
 // - 응답은 믿지 않는다: 도구 이름·인자 모양을 표(tables.ts)로 다시 검사한다. 답 문장 검사는 PhoneChat이 한다.
 // - 본문·토큰·헤더를 로그에 남기지 않는다. 오류는 코드만 옮긴다.
 import { wasMinted, type RedactedText } from '@sax/redaction';
 import { CHAT_PHONE_TOOLS, DATE_MONTH_MIN, PHONE_SCREENS, type ChatPhoneToolName } from './tables.ts';
+import { CHAT_ROUTE_BUNDLE, routeAnswersOf, type RouteAnswer } from './turn.ts';
 
 export type PhoneChatErrorCode =
   | 'chat.unavailable'
@@ -67,6 +69,11 @@ export interface PhoneModel {
   /** 대화 세션 범위 실행 토큰. 실패하면 PhoneChatError */
   runToken(chatSessionId: string): Promise<string>;
   respond(req: PhoneRespondRequest): Promise<PhoneRespondResult>;
+  /**
+   * 대화 판정(ADR-057): 가린 판정 입력 하나로 jev를 부른다. 이름 키 답을 돌려준다. 받지 못하면 null.
+   * 실행 토큰이 무효면 PhoneChatError(tokenInvalid는 PhoneChat이 토큰을 버리는 것으로 다룬다). 없으면 판정 없이 돈다.
+   */
+  route?(req: { text: RedactedText; runToken: string }): Promise<Record<string, RouteAnswer> | null>;
 }
 
 export interface HttpResponse {
@@ -183,7 +190,7 @@ export class PhoneGateway implements PhoneModel {
     this.o = o;
   }
 
-  private async call(method: 'GET' | 'POST', path: '/v1/run-tokens' | '/v1/respond' | '/v1/usage', body?: unknown): Promise<{ ok: true; value: unknown } | { ok: false; error: string | undefined }> {
+  private async call(method: 'GET' | 'POST', path: '/v1/run-tokens' | '/v1/respond' | '/v1/usage' | '/v1/decide', body?: unknown): Promise<{ ok: true; value: unknown } | { ok: false; error: string | undefined }> {
     const url = this.o.origin + path;
     let res: HttpResponse;
     let text: string;
@@ -223,6 +230,16 @@ export class PhoneGateway implements PhoneModel {
     });
     if (!r.ok) return { status: 'error', ...phoneErrorOf(r.error) };
     return parseRespond(r.value);
+  }
+
+  async route(req: { text: RedactedText; runToken: string }): Promise<Record<string, RouteAnswer> | null> {
+    if (!wasMinted(req.text)) return null;
+    const r = await this.call('POST', '/v1/decide', { bundleId: CHAT_ROUTE_BUNDLE.id, bundleDigest: CHAT_ROUTE_BUNDLE.digest, input: req.text, runToken: req.runToken });
+    if (!r.ok) {
+      if (phoneErrorOf(r.error).tokenInvalid) throw new PhoneChatError('chat.unavailable');
+      return null;
+    }
+    return isObj(r.value) ? routeAnswersOf(r.value.answers) : null;
   }
 
   /** 오늘 쓴 금액과 한도(계정 단위, PC와 같이 센다). 받지 못하면 null. */

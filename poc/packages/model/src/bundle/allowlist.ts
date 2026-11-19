@@ -1,6 +1,7 @@
 // 생성 파일: node scripts/bundles-digest.ts 가 쓴다. 손으로 고치지 않는다(BV-06, 앱 업데이트로만 바뀜).
 export const BUNDLE_ALLOWLIST: ReadonlyArray<{ id: string; digest: string }> = [
   { id: 'amount_parse_check_v1', digest: '987eaaf68560ed7cb2ab5ca9596425badc5f3b404e08e6f745648981b3484f1d' },
+  { id: 'chat_route_v1', digest: 'c81cab9b3a0e1046e7e4367d9b774d1367bf7eb8da09f9f99796e8f450be55b9' },
   { id: 'doc_meta_check_v1', digest: 'b863c88239fe101d6e757f014c927c39f3e9159a70aedbbd035e6b6cc76109e6' },
   { id: 'form_ready_v2', digest: 'b35492acfdd4fe4dbaee0971f1183adfe4511abba57cb4f18ffa5f944a923409' },
   { id: 'intent_route_v1', digest: '5e1f916341f62f42bbb09432fe81ad04d4687527f3a6bc43e90f51a075a87eb6' },
