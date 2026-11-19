@@ -10,7 +10,7 @@
 
 | 길 | 문장을 읽는 것 | 문제 |
 |---|---|---|
-| PC 사업자 대화(`chat.step`, `chat_agent`) | 생성 모델 한 번, 도구 8개(조회 5, 카드 3) | 도구가 세금계산서와 조회뿐이다. 은행 연결·인증서·보안카드·폰 연결·설정·거래처 추가는 "할 수 없음"으로 끝난다 |
+| PC 사업자 대화(`chat.step`, `chat_agent`) | 생성 모델 한 번, 도구 8개(조회 5, 카드 3) | 도구가 세금계산서와 조회뿐이다. 은행 연결·인증서·폰 연결·설정·거래처 추가는 "할 수 없음"으로 끝난다 |
 | PC 민원증명·꾸러미·등본 | `parseRegex`·`packAsk` 정규식(모델 앞에서 가로챔) | 정해 둔 꼴의 문장만 알아듣는다 |
 | PC 개인 프로필 | `intent.resolve`(jev, `intent_route_v1`) → 로컬 파서 → `chat.respond`(`chat_reply`) | 사업자 대화와 다른 길이다. 판정 결과가 도구로 이어지지 않는다 |
 | 폰 대화(`chat_phone`) | 생성 모델 + PR #427의 `issueIntent` 정규식과 `intentNet` 안전망 | 발급 말투를 정규식으로 늘려 간다. 머리말에 일상 말 예시(점심 메뉴)를 적어 넣었다 |
@@ -46,7 +46,7 @@
 | 질문 | 꼴 | 값 |
 |---|---|---|
 | `act` | 선택 | `task`(일을 시킴) · `lookup`(내 기록·돈을 물음) · `followup`(앞 되묻기에 답하거나 앞 요청을 고침) · `app_help`(앱 쓰는 법·할 수 있는 일) · `smalltalk`(일상 말) · `tax_advice` · `other` |
-| `domain` | 선택 | `invoice` · `records`(발급 기록·매출·받을 돈·낼 돈·돈 흐름) · `cert_doc`(민원증명) · `bank` · `auth`(인증서·보안카드·간편인증) · `phone_link` · `counterparty` · `pack`(세무사 꾸러미) · `capture`(영수증·현금 매출) · `settings` · `none` |
+| `domain` | 선택 | `invoice` · `records`(발급 기록·매출·받을 돈·낼 돈·돈 흐름) · `cert_doc`(민원증명) · `bank` · `auth`(인증서·간편인증) · `phone_link` · `counterparty` · `pack`(세무사 꾸러미) · `capture`(영수증·현금 매출) · `settings` · `none` |
 | `corrects_previous` | 예/아니오 | 방금 만든 카드나 진행 중인 발급을 고치는 말인가 |
 | `mentions_tax_advice` | 예/아니오 | `intent_route_v1`과 같은 질문 |
 
@@ -86,12 +86,12 @@
 
 | 도구 | 등급 | 하는 일 |
 |---|---|---|
-| `open_flow(flow)` | open | 인자 없는 흐름을 바로 연다: `bank_connect`, `cert_register`, `security_card`, `simple_auth`, `phone_link`, `counterparty_add`, `tax_pack`, `receipt_capture`(폰), `cash_sale`(폰), `settings.*`. 결과 status: `opened`·`already_done`·`needs_setup`·`not_on_this_device` |
+| `open_flow(flow)` | open | 인자 없는 흐름을 바로 연다: `bank_connect`, `cert_register`, `simple_auth`, `phone_link`, `counterparty_add`, `tax_pack`, `receipt_capture`(폰), `cash_sale`(폰), `settings.*`. 결과 status: `opened`·`already_done`·`needs_setup`·`not_on_this_device` |
 | `app_status(topic)` | read | 은행·인증·폰 연결·구독·내 사업장 상태를 열거값으로 돌려준다. "은행 연결됐어?"에 답하고, 흐름을 열기 전에 본다 |
 | `cert_doc_request(doc, purpose\|null)` | draft | 민원증명 카드. 지금 `parseRegex`가 하던 일 |
 | `counterparty_lookup(name)` | read | 장부에 없는 이름일 때 비슷한 거래처 후보(이름은 토큰으로) |
 
-- 비밀(인증서 비밀번호, 보안카드 값)은 대화에 들어오지 않는다(ADR-019 결정 3). `open_flow`는 금고 비밀 창이나 전용 화면을 열 뿐이다.
+- 비밀(인증서 비밀번호 등)은 대화에 들어오지 않는다(ADR-019 결정 3). 보안카드 지원은 없애기로 해서(2026-11-19, 은행 연결 스레드가 코드에서 삭제 중) 도구 목록에 넣지 않는다. `open_flow`는 금고 비밀 창이나 전용 화면을 열 뿐이다.
 - 폰에서 안 되는 도구는 표의 기기 칸으로 정하고, 결과는 `not_on_this_device`다. 폰은 그 요청을 밀린 일로 넘긴다(ADR-047 결정 6 그대로). PC용·폰용 머리말을 따로 손으로 쓰지 않고, 한 틀에 기기 절만 바꿔 만든다.
 - 인자 있는 흐름이 늘면 `open_flow`에 넣지 않고 전용 도구로 만든다.
 
