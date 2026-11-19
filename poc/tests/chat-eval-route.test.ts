@@ -53,8 +53,10 @@ describe('대화 판정 평가 A층', () => {
     try {
       const out = path.join(dir, 'r.json');
       await node(['--target=draft', '--fake', '--limit=5', `--out=${out}`]);
-      const rep = JSON.parse(fs.readFileSync(out, 'utf8')) as { summary: { model: string; score: { n: number; errors: number } }; rows: unknown[] };
+      const rep = JSON.parse(fs.readFileSync(out, 'utf8')) as { summary: { model: string; score: { n: number; errors: number } }; rows: RouteRow[] };
       assert.deepEqual([rep.summary.model, rep.summary.score.n, rep.summary.score.errors, rep.rows.length], ['fake', 5, 0, 5]);
+      // 가짜 답(이름 키 객체)도 게이트웨이 정규화(systemOneAnswers)를 지나 채점까지 간다
+      assert.deepEqual([rep.rows[0]!.act, rep.rows[0]!.domain, rep.rows[0]!.corrects, rep.rows[0]!.advice], [{ got: 'task', conf: 0.9 }, { got: 'invoice', conf: 0.9 }, 0.1, 0.05]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
