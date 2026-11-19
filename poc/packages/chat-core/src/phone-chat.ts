@@ -73,7 +73,7 @@ export const PHONE_ASK_TEXT: Record<AgentAsk, string> = {
   counterparty: '어느 거래처예요? 거래처 목록에 있는 이름으로 골라 주세요.',
   vat: '부가세는 별도예요, 포함이에요?',
   which_card: '어느 카드를 말씀하시는지 골라 주세요.',
-  date: '작성일자를 정하는 카드는 PC에서 만들 수 있어요. PC가 켜지면 PC 대화에서 말씀해 주세요.',
+  date: '작성일자를 정하는 카드는 폰에서 만들 수 없어요. PC를 켜면 이어서 할게요.',
 };
 export const PHONE_SLOT_MISSING_TEXT = '정확한 값은 아래 표에 있어요.';
 export const PHONE_UNAVAILABLE_TEXT = '답을 받지 못했어요. 잠시 뒤 [다시 시도]를 눌러 주세요.';
@@ -88,7 +88,7 @@ export const PHONE_ERROR_TEXT: Record<PhoneChatErrorCode, { text: string; retry:
   'chat.daily_limit': { text: '오늘 쓸 수 있는 대화를 다 썼어요. 새벽 4시에 다시 채워져요.', retry: false },
   'chat.subscription_required': { text: '무료 체험이 끝났어요. 구독하면 대화를 다시 쓸 수 있어요.', retry: false },
   'chat.rate_limited': { text: '요청이 잠깐 몰렸어요. 조금 뒤에 다시 보내 주세요.', retry: true },
-  'chat.device_suspended': { text: '이 폰의 연결이 정지되어 있어요. PC의 설정에서 폰 연결을 확인해 주세요.', retry: false },
+  'chat.device_suspended': { text: '이 폰의 연결이 정지되어 있어요. 설정의 연결된 기기에서 확인해 주세요.', retry: false },
   'chat.input_too_large': { text: '문장이 길어요. 두세 번에 나눠서 말해 주세요.', retry: false },
   'chat.secret_rejected': { text: '비밀번호 같은 값은 대화창에 쓰지 말아 주세요. 이 문장은 보내지 않았어요.', retry: false },
   'chat.turn_limit': { text: '한 번에 하기엔 일이 많아요. 하나씩 나눠서 말씀해 주세요.', retry: false },
