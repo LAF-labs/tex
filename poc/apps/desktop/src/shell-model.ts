@@ -298,7 +298,7 @@ export function answersPending(parsed: Parsed, runs: Drafts, text?: string): boo
 
 /** parsed가 없으면 정규식으로 뽑는다. 화면의 부가세 선택(vat)이 문장보다 먼저다. */
 /** 빈 요청·모르는 요청의 기본 안내. */
-export const EMPTY_REQUEST_TEXT = '세금계산서 발급이나 지난 발급·매출을 말해 주세요.';
+export const EMPTY_REQUEST_TEXT = '세금계산서 발급이나 지난 발급, 매출을 말해 주세요.';
 /** 이 앱이 떼지 않는 증명서(지방세 납세증명·4대보험 등). 떼는 것만 말한다. */
 export const CERT_OTHER_TEXT = `그 증명서는 이 앱에서 떼지 못해요. ${CERT_DOCS_SHOWN.map((d) => d.name).join('·')}은 바로 뗄 수 있어요.`;
 /** 받침에 맞춘 목적격 조사(을/를). */

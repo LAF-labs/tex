@@ -347,7 +347,7 @@ const todoLine = (text, ...meta) => h('div', { class: 'sx-todo' }, h('p', {}, te
  * 머리 한 줄 = 제목 · 지금 단계 · 상태 칩, 끝에 조용한 [중지](있을 때). 사람 차례·확인 필요일 때만 그 아래 할 일 한 줄과 주요 단추 하나를 붙인다.
  * 금액·단계 목록·값 목록은 패널에만 있다(카드를 누르면 act.open). taskCard가 먼저 붙인 머리·금액 줄은 여기서 바꾼다(승인 대기 접힘과 같은 방식).
  */
-function fold(card, run, step, stop = null) {
+function fold(card, run, act, step, stop = null) {
   // 확인 필요는 안내 상자 대신 카드의 황토 안쪽 선으로 보인다(내 차례의 파랑 선과 같은 규칙).
   card.classList.toggle('is-attention', run.status === 'attention');
   // 발급 카드는 언제나 같은 틀이다(대표 2026-11-19 "카드가 매번 제각각", "너무 자세할 필요가 없어"):
@@ -364,9 +364,31 @@ function fold(card, run, step, stop = null) {
           step ? h('p', { class: 'sx-card-now', 'aria-live': 'polite' }, step, progressCount(run)) : null,
           // 정정·대기 알림은 상자 대신 같은 면의 조용한 한 줄
           ...info.map((t) => h('p', { class: 'sx-run-info', 'data-run-info': '' }, t)),
+          stepsToggle(run, act),
         )
       : null,
   );
+}
+
+/**
+ * 단계 목록(11-19): 새로 들어온 카드는 닫힌 채로 시작하고, 사용자가 연 카드만 기억한다(act.stepsOpen, 실행 id).
+ * 상태가 바뀌어 카드를 다시 그려도 연 것은 열린 채, 안 연 것은 닫힌 채다. 다시 그리지 않고 그 자리에서 펴고 접는다.
+ */
+function stepsToggle(run, act) {
+  if (!act?.stepsOpen) return null;
+  const open = act.stepsOpen.has(run.id);
+  const list = steps(runSteps(run));
+  list.classList.add('sx-run-steps');
+  if (!open) list.hidden = true;
+  const b = h('button', { type: 'button', class: 'sx-steps-toggle', 'data-act': 'steps-toggle', 'aria-expanded': String(open) }, open ? '단계 접기' : '단계 보기', icon('chevron'));
+  b.addEventListener('click', () => {
+    const now = list.hidden;
+    list.hidden = !now;
+    b.setAttribute('aria-expanded', String(now));
+    b.firstChild.textContent = now ? '단계 접기' : '단계 보기';
+    act.toggleSteps(run.id, now);
+  });
+  return [b, list];
 }
 
 /** 요약 한 줄: 합계(굵게) · 부가세 별도/포함 · 품목. 민원증명은 용도 · 제출처. 공급가·세액 분해·작성일자·이메일은 패널에. */
@@ -529,17 +551,17 @@ export function taskCard(run, act) {
   } else if (st === 'preparing') {
     // v2.0(H3): 머리 한 줄(지금 단계) + 조용한 [중지]. "승인 전에는 발급하지 않아요"는 패널에 있다.
     // 로그인 단계: 앱이 직접 로그인한다. 사람 몫(캡차·추가 인증 등)은 로그인 차례 카드로 따로 온다. 여기서는 머리 한 줄(단계 이름만, 설명은 패널 단계 목록)뿐이다.
-    fold(card, run, stepLine(now, run.steps[0].state !== 'now'), stopBtn(run, act));
+    fold(card, run, act, stepLine(now, run.steps[0].state !== 'now'), stopBtn(run, act));
   } else if (verifying(run)) {
     // 발급 후 조회 중(08 §11 "발급 후 응답 끊김" 행). 이 상태에서는 어떤 버튼도 다시 발급하지 않는다. 머리 한 줄만, 설명은 패널에 있다.
-    fold(card, run, h('span', { 'data-verify-attempt': run.verifyAttempt ? String(run.verifyAttempt) : null }, verifyLine(run.verifyAttempt)));
+    fold(card, run, act, h('span', { 'data-verify-attempt': run.verifyAttempt ? String(run.verifyAttempt) : null }, verifyLine(run.verifyAttempt)));
   } else if (st === 'issuing' && run.steps[5].state === 'now' && run.steps[5].note) {
     // 승인 뒤 서명 단계: 사람 몫(인증서 비밀번호·간편인증 승인)을 바로 보인다. 엔진의 서명 차례(handoff)는 끝 표지를 기다린 뒤에야 온다.
     card.dataset.signNow = '';
-    fold(card, run, stepLine(now, false));
+    fold(card, run, act, stepLine(now, false));
     card.append(todoLine(`${run.steps[5].note}. 끝나면 자동으로 이어집니다`, '홈택스 발급목록에서 확인할 때까지 다시 발급하지 않아요.'), h('div', { class: 'sx-actions' }, showBrowserBtn(run, act, true)));
   } else if (st === 'issuing') {
-    fold(card, run, stepLine(now));
+    fold(card, run, act, stepLine(now));
   } else if (st === 'turn' && run.handoff) {
     // 사람 차례(D03 HandedOff, #278 셸 계약): 실행은 끝나지 않았다. 버튼은 재개·확인·중지로만 가고 발급하지 않는다.
     // 할 일 한 줄 + 주요 단추 하나, [중지]는 머리 줄 끝의 조용한 단추(v2.0).
@@ -548,7 +570,7 @@ export function taskCard(run, act) {
     // - 그 밖: [다 했어요](주요) · [직접 발급함] · [홈택스 창 보기]
     const kind = run.handoff.kind ?? 'other';
     card.dataset.handoff = kind;
-    fold(card, run, stepLine(now, false), btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' }));
+    fold(card, run, act, stepLine(now, false), btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' }));
     card.append(
       todoLine(run.turn.text, run.turn.note, kind === 'sign' ? h('p', { class: 'sx-meta', 'data-sign-wait': '' }, '서명을 마치면 앱이 발급목록을 확인해요. 그동안 다시 발급하지 않아요.') : null),
       h(
@@ -564,7 +586,7 @@ export function taskCard(run, act) {
     // 폰 간편인증 차례: 할 일은 폰에 있어 카드에 주요 단추가 없다.
     // 폰으로 다시 요청하기는 아직 없다: 누르면 '곧 지원'만 뜨던 [다시 요청]을 지웠다(v2.0). 서명 차례에는 [중지]도 없다.
     const signing = run.steps[4].state === 'done';
-    fold(card, run, stepLine(now, false), signing ? null : stopBtn(run, act));
+    fold(card, run, act, stepLine(now, false), signing ? null : stopBtn(run, act));
     card.append(todoLine(run.turn.text, run.turn.note));
   } else if (st === 'waiting') {
     // ADR-021 결정 7: 작성 카드는 "작성 완료" 한 줄로 접는다. 되읽은 값 전체·중복 경고·[중지]는 대화 열 아래 main 승인 카드에 있다.
@@ -606,7 +628,7 @@ export function taskCard(run, act) {
     card.classList.add('is-folded', 'is-replaced');
     return card;
   } else if (st === 'stopped') {
-    fold(card, run, null);
+    fold(card, run, act, null);
     card.append(line(run.stoppedNote || '중지했어요.', true));
     // 브라우저가 닫혀 멈춘 제출 전 실행: 같은 값으로 바로 다시 시작
     if (run.browserClosed) card.append(h('div', { class: 'sx-actions' }, btn('다시 시작', () => act.restart(run.id), 'sx-btn-primary', { 'data-act': 'restart' })));
@@ -615,7 +637,7 @@ export function taskCard(run, act) {
   } else if (st === 'attention' && run.inDoubt) {
     // InDoubt 카드(08 §11): 발급됐는지 모른다. 다시 발급하는 버튼은 두지 않는다. 직접 확인할 곳(패널의 찾을 값)만 연다.
     card.dataset.inDoubt = '1';
-    fold(card, run, stepLine(now, false));
+    fold(card, run, act, stepLine(now, false));
     card.append(
       todoLine(
         run.stoppedNote || '발급됐는지 확인하지 못했어요.',
@@ -626,7 +648,7 @@ export function taskCard(run, act) {
       h('div', { class: 'sx-actions' }, btn('홈택스에서 직접 확인', () => act.open(run.id), 'sx-btn-primary', { 'data-act': 'check-list' })),
     );
   } else if (st === 'attention') {
-    fold(card, run, stepLine(now, false));
+    fold(card, run, act, stepLine(now, false));
     card.append(
       todoLine(run.stoppedNote || '확인이 필요해요.'),
       // 승인 전 핸드오프 끝: [다시 준비]·[홈택스에서 직접 발급]. 그 밖에 발급 전에 멈췄으면 [다시 준비](새 초안). Chrome 확장 멈춤은 아래 [다시 시도]가 맡는다.
