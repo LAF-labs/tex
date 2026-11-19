@@ -1,5 +1,6 @@
 // 사업자등록증 OCR 텍스트 → 거래처·프로필 입력 후보. OCR 자체는 docparse 샌드박스(ADR-014)에서 돌고
 // 엔진은 텍스트만 받는다. 결과는 사용자가 확인·수정한 뒤에만 저장한다(source='ocr').
+import { isValidBizNo } from '@sax/db';
 
 export interface BizCertFields {
   bizNo: string | null;
@@ -73,7 +74,7 @@ function bizNoSuggestions(d: string): string[] {
   for (let i = 0; i < d.length; i++) {
     for (const alt of CONFUSABLE[d[i]!] ?? []) {
       const c = d.slice(0, i) + alt + d.slice(i + 1);
-      if (checksum(c)) out.add(c);
+      if (isValidBizNo(c)) out.add(c);
     }
   }
   return [...out];
@@ -162,15 +163,6 @@ function bizKinds(lines: string[]): { type: string | null; item: string | null }
   return { type: after(lines, ['업태']), item: after(lines, ['종목']) };
 }
 
-function checksum(d: string): boolean {
-  if (!/^\d{10}$/.test(d)) return false;
-  const w = [1, 3, 7, 1, 3, 7, 1, 3, 5];
-  let sum = 0;
-  for (let i = 0; i < 9; i++) sum += Number(d[i]) * w[i]!;
-  sum += Math.floor((Number(d[8]) * 5) / 10);
-  return (10 - (sum % 10)) % 10 === Number(d[9]);
-}
-
 /** OCR이 자주 혼동하는 글자를 숫자로 바로잡는다(숫자 문맥에서만). */
 const fixDigits = (s: string) => s.replace(/[Oo]/g, '0').replace(/[Il|]/g, '1').replace(/[Ss]/g, '5').replace(/B/g, '8');
 const D = '[0-9OoIlSB|]';
@@ -189,7 +181,7 @@ export function parseBizCert(raw: string): BizCertParse {
   const labelled = lines.map((l) => labelledRe.exec(l)).find(Boolean);
   const nos = [...text.matchAll(BIZNO_RE)].map((m) => fixDigits(m[1]!.replace(/ /g, '') + m[2]!.replace(/ /g, '') + m[3]!.replace(/ /g, '')));
   const candidates = [labelled ? digitsOf(labelled[1]!) : '', ...nos].filter((d) => /^\d{10}$/.test(d));
-  fields.bizNo = candidates.find(checksum) ?? candidates[0] ?? null;
+  fields.bizNo = candidates.find(isValidBizNo) ?? candidates[0] ?? null;
 
   if (/법\s*인\s*사\s*업\s*자/u.test(text) || /법\s*인\s*명/u.test(text)) fields.kind = 'corporate';
   else if (/일\s*반\s*과\s*세\s*자|간\s*이\s*과\s*세\s*자|면\s*세\s*사\s*업\s*자|개\s*인\s*사\s*업\s*자/u.test(text)) fields.kind = 'individual';
@@ -211,7 +203,7 @@ export function parseBizCert(raw: string): BizCertParse {
   fields.bizType = kinds.type;
   fields.bizItem = kinds.item;
   const required: Array<keyof BizCertFields> = ['bizNo', 'name', 'repName', 'openDate'];
-  const ok = !!fields.bizNo && checksum(fields.bizNo);
+  const ok = !!fields.bizNo && isValidBizNo(fields.bizNo);
   return {
     fields,
     missing: required.filter((k) => !fields[k]),
