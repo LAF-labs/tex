@@ -483,7 +483,7 @@ export const SIMPLE_AUTH_MS = 5 * 60_000;
 /** 인증 앱 코드 → 사람 말(엔진 run/simple-auth.ts OACX_PROVIDERS와 같은 코드) */
 export const SIMPLE_APP_LABEL: Readonly<Record<string, string>> = { kakao: '카카오톡', naver: '네이버', toss: '토스', pass: 'PASS 앱', kb: 'KB국민은행 앱', shinhan: '신한 앱', woori: '우리은행 앱', hana: '하나은행 앱', nh: 'NH 앱', ibk: 'IBK 앱', kakaobank: '카카오뱅크', samsung: '삼성패스', banksalad: '뱅크샐러드' };
 /** 다시 해도 공동인증서 로그인이 안 됐다: 인증서로 한 번 더, 또는 간편인증(아래 홈택스 화면이나 폰에서). */
-export const CERT_FAILED_TWICE = { text: '공동인증서로 두 번 로그인하지 못했어요. 인증서로 다시 해 보거나 간편인증으로 로그인해 주세요', note: '간편인증은 아래 홈택스 화면에서 인증 앱을 고르고 휴대폰에서 승인한 뒤 [간편인증 마치고 이어서]를 눌러 주세요. 아무것도 발급하지 않았어요.' };
+export const CERT_FAILED_TWICE = { text: '공동인증서로 두 번 로그인하지 못했어요', note: '간편인증은 아래 홈택스 화면에서 승인한 뒤 [간편인증 마치고 이어서]를 눌러 주세요.' };
 export const WAKE_RESUMED_NOTE = '맥이 잠들었다 깨어나 멈춘 건을 같은 내용으로 다시 시작했어요. 앞 시도는 승인 전이라 아무것도 발급하지 않았어요.';
 /** 맥이 깨어난 뒤 이 안에 승인 전 단계에서 멈춘 실행은 같은 값으로 한 번 다시 시작한다. */
 const WAKE_RESUME_MS = 5 * 60_000;
@@ -1360,7 +1360,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     const app = d ? (SIMPLE_APP_LABEL[d.provider] ?? '인증 앱') : '인증 앱';
     r.handoff = { ...r.handoff!, code: SIMPLE_SENT };
     r.simpleAuth = { provider: d?.provider ?? '', deadline: this.clock() + SIMPLE_AUTH_MS };
-    r.turn = { text: `${app}에서 간편인증을 승인해 주세요`, note: '승인하면 폰이나 이 카드에서 [승인했어요]를 눌러 주세요. 5분 안에 승인하지 않으면 다시 요청해야 해요.' };
+    r.turn = { text: `${app}에서 간편인증을 승인해 주세요`, note: '5분 안에 승인해 주세요.' };
     this.emit('update', r);
     return r;
   }
@@ -1486,7 +1486,11 @@ export class ShellRuns extends EventEmitter implements Drafts {
         });
         return;
       }
-      if (e.code === CERT_LOGIN_FAILED) r.turn = { text: CERT_FAILED_TWICE.text, note: CERT_FAILED_TWICE.note };
+      if (e.code === CERT_LOGIN_FAILED) {
+        r.turn = { text: CERT_FAILED_TWICE.text, note: CERT_FAILED_TWICE.note };
+        // "한 번 더 해 봐요" 안내는 다시 하는 동안만(차례 카드에서 같은 말을 되풀이하지 않는다, 대표 지적 2026-11-19)
+        if (r.notices) r.notices = r.notices.filter((x) => x !== CERT_RETRY_NOTE);
+      }
       this.step(r, e.phase, 'attention', t.kind === 'sign' ? '홈택스 창에서 서명 중' : '직접 해 주세요');
       this.emit('update', r);
       return;
