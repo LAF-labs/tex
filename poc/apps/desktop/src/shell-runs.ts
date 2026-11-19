@@ -1385,7 +1385,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
       const i = PHASES.indexOf(e.phase);
       const t = handoffTurn(e.phase, e.code, r.auth, STEP_LABELS[r.doc]);
       r.status = 'turn';
-      r.handoff = { phase: e.phase, afterGate: i > PHASES.indexOf('gate'), kind: t.kind };
+      r.handoff = { phase: e.phase, afterGate: i > PHASES.indexOf('gate'), kind: t.kind, ...(e.code ? { code: e.code } : {}) };
       r.turn = { text: t.text, note: t.note };
       this.step(r, e.phase, 'attention', t.kind === 'sign' ? '홈택스 창에서 서명 중' : '직접 해 주세요');
       this.emit('update', r);
