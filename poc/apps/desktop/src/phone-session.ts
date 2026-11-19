@@ -63,6 +63,11 @@ export function phoneSession(o: PhoneSessionOptions): PhoneSessionHook {
         if (caps.get(ch)?.has(CAP.issue)) await o.issue.resume(pairId, ch, env.body as CmdResumeBody);
         return true;
       }
+      // 폰 간편인증(human.response): PC가 연 요청(human.request manual simple_auth)에만
+      if (env.type === 'human.response') {
+        if (caps.get(ch)?.has(CAP.issue)) await o.issue.human(pairId, ch, env.body as { runId?: unknown; reqId?: unknown; value?: unknown });
+        return true;
+      }
       if (env.type !== 'cmd.run') return false;
       // issue.v1을 알리지 않은 폰의 cmd.run은 다른 길(현재 없음)로 보내지 않고 버린다
       if (!caps.get(ch)?.has(CAP.issue)) return true;

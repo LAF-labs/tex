@@ -17,6 +17,7 @@ import { kstDay, policyFor, RateGuard, RunPolicy, runPortalConfig, type Clock, t
 import { IrRun, type GateHistory, type IrPackage, type IrSourceResult, type StoppedAt } from './run/service-ir.ts';
 import { CERT_CARD, certBusinessKey, certInputs, type CertStartParams } from './cert.ts';
 import type { HumanPort } from './run/controller.ts';
+import type { SimpleAuthIdentity } from './run/simple-auth.ts';
 import { ratePolicyFrom, runSignalDict } from './enforcer.ts';
 import type { SecretTurnEvent } from './driver/cert-secret.ts';
 import type { RunPermit } from './core/permit.ts';
@@ -992,6 +993,15 @@ export class RunService extends EventEmitter {
     if (!a || a.runId !== runId || !a.ir) return { ok: false, code: 'not_handed_off' };
     const r = a.ir.command('resume');
     if (r.ok) this.journal.append(a.runId, 'run.resume_requested', {});
+    return r;
+  }
+
+  /** 폰에서 시작한 간편인증(run/simple-auth.ts): 공동인증서 로그인 실패 차례에서만. complete는 성공하면 재개까지 한다. */
+  async simpleAuth(runId: string, op: 'request' | 'complete', d?: SimpleAuthIdentity): Promise<{ ok: boolean; code?: string }> {
+    const a = this.active;
+    if (!a || a.runId !== runId || !a.ir) return { ok: false, code: 'not_handed_off' };
+    const r = await a.ir.simpleAuth(op, d);
+    this.journal.append(a.runId, 'run.simple_auth_requested', { op, ok: r.ok });
     return r;
   }
 

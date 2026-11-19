@@ -58,7 +58,8 @@ export function eventOf(r: RunView, runId: string, cmdId: string, at: number, ap
   const turn = phase !== 'done' && phase !== 'stopped' && r.status === 'turn' && !!r.handoff;
   // 사람 차례(핸드오프): 'turn' 사건과 그 까닭(엔진 코드, 예: login.simple_auth)을 싣는다. 이게 없으면 폰은 "진행 중"에 머문다(2026-11-19 실기기).
   const ev: RunEventBody = { runId, cmdId, at, event: phase === 'done' || phase === 'stopped' ? 'end' : turn ? 'turn' : 'phase', phase, status: r.status };
-  if (turn) ev.code = turnCode(r.handoff!);
+  if (turn) ev.code = turnCode(r.handoff!, r);
+  if (turn && r.handoff!.code === 'login.simple_sent' && r.simpleAuth) ev.deadline = r.simpleAuth.deadline;
   if (phase === 'verify' && Number.isSafeInteger(r.verifyAttempt) && r.verifyAttempt! >= 1) ev.attempt = Math.min(r.verifyAttempt!, 99);
   if (phase === 'done' && r.result && APPROVAL_NO.test(r.result.approvalNo) && Number.isSafeInteger(r.total) && r.total >= 0) {
     ev.result = { approvalNo: r.result.approvalNo, total: r.total, emailSent: r.result.mailConfirmed };
@@ -73,7 +74,17 @@ export function eventOf(r: RunView, runId: string, cmdId: string, at: number, ap
 
 /** 사람 차례 까닭(폰에 보내는 코드). 엔진 코드는 패키지 규칙 모양(소문자·점·밑줄)일 때만 그대로, 아니면 종류만(turn.login·turn.sign·turn.other). */
 const TURN_CODE = /^[a-z][a-z0-9_]*(\.[a-z0-9_]+){1,3}$/;
-export function turnCode(h: NonNullable<RunView['handoff']>): string {
+/** 공동인증서 로그인 실패 차례(엔진 s7e)와, 폰이 시작한 간편인증 승인 대기(셸). 폰 [인증서로 다시 시도]·간편인증을 받는다. */
+const CERT_TURN: ReadonlySet<string> = new Set(['login.simple_auth', 'login.simple_sent']);
+/** 간편인증 답(human.response value): sa1:req:<앱>:<생년월일 8>:<휴대폰 숫자>:<이름> 또는 sa1:done */
+const SA_REQ = /^sa1:req:([a-z]{2,10}):(\d{8}):(01\d{8,9}):([^:]{1,20})$/;
+export function parseSimpleAnswer(v: unknown): { op: 'request'; d: { provider: string; birth: string; phone: string; name: string } } | { op: 'complete' } | null {
+  if (v === 'sa1:done') return { op: 'complete' };
+  const m = typeof v === 'string' ? SA_REQ.exec(v) : null;
+  return m ? { op: 'request', d: { provider: m[1]!, birth: m[2]!, phone: m[3]!, name: m[4]! } } : null;
+}
+export function turnCode(h: NonNullable<RunView['handoff']>, r?: RunView): string {
+  if (h.code === 'login.simple_sent' && r?.simpleAuth && /^[a-z]{2,10}$/.test(r.simpleAuth.provider)) return `login.simple_sent.${r.simpleAuth.provider}`;
   if (h.code && TURN_CODE.test(h.code) && h.code.length <= 40) return h.code;
   return `turn.${h.kind ?? 'other'}`;
 }
@@ -132,6 +143,8 @@ export interface PhoneIssuePorts {
   anyActive: () => boolean;
   /** [인증서로 다시 시도](ShellRuns.retryCert). 없으면 폰의 cmd.resume을 받지 않는다. */
   retryCert?: (id: string) => Promise<unknown>;
+  /** 폰에서 시작한 간편인증(ShellRuns.simpleAuth). 없으면 human.request를 보내지 않는다. */
+  simpleAuth?: (id: string, op: 'request' | 'complete', d?: { provider: string; name: string; birth: string; phone: string }) => Promise<unknown>;
   get: (id: string) => RunView | undefined;
   /** 초안이 생겼다(판·대화에 카드를 그린다). */
   onDraft?: (run: RunView) => void;
@@ -155,6 +168,8 @@ interface Tracked {
   cmdId: string;
   runId: string;
   last: string;
+  /** 간편인증 답을 받을 요청(human.request reqId). 공동인증서 실패 차례에서 한 번 만든다. */
+  simpleReq?: string;
 }
 
 /** PC 하나에 하나. 폰마다 지금 세션(sink)을 붙였다 뗀다. */
@@ -225,6 +240,11 @@ export class PhoneIssue {
     if (!sink) return;
     try {
       sink.send('run.event', ev);
+      // 공동인증서 실패 차례: 폰이 간편인증 값을 보낼 자리(human.request manual)를 연다. 같은 차례에서는 같은 reqId.
+      if (ev.event === 'turn' && ev.code === 'login.simple_auth' && this.#o.simpleAuth) {
+        t.simpleReq ??= ulid(this.#now());
+        (sink.send as unknown as (ty: string, b: object) => unknown)('human.request', { runId: t.runId, stepId: 's7e', reqId: t.simpleReq, kind: 'manual', prompt: 'simple_auth', ttl: 600 });
+      }
     } catch {
       // 끝 소식도 못 보냈으면 지우지 않는다(다음 세션 attach에서 다시 보낸다)
       this.#log('event_send_failed');
@@ -242,7 +262,7 @@ export class PhoneIssue {
     if (!at) return (this.#log('resume_unknown'), false);
     const [id, t] = at;
     const r = this.#o.get(id);
-    const ok = !!r && !!this.#o.retryCert && r.status === 'turn' && r.handoff?.code === 'login.simple_auth' && !r.handoff.afterGate;
+    const ok = !!r && !!this.#o.retryCert && r.status === 'turn' && CERT_TURN.has(r.handoff?.code ?? '') && !r.handoff!.afterGate;
     if (ok) {
       try {
         await this.#o.retryCert!(id);
@@ -255,6 +275,37 @@ export class PhoneIssue {
     this.#log('resume_refused');
     this.#sinks.set(pairId, sink);
     if (r) this.#emit(r, t, true);
+    return false;
+  }
+
+  /**
+   * 폰 human.response(간편인증 값 또는 "승인했어요"). 그 폰이 맡긴 건, 이 PC가 연 reqId일 때만 받는다.
+   * 못 하면 run.event turn code login.simple_failed를 한 번 보내고(폰이 고르기 화면으로 돌아간다) 지금 차례를 다시 보낸다. 값은 로그에 남기지 않는다.
+   */
+  async human(pairId: string, sink: PhoneSink, body: { runId?: unknown; reqId?: unknown; value?: unknown }): Promise<boolean> {
+    const at = [...this.#runs].find(([, x]) => x.pairId === pairId && x.runId === body?.runId && !!x.simpleReq && x.simpleReq === body?.reqId);
+    if (!at || !this.#o.simpleAuth) return (this.#log('human_unknown'), false);
+    const [id, t] = at;
+    const a = parseSimpleAnswer(body.value);
+    const r = this.#o.get(id);
+    if (a && r && r.status === 'turn' && CERT_TURN.has(r.handoff?.code ?? '')) {
+      try {
+        await this.#o.simpleAuth(id, a.op, a.op === 'request' ? a.d : undefined);
+        this.#log(a.op === 'request' ? 'simple_requested' : 'simple_completed');
+        return true;
+      } catch {
+        // 아래에서 실패를 알린다
+      }
+    }
+    this.#log('simple_failed');
+    this.#sinks.set(pairId, sink);
+    try {
+      sink.send('run.event', { runId: t.runId, cmdId: t.cmdId, at: this.#now(), event: 'turn', phase: 'login', status: 'turn', code: 'login.simple_failed' });
+    } catch {
+      // 다음 세션에서 지금 상태를 다시 보낸다
+    }
+    const now = this.#o.get(id);
+    if (now) this.#emit(now, t, true);
     return false;
   }
 

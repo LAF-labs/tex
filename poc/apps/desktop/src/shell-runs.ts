@@ -476,6 +476,12 @@ export const RESUMED_NOTE = '앱이 다시 켜져 멈췄던 건을 같은 내용
 export const CERT_RETRY_NOTE = '공동인증서 로그인이 안 돼 같은 내용으로 한 번 더 이어서 준비해요. 앞 시도는 로그인 단계라 아무것도 발급하지 않았어요.';
 /** 공동인증서 로그인 실패 핸드오프 코드(H-01 s7e). 엔진이 간편인증 화면까지 열어 두고 기다린다. */
 export const CERT_LOGIN_FAILED = 'login.simple_auth';
+/** 폰이 시작한 간편인증 요청을 보냈고 인증 앱 승인을 기다린다(셸이 정한 차례 코드, 엔진은 여전히 login.simple_auth 차례). */
+export const SIMPLE_SENT = 'login.simple_sent';
+/** 홈택스 간편인증 승인 제한 시간(짐작: 민간인증서 요청은 대개 5분 안에 끝나야 한다. 실화면에서 확인 전) */
+export const SIMPLE_AUTH_MS = 5 * 60_000;
+/** 인증 앱 코드 → 사람 말(엔진 run/simple-auth.ts OACX_PROVIDERS와 같은 코드) */
+export const SIMPLE_APP_LABEL: Readonly<Record<string, string>> = { kakao: '카카오톡', naver: '네이버', toss: '토스', kb: 'KB국민은행 앱', shinhan: '신한 앱', woori: '우리은행 앱', hana: '하나은행 앱', nh: 'NH 앱', ibk: 'IBK 앱', kakaobank: '카카오뱅크', samsung: '삼성패스', banksalad: '뱅크샐러드' };
 /** 다시 해도 공동인증서 로그인이 안 됐다: 인증서로 한 번 더, 또는 간편인증(아래 홈택스 화면이나 폰에서). */
 export const CERT_FAILED_TWICE = { text: '공동인증서로 두 번 로그인하지 못했어요. 인증서로 다시 해 보거나 간편인증으로 로그인해 주세요', note: '간편인증은 아래 홈택스 화면에서 인증 앱을 고르고 휴대폰에서 승인한 뒤 [간편인증 마치고 이어서]를 눌러 주세요. 아무것도 발급하지 않았어요.' };
 export const WAKE_RESUMED_NOTE = '맥이 잠들었다 깨어나 멈춘 건을 같은 내용으로 다시 시작했어요. 앞 시도는 승인 전이라 아무것도 발급하지 않았어요.';
@@ -1242,7 +1248,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
   async retryCert(id: string): Promise<RunView> {
     const r = this.runs.get(id);
     if (!r) throw new Error('no_run');
-    if (r.status !== 'turn' || r.handoff?.code !== CERT_LOGIN_FAILED || r.handoff.afterGate) throw new Error('not_cert_turn');
+    if (r.status !== 'turn' || (r.handoff?.code !== CERT_LOGIN_FAILED && r.handoff?.code !== SIMPLE_SENT) || r.handoff.afterGate) throw new Error('not_cert_turn');
     this.certRetry.add(id);
     try {
       return await this.stop(id);
@@ -1332,6 +1338,33 @@ export class ShellRuns extends EventEmitter implements Drafts {
     return r;
   }
 
+  /**
+   * 폰에서 시작한 간편인증(공동인증서 로그인 실패 차례에서만). request: 엔진이 홈택스 간편인증 창을 채워 [인증 요청]을 누른다.
+   * 그 뒤 차례 코드는 login.simple_sent(인증 앱 승인 대기, 5분). complete: 엔진이 [인증 완료]를 누르고 재개한다.
+   * 값(이름·생년월일·휴대폰 번호)은 엔진에 넘기기만 하고 카드·로그에 남기지 않는다.
+   */
+  async simpleAuth(id: string, op: 'request' | 'complete', d?: { provider: string; name: string; birth: string; phone: string }): Promise<RunView> {
+    const r = this.handedOff(id);
+    const code = r.handoff!.code;
+    if (code !== CERT_LOGIN_FAILED && code !== SIMPLE_SENT) throw new Error('not_cert_turn');
+    const res = (await this.host.rpc('run.simpleAuth', { runId: id, op, ...(op === 'request' && d ? d : {}) })) as { ok?: boolean; code?: string } | null;
+    if (!res?.ok) {
+      this.src.log?.('main.simple_auth', { op, result: String(res?.code ?? 'failed').slice(0, 40) });
+      throw new Error(String(res?.code ?? 'simple.failed'));
+    }
+    this.src.log?.('main.simple_auth', { op, result: 'ok' });
+    if (op === 'complete') {
+      this.leaveHandoff(r, 'preparing');
+      return r;
+    }
+    const app = d ? (SIMPLE_APP_LABEL[d.provider] ?? '인증 앱') : '인증 앱';
+    r.handoff = { ...r.handoff!, code: SIMPLE_SENT };
+    r.simpleAuth = { provider: d?.provider ?? '', deadline: this.clock() + SIMPLE_AUTH_MS };
+    r.turn = { text: `${app}에서 간편인증을 승인해 주세요`, note: '승인하면 폰이나 이 카드에서 [승인했어요]를 눌러 주세요. 5분 안에 승인하지 않으면 다시 요청해야 해요.' };
+    this.emit('update', r);
+    return r;
+  }
+
   private handedOff(id: string): RunView {
     const r = this.runs.get(id);
     if (!r) throw new Error('no_run');
@@ -1344,6 +1377,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     if (r.steps[PHASES.indexOf(ph)]!.state === 'attention') this.step(r, ph, 'now');
     r.handoff = null;
     r.turn = null;
+    r.simpleAuth = undefined;
     r.status = status;
     this.emit('update', r);
   }

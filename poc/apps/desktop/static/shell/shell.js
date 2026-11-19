@@ -272,6 +272,7 @@ const act = {
   // 핸드오프 [다 했어요]·[직접 발급함]: 재개·확인으로만 간다(발급하지 않는다). main이 실제 입력 뒤 3초 안에만 받는다.
   resume: (id) => handoffCall('run.resume', id),
   retryCert: (id) => handoffCall('run.retryCert', id),
+  simpleDone: (id) => handoffCall('run.simpleDone', id),
   manualDone: (id) => handoffCall('run.manualDone', id),
   // [홈택스 창 보기]: 실행 Chrome 창을 앞으로(main → 금고). 발급·재개와 무관하다.
   showBrowser: async (id) => {
@@ -1014,6 +1015,8 @@ async function handoffCall(method, id) {
         ? '버튼을 직접 눌러 주세요.'
         : c === 'not_handed_off'
           ? '이미 이어서 진행하고 있어요'
+          : c === 'simple.no_complete_button' || c === 'simple.complete_failed'
+            ? '간편인증이 아직 끝나지 않았어요. 인증 앱에서 승인한 뒤 다시 눌러 주세요.'
           : c === 'sign.turn_resume_only'
             ? '서명 차례에는 [다 했어요]만 받아요. 홈택스 창에서 서명을 마쳐 주세요.'
             : c === 'refused' || /^[a-z_]+\.[a-z_.]+$/.test(c)
