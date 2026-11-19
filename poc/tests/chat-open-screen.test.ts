@@ -2,14 +2,16 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
-import { CHAT_AGENT_TOOLS, CHAT_PHONE_TOOLS, OPEN_SCREENS, unsafeText } from '@sax/chat-core';
+import { CHAT_AGENT_TOOLS, CHAT_PHONE_TOOLS, OPEN_SCREENS, PHONE_SCREENS, unsafeText } from '@sax/chat-core';
 
 describe('open_screen 도구', () => {
-  it('PC 도구 표에 있고 폰 도구 표에는 없다(화면은 PC 앱에만 있다)', () => {
+  it('PC 도구 표의 화면은 PC 화면이고, 폰은 같은 이름으로 폰 화면(PHONE_SCREENS)만 연다', () => {
     const t = CHAT_AGENT_TOOLS.find((x) => x.name === 'open_screen');
     assert.ok(t);
     assert.deepEqual((t.parameters.properties as { screen: { enum: readonly string[] } }).screen.enum, OPEN_SCREENS);
-    assert.ok(!CHAT_PHONE_TOOLS.some((x) => (x.name as string) === 'open_screen'));
+    const phone = CHAT_PHONE_TOOLS.filter((x) => (x.name as string) === 'open_screen');
+    assert.equal(phone.length, 1);
+    assert.deepEqual((phone[0]!.parameters.properties as { screen: { enum: readonly string[] } }).screen.enum, [...PHONE_SCREENS]);
   });
   it('보안카드는 열 화면이 없다(지원하지 않음, 대표 2026-11-19)', () => {
     assert.ok(!(OPEN_SCREENS as readonly string[]).some((s) => /card/.test(s)));
