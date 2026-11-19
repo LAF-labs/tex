@@ -150,6 +150,10 @@ describe('셸 실행 → 폰 단계', () => {
     // 발급 없이 멈춤
     assert.equal(eventOf(run({ status: 'stopped', redo: true }), ulid(), ulid(), NOW).code, 'not_issued');
     assert.equal(eventOf(run({ status: 'stopped' }), ulid(), ulid(), NOW).code, undefined);
+    // 앱 판이 낮아 시작하지 않음: 폰이 "PC 앱을 업데이트해 주세요"를 말할 수 있게 코드를 따로 보낸다(not_issued보다 먼저)
+    const old = eventOf(run({ status: 'stopped', redo: true, endCode: 'package.app_old' }), ulid(), ulid(), NOW);
+    assert.equal(old.code, 'app_old');
+    assert.ok(encodeEnvelope(makeEnvelope('run.event', old, { pairId: ulid(), from: 'desktop', seq: 1 })));
   });
   it('차례가 오고 풀리면 각각 한 번 보낸다', async () => {
     const x = await issueWorld();

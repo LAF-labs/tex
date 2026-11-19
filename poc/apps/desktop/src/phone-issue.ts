@@ -65,6 +65,8 @@ export function eventOf(r: RunView, runId: string, cmdId: string, at: number, ap
     if (UUID4.test(r.result.docId)) ev.result.docId = r.result.docId;
   }
   if (phase === 'stopped' && r.inDoubt) ev.code = 'in_doubt';
+  // PC 앱 판이 낮아 시작하지 않았다: 폰이 "PC 앱을 업데이트해 주세요"라고 말할 수 있다(아무것도 발급하지 않았다).
+  else if (phase === 'stopped' && r.endCode === 'package.app_old' && !r.result) ev.code = 'app_old';
   // 발급 없이 멈췄다(승인 전 실패·핸드오프 끝·버림). 폰은 "아무것도 발급하지 않았어요"를 확실히 말할 수 있다.
   else if (phase === 'stopped' && (r.redo || r.handoffEnd || r.discarded) && !r.result) ev.code = 'not_issued';
   if (phase === 'approve' && approveCode) ev.code = approveCode;
