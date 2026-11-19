@@ -11,7 +11,7 @@ const DESK = path.resolve(import.meta.dirname, '../apps/desktop');
 const { tokensCss, bundleCss, loadTokens } = await import(`${DESK}/dist/shell-tokens.js`);
 const { MockStore, seedTimeline, QUICK, PROFILES, dayOffset, mockBundle, MOCK_SETTINGS } = await import(`${DESK}/dist/shell-mock.js`);
 const { buildBoard } = await import(`${DESK}/dist/board.js`);
-const { REGATE_NOTE, HANDOFF_HINT, HANDOFF_TEXT, NOTE, HANDOFF_LOGIN, REHEARSAL_NEXT, LOGIN_NOW } = await import(`${DESK}/dist/shell-runs.js`);
+const { REGATE_NOTE, NOTE, HANDOFF_LOGIN, REHEARSAL_NEXT, LOGIN_NOW, STEP_LABELS, STEP_NOW, handoffTurn, REPLACING_NOTE, REPLACED_NOTE, QUEUED_NOTE } = await import(`${DESK}/dist/shell-runs.js`);
 const { OnboardingFlow, initialOnbState } = await import(`${DESK}/dist/onboarding.js`);
 const { MockOnboardingPorts } = await import(`${DESK}/dist/onboarding-mock.js`);
 const { buildCardHtml, barCss, barPalette, summarize, BAR_CSP } = await import(`${DESK}/dist/approval-gate.js`);
@@ -47,10 +47,11 @@ const cps = [
   { id: 'c2', name: 'B상사', bizNo: '1078145678', rep: '박다라', email: 'account@bsangsa.example', item: '유지보수', status: '계속사업자', checkedOn: dayOffset(-3), lastIssuedOn: dayOffset(-1) },
   { id: 'c3', name: 'C테크', bizNo: '1208712345', rep: '최마바', email: 'bill@ctech.example', item: '개발 용역', status: '계속사업자', checkedOn: dayOffset(-15), lastIssuedOn: null },
 ];
-const LABELS = ['홈택스 로그인', '건별발급 화면', '입력', '되읽기', '승인', '전자서명', '발급목록 확인', '메일 전송 확인'];
+// 셸과 같은 단계 이름·지금 문장(shell-runs STEP_LABELS·STEP_NOW)
+const LABELS = STEP_LABELS['H-01'];
 const mkRun = (status, o = {}) => {
   const done = o.done ?? 0;
-  const steps = LABELS.map((label, i) => ({ label, state: i < done ? 'done' : i === done && o.now ? 'now' : 'todo', note: i === done ? o.note : i === 0 ? '가짜 페이지라 로그인을 건너뛰었어요' : undefined }));
+  const steps = LABELS.map((label, i) => ({ label, state: i < done ? 'done' : i === done && o.now ? 'now' : 'todo', note: i === done ? (o.note ?? (o.now ? STEP_NOW['H-01'][i] ?? undefined : undefined)) : i === 0 ? '가짜 페이지라 로그인을 건너뛰었어요' : undefined }));
   if (o.attentionAt != null) steps[o.attentionAt] = { label: LABELS[o.attentionAt], state: 'attention', note: o.note };
   return {
     id: 'run-1', doc: 'H-01', status, createdAt: '10:41', counterparty: { id: 'c1', name: 'A상사', bizNo: '2148651233', first: !!o.confirmed },
@@ -171,7 +172,7 @@ const handlers = {
     const r = await S.onb.answer(p);
     return { onboarding: await S.onb.view(), fill: r.fill ?? null, profiles: PROFILES };
   },
-  'request.send': (p) => (/등본/.test(p.text) ? { kind: 'g24', doc: '주민등록표 등본' } : { kind: 'draft', run: mkRun('draft') }),
+  'request.send': (p) => S.agentReply ? { kind: 'agent', text: S.agentReply, show: [], filtered: null } : (/등본/.test(p.text) ? { kind: 'g24', doc: '주민등록표 등본' } : { kind: 'draft', run: S.sendSeq ? { ...mkRun('draft'), id: `run-${++S.sendSeq}` } : mkRun('draft') }),
   'counterparties.list': () => (EMPTY ? [] : cps),
   'docs.list': () => (EMPTY ? [] : S.withVault ? [vaultDoc, ...store.docs] : [...store.docs]),
   'issued.list': () => [],
@@ -282,7 +283,7 @@ const scenes = {
     await js(win, `(() => { const i = document.querySelector('#composer'); i.value = 'A상사에 330만원 세금계산서 끊고 메일 보내 줘'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
     await sleep(300);
     await shot(win, '04-draft');
-    ev(win, { type: 'run', run: mkRun('preparing', { done: 2, now: true, note: '품목 칸을 넣는 중' }) });
+    ev(win, { type: 'run', run: mkRun('preparing', { done: 2, now: true }) });
     await shot(win, '05-preparing');
     ev(win, { type: 'run', run: mkRun('turn', { done: 0, now: true, note: '카카오뱅크 앱 승인 대기', turn: { text: '카카오뱅크 앱에서 간편인증을 승인해 주세요.', note: '승인하면 홈택스 입력을 이어서 해요.' } }) });
     await shot(win, '06-turn');
@@ -309,7 +310,7 @@ const scenes = {
   async incidents(win) {
     await js(win, `(() => { const i = document.querySelector('#composer'); i.value = 'A상사에 330만원 세금계산서'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
     await sleep(300);
-    ev(win, { type: 'run', run: { ...mkRun('turn', { done: 2, attentionAt: 2, note: '직접 해 주세요' }), handoff: { phase: 'input', afterGate: false }, turn: { text: `${HANDOFF_TEXT} · 이 단계는 직접 해 주세요: 입력`, note: HANDOFF_HINT } } });
+    ev(win, { type: 'run', run: { ...mkRun('turn', { done: 2, attentionAt: 2, note: '직접 해 주세요' }), handoff: { phase: 'input', afterGate: false }, turn: handoffTurn('input') } });
     await shot(win, '30-handoff');
     ev(win, { type: 'run', run: { ...mkRun('waiting', { done: 4, now: true, confirmed: true, note: '아래 [승인하고 발급]을 기다려요' }), regate: { reason: 'date_changed', note: REGATE_NOTE.date_changed } } });
     await shot(win, '31-regate');
@@ -326,6 +327,54 @@ const scenes = {
     await shot(win, '35-rehearsal-handoff');
     ev(win, { type: 'run', run: mkRun('preparing', { done: 0, now: true, note: LOGIN_NOW }) });
     await shot(win, '36-login-now');
+  },
+  // 앱 안 브라우저(실행 중): main이 보내는 browser·screen 이벤트를 흉내 낸다. 홈택스 화면 자리(.run-screen)는 실제로는 main의 보기가 덮는다.
+  async browser(win) {
+    await js(win, `(() => { const i = document.querySelector('#composer'); i.value = 'A상사에 330만원 세금계산서'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
+    await sleep(300);
+    ev(win, { type: 'browser', shown: false, available: true, embedded: true, width: Math.round((W - SHELL.rail) * SHELL.browserShare) });
+    ev(win, { type: 'run', run: mkRun('preparing', { done: 2, now: true }) });
+    ev(win, { type: 'screen', runId: 'run-1', url: 'https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml' });
+    await sleep(200);
+    await js(win, `document.querySelector('[data-run] .sx-card-hd, [data-run]').click()`);
+    await sleep(200);
+    await shot(win, '37-browser-live');
+    ev(win, { type: 'run', run: { ...mkRun('issuing', { done: 6, now: true, confirmed: true }), verifyAttempt: 3 } });
+    await shot(win, '38-browser-checking');
+    ev(win, { type: 'run', run: { ...mkRun('turn', { done: 2, attentionAt: 2, note: '직접 해 주세요' }), handoff: { phase: 'input', afterGate: false }, turn: handoffTurn('input') } });
+    await shot(win, '39-browser-handoff');
+    ev(win, { type: 'browser', shown: false, available: false, embedded: true, width: 0 });
+  },
+  // 정정(대표 실사용 2026-11-19): "일호유통 110원 끊어줘" 준비 중에 "100원이야" → 앞 준비는 접힌 요약, 새 카드가 같은 틀로 바로 준비. 다른 거래처는 기다림.
+  async replace(win) {
+    S.sendSeq = 0;
+    const small = (amt, o) => ({ supply: amt, tax: Math.round(amt / 10), total: amt + Math.round(amt / 10), amount: amt, counterparty: { id: 'c9', name: '일호유통', bizNo: '6495800524', first: false }, item: '예행', email: { value: '', first: false }, ...o });
+    const say = (t) => js(win, `(() => { const i = document.querySelector('#composer'); i.value = ${JSON.stringify(t)}; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
+    await say('일호유통 110원 끊어줘');
+    await sleep(300);
+    ev(win, { type: 'run', run: { ...mkRun('preparing', { done: 0, now: true, note: LOGIN_NOW }), ...small(110), id: 'run-1' } });
+    await shot(win, '40-replace-first');
+    await say('아 100원이야');
+    await sleep(300);
+    ev(win, { type: 'run', run: { ...mkRun('preparing', { done: 1, now: true }), ...small(100), id: 'run-2', notices: [REPLACING_NOTE] } });
+    ev(win, { type: 'run', run: { ...mkRun('stopped', { done: 1 }), ...small(110), id: 'run-1', replaced: true, notices: [REPLACED_NOTE], stoppedNote: REPLACED_NOTE } });
+    await shot(win, '41-replace-after');
+    await say('B상사 55만원도 끊어줘');
+    await sleep(300);
+    ev(win, { type: 'run', run: { ...mkRun('draft'), id: 'run-3', counterparty: { id: 'c2', name: 'B상사', bizNo: '1078145678', first: false }, amount: 550000, supply: 550000, tax: 55000, total: 605000, notices: [QUEUED_NOTE] } });
+    await shot(win, '42-replace-queued');
+    S.sendSeq = 0;
+  },
+  // 대화가 앱 화면을 연다(open_screen, 2026-11-19): "은행 연결해줘" → 답 한 줄 뒤 설정 > 계좌 연결
+  async openBank(win) {
+    S.agentReply = '계좌 연결 화면을 열었어요. 거래 중인 은행을 고르고 로그인하면 통장 내역이 여기로 모여요.';
+    await js(win, `(() => { const i = document.querySelector('#composer'); i.value = '은행 연결해줘'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
+    await sleep(300);
+    await shot(win, '43-open-bank-reply');
+    ev(win, { type: 'open-screen', screen: 'bank' });
+    await sleep(1200);
+    await shot(win, '44-open-bank-screen');
+    S.agentReply = null;
   },
   // EMPTY=1 ONLY=empty: 빈 화면 셋(거래처·문서함·활동 기록)
   async empty(win) {
@@ -584,6 +633,11 @@ Object.assign(scenes, {
     await typeCode(win, '482915');
     await devScroll(win, '[data-pclink-card]');
     await shot(win, '78-pclink-done');
+    // 새 PC가 로그인해 목록에 먼저 오른 채(active) 요청이 열려 있다: 그 줄은 '쓰는 중'이 아니라 '연결하는 중'(끊기 단추 없음)
+    reset([...DEV.normal(), devRow(9, 'desktop', 'windows', '새 노트북', { ago: 0 })], [req('code')]);
+    await devTab(win);
+    await devScroll(win, '[data-device-group=desktop]');
+    await shot(win, '78b-pclink-listed-linking');
     // 3번 틀림, 10분 지남, PC 한도
     reset(DEV.normal(), [req('code', { triesLeft: 1 })]);
     await devTab(win);

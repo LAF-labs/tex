@@ -52,7 +52,8 @@ describe('폰 대화 툴셋 등록(목록 대조)', () => {
 
   it('chat_phone 도구는 chat_agent 표에서 폰에 없는 것을 빼고 폰 화면 도구(open_screen)만 더한 것이다(겹치는 도구는 이름·인자 모양이 PC와 같다)', () => {
     const pc = new Map(CHAT_AGENT_TOOLS.map((t) => [t.name as string, t.parameters]));
-    assert.deepEqual(CHAT_PHONE_TOOLS.map((t) => t.name), [...CHAT_AGENT_TOOLS.map((t) => t.name as string).filter((n) => !(PHONE_OMITTED_TOOLS as readonly string[]).includes(n)), 'open_screen']);
+    // PC에도 open_screen이 있다(화면 목록이 다르다): 폰은 PC 것을 빼고 폰 화면 도구를 끝에 단다
+    assert.deepEqual(CHAT_PHONE_TOOLS.map((t) => t.name), [...CHAT_AGENT_TOOLS.map((t) => t.name as string).filter((n) => !(PHONE_OMITTED_TOOLS as readonly string[]).includes(n) && n !== 'open_screen'), 'open_screen']);
     for (const t of CHAT_PHONE.tools) {
       assertStrict(t.parameters as Strict, t.name);
       if (t.name !== 'open_screen') assert.deepEqual(t.parameters, pc.get(t.name), t.name);

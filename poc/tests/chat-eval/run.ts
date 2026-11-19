@@ -250,6 +250,8 @@ async function runTurns(c: Case, env: ReturnType<typeof seedDb>, origin: string,
     const log: TurnLog = { say: t.say, calls: cur.calls, model: cur.model, trace: sink.trace, ms, result, created, open, checks: [] };
     log.checks = score(t.expect, log, sink.err);
     logs.push(log);
+    // 앱의 0클릭 준비(shell-app autoPrepare): 품목이 있는 새 카드는 바로 준비 중이 되어 열린 카드 목록에서 빠진다.
+    if (c.autoPrepare) for (const d of drafts) if (!before.has(d.runId) && d.status === 'draft' && view(d).itemShown) d.status = 'preparing';
   }
   return logs;
 }
@@ -284,9 +286,10 @@ function score(e: TurnExpect, l: TurnLog, upstreamError = ''): TurnLog['checks']
   }
   const tools = l.calls.map((x) => x.tool);
   // 카드를 만들라는 차례에 조회 요약 문장으로 답하면 틀린 답이다(카드가 생겨도)
-  if (e.created && /건이고 합계는/.test(text)) add('카드 차례에 조회 요약 없음', false, text);
+  if (e.created && /건(?:이고|,) 합계/.test(text)) add('카드 차례에 조회 요약 없음', false, text);
   for (const t of e.tools ?? []) add(`도구 ${t}`, tools.includes(t), tools.join(',') || '없음');
   for (const t of e.noTools ?? []) add(`도구 ${t} 안 부름`, !tools.includes(t));
+  if (e.screen) add(`화면 ${e.screen}`, l.calls.some((x) => x.tool === 'open_screen' && x.args.includes(`"${e.screen}"`)), l.calls.map((x) => `${x.tool} ${x.args}`).join('; ') || '없음');
   if (e.noCreate) add('카드 안 만듦', l.created.length === 0, l.created.map((d) => `${d.name} ${d.amount}`).join(', '));
   if (e.created) {
     const left = [...l.created];

@@ -34,9 +34,12 @@ export const devicesErrText = (code) => ERR[code] ?? (String(code).startsWith('n
 
 const kindName = (d) => (d.role === 'desktop' ? (d.platform === 'macos' ? 'Mac' : d.platform === 'windows' ? 'Windows PC' : 'PC') : d.platform === 'ios' ? 'iPhone' : d.platform === 'android' ? 'Android 폰' : '폰');
 
-/** 상태 한 줄(폰 앱과 같은 말). */
-export function deviceSub(d, now) {
-  if (d.state === 'pending') return '연결하는 중';
+/**
+ * 상태 한 줄(폰 앱과 같은 말). linking: 이 기기에 열린 새 PC 연결 요청이 있다(pclink.list에 같은 deviceId, 끝나지 않은 단계).
+ * 새 PC는 로그인하면 목록에 먼저 오르고(active) 금고 키를 받기 전까지 요청이 열려 있다. 그동안 '쓰는 중'이 아니라 '연결하는 중'이다.
+ */
+export function deviceSub(d, now, linking = false) {
+  if (d.state === 'pending' || linking) return '연결하는 중';
   if (d.state === 'suspended') {
     if (d.deleteAfter === null) return '정지됨';
     const days = Math.ceil((d.deleteAfter - now) / DAY);
@@ -215,8 +218,9 @@ export function createDevices(ctx) {
 
   function deviceRow(d, activePcs, pxPrimary = false) {
     const name = d.name || kindName(d);
-    const sub = deviceSub(d, Date.now());
-    const attrs = { 'data-device': d.deviceId, 'data-device-state': d.state, ...(d.self ? { 'data-device-self': '' } : {}) };
+    const linking = s.reqs.some((x) => x.deviceId === d.deviceId && x.stage !== 'done');
+    const sub = deviceSub(d, Date.now(), linking);
+    const attrs = { 'data-device': d.deviceId, 'data-device-state': linking ? 'linking' : d.state, ...(d.self ? { 'data-device-self': '' } : {}) };
     const key = d.self ? 'self' : d.deviceId;
     if (s.confirm === key) {
       const ask = d.self ? '이 PC 연결을 끊을까요? 로그아웃되고, 다시 쓰려면 다른 PC에서 승인해야 해요.' : `${name} 연결을 끊을까요? 그 기기는 바로 계정을 쓸 수 없어요.`;
@@ -247,7 +251,7 @@ export function createDevices(ctx) {
     let act = null;
     if (d.self) {
       act = activePcs > 1 ? btn('이 PC 연결 끊기', () => set({ confirm: 'self', msg: null }), 'sx-btn-quiet', { 'data-act': 'device-leave-open' }) : null;
-    } else if (d.listed && d.state !== 'pending') {
+    } else if (d.listed && d.state !== 'pending' && !linking) {
       act = btn('연결 끊기', () => set({ confirm: d.deviceId, pxConfirm: null, msg: null }), 'sx-btn-quiet', { 'data-act': 'device-unlink-open' });
     }
     if (px) attrs['data-px'] = px;

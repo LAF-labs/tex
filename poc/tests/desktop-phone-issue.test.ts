@@ -32,7 +32,7 @@ const tmp = async () => {
 const NOW = Date.parse('2026-11-17T01:00:00Z');
 const TODAY = kstToday(NOW);
 const CP: Counterparty = { id: 'cp_12', name: '가나식자재', bizNo: '2110987654', rep: '김가나', email: 'tax@ganafood.example', item: '식자재', status: '정상', checkedOn: '2026-11-01', lastIssuedOn: '2026-10-31' };
-const STEP_LABELS = ['홈택스 로그인', '건별발급 화면', '입력', '되읽기', '승인', '전자서명', '발급목록 확인', '메일 전송 확인'];
+const STEP_LABELS = ['홈택스 로그인', '세금계산서 화면 열기', '내용 넣기', '넣은 내용 확인', '사장님 승인', '인증서로 서명', '발급됐는지 확인', '메일 보낸 것 확인'];
 
 function run(over: Partial<RunView> & { at?: number } = {}): RunView {
   const at = over.at ?? -1;

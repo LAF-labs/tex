@@ -31,7 +31,7 @@ import {
   type ToolCall,
 } from '@sax/model';
 import type { Egress } from '@sax/net';
-import { AGENT_SHOW_MAX, ReplyShapeError, TOOL_NEEDS, braceTokens, checkAgentReply, chatInput, gluedName, parseKrw, registerChatRecords, type ToolNeed } from '@sax/chat-core';
+import { AGENT_SHOW_MAX, OPEN_SCREENS, ReplyShapeError, TOOL_NEEDS, braceTokens, checkAgentReply, chatInput, gluedName, parseKrw, registerChatRecords, type OpenScreen, type ToolNeed } from '@sax/chat-core';
 import { CHAT_MAP_IDLE_MS, ChatTokenMaps, TOKEN_RE, detokenize, type Redactor } from '@sax/redaction';
 import { ChatError, chatSecretShaped, errorOf, type ChatErrorCode } from './chat.ts';
 import { INTENT_TEXT_MAX } from './intent.ts';
@@ -41,35 +41,38 @@ export const CHAT_AGENT_INPUT_MAX_BYTES = 8192;
 /** 대화록에 붙이는 최근 턴 수 */
 export const CHAT_AGENT_TRANSCRIPT_TURNS = 12;
 /** 답 문장을 쓸 수 없을 때(식별자·링크·비밀 유도 말, 모델 거절)의 고정 안내 */
-export const CHAT_AGENT_FALLBACK_TEXT = '세금계산서 카드 만들기와 발급 기록·매출·받을 돈·낼 돈·돈 흐름 확인을 도와드려요. 어떤 일을 할까요?';
+// 모델 답을 쓸 수 없을 때(숫자·안전 검사에 걸림, 거절)의 문장. 할 수 있는 일 목록을 늘어놓지 않는다(대표 2026-11-19 "에이전틱하지 않잖아").
+export const CHAT_AGENT_FALLBACK_TEXT = '네, 말씀해 주세요. 필요한 일을 편하게 말씀해 주시면 바로 해 드릴게요.';
 /**
  * 답 문장에 슬롯·토큰 밖의 숫자가 있을 때(모델이 셈하거나 지어낸 값일 수 있다). 문장은 버리고 같이 보일 표·카드는 그대로 둔다.
  * 다시 묻지 않는 이유: 한 번 더 부르면 3~4초가 늘고 또 틀릴 수 있다. 표·카드의 값은 PC가 낸 것이라 언제나 맞다.
  */
-export const CHAT_AGENT_NUMBER_TEXT = '결과를 화면에 보여 드렸어요. 금액과 날짜는 표와 카드에서 확인해 주세요.';
+export const CHAT_AGENT_NUMBER_TEXT = '결과를 아래에 보여 드렸어요. 금액과 날짜는 표와 카드에 있어요.';
 /**
  * 엔진이 직접 되묻는 고정 문장(되묻기 칸별). 모델이 같은 호출을 되풀이하거나 되묻는 문장에 숫자를 섞었을 때 쓴다.
  * 화면은 이 문장 아래 그 칸의 선택지를 붙인다.
  */
 export const CHAT_AGENT_ASK_TEXT: Record<AgentAsk, string> = {
-  amount: '금액을 알려 주세요. 부가세 포함인지 별도인지도 같이 말씀해 주시면 바로 카드를 만들게요.',
-  item: '품목을 알려 주세요. 예를 들어 디자인 용역처럼 적어 주시면 돼요.',
-  counterparty: '어느 거래처인가요? 장부에 있는 거래처 중에서 골라 주세요.',
-  vat: '부가세 별도인가요, 포함인가요?',
+  amount: '금액을 알려 주세요. 부가세 포함이면 같이 말씀해 주세요.',
+  item: '품목을 알려 주세요. 디자인 용역처럼 적어 주시면 돼요.',
+  counterparty: '어느 거래처예요? 거래처 목록에 있는 이름으로 골라 주세요.',
+  vat: '부가세는 별도예요, 포함이에요?',
   which_card: '어느 카드를 말씀하시는지 골라 주세요.',
-  date: '작성일자를 다시 알려 주세요. 작성일자는 오늘이나 지난 날로만 정할 수 있어요.',
+  date: '작성일자를 다시 알려 주세요. 오늘이나 지난 날로만 정할 수 있어요.',
 };
 /** 엔진이 도구 결과로 턴을 닫을 때의 고정 문장(마지막 결과 status별). 없으면 CHAT_AGENT_NUMBER_TEXT. */
 export const CHAT_AGENT_DONE_TEXT: Partial<Record<ToolStatus, string>> = {
-  card_shown: '세금계산서 확인 카드를 만들었어요. 내용을 확인하시고 [홈택스에서 준비]를 눌러 주세요.',
-  card_updated: '카드를 고쳤어요. 카드에서 바뀐 값을 확인해 주세요.',
-  discarded: '카드를 취소했어요. 아무것도 발급되지 않았어요.',
-  ok: '찾은 기록을 표로 보여 드렸어요.',
-  empty: '찾는 기록이 없어요.',
-  not_set_up: '계좌 연결이 아직이라 확인할 수 없어요. 은행 화면에서 계좌를 먼저 연결해 주세요.',
+  card_shown: '세금계산서 카드를 만들었어요. 진행은 카드에서 보여 드려요.',
+  card_updated: '카드를 고쳤어요. 바뀐 값을 한 번 봐 주세요.',
+  discarded: '카드를 취소했어요. 홈택스에는 아무것도 보내지 않았어요.',
+  ok: '찾은 기록을 아래 표로 보여 드렸어요.',
+  empty: '찾는 기록이 아직 없어요.',
+  not_set_up: '아직 계좌를 연결하지 않아서 볼 수 없어요. 설정 > 계좌 연결에서 먼저 이어 주세요.',
+  // 화면을 연 턴의 답은 모델이 쓴다. 이 문장은 답이 검사에 걸렸을 때만(조회 되풀이·슬롯).
+  opened: '말씀하신 화면을 열었어요.',
 };
 /** 엔진이 조회 되풀이로 턴을 닫을 때의 문장. 슬롯은 main이 결과 값으로 채운다. */
-export const CHAT_AGENT_LOOKUP_TEXT = (ref: string): string => `{${ref}.count}건이고 합계는 {${ref}.sum.total}이에요. 가장 최근은 {${ref}.first.date} {${ref}.first.counterparty} 건이에요.`;
+export const CHAT_AGENT_LOOKUP_TEXT = (ref: string): string => `{${ref}.count}건, 합계 {${ref}.sum.total}이에요. 가장 최근은 {${ref}.first.date} {${ref}.first.counterparty} 건이에요.`;
 /** 돈 흐름 조회 되풀이(값은 main이 채운다). partial이면 확인 못 한 계좌가 있다고 같이 말한다(11 §3.4: 모르는 것을 0으로 세지 않는다). */
 export const CHAT_AGENT_CASH_TEXT = (ref: string, partial: boolean): string =>
   `${partial ? '일부 계좌 거래내역이 모자라 확인 못 한 부분이 있어요. 확인된 것만 보면 ' : ''}들어온 돈 {${ref}.cash.in}, 나간 돈 {${ref}.cash.out}이에요.`;
@@ -100,7 +103,7 @@ const RETRY_CODES: readonly ChatErrorCode[] = ['chat.unavailable', 'chat.budget_
 /** 게이트웨이 respond 스키마의 replay maxItems */
 const REPLAY_MAX = 12;
 
-export const TOOL_STATUSES = ['ok', 'partial', 'empty', 'unknown_counterparty', 'not_set_up', 'card_shown', 'needs_input', 'setup_missing', 'card_updated', 'no_such_draft', 'not_editable', 'discarded'] as const;
+export const TOOL_STATUSES = ['ok', 'partial', 'empty', 'unknown_counterparty', 'not_set_up', 'card_shown', 'needs_input', 'setup_missing', 'card_updated', 'no_such_draft', 'not_editable', 'discarded', 'opened'] as const;
 export type ToolStatus = (typeof TOOL_STATUSES)[number];
 // 대화 경로 가림 규칙·금액 읽기는 @sax/chat-core로 옮겼다(폰과 같은 코드, ADR-047 결정 4). 이름은 여기서 그대로 다시 내보낸다.
 export { draftDate, issueDateRule, lineSupply, parseQuantity, shortDate, type IssueDateRule } from '@sax/chat-core';
@@ -145,7 +148,8 @@ export type DomainCall =
   | { tool: 'cash_flow'; monthOffset: number }
   | ({ tool: 'invoice_draft'; counterpartyId: string; amount: DraftAmount; vat: Vat | null; item: string | null } & DraftExtra)
   | ({ tool: 'draft_edit'; draft: string; amount: DraftAmount; vat: Vat | null; item: string | null } & DraftExtra)
-  | { tool: 'draft_discard'; draft: string };
+  | { tool: 'draft_discard'; draft: string }
+  | { tool: 'open_screen'; screen: OpenScreen };
 
 /** 검사를 마친 답. filtered가 있으면 text는 엔진 고정 문구다. */
 export interface AgentReply {
@@ -240,7 +244,7 @@ const validFrame: ValidateFunction = ajv.compile({
 });
 
 /** 도구마다 결과 ref의 종류(조회 결과 r#, 카드 d#) */
-const REF_KIND: Record<ChatAgentToolName, 'r' | 'd'> = { sales_summary: 'r', invoice_history: 'r', receivables: 'r', payables: 'r', cash_flow: 'r', invoice_draft: 'd', draft_edit: 'd', draft_discard: 'd' };
+const REF_KIND: Record<ChatAgentToolName, 'r' | 'd'> = { sales_summary: 'r', invoice_history: 'r', receivables: 'r', payables: 'r', cash_flow: 'r', invoice_draft: 'd', draft_edit: 'd', draft_discard: 'd', open_screen: 'r', reply: 'r' };
 const engineAnswer = (status: 'unknown_counterparty' | 'no_such_draft'): ToolOutput => ({ ref: null, status, fields: null, needs: null });
 /**
  * 풀리지 않은 거래처 인자가 사장님 이번 문장의 낱말인가: 이번 문장에 있는 토큰이면 그 원값, 토큰 없는 말이면 문장에 글자 그대로 있을 때만.
@@ -421,6 +425,12 @@ export class ChatAgent {
       turn.replay.push(...r.replay);
       if (!r.toolCalls.length) return this.finish(s, this.checkReply(s, turn, r.output));
       const tc = r.toolCalls.map((c) => ({ ...c, arguments: braceTokens(c.arguments) }));
+      // reply 도구: 도구 없이 하는 답(잡담·할 수 없는 일 등). 다른 도구와 같이 왔으면 답만 쓴다(머리말: reply는 혼자 부른다). 모델 답과 같은 검사를 거친다.
+      const said = tc.find((c) => c.name === 'reply');
+      if (said) {
+        const a = said.arguments as Record<string, unknown>;
+        return this.finish(s, this.checkReply(s, turn, { kind: a.kind, text: a.text, show: [], ask: a.kind === 'ask' ? (a.ask ?? null) : null }));
+      }
       // 다음 호출이 툴셋 턴 상한·replay 상한을 넘으면 도구를 실행하지 않는다(결과를 모델에 돌려줄 수 없다).
       const turns = turn.replay.filter((x) => x.kind === 'model_output' && (x.item.item as { type?: string }).type !== 'reasoning').length;
       const key = (c: ToolCall) => `${c.name}:${JSON.stringify(c.arguments)}`;
@@ -492,6 +502,11 @@ export class ChatAgent {
    * 조회 결과가 섞이면 모델이 그 결과로 다음 걸음(같은 금액으로 만들기 등)을 할 수 있어 닫지 않는다.
    */
   private closeOnCards(s: Session, turn: Turn, round: Array<{ o: ToolOutput; call: DomainCall | null; args: Record<string, unknown> }>): AgentReply | null {
+    // 화면을 연 차례(open_screen)는 모델이 같은 호출에 적은 말(say)로 바로 닫는다. 말은 모델 답과 같은 검사를 거친다.
+    if (round.length && round.every((r) => r.o.status === 'opened')) {
+      const say = round.map((r) => r.args.say).find((x): x is string => typeof x === 'string' && x.trim().length > 0);
+      return this.checkReply(s, turn, { kind: 'did', text: say ?? CHAT_AGENT_DONE_TEXT.opened!, show: [], ask: null });
+    }
     if (!round.length || !round.every((r) => CARD_CLOSE.has(r.o.status))) return null;
     const show = [...new Set(turn.made)].filter((r) => r.startsWith('d')).slice(-AGENT_SHOW_MAX);
     const ask = round.flatMap((r) => (r.o.status === 'needs_input' ? (r.o.needs ?? []) : []))[0] ?? null;
@@ -515,7 +530,7 @@ export class ChatAgent {
         const amt = amtOf(a) ?? line2;
         // 부가세를 말하지 않았으면(null) 앱이 별도로 둔다: 문장 끝에 한 번 알린다(vatNote)
         const vat = vatWord(a.vat);
-        return `${who ? `${who} 앞으로 ` : ''}${when ? `작성일 ${when}, ` : ''}${amt ? `${amt}${vat ? ', ' : ' '}` : ''}${vat ? `${vat}로 ` : ''}확인 카드를 만들었어요.`;
+        return `${who ? `${who} 앞으로 ` : ''}${when ? `작성일 ${when}, ` : ''}${amt ? `${amt}${vat ? ', ' : ' '}` : ''}${vat ? `${vat}${vat.endsWith('포함') ? '으로' : '로'} ` : ''}세금계산서 카드를 만들었어요.`;
       }
       if (r.o.status === 'card_updated') {
         const parts = [amtOf(a) ? `금액 ${amtOf(a)}` : line2 ? `금액 ${line2}` : null, vatWord(a.vat), r.call?.tool === 'draft_edit' && r.call.item ? '품목' : null, when ? `작성일 ${when}` : null].filter((x) => x);
@@ -525,13 +540,13 @@ export class ChatAgent {
       return null;
     };
     const lines = round.map(line);
-    const vatNote = round.some((r) => r.o.status === 'card_shown' && !vatWord(r.args.vat)) ? ' 부가세는 별도로 두었어요. 포함이면 말씀해 주세요.' : '';
+    const vatNote = round.some((r) => r.o.status === 'card_shown' && !vatWord(r.args.vat)) ? ' 부가세는 별도로 계산했어요. 포함이면 말씀해 주세요.' : '';
     const cards = round.filter((r) => r.o.status === 'card_shown').length;
-    const tail = round.at(-1)!.o.status === 'card_shown' ? ' 내용을 확인하시고 [홈택스에서 준비]를 눌러 주세요.' : round.at(-1)!.o.status === 'card_updated' ? ' 카드에서 바뀐 값을 확인해 주세요.' : '';
+    const tail = round.at(-1)!.o.status === 'card_shown' ? ' 진행은 카드에서 보여 드려요.' : round.at(-1)!.o.status === 'card_updated' ? ' 바뀐 값을 한 번 봐 주세요.' : '';
     const text =
       round.every((r) => r.o.status === 'discarded') ? CHAT_AGENT_DONE_TEXT.discarded!
       : lines.every((l) => l) && lines.length <= 2 ? `${lines.join(' ')}${vatNote || tail}`
-      : cards > 1 ? `확인 카드 ${cards}장을 만들었어요.${vatNote || tail}`
+      : cards > 1 ? `세금계산서 카드 ${cards}장을 만들었어요.${vatNote || tail}`
       : (CHAT_AGENT_DONE_TEXT[round.at(-1)!.o.status] ?? CHAT_AGENT_NUMBER_TEXT);
     return { kind: 'did', text, show, ask: null, filtered: 'closed' };
   }
@@ -633,6 +648,14 @@ export class ChatAgent {
       draft_discard: () => {
         const d = draft(a.draft);
         return d ? { tool: 'draft_discard', draft: d } : engineAnswer('no_such_draft');
+      },
+      open_screen: () => {
+        if (!(OPEN_SCREENS as readonly unknown[]).includes(a.screen)) throw new ChatError('chat.bad_response');
+        return { tool: 'open_screen', screen: a.screen as OpenScreen };
+      },
+      // reply는 advance가 먼저 받아 턴을 닫는다. 여기 오는 일은 없다(모양이 틀린 응답).
+      reply: () => {
+        throw new ChatError('chat.bad_response');
       },
     };
     if (!Object.hasOwn(parse, tool)) throw new ChatError('chat.bad_response');

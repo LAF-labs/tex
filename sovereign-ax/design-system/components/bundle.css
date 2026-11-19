@@ -74,12 +74,27 @@ body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var
 .sx-card.is-attention { box-shadow: inset 0 0 0 1px var(--attention); }
 .sx-card-hd { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); min-height: 22px; }
 .sx-card-title { font-size: 14px; line-height: 22px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
-/* 실행 중 카드(v2.0 H3): 머리 한 줄 = 제목 · 지금 단계(13 ink-2, 넘치면 말줄임) · 칩 · 조용한 [중지]. 사람 차례·확인 필요만 할 일 한 줄 + 주요 단추 하나. 금액·단계·값은 패널에만. */
-.sx-run-hd { justify-content: flex-start; }
-.sx-run-hd .sx-card-title { flex: 0 1 auto; }
-.sx-card-now { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 20px; color: var(--ink-2); }
+/* 발급 카드(v2.2, 11-19 대표 "더 예쁘고 깔끔하게", "너무 자세할 필요가 없어"):
+   머리(제목 · 칩 · 조용한 [중지]) → 요약 한 줄(합계 600 · 부가세 · 품목, 13 ink-2) → 아래 면(진행 막대 + 지금 하는 일 + n/전체).
+   아래 면은 카드 안 canvas 채움 한 장이라 값과 진행이 붙지 않는다. 알림은 상자 대신 그 면의 조용한 한 줄. */
+.sx-run-hd { justify-content: flex-start; gap: var(--space-2); }
+.sx-run-hd .sx-card-title { flex: 1 1 auto; }
+.sx-run-sum { margin: -4px 0 0; font-size: 13px; line-height: 20px; color: var(--ink-2); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.sx-run-sum b { font-size: 14px; font-weight: 600; color: var(--ink); }
+.sx-run-foot { display: grid; gap: 6px; padding: 10px 12px; border-radius: var(--radius-md); background: var(--canvas); }
+.sx-card-now { margin: 0; display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; font-size: 13px; line-height: 20px; color: var(--ink); overflow-wrap: anywhere; }
+.sx-run-count { margin-left: auto; flex: none; font-size: 12px; line-height: 16px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.sx-run-info { margin: 0; font-size: 12px; line-height: 16px; color: var(--ink-3); }
+.sx-progress { height: 3px; border-radius: 2px; background: var(--surface-sunken); overflow: hidden; }
+.sx-progress > i { display: block; height: 100%; background: var(--ink-2); border-radius: 2px; transition: width var(--motion-slow) var(--ease-out); }
+.sx-card.is-turn .sx-progress > i { background: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .sx-progress > i { transition: none; } }
+/* 바뀐 앞 카드: 카드 면 없이 옅은 한 줄 */
+.sx-card.is-replaced { background: transparent; padding: 0 var(--space-4); }
+.sx-replaced-line { display: flex; gap: var(--space-2); font-size: 12px; line-height: 16px; color: var(--ink-4); }
+.sx-replaced-line > :first-child { color: var(--ink-3); }
 .sx-run-hd .sx-chip { flex: none; }
-.sx-run-hd .sx-btn { flex: none; margin: -5px -6px -5px -4px; }
+.sx-run-hd .sx-btn { flex: none; height: 28px; margin: -3px -8px -3px 0; padding: 0 10px; }
 .sx-todo { display: grid; gap: 2px; min-width: 0; }
 .sx-todo p { margin: 0; font-size: 14px; line-height: 22px; color: var(--ink); overflow-wrap: anywhere; }
 .sx-todo p.sx-meta { font-size: 13px; line-height: 20px; color: var(--ink-2); }
@@ -150,7 +165,7 @@ body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var
 /* ReplyOptions(답 후보, Muse식): 앱 말 아래 전폭 줄. 테두리 없는 은은한 면이다(2026-11-16, 점선은 초안처럼 읽혀 뺐다).
    기본 = surface-tint 면(카드 안에서는 canvas 면), hover = 한 단계 진한 surface-sunken, 고른 답 = accent-soft 면 + 600 + accent 체크,
    고르지 않은 답(굳은 뒤)·고를 수 없는 답 = 흐림, 포커스 = focus-ring 2px. 선택지가 무엇이든 같은 모양이다(확인, 하나 고르기, 되묻기). 폼이나 단추 묶음 대신 쓴다. */
-.sx-replies { display: grid; gap: 6px; margin-top: 10px; max-width: 440px; }
+.sx-replies { display: grid; gap: 6px; margin-top: 10px; }
 .sx-reply { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 40px; padding: 8px 14px; box-sizing: border-box; border: 0; border-radius: 12px; background: var(--surface-tint); color: var(--ink); font: inherit; font-size: 14px; line-height: 20px; text-align: left; cursor: pointer; transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), opacity var(--motion-base) var(--ease-out), transform var(--motion-base) var(--ease-out); }
 .sx-reply:hover:not(:disabled) { background: var(--surface-sunken); }
 .sx-reply:active:not(:disabled) { transform: scale(0.99); }

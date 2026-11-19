@@ -77,7 +77,7 @@ async function flow() {
   let n0 = await runs();
   await send(`${cpName}에 330만원 끊어줘`);
   check('작업 고름 → 확인 카드 하나', await until('draft', async () => (await runs()) === n0 + 1));
-  check('카드에 로컬 파서 인자(거래처·금액)', (await js<string>(`[...document.querySelectorAll('[data-run]')].pop().textContent`)).includes(cpName) && /3,000,000|3,300,000|330만/.test(await js<string>(`[...document.querySelectorAll('[data-run]')].pop().textContent`)));
+  check('카드에 로컬 파서 인자(거래처·금액)', (await js<string>(`[...document.querySelectorAll('[data-run]')].pop().textContent`)).includes(cpName) && /3,000,000|3,300,000|3,630,000|330만/.test(await js<string>(`[...document.querySelectorAll('[data-run]')].pop().textContent`)));
   check('제목줄에 해석 경로 표시(모델 해석/오프라인 해석)가 없다', !(await js<string>(`document.querySelector('#titlebar').textContent`)).includes('해석'));
   check('해석기에는 입력 문장만 간다', seen.at(-1) === `${cpName}에 330만원 끊어줘`, seen);
 
@@ -118,12 +118,12 @@ async function flow() {
 
   // 5b) 대화 응대 오류 코드 → 문구. 연결 안 됨·응답 이상·예산은 [다시 시도], 한도·긴 문장·비밀 값은 문장만
   const ERR: Array<[string, string, boolean]> = [
-    ['chat.unavailable', '지금 AI 모델에 연결하지 못했어요', true],
-    ['chat.bad_response', '지금 AI 모델에 연결하지 못했어요', true],
+    ['chat.unavailable', '지금은 답을 받을 수 없어요', true],
+    ['chat.bad_response', '지금은 답을 받을 수 없어요', true],
     ['chat.budget_exceeded', '잠시 뒤에 다시', true],
-    ['chat.quota_exceeded', '이번 달 대화 한도', false],
-    ['chat.input_too_large', '짧게 나눠서', false],
-    ['chat.secret_rejected', '대화창에 입력하지 마세요', false],
+    ['chat.quota_exceeded', '이번 달 대화를 다 썼어요', false],
+    ['chat.input_too_large', '나눠서 말해 주세요', false],
+    ['chat.secret_rejected', '대화창에 쓰지 말아 주세요', false],
   ];
   for (const [code, words, retry] of ERR) {
     const u0 = await unavailable();
@@ -155,7 +155,7 @@ async function flow() {
     await send(`${cpName}에 220만원 세금계산서`);
     check(`판정 못 함(${code}) → 카드 없이 연결 안 됨 + [다시 시도]`, (await until(`unavailable ${code}`, async () => (await unavailable()) === u0 + 1)) && (await runs()) === n0 && (await js<boolean>(`!![...document.querySelectorAll('[data-intent-unavailable]')].pop().querySelector('[data-act=intent-retry]')`)));
   }
-  check('연결 안 됨 문장(정해진 문구, "데모" 없음)', (await lastApp()).startsWith('지금 AI 모델에 연결하지 못했어요') && !(await lastApp()).includes('데모'), await lastApp());
+  check('연결 안 됨 문장(정해진 문구, "데모" 없음)', (await lastApp()).startsWith('지금은 답을 받을 수 없어요') && !(await lastApp()).includes('데모'), await lastApp());
   // [다시 시도]: 이번에는 모델이 고른다 → 같은 문장으로 카드 하나, 연결 안 됨 말풍선은 걷힌다
   n0 = await runs();
   const u1 = await unavailable();
