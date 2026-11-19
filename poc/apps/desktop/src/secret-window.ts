@@ -4,14 +4,8 @@ import path from 'node:path';
 import { BrowserWindow, type MessagePortMain } from 'electron';
 import { hardenWindow } from './harden.ts';
 import { IPC } from './ipc.ts';
-import { secretTitle, type SecretInputBind } from './secret-labels.ts';
 
 const STATIC = path.join(import.meta.dirname, '../static');
-
-/** 창을 띄우고 페이지가 뜨면 금고 포트를 넘긴다. url은 main이 만든 비밀 창 페이지(sax-shell://shell/secret.html). */
-export function openSecretWindow(parent: BrowserWindow, bind: SecretInputBind, port: MessagePortMain, url: string): BrowserWindow {
-  return openVaultInputWindow(parent, port, url, secretTitle(bind.kind));
-}
 
 /** 금고 직결 입력 창(제목은 main 내장 문구). 계좌 자동조회 인증서 비밀번호 창(bank-auto.ts)도 같은 창을 쓴다. */
 export function openVaultInputWindow(parent: BrowserWindow, port: MessagePortMain, url: string, title: string, height = 300, log?: (name: string, data: Record<string, string | number>) => void): BrowserWindow {

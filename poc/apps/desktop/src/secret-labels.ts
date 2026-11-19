@@ -1,10 +1,9 @@
 // 금고가 부르는 비밀 입력 창(ADR-025 결정 10, N-44·N-11 PoC 부분). 창 개시 판정·라벨·페이지는 main 내장 표에서만 고른다.
 // 렌더러는 창을 열 수 없고 라벨 문자열을 넘기지 못한다. Electron 없이 시험한다(창 생성은 secret-window.ts).
 
-import type { OneShotBind, ProfileScope, SecretKind } from '@sax/vault';
+import type { OneShotBind, SecretKind } from '@sax/vault';
 
 export type { SecretKind } from '@sax/vault';
-export type SecretScope = ProfileScope;
 
 /** 금고 프로토콜의 1회용 결속(OneShotBind, I-1). main → 금고 secretInput 포트에 붙인다. */
 export type SecretInputBind = OneShotBind;

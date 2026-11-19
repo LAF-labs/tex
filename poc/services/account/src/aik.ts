@@ -1,7 +1,7 @@
 // AIK 서명 산출물 검증(D08 §2.1·§4.1, D09 §2.2). 서버는 기기 목록을 보관·중계할 뿐 신뢰 앵커가 아니다(C-01).
 // 그래도 서버는 AIK 서명이 없는 목록·인증서·계정 작업을 받지 않는다(위조 목록 거부, D09 §1.1 계정 행).
 // 서명 입력: utf8(context) ‖ utf8(JCS(object)) (services/shared/CONTRACT.md §1).
-import { fromB64, validator, verifyCtx, S } from '@sax/svc-shared';
+import { fromB64, verifyCtx, S } from '@sax/svc-shared';
 
 export interface DeviceListEntry {
   device_id: string;
@@ -61,8 +61,6 @@ export const deviceListSchema = {
     },
   },
 } as const;
-
-export const parseDeviceList = validator<DeviceList>(deviceListSchema);
 
 export interface DeviceCert {
   device_id: string;
