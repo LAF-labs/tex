@@ -636,7 +636,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     void refresh().catch(() => {});
   });
   runs.on('gate-closed', (runId: string, reqId: string, reason: string) => {
-    phoneGate?.close(runId, reqId);
+    // 엔진이 닫은 게이트(승인은 여기로 오지 않는다): 대기 만료만 expired, 나머지(중지·신호·실행 끝)는 stopped
+    phoneGate?.close(runId, reqId, reason === 'expired' ? 'expired' : 'stopped');
     bar.close(reason, reqId);
   });
 
@@ -874,7 +875,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 보내기 전에 표시한다. 보낸 뒤 엔진이 끝나면 발급됐는지 모르는 쪽(in_doubt)으로 다룬다.
     const sendApproval = async (approval: LocalApproval, note?: string) => {
       // 이 게이트는 여기서 답했다. 뒤에 오는 폰의 답은 받지 않는다(ADR-052 결정 5).
-      phoneGate?.close(runId, req.reqId);
+      phoneGate?.close(runId, req.reqId, 'pc');
       runs.approved(runId, note);
       // 이 건이 "다시 시작할 일"에서 빠진 것이 DB에 닿은 뒤 보낸다(보낸 뒤 꺼지면 다시 시작하지 않고 안내만).
       await saveResume().catch(() => {});
@@ -1528,7 +1529,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   runs.on('update', (run) => {
     phoneIssue?.update(run);
     // 승인 대기를 벗어난 실행의 게이트는 닫는다(끝·중지·다음 단계)
-    if (run.status !== 'waiting') phoneGate?.close(run.id);
+    if (run.status !== 'waiting') phoneGate?.close(run.id, undefined, run.status === 'issuing' || run.status === 'done' ? 'pc' : 'stopped');
   });
   const phones = (): PhoneLink | null => {
     if (phoneLink) return phoneLink;

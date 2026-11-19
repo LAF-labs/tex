@@ -9,7 +9,7 @@ import { ulid } from './ulid.ts';
 
 export type Role = 'desktop' | 'mobile';
 /** 스키마 type enum과 같아야 한다(tests/remote-envelope.test.ts가 대조). */
-export type MessageType = 'hello' | 'pair.ok' | 'kek.grant' | 'devlist.push' | 'mbx.reissue' | 'close' | 'ping' | 'pong' | 'receipt.offer' | 'receipt.chunk' | 'receipt.ack' | 'cash.entry' | 'cash.ack' | 'cmd.run' | 'cmd.abort' | 'cmd.resume' | 'run.event' | 'gate.request' | 'gate.response' | 'consent.request' | 'consent.response' | 'human.request' | 'human.response' | 'file.offer' | 'query.documents' | 'query.result' | 'rotate.static' | 'cmd.ack' | 'phone.copy' | 'share.key' | 'px.enroll' | 'px.ack' | 'gate.refresh';
+export type MessageType = 'hello' | 'pair.ok' | 'kek.grant' | 'devlist.push' | 'mbx.reissue' | 'close' | 'ping' | 'pong' | 'receipt.offer' | 'receipt.chunk' | 'receipt.ack' | 'cash.entry' | 'cash.ack' | 'cmd.run' | 'cmd.abort' | 'cmd.resume' | 'run.event' | 'gate.request' | 'gate.response' | 'consent.request' | 'consent.response' | 'human.request' | 'human.response' | 'file.offer' | 'query.documents' | 'query.result' | 'rotate.static' | 'cmd.ack' | 'phone.copy' | 'share.key' | 'px.enroll' | 'px.ack' | 'gate.refresh' | 'gate.resolved';
 
 export const ALL_MESSAGE_TYPES: readonly string[] = MESSAGE_TYPES as readonly string[];
 const BIN = new Set<string>(BINARY_KEYS as readonly string[]);
@@ -180,6 +180,8 @@ export interface RunEventBody {
   attempt?: number;
   deadline?: number;
   result?: RunResult;
+  /** v1.11: 실행마다 PC가 run.event를 보낼 때마다 1씩 올린다. 폰은 적용한 것보다 크지 않은 rev를 버린다(sync.v1을 알린 폰에만). */
+  rev?: number;
 }
 export interface GateField {
   key: string;
@@ -226,6 +228,13 @@ export interface PxAckBody {
 export interface GateRefreshBody {
   runId: string;
   reqId: string;
+}
+/** v1.11: 폰에 보낸 게이트가 닫혔다. 폰은 그 reqId의 승인 시트를 바로 닫는다(sync.v1을 알린 폰에만). */
+export type GateResolvedBy = 'pc' | 'phone' | 'expired' | 'stopped';
+export interface GateResolvedBody {
+  runId: string;
+  reqId: string;
+  by: GateResolvedBy;
 }
 export interface MoneySide {
   unpaidCount: number;
@@ -299,6 +308,7 @@ export interface Bodies {
   'px.enroll': PxEnrollBody;
   'px.ack': PxAckBody;
   'gate.refresh': GateRefreshBody;
+  'gate.resolved': GateResolvedBody;
 }
 export type KnownType = keyof Bodies;
 export type BodyOf<T extends string> = T extends KnownType ? Bodies[T] : object;

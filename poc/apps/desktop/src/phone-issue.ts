@@ -148,6 +148,8 @@ interface Tracked {
   cmdId: string;
   runId: string;
   last: string;
+  /** v1.11 run.event.rev: 이 실행에 보낸 run.event 수(보낼 때마다 1씩 올린다) */
+  rev: number;
 }
 
 /** PC 하나에 하나. 폰마다 지금 세션(sink)을 붙였다 뗀다. */
@@ -206,6 +208,8 @@ export class PhoneIssue {
     t.last = key;
     const sink = this.#sinks.get(t.pairId);
     if (!sink) return;
+    // 폰은 적용한 것보다 크지 않은 rev를 버린다(늦게 온 옛 이벤트가 새 상태를 덮지 않게). sync.v1을 모르는 폰에는 phone-session이 뺀다.
+    ev.rev = ++t.rev;
     try {
       sink.send('run.event', ev);
     } catch {
@@ -249,7 +253,7 @@ export class PhoneIssue {
     // 시작보다 먼저 디스크에 적는다(같은 cmdId 재전송이 두 번 시작하지 않게)
     await this.#o.cmds.put(body.cmdId, runId, this.#now());
     const draft = this.#o.createDraft(cp, req.supply, req.item.trim());
-    const t: Tracked = { pairId, cmdId: body.cmdId, runId, last: '' };
+    const t: Tracked = { pairId, cmdId: body.cmdId, runId, last: '', rev: 0 };
     this.#runs.set(draft.id, t);
     this.#o.onDraft?.(draft);
     setImmediate(() => {
