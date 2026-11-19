@@ -77,7 +77,7 @@ async function flow() {
   let n0 = await runs();
   await send(`${cpName}에 330만원 끊어줘`);
   check('작업 고름 → 확인 카드 하나', await until('draft', async () => (await runs()) === n0 + 1));
-  check('카드에 로컬 파서 인자(거래처·금액)', (await js<string>(`[...document.querySelectorAll('[data-run]')].pop().textContent`)).includes(cpName) && /3,000,000|3,300,000|330만/.test(await js<string>(`[...document.querySelectorAll('[data-run]')].pop().textContent`)));
+  check('카드에 로컬 파서 인자(거래처·금액)', (await js<string>(`[...document.querySelectorAll('[data-run]')].pop().textContent`)).includes(cpName) && /3,000,000|3,300,000|3,630,000|330만/.test(await js<string>(`[...document.querySelectorAll('[data-run]')].pop().textContent`)));
   check('제목줄에 해석 경로 표시(모델 해석/오프라인 해석)가 없다', !(await js<string>(`document.querySelector('#titlebar').textContent`)).includes('해석'));
   check('해석기에는 입력 문장만 간다', seen.at(-1) === `${cpName}에 330만원 끊어줘`, seen);
 

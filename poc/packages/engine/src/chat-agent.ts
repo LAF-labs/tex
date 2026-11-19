@@ -243,7 +243,7 @@ const validFrame: ValidateFunction = ajv.compile({
 });
 
 /** 도구마다 결과 ref의 종류(조회 결과 r#, 카드 d#) */
-const REF_KIND: Record<ChatAgentToolName, 'r' | 'd'> = { sales_summary: 'r', invoice_history: 'r', receivables: 'r', payables: 'r', cash_flow: 'r', invoice_draft: 'd', draft_edit: 'd', draft_discard: 'd', open_screen: 'r' };
+const REF_KIND: Record<ChatAgentToolName, 'r' | 'd'> = { sales_summary: 'r', invoice_history: 'r', receivables: 'r', payables: 'r', cash_flow: 'r', invoice_draft: 'd', draft_edit: 'd', draft_discard: 'd', open_screen: 'r', reply: 'r' };
 const engineAnswer = (status: 'unknown_counterparty' | 'no_such_draft'): ToolOutput => ({ ref: null, status, fields: null, needs: null });
 /**
  * 풀리지 않은 거래처 인자가 사장님 이번 문장의 낱말인가: 이번 문장에 있는 토큰이면 그 원값, 토큰 없는 말이면 문장에 글자 그대로 있을 때만.
@@ -424,6 +424,12 @@ export class ChatAgent {
       turn.replay.push(...r.replay);
       if (!r.toolCalls.length) return this.finish(s, this.checkReply(s, turn, r.output));
       const tc = r.toolCalls.map((c) => ({ ...c, arguments: braceTokens(c.arguments) }));
+      // reply 도구: 도구 없이 하는 답(잡담·할 수 없는 일 등). 다른 도구와 같이 왔으면 답만 쓴다(머리말: reply는 혼자 부른다). 모델 답과 같은 검사를 거친다.
+      const said = tc.find((c) => c.name === 'reply');
+      if (said) {
+        const a = said.arguments as Record<string, unknown>;
+        return this.finish(s, this.checkReply(s, turn, { kind: a.kind, text: a.text, show: [], ask: null }));
+      }
       // 다음 호출이 툴셋 턴 상한·replay 상한을 넘으면 도구를 실행하지 않는다(결과를 모델에 돌려줄 수 없다).
       const turns = turn.replay.filter((x) => x.kind === 'model_output' && (x.item.item as { type?: string }).type !== 'reasoning').length;
       const key = (c: ToolCall) => `${c.name}:${JSON.stringify(c.arguments)}`;
@@ -495,6 +501,11 @@ export class ChatAgent {
    * 조회 결과가 섞이면 모델이 그 결과로 다음 걸음(같은 금액으로 만들기 등)을 할 수 있어 닫지 않는다.
    */
   private closeOnCards(s: Session, turn: Turn, round: Array<{ o: ToolOutput; call: DomainCall | null; args: Record<string, unknown> }>): AgentReply | null {
+    // 화면을 연 차례(open_screen)는 모델이 같은 호출에 적은 말(say)로 바로 닫는다. 말은 모델 답과 같은 검사를 거친다.
+    if (round.length && round.every((r) => r.o.status === 'opened')) {
+      const say = round.map((r) => r.args.say).find((x): x is string => typeof x === 'string' && x.trim().length > 0);
+      return this.checkReply(s, turn, { kind: 'did', text: say ?? CHAT_AGENT_DONE_TEXT.opened!, show: [], ask: null });
+    }
     if (!round.length || !round.every((r) => CARD_CLOSE.has(r.o.status))) return null;
     const show = [...new Set(turn.made)].filter((r) => r.startsWith('d')).slice(-AGENT_SHOW_MAX);
     const ask = round.flatMap((r) => (r.o.status === 'needs_input' ? (r.o.needs ?? []) : []))[0] ?? null;
@@ -640,6 +651,10 @@ export class ChatAgent {
       open_screen: () => {
         if (!(OPEN_SCREENS as readonly unknown[]).includes(a.screen)) throw new ChatError('chat.bad_response');
         return { tool: 'open_screen', screen: a.screen as OpenScreen };
+      },
+      // reply는 advance가 먼저 받아 턴을 닫는다. 여기 오는 일은 없다(모양이 틀린 응답).
+      reply: () => {
+        throw new ChatError('chat.bad_response');
       },
     };
     if (!Object.hasOwn(parse, tool)) throw new ChatError('chat.bad_response');

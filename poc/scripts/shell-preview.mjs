@@ -159,7 +159,7 @@ const handlers = {
     const r = await S.onb.answer(p);
     return { onboarding: await S.onb.view(), fill: r.fill ?? null, profiles: PROFILES };
   },
-  'request.send': (p) => (/등본/.test(p.text) ? { kind: 'g24', doc: '주민등록표 등본' } : { kind: 'draft', run: S.sendSeq ? { ...mkRun('draft'), id: `run-${++S.sendSeq}` } : mkRun('draft') }),
+  'request.send': (p) => S.agentReply ? { kind: 'agent', text: S.agentReply, show: [], filtered: null } : (/등본/.test(p.text) ? { kind: 'g24', doc: '주민등록표 등본' } : { kind: 'draft', run: S.sendSeq ? { ...mkRun('draft'), id: `run-${++S.sendSeq}` } : mkRun('draft') }),
   'counterparties.list': () => (EMPTY ? [] : cps),
   'docs.list': () => (EMPTY ? [] : S.withVault ? [vaultDoc, ...store.docs] : [...store.docs]),
   'issued.list': () => [],
@@ -351,6 +351,17 @@ const scenes = {
     ev(win, { type: 'run', run: { ...mkRun('draft'), id: 'run-3', counterparty: { id: 'c2', name: 'B상사', bizNo: '1078145678', first: false }, amount: 550000, supply: 550000, tax: 55000, total: 605000, notices: [QUEUED_NOTE] } });
     await shot(win, '42-replace-queued');
     S.sendSeq = 0;
+  },
+  // 대화가 앱 화면을 연다(open_screen, 2026-11-19): "은행 연결해줘" → 답 한 줄 뒤 설정 > 계좌 연결
+  async openBank(win) {
+    S.agentReply = '계좌 연결 화면을 열었어요. 거래 중인 은행을 고르고 로그인하면 통장 내역이 여기로 모여요.';
+    await js(win, `(() => { const i = document.querySelector('#composer'); i.value = '은행 연결해줘'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
+    await sleep(300);
+    await shot(win, '43-open-bank-reply');
+    ev(win, { type: 'open-screen', screen: 'bank' });
+    await sleep(1200);
+    await shot(win, '44-open-bank-screen');
+    S.agentReply = null;
   },
   // EMPTY=1 ONLY=empty: 빈 화면 셋(거래처·문서함·활동 기록)
   async empty(win) {
@@ -671,7 +682,7 @@ Object.assign(scenes, {
   },
 });
 
-const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'browser', 'replace', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'newPc', ...(EMPTY ? ['empty'] : [])];
+const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'browser', 'replace', 'openBank', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'newPc', ...(EMPTY ? ['empty'] : [])];
 const agreed = { version: 'pv', choice: 'agreed', at: '' };
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {

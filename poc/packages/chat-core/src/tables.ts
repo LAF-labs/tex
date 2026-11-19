@@ -35,7 +35,11 @@ export const CHAT_AGENT_TOOLS = [
   { name: 'invoice_draft', parameters: obj({ counterparty: { type: 'string' }, amount: NULLABLE_STRING, vat: VAT, item: NULLABLE_STRING, ...DRAFT_EXTRA }) },
   { name: 'draft_edit', parameters: obj({ draft: { type: 'string' }, amount: NULLABLE_STRING, vat: VAT, item: NULLABLE_STRING, ...DRAFT_EXTRA }) },
   { name: 'draft_discard', parameters: obj({ draft: { type: 'string' } }) },
-  { name: 'open_screen', parameters: obj({ screen: { type: 'string', enum: OPEN_SCREENS } }) },
+  // say: 화면을 열며 사장님께 할 한두 문장. 엔진이 답 검사(checkAgentReply)를 거쳐 그대로 답으로 닫는다(두 번째 모델 호출 없음, 2026-11-19 DeepSeek가 opened 뒤 같은 호출을 되풀이해 턴 상한에 걸림).
+  { name: 'open_screen', parameters: obj({ screen: { type: 'string', enum: OPEN_SCREENS }, say: { type: 'string' } }) },
+  // 도구 없이 답할 때(잡담·인사·고맙다는 말·할 수 없는 일·세무 판단). DeepSeek는 도구가 있으면 늘 도구를 부른다(chat-eval 2026-11-19: 점심·날씨에
+  // open_screen·sales_summary를 부름). 답도 도구 하나로 쥐여 주면 엉뚱한 도구로 말하지 않는다. 엔진이 답 검사를 거쳐 그대로 닫는다. PC만(폰은 PHONE_OMITTED_TOOLS).
+  { name: 'reply', parameters: obj({ kind: { type: 'string', enum: ['answer', 'smalltalk', 'cannot', 'tax_advice'] }, text: { type: 'string' } }) },
 ] as const;
 export type ChatAgentToolName = (typeof CHAT_AGENT_TOOLS)[number]['name'];
 
@@ -88,7 +92,7 @@ export type Vat = 'separate' | 'included';
 // ── 폰 대화(chat_phone, ADR-047 결정 3) ──
 
 /** 폰에 없는 도구(장부 전체·통장 거래내역이 있어야 답하는 조회. 낼 돈·돈 흐름은 폰 사본에 아직 없다). 이런 요청은 defer로 답하고 PC가 켜지면 PC가 이어받는다. */
-export const PHONE_OMITTED_TOOLS = ['sales_summary', 'payables', 'cash_flow', 'open_screen'] as const;
+export const PHONE_OMITTED_TOOLS = ['sales_summary', 'payables', 'cash_flow', 'open_screen', 'reply'] as const;
 /** 폰 대화 도구 표: chat_agent 표에서 폰에 없는 것만 뺀다(이름·인자 모양은 PC와 같다). */
 export const CHAT_PHONE_TOOLS = CHAT_AGENT_TOOLS.filter((t) => !(PHONE_OMITTED_TOOLS as readonly string[]).includes(t.name)) as ReadonlyArray<Exclude<(typeof CHAT_AGENT_TOOLS)[number], { name: (typeof PHONE_OMITTED_TOOLS)[number] }>>;
 export type ChatPhoneToolName = Exclude<ChatAgentToolName, (typeof PHONE_OMITTED_TOOLS)[number]>;
