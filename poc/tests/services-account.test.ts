@@ -1127,8 +1127,8 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     // 정지된 폰은 자리를 막지 않는다(목록에 보이지 않고 끊을 수도 없다, 2026-11-19). 되살릴 때 자리를 다시 본다
     assert.equal((await enroll(device('mobile', 0))).status, 201);
     assert.equal((await enroll(device('mobile', 0))).status, 201);
-    // 30일 안 추가 5회째까지 썼으니 기기 수(2)가 상한 아래여도 막힌다
-    assert.equal((await enroll(device('mobile', 0))).json.error, 'account.device_churn_limit');
+    // 폰은 30일 추가 횟수를 세지 않는다(2026-11-19 대표: "30일 5번 제한 삭제"): 6번째 추가도 자리만 있으면 된다
+    assert.equal((await enroll(device('mobile', 0))).status, 201);
     assert.equal((await enroll(device('mobile', 0), 'windows')).json.error, 'request.param_rejected');
   });
 });

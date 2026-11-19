@@ -65,7 +65,6 @@ export const DEVICE = {
   churnWindowDays: 30,
   /** 한도 3 + 교체 2(ADR-048 결정 1) */
   churnDesktop: 5,
-  churnMobile: 5,
   /** 페어링되지 않은 등록 신청은 7일 뒤 지운다 */
   pendingTtlDays: 7,
   /** 기기 인증서 수명(D08 §4.1 90일) + 하루 여유 */

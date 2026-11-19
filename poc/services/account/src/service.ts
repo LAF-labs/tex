@@ -1139,9 +1139,11 @@ export class AccountService {
   // ---------- 기기: 첫 데스크톱·등록 신청·AIK 서명 기기 목록·긴급 정지·삭제 유예 ----------
 
   private async churnOk(q: Sql, accountId: string, role: 'desktop' | 'mobile'): Promise<boolean> {
+    // 폰은 30일 추가 횟수를 세지 않는다(2026-11-19 대표: "30일 5번 제한 삭제"). 폰 3대 한도만 지킨다. PC는 그대로 5회
+    if (role === 'mobile') return true;
     const since = kstDay(this.now() - DEVICE.churnWindowDays * MS.D);
     const r = await q.one<{ n: number }>("SELECT COUNT(*) AS n FROM device_events WHERE account_id = $1 AND role = $2 AND kind = 'add' AND day >= $3", [accountId, role, since]);
-    return Number(r?.n ?? 0) < (role === 'desktop' ? DEVICE.churnDesktop : DEVICE.churnMobile);
+    return Number(r?.n ?? 0) < DEVICE.churnDesktop;
   }
 
   private async countOk(q: Sql, accountId: string, role: 'desktop' | 'mobile', extra = 1): Promise<boolean> {
