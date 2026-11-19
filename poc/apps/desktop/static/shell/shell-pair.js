@@ -84,7 +84,7 @@ export function pairSection(v, act, busy = false, now = Date.now(), inModal = fa
   if (v.step === 'paired')
     return panel(
       {},
-      h('div', { class: 'pair-head' }, mark('done'), h('div', { class: 'pair-head-t' }, h('p', { class: 'pair-title', 'data-pair-done': '' }, '연결됐어요'), h('p', { class: 'sx-meta' }, h('span', { 'data-pair-phone': '' }, v.phoneName || '폰'), ' · 폰에서 계정 이메일을 확인하고 저장하면 끝나요.'))),
+      h('div', { class: 'pair-head' }, mark('done'), h('div', { class: 'pair-head-t' }, h('p', { class: 'pair-title', 'data-pair-done': '' }, '연결됐어요'), h('p', { class: 'sx-meta' }, h('span', { 'data-pair-phone': '' }, v.phoneName || '폰'), h('br'), '폰에서 계정 이메일을 확인하고 저장하면 끝나요.'))),
       h('div', { class: 'sx-actions' }, cancel('닫기')),
     );
 
@@ -221,7 +221,7 @@ export function pairModal(v, act, busy = false, now = Date.now(), shake = false)
       ),
     ];
   } else if (v.step === 'paired') {
-    body = [head('done', '연결됐어요', phone(), ' · 폰에서 계정 이메일을 확인하고 저장하면 끝나요.'), h('div', { class: 'modal-acts' }, btn('닫기', act.cancel, 'sx-btn-primary sx-btn-lg', { 'data-act': 'pair-close' }))];
+    body = [head('done', '연결됐어요', phone(), h('br'), '폰에서 계정 이메일을 확인하고 저장하면 끝나요.'), h('div', { class: 'modal-acts' }, btn('닫기', act.cancel, 'sx-btn-primary sx-btn-lg', { 'data-act': 'pair-close' }))];
   } else {
     const expired = v.error === 'pair.expired';
     body = [
