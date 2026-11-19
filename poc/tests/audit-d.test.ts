@@ -431,7 +431,9 @@ describe('audit-d: D13 셸 문구·이벤트 연결', () => {
     assert.ok(r.notices![0]!.length <= '홈택스 안내: “”'.length + 200);
     // 렌더러는 notices를 텍스트 노드로만 넣는다: 주의 면 하나(noteGroup)에 모으고, noteGroup은 줄마다 h('p', 속성, 글)이다(h는 문자열을 텍스트 노드로 붙인다). innerHTML은 쓰지 않는다.
     const views = fs.readFileSync(path.join(root, 'apps/desktop/static/shell/shell-views.js'), 'utf8');
-    assert.match(views, /if \(run\.notices\?\.length\) card\.append\(noteGroup\(run\.notices\)\);/);
+    // 주의 문구는 noteGroup 한 면, 정정·대기 알림(INFO_NOTICE)은 h('p', …, t) 한 줄. 둘 다 텍스트 노드다.
+    assert.match(views, /if \(warnNotices\.length\) card\.append\(noteGroup\(warnNotices\)\);/);
+    assert.match(views, /h\('p', \{ class: 'sx-run-info', 'data-run-info': '' \}, t\)/);
     const group = views.slice(views.indexOf('export function noteGroup('), views.indexOf('\n}\n', views.indexOf('export function noteGroup(')));
     assert.match(group, /\.\.\.list\.map\(\(\[t, a\]\) => h\('p', a, t\)\)/);
     assert.doesNotMatch(group, /innerHTML|insertAdjacentHTML|outerHTML/);
