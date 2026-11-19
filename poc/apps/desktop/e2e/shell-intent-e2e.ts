@@ -121,9 +121,9 @@ async function flow() {
     ['chat.unavailable', '지금은 답을 받을 수 없어요', true],
     ['chat.bad_response', '지금은 답을 받을 수 없어요', true],
     ['chat.budget_exceeded', '잠시 뒤에 다시', true],
-    ['chat.quota_exceeded', '이번 달 대화 한도', false],
-    ['chat.input_too_large', '짧게 나눠서', false],
-    ['chat.secret_rejected', '대화창에 입력하지 마세요', false],
+    ['chat.quota_exceeded', '이번 달 대화를 다 썼어요', false],
+    ['chat.input_too_large', '나눠서 말해 주세요', false],
+    ['chat.secret_rejected', '대화창에 쓰지 말아 주세요', false],
   ];
   for (const [code, words, retry] of ERR) {
     const u0 = await unavailable();

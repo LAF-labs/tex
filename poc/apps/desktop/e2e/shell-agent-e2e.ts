@@ -154,7 +154,7 @@ async function flow() {
   await turn('지난주 발급 보여줘', () => new Error('chat.unavailable'));
   check('연결 안 됨 → [다시 시도]', (await js<number>(`document.querySelectorAll('[data-act="intent-retry"]:not([disabled])').length`)) === 1);
   const failText = await js<string>(`[...document.querySelectorAll('[data-intent-unavailable] p')].pop().textContent`);
-  check('실패 문구는 원인을 단정하지 않는다(U8-5)', failText === '지금 답을 받지 못했어요. 잠시 뒤 다시 시도해 주세요.' && !/인터넷|연결/.test(failText), failText);
+  check('실패 문구는 원인을 단정하지 않는다(U8-5)', failText === '답을 받지 못했어요. 잠시 뒤 [다시 시도]를 눌러 주세요.' && !/인터넷|연결/.test(failText), failText);
   await turn('고마워', () => reply({ kind: 'answer', text: '천만에요.' }));
   check('새 문장 뒤 앞 [다시 시도]는 꺼진다', (await js<number>(`document.querySelectorAll('[data-act="intent-retry"]:not([disabled])').length`)) === 0);
 
