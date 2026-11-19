@@ -851,7 +851,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   // 계좌 자동조회 인증서 비밀번호 창(금고 codef.seal이 부른다). 하나만. 값 없이 닫히면 금고에 알려 기다림을 끝낸다.
   let codefWin: { win: BrowserWindow; req: CodefNeeded } | null = null;
-  codefPage = () => (codefWin ? codefPageHtml(codefWin.req, { profileName: profiles()[codefWin.req.scope].name, certLabel: bankAuto.chosenLabel() }) : null);
+  codefPage = () => {
+    // 기다리는 요청이 없을 때 창이 이 페이지를 부르면 빈 창이 된다: 남긴다
+    if (!codefWin) log.event('main.secret_window_blank', { step: 'no_request' });
+    return codefWin ? codefPageHtml(codefWin.req, { profileName: profiles()[codefWin.req.scope].name, certLabel: bankAuto.chosenLabel(), bankName: bankAuto.chosenBank() }) : null;
+  };
   const openCodef = (req: CodefNeeded): void => {
     if (mainClosing || win.isDestroyed() || codefWin) {
       void host.control('codef.windowClosed', { reqId: req.reqId }).catch(() => {});
@@ -860,7 +864,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     let port: ReturnType<typeof host.secretInputPort> | null = null;
     try {
       port = host.secretInputPort(req);
-      const w = openVaultInputWindow(win, port, `${SHELL_SCHEME}://shell/codef-secret.html`, CODEF_WINDOW_TITLE, 340);
+      const w = openVaultInputWindow(win, port, `${SHELL_SCHEME}://shell/codef-secret.html`, CODEF_WINDOW_TITLE, 340, (n, d) => log.event(n, d));
       codefWin = { win: w, req };
       w.on('closed', () => {
         if (codefWin?.win === w) codefWin = null;
@@ -2095,6 +2099,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'bankAuto.choose': (p) => {
       needGesture(3_000);
       return bankAutoH['bankAuto.choose'](p);
+    },
+    'bankAuto.sms': (p) => {
+      needGesture(3_000);
+      return bankAutoH['bankAuto.sms'](p);
     },
     'bankAuto.refresh': async () => {
       needGesture(3_000);

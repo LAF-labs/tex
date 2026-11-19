@@ -25,7 +25,7 @@ interface Call {
 /** 모의 CODEF: 계정 등록·삭제·보유계좌·거래내역. scenario로 오류 갈래를 고른다 */
 class MockCodef {
   calls: Call[] = [];
-  scenario: { createCode?: string; createAsErrorList?: string; txnCode?: string; tokenExpiredOnce?: boolean; deleteFails?: boolean } = {};
+  scenario: { createCode?: string; createAsErrorList?: string; createByType?: Partial<Record<'B' | 'P', string>>; needWithdraw?: string; needWithdrawPass?: boolean; smsCode?: string; txnCode?: string; tokenExpiredOnce?: boolean; deleteFails?: boolean } = {};
   live = new Set<string>();
   private n = 0;
   txns: Array<Record<string, string>> = [
@@ -42,6 +42,18 @@ class MockCodef {
     }
     if (path === '/v1/account/create') {
       if (this.scenario.createCode) return err(this.scenario.createCode);
+      const entry = (body.accountList as Array<Record<string, unknown>>)?.[0] ?? {};
+      const t = String(entry.clientType) as 'B' | 'P';
+      // 우리은행 개인 뱅킹처럼 출금계좌번호를 요구한다(실기기 2026-11-19: CF-12401, 안내문에 commWithdrawAccountNo)
+      if (t === 'P' && this.scenario.needWithdraw && entry.withdrawAccountNo !== this.scenario.needWithdraw) {
+        return { result: { code: 'CF-12401', message: '로그인 파라미터가 누락되었습니다.', extraMessage: 'commWithdrawAccountNo' }, data: {} };
+      }
+      // 그다음 출금계좌 비밀번호(실기기 03:45: reqWithdrawAccountPass)
+      if (t === 'P' && this.scenario.needWithdrawPass && typeof entry.withdrawAccountPassword !== 'string') {
+        return { result: { code: 'CF-12401', message: '로그인 파라미터가 누락되었습니다.', extraMessage: 'reqWithdrawAccountPass' }, data: {} };
+      }
+      const byType = this.scenario.createByType?.[t];
+      if (byType) return ok({ connectedId: '', successList: [], errorList: [{ code: byType, message: 'x', organization: '0020' }] });
       if (this.scenario.createAsErrorList) return ok({ connectedId: '', successList: [], errorList: [{ code: this.scenario.createAsErrorList, message: 'x', organization: '0020' }] });
       const id = `cid${String(++this.n).padStart(10, '0')}`;
       this.live.add(id);
@@ -55,6 +67,10 @@ class MockCodef {
     }
     if (!this.live.has(String(body.connectedId))) return err('CF-04019');
     if (path.endsWith('/account-list')) {
+      // 은행이 SMS 추가 인증을 요구한다(CODEF 개인 보유계좌 추가인증 출력부). 2차 요청의 번호가 맞아야 계좌를 준다
+      if (this.scenario.smsCode && !(body.is2Way === true && body.smsAuthNo === this.scenario.smsCode && (body.twoWayInfo as { jti?: string })?.jti === 'jti0000000001')) {
+        return { result: { code: 'CF-03002', message: '추가 인증 필요' }, data: { continue2Way: true, method: 'smsAuthNo', jobIndex: 0, threadIndex: 0, jti: 'jti0000000001', twoWayTimestamp: 1763500000000, extraInfo: { reqSMSAuthNo: '' } } };
+      }
       return ok({ resDepositTrust: [
         { resAccount: FAKE_ACCOUNT, resAccountDisplay: '1002-123-456789', resAccountName: '기업자유예금', resAccountNickName: '', resAccountBalance: '5067000', resAccountDeposit: '11' },
         { resAccount: '1002999888777', resAccountDisplay: '1002-999-888777', resAccountName: '정기예금', resAccountBalance: '1000000', resAccountDeposit: '12' },
@@ -195,7 +211,7 @@ afterEach(() => {
   }
 });
 
-const paths = () => mock.calls.map((x) => x.path.replace('/v1/kr/bank/b/account/', ''));
+const paths = () => mock.calls.map((x) => x.path.replace(/^\/v1\/kr\/bank\/[bp]\/account\//, ''));
 
 describe('CODEF 원천: 연결 → 계좌 고르기 → 받을 돈', () => {
   it('인증서 하나·비밀번호 한 번으로 보유계좌를 보이고, 고르면 받을 돈 계좌로 잇고 같은 connectedId로 첫 조회 → 넣기 → 맞추기 → 삭제', async () => {
@@ -372,6 +388,8 @@ describe('CODEF 원천: 오류 갈래(사람 말 코드)', () => {
     ['CF-12810', 'cert_kind', 'createCode'],
     ['CF-03002', 'two_way_required', 'createCode'],
     ['CF-12831', 'identity_required', 'createCode'],
+    ['CF-12811', 'banking_kind', 'createCode'],
+    ['CF-12812', 'not_enrolled', 'createCode'],
     ['CF-12100', 'bank_error', 'createCode'],
     ['CF-55555', 'rejected', 'createCode'],
   ];
@@ -380,7 +398,8 @@ describe('CODEF 원천: 오류 갈래(사람 말 코드)', () => {
       const { link, events } = await setup();
       mock.scenario[how] = cf;
       await assert.rejects(link.connect({ certId: CERT }), (e: unknown) => e instanceof CodefError && e.code === code && e.cf === cf);
-      assert.deepEqual(events.at(-1), { phase: 'error', code, cf });
+      const { hint: _h, ...last } = events.at(-1)!;
+      assert.deepEqual(last, { phase: 'error', code, cf });
       assert.equal(mock.live.size, 0);
     });
   }
@@ -535,5 +554,154 @@ describe('Egress.toCodef: 고정 목적지·경로·헤더', () => {
 
   it('codefToken 게이트웨이 호출은 빈 본문만', async () => {
     await assert.rejects(egress().toGateway({ surface: 'codefToken', body: { x: 1 } as never }), (x: unknown) => (x as EgressError).code === 'path_not_allowed');
+  });
+});
+
+describe('CODEF: 기업·개인 뱅킹을 사람이 고르지 않는다(대표 2026-11-19)', () => {
+  const creates = () => mock.calls.filter((c) => c.path === '/v1/account/create').map((c) => String((c.body.accountList as Array<Record<string, unknown>>)[0]!.clientType));
+  it('개인 뱅킹이 안 되면 같은 비밀번호로 기업 뱅킹을 해 보고 되는 쪽 계좌를 보여 준다(금고 창은 한 번)', async () => {
+    const { link, seal, events } = await setup();
+    mock.scenario.createByType = { P: 'CF-12805' };
+    const r = await link.connect({ certId: CERT });
+    assert.deepEqual(creates(), ['P', 'B']);
+    assert.equal(r.accounts.length, 2);
+    assert.equal(seal.asks, 1);
+    assert.ok(events.some((e) => e.phase === 'next_banking' && e.clientType === 'P' && e.cf === 'CF-12805'), '넘어간 뱅킹의 거절도 남는다');
+    assert.ok(mock.calls.some((c) => c.path === '/v1/kr/bank/b/account/account-list'));
+  });
+  it('개인 뱅킹이 되면 기업 뱅킹은 부르지 않는다(기업 뱅킹이 본인인증을 요구해도 사장님은 모른다)', async () => {
+    const { link } = await setup();
+    mock.scenario.createByType = { B: 'CF-12831' };
+    const r = await link.connect({ certId: CERT });
+    assert.deepEqual(creates(), ['P']);
+    assert.equal(r.accounts.length, 2);
+  });
+  it('둘 다 안 되면 사람이 할 일이 분명한 쪽(본인인증)을 그 뱅킹과 함께 알린다', async () => {
+    const { link } = await setup();
+    mock.scenario.createByType = { P: 'CF-12401', B: 'CF-12831' };
+    await assert.rejects(link.connect({ certId: CERT }), (e: unknown) => e instanceof CodefError && e.code === 'identity_required' && e.clientType === 'B');
+    assert.deepEqual(creates(), ['P', 'B']);
+  });
+  it('비밀번호가 틀리면 다른 뱅킹을 해 보지 않는다(인증서 잠김 방지)', async () => {
+    const { link } = await setup();
+    mock.scenario.createByType = { P: 'CF-12801' };
+    await assert.rejects(link.connect({ certId: CERT }), (e: unknown) => e instanceof CodefError && e.code === 'password_wrong');
+    assert.deepEqual(creates(), ['P']);
+  });
+  it('화면이 하나를 정해 보내면 그것만 한다', async () => {
+    const { link } = await setup();
+    await link.connect({ certId: CERT, clientType: 'P' });
+    assert.deepEqual(creates(), ['P']);
+  });
+});
+
+describe('CODEF: 은행 SMS 추가 인증을 카드 안 칸 하나로(2-way)', () => {
+  it('보유계좌가 SMS를 요구하면 sms 단계로 멈추고, 번호가 맞으면 계좌를 보여 준다. 번호는 어디에도 남지 않는다', async () => {
+    const { link, store, events } = await setup();
+    mock.scenario.smsCode = '482913';
+    const r = await link.connect({ certId: CERT });
+    assert.equal(r.step, 'sms');
+    assert.equal(r.accounts.length, 0);
+    assert.equal(mock.live.size, 1, '번호를 기다리는 동안 connectedId를 붙잡아 둔다');
+    // 틀린 번호: 은행이 다시 요구한다 → 같은 sms 단계
+    const again = await link.sms({ sessionId: r.sessionId, code: '000000' });
+    assert.equal(again.step, 'sms');
+    const ok = await link.sms({ sessionId: again.sessionId, code: '482 913' });
+    assert.equal(ok.step, undefined);
+    assert.equal(ok.accounts.length, 2);
+    const last = mock.calls.filter((c) => c.path.endsWith('/account-list')).at(-1)!;
+    assert.equal(last.body.is2Way, true);
+    assert.deepEqual(last.body.twoWayInfo, { jobIndex: 0, threadIndex: 0, jti: 'jti0000000001', twoWayTimestamp: 1763500000000 });
+    assert.ok(events.some((e) => e.phase === 'sms'));
+    assert.doesNotMatch(JSON.stringify({ store: store.get(), events, status: link.status() }), /482913|482 913/);
+  });
+  it('세션이 다르거나 번호 모양이 아니면 받지 않고, 세 번 틀리면 붙잡은 connectedId를 지운다', async () => {
+    const { link } = await setup();
+    mock.scenario.smsCode = '482913';
+    let r = await link.connect({ certId: CERT, clientType: 'P' });
+    await assert.rejects(link.sms({ sessionId: 'nope', code: '482913' }), (e: unknown) => e instanceof CodefError && e.code === 'session_lost');
+    await assert.rejects(link.sms({ sessionId: r.sessionId, code: 'abc' }), (e: unknown) => e instanceof CodefError && e.code === 'sms_wrong');
+    for (let i = 0; i < 3; i++) r = await link.sms({ sessionId: r.sessionId, code: '111111' });
+    await assert.rejects(link.sms({ sessionId: r.sessionId, code: '111111' }), (e: unknown) => e instanceof CodefError && e.code === 'sms_wrong');
+    assert.equal(mock.live.size, 0);
+  });
+});
+
+describe('CODEF: 뱅킹 순서는 고객 데이터로(대표 2026-11-19 "모든 고객을 상정해야지")', async () => {
+  const { bankingOrder } = await import('../packages/engine/src/codef/link.ts');
+  it('법인 사업장은 기업 뱅킹만, 개인사업자는 인증서 종류로 순서를 정한다', () => {
+    assert.deepEqual(bankingOrder({ corporate: true, prefer: 'P' }), ['B']);
+    assert.deepEqual(bankingOrder({ corporate: false, prefer: 'B' }), ['B', 'P']);
+    assert.deepEqual(bankingOrder({ corporate: false, prefer: 'P' }), ['P', 'B']);
+    assert.deepEqual(bankingOrder({ corporate: false }), ['P', 'B'], '모르면 개인 먼저(1인 사업자는 개인 뱅킹으로 사업자 계좌를 본다)');
+    assert.deepEqual(bankingOrder({ explicit: 'B', corporate: false, prefer: 'P' }), ['B']);
+  });
+  it('시작할 때 순서를 로그 이벤트로 남긴다', async () => {
+    const { link, events } = await setup();
+    await link.connect({ certId: CERT, prefer: 'B' });
+    assert.ok(events.some((e) => e.phase === 'order' && e.order === 'BP'));
+  });
+});
+
+describe('CODEF: 은행이 출금계좌번호를 요구하면(우리은행 개인 뱅킹 CF-12401 commWithdrawAccountNo)', () => {
+  const creates = () => mock.calls.filter((c) => c.path === '/v1/account/create').map((c) => (c.body.accountList as Array<Record<string, unknown>>)[0]!);
+  it('모르면 계좌번호 한 칸을 묻는다(기업 뱅킹 본인인증보다 먼저)', async () => {
+    const { link } = await setup();
+    mock.scenario.needWithdraw = FAKE_ACCOUNT;
+    mock.scenario.createByType = { B: 'CF-12831' };
+    await assert.rejects(link.connect({ certId: CERT }), (e: unknown) => e instanceof CodefError && e.code === 'withdraw_account_required' && e.clientType === 'P');
+  });
+  it('사람이 넣은 계좌번호로 같은 비밀번호로 이어 간다(금고 창 한 번)', async () => {
+    const { link, seal } = await setup();
+    mock.scenario.needWithdraw = FAKE_ACCOUNT;
+    const r = await link.connect({ certId: CERT, withdrawAccount: '1002-123-456789' });
+    assert.equal(r.accounts.length, 2);
+    assert.equal(seal.asks, 1);
+    assert.equal(creates().at(-1)!.commWithdrawAccountNo, FAKE_ACCOUNT);
+  });
+  it('넣은 번호로도 같은 요구면 계좌번호를 다시 묻는다(기업 뱅킹 본인인증 안내가 덮지 않는다)', async () => {
+    const { link } = await setup();
+    mock.scenario.needWithdraw = '9999999999';
+    mock.scenario.createByType = { B: 'CF-12831' };
+    await assert.rejects(link.connect({ certId: CERT, withdrawAccount: FAKE_ACCOUNT }), (e: unknown) => e instanceof CodefError && e.code === 'withdraw_account_required' && e.param === 'retried');
+  });
+  it('계좌 비밀번호도 요구하면 금고 창(계좌 비밀번호 모드)에서 받아 감싸 보낸다', async () => {
+    const fields: Array<string | undefined> = [];
+    const base = fakeSeal();
+    const seal = { ...base, async seal(p: { certId: string; publicKey: string; mode: 'ask' | 'auto'; field?: 'account' }) { fields.push(p.field); return base.seal(p); } };
+    const { link } = await setup({ seal });
+    mock.scenario.needWithdraw = FAKE_ACCOUNT;
+    mock.scenario.needWithdrawPass = true;
+    const r = await link.connect({ certId: CERT, withdrawAccount: FAKE_ACCOUNT });
+    assert.equal(r.accounts.length, 2);
+    assert.deepEqual(fields, [undefined, 'account'], '인증서 비밀번호 한 번, 계좌 비밀번호 한 번');
+    assert.equal(typeof creates().at(-1)!.withdrawAccountPassword, 'string');
+  });
+  it('받을 돈에 넣어 둔 같은 은행 계좌가 있으면 묻지 않고 쓴다', async () => {
+    const { link, call } = await setup();
+    await call('bank.addAccount', { bank: '0020', number: FAKE_ACCOUNT, alias: null });
+    mock.scenario.needWithdraw = FAKE_ACCOUNT;
+    const r = await link.connect({ certId: CERT });
+    assert.equal(r.accounts.length, 2);
+    assert.equal(creates().at(-1)!.commWithdrawAccountNo, FAKE_ACCOUNT);
+  });
+});
+
+describe('CODEF CF-12401(로그인 파라미터 누락): 빠진 키 이름만 고른다', async () => {
+  const { missingParamOf } = await import('../packages/engine/src/codef/client.ts');
+  it('단서는 CODEF 안내문 단어만, 숫자는 지운다', async () => {
+    const { hintOf } = await import('../packages/engine/src/codef/client.ts');
+    assert.equal(hintOf('로그인 파라미터가 누락되었습니다. [birthDate] 900101 id'), 'birthDate_id');
+    assert.equal(hintOf('로그인 파라미터가 누락되었습니다.'), null);
+    assert.equal(hintOf(''), null);
+  });
+  it('원문에서 계정 등록 키 이름만, 값·다른 글자는 버린다', () => {
+    assert.equal(missingParamOf('로그인 파라미터가 누락되었습니다. birthDate'), 'birthDate');
+    assert.equal(missingParamOf('필수 파라미터 누락 [identity] 홍길동 900101'), 'identity');
+    assert.equal(missingParamOf('누락: id, birthDate'), 'birthDate_id');
+    assert.equal(missingParamOf('로그인 파라미터가 누락되었습니다. 생년월일을 입력하세요'), 'birthDate');
+    assert.equal(missingParamOf('주민등록번호(사업자번호) 누락'), 'identity');
+    assert.equal(missingParamOf('로그인 파라미터가 누락되었습니다.'), 'other');
+    assert.equal(missingParamOf(undefined), null);
   });
 });

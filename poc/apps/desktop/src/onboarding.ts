@@ -206,6 +206,8 @@ export interface NpkiCert {
   /** 고를 수 있는가. 개인키 파일이 없거나(no_key) 만료됐으면(expired) 보이되 고를 수 없다. 옛 이어 하기 값(칸 없음)은 고를 수 있는 것으로 본다. */
   usable?: boolean;
   why?: 'no_key' | 'expired';
+  /** 주체 OU로 본 종류(npki-certs certKind). 은행 자동 연결의 뱅킹 순서에만 쓴다 */
+  kind?: 'corp' | 'personal';
 }
 export const CERT_EXPIRY_WARN_DAYS = 30;
 

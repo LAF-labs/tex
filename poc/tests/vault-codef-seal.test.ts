@@ -108,6 +108,29 @@ describe('금고 codef.seal', () => {
     }
   });
 
+  it('출금계좌 비밀번호(field account): 창을 계좌 비밀번호 모드로 열고 4자리만 받아 감싼다. 인증서 파일은 싣지 않는다', async () => {
+    const s = await stack();
+    try {
+      const certId = s.idOf(s.t.a.dir);
+      const p = s.engine.rpc<CodefSealResult>('codef.seal', { certId, publicKey: PUB_B64, scope: 'business', mode: 'ask', field: 'account' });
+      await waitNeed(s.needs, 1);
+      const need = s.needs[0]!;
+      assert.equal(need.field, 'account');
+      // 4자리 숫자가 아니면 받지 않는다
+      assert.notDeepEqual(await s.windowProvide({ mode: 'codef', reqId: need.reqId, scope: 'business' }, 'abcd'), {});
+      assert.deepEqual(await s.windowProvide({ mode: 'codef', reqId: need.reqId, scope: 'business' }, '4821'), {});
+      const r = await p;
+      assert.ok(r.ok);
+      if (!r.ok) return;
+      assert.equal(r.derFile, '');
+      assert.equal(r.keyFile, '');
+      assert.equal(privateDecrypt({ key: privateKey, padding: cc.RSA_PKCS1_PADDING }, Buffer.from(r.password, 'base64')).toString('utf8'), '4821');
+      assert.equal(s.audit.opened.filter((x) => /signpri\.key$/i.test(x)).length, 0, '인증서 개인키를 열지 않는다');
+    } finally {
+      s.close();
+    }
+  });
+
   it('[이 PC에 기억]이면 다음 auto는 창 없이, forget 뒤에는 stored가 missing', async () => {
     const s = await stack();
     try {

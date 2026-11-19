@@ -14,7 +14,7 @@ export function openSecretWindow(parent: BrowserWindow, bind: SecretInputBind, p
 }
 
 /** 금고 직결 입력 창(제목은 main 내장 문구). 계좌 자동조회 인증서 비밀번호 창(bank-auto.ts)도 같은 창을 쓴다. */
-export function openVaultInputWindow(parent: BrowserWindow, port: MessagePortMain, url: string, title: string, height = 300): BrowserWindow {
+export function openVaultInputWindow(parent: BrowserWindow, port: MessagePortMain, url: string, title: string, height = 300, log?: (name: string, data: Record<string, string | number>) => void): BrowserWindow {
   const win = new BrowserWindow({
     parent,
     modal: true,
@@ -65,5 +65,9 @@ export function openVaultInputWindow(parent: BrowserWindow, port: MessagePortMai
     },
   );
   win.on('closed', drop);
+  // 창이 빈 채로 뜨면 원인이 로그에 남아야 한다(2026-11-19 실기기: 금고 창이 연달아 뜨는 중 까만 빈 창). 값·주소 없이 단계·코드만
+  win.webContents.on('did-fail-load', (_e, code) => log?.('main.secret_window_blank', { step: 'load', code }));
+  win.webContents.on('render-process-gone', (_e, d) => log?.('main.secret_window_blank', { step: 'gone', code: String(d.reason).slice(0, 20) }));
+  win.webContents.on('unresponsive', () => log?.('main.secret_window_blank', { step: 'unresponsive' }));
   return win;
 }

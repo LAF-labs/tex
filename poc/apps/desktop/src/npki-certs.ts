@@ -89,6 +89,17 @@ function unescapeRdn(v: string): string {
 
 /** NPKI CN(`홍길동()0012345…`)에서 사람이 읽는 이름만. 뒤의 식별 번호는 보이지 않는다. */
 export const certOwner = (subject: string): string => rdnValue(subject, 'CN').replace(/\(\)[0-9A-Za-z]*$/, '').trim().slice(0, 60);
+/**
+ * 인증서 주체의 OU로 개인용·법인(사업자)용을 가른다(값은 보지 않고 종류만). 은행 자동 연결이 어느 뱅킹을 먼저 해 볼지 정하는 데 쓴다.
+ * 예: yessign 개인 `OU=personal4IB`, 법인 `OU=corporation4EC`, 다른 CA는 `OU=개인`·`OU=법인`. 모르면 null.
+ */
+export function certKind(subject: string): 'corp' | 'personal' | null {
+  const ous = subject.split(/,(?=\s*[A-Za-z]+=)/).map((x) => x.trim()).filter((x) => /^OU=/i.test(x)).map((x) => x.slice(3));
+  if (ous.some((v) => /corporat|법인|기업|사업자/i.test(v))) return 'corp';
+  if (ous.some((v) => /personal|개인/i.test(v))) return 'personal';
+  return null;
+}
+
 /** 발급자 이름(issuer O=, 없으면 CA 폴더 이름). */
 const certIssuer = (issuer: string, ca: string): string => (rdnValue(issuer, 'O') || ca).trim().slice(0, 40);
 
@@ -118,7 +129,8 @@ export async function listNpkiCerts(control: VaultControl, readInfo: CertInfoRea
     const why = !e.hasKey ? 'no_key' : expiresOn < opts.today ? 'expired' : undefined;
     // 홈택스 인증서 창 목록의 소유자 칸 글(CN 전체). main 안에서만 들고, 고른 인증서의 것만 프로필 cert_name에 쓴다(H-01 2.3.0이 이 이름으로 행을 고른다)
     opts.names?.set(e.id, rdnValue(info.subject, 'CN').trim().slice(0, 100));
-    out.push({ id: e.id, owner, usage: certIssuer(info.issuer, e.ca), expiresOn, usable: !why, ...(why ? { why } : {}) });
+    const kind = certKind(info.subject);
+    out.push({ id: e.id, owner, usage: certIssuer(info.issuer, e.ca), expiresOn, usable: !why, ...(why ? { why } : {}), ...(kind ? { kind } : {}) });
   }
   opts.log?.('main.npki_shown', { listed: ok.length + bad, shown: out.length, unusable: out.filter((c) => !c.usable).length, invalid: invalid + bad });
   return out;
