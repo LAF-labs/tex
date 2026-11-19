@@ -9,7 +9,7 @@ import { buildGateRequest, type GateRequest } from '@sax/engine/gate';
 import { kstToday } from '../apps/desktop/src/approval-gate.ts';
 import { ApprovalLog, PhoneGate, type GateSink } from '../apps/desktop/src/phone-gate.ts';
 import { CmdLog, PhoneIssue, wakeWorthy, type PhoneSink } from '../apps/desktop/src/phone-issue.ts';
-import { PhoneWaker, WAKE_APPROVE_AGAIN_MS, WAKE_NO_TOKEN_MS, type WakeKind } from '../apps/desktop/src/phone-wake.ts';
+import { PhoneWaker, WAKE_APPROVE_AGAIN_MS, WAKE_DETACHED_MS, WAKE_NO_TOKEN_MS, type WakeKind } from '../apps/desktop/src/phone-wake.ts';
 import type { Counterparty, RunView } from '../apps/desktop/src/shell-model.ts';
 
 let dirs: string[] = [];
@@ -141,6 +141,42 @@ describe('PhoneGate: 승인 게이트를 열 때 폰이 없으면 approve로 깨
     assert.equal(w.wakes.length, 1);
     await w.gate.offer('run-2', gateReq(), w.on);
     assert.equal(w.wakes.length, 1, '앱이 앞에 있으면 깨우지 않는다');
+  });
+
+  it('보낸 승인 요청에 답 없이 세션이 닫히면 5초 뒤 깨운다. 그 사이 다시 붙으면 깨우지 않는다', async () => {
+    const w = await gateWorld();
+    const sink = new Sink();
+    w.gate.attach(PAIR, sink);
+    await w.gate.offer('run-1', gateReq(), w.on);
+    assert.equal(sink.sent.length, 1);
+    assert.deepEqual(w.wakes, []);
+    // 앱이 뒤로 갔다가 바로 다시 붙었다
+    w.gate.detach(PAIR, sink);
+    assert.equal(w.timers[0]!.ms, WAKE_DETACHED_MS);
+    const back = new Sink();
+    w.gate.attach(PAIR, back);
+    assert.equal(w.timers[0]!.live, false);
+    w.fire();
+    assert.deepEqual(w.wakes, []);
+    // 이번엔 닫힌 채
+    w.gate.detach(PAIR, back);
+    w.fire();
+    assert.deepEqual(w.wakes, [[PAIR, 'approve']]);
+    assert.equal(w.timers[0]!.ms, WAKE_APPROVE_AGAIN_MS);
+    w.fire();
+    assert.equal(w.wakes.length, 2, '게이트당 최대 2번');
+    const third = new Sink();
+    w.gate.attach(PAIR, third);
+    w.gate.detach(PAIR, third);
+    assert.equal(w.timers.length, 0, '세 번째는 없다');
+    // 닫힌 게이트, 아직 보낸 적 없는 다른 폰 세션의 detach는 깨우지 않는다
+    const w2 = await gateWorld();
+    const s2 = new Sink();
+    w2.gate.attach(PAIR, s2);
+    await w2.gate.offer('run-1', gateReq(), w2.on);
+    w2.gate.close('run-1');
+    w2.gate.detach(PAIR, s2);
+    assert.equal(w2.timers.length, 0);
   });
 
   it('게이트가 닫히면(PC 승인·중지) 다시 깨우지 않는다', async () => {
