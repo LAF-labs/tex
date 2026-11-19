@@ -734,12 +734,17 @@ Object.assign(scenes, {
     await sleep(200);
     await shot(win, '91-pair-qr');
     await push({ ...S.pair, step: 'awaiting_sas', qr: null, phoneName: '사장님 폰', triesLeft: 3 });
+    await sleep(250);
     await shot(win, '92-pair-sas');
-    await js(win, `(() => { const i = document.querySelector('#pair-sas'); i.value = '482916'; i.dispatchEvent(new Event('input')); document.querySelector('[data-act=pair-submit]').click(); })()`);
-    await sleep(200);
+    const typeSas = (d) => `(() => { const b = document.querySelector('.sas-box'); b.focus(); b.value = '${d}'; b.dispatchEvent(new Event('input')); })()`;
+    await js(win, typeSas('482'));
+    await sleep(150);
+    await shot(win, '92b-pair-sas-typing');
+    await js(win, `document.querySelectorAll('.sas-box')[3].value = '916'; document.querySelectorAll('.sas-box')[3].dispatchEvent(new Event('input'))`);
+    await sleep(120);
     await shot(win, '93-pair-sas-wrong');
-    await js(win, `(() => { const i = document.querySelector('#pair-sas'); i.value = '482915'; i.dispatchEvent(new Event('input')); document.querySelector('[data-act=pair-submit]').click(); })()`);
-    await sleep(200);
+    await js(win, typeSas('482915'));
+    await sleep(250);
     await shot(win, '94-pair-done');
     await js(win, `document.querySelector('[data-act=pair-close]').click()`);
     await sleep(150);
@@ -750,6 +755,10 @@ Object.assign(scenes, {
     await shot(win, '97-pair-failed');
     await push({ ...PAIR_IDLE, step: 'opening' });
     await shot(win, '98-pair-opening');
+    // 6자리 단계에서 3번 틀려 멈춤(모달에 이어서)
+    await push({ ...PAIR_IDLE, step: 'awaiting_sas', phoneName: '사장님 폰', triesLeft: 1, expiresAt: Date.now() + 61_000 });
+    await push({ ...PAIR_IDLE, step: 'failed', error: 'pair.sas_locked', phoneName: '사장님 폰' });
+    await shot(win, '99-pair-sas-locked');
     await push(PAIR_IDLE);
   },
   // 새 PC 쪽: 로그인 뒤 쓰던 PC의 승인을 기다림 → 6자리 → '연결됐어요'가 떴나요? · PC 3대가 찬 계정
