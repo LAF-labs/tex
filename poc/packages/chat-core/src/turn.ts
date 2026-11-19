@@ -25,12 +25,12 @@ export type ReplyMode = (typeof REPLY_MODES)[number];
 export const REACTION_GTE = 0.8;
 
 /** 폰과 PC가 같은 번들을 부른다. digest는 packages/model/bundles/chat_route_v1.json과 같다(시험이 대조). */
-export const CHAT_ROUTE_BUNDLE = { id: 'chat_route_v1', digest: 'd422049ae92b3bea0965d05fed747a33a00cb5772dbc25918c93cbf973cf65db' } as const;
+export const CHAT_ROUTE_BUNDLE = { id: 'chat_route_v1', digest: 'c81cab9b3a0e1046e7e4367d9b774d1367bf7eb8da09f9f99796e8f450be55b9' } as const;
 
 /** 판정 답 한 질문(이름 키). PC는 @sax/model BundleAnswers, 폰은 게이트웨이 응답을 이 꼴로 옮긴다. */
 export type RouteAnswer = { type: 'choice'; value: string; confidence: number } | { type: 'predicate'; probability: number } | { type: 'refusal' } | { type: string };
 
-/** 판정이 정한 받는 방식. mode가 answer면 reaction은 null이다. */
+/** 판정이 정한 받는 방식. mode가 answer여도 맞장구가 이어진 턴이면(capStreak) 반응을 달고 짧게 답한다. */
 export interface RouteAck {
   mode: ReplyMode;
   reaction: ReactionId | null;
@@ -55,6 +55,25 @@ export function routeAck(answers: Record<string, RouteAnswer | undefined> | null
   if (!advice || advice.type !== 'predicate' || (advice as { probability: number }).probability >= 0.5) return none;
   if (!react || !isReaction(react.value)) return none;
   return { mode: mode.value as ReplyMode, reaction: react.value };
+}
+
+/**
+ * 반응만으로 잇달아 닫는 상한(대표 피드백 2026-11-19: "고마워를 연달아 보내면 매번 이모지만 보내지 말고 응답을 해야 어색하지 않다").
+ * 바로 앞 턴이 반응만이었으면 이번 맞장구는 반응을 달고 대화 모델이 한 문장으로 답한다. 판정 입력에도 연속 횟수를 실어 판정이 먼저 고르게 하고,
+ * 이 상한은 판정이 그래도 반응만을 고를 때의 안전장치다. 문장이 아니라 대화 기록(앞 턴이 반응만이었는가)만 본다.
+ */
+export const ACK_STREAK_MAX = 1;
+
+/** 판정 입력의 한 줄: 바로 앞에서 반응만으로 닫은 턴 수. 0이면 줄을 싣지 않는다(입력이 다른 사례와 같다). */
+export const reactedLine = (streak: number): string[] => (streak > 0 ? [`직전 앱 답: 반응만 ${streak}번 연속`] : []);
+
+/** 대화 모델에 주는 한 줄(짧게 답하라는 앱 판단). 맞장구가 이어져 반응만으로 닫지 않은 턴에만 싣는다. */
+export const ACK_REPLY_HINT = '앱 판단: 맞장구가 이어짐(앞 맞장구에는 반응만 했다). 한 문장으로 짧게 답한다';
+
+/** 연속 상한을 적용한다. 넘으면 반응은 달고 답은 대화 모델이 한다(mode answer, reaction 그대로). */
+export function capStreak(ack: RouteAck, streak: number): RouteAck & { capped: boolean } {
+  if (ack.mode === 'reaction_only' && streak >= ACK_STREAK_MAX) return { mode: 'answer', reaction: ack.reaction, capped: true };
+  return { ...ack, capped: false };
 }
 
 /**

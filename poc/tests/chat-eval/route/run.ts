@@ -11,7 +11,7 @@
 // 키·응답 원문은 남기지 않는다. 보고서에는 사례 ID·라벨·고른 값·확률·지연·입력 토큰만 들어간다(문장은 가상 장부라 cases.ts에 있다).
 import fs from 'node:fs';
 import path from 'node:path';
-import { registerChatRecords } from '@sax/chat-core';
+import { reactedLine, registerChatRecords } from '@sax/chat-core';
 import { BundleCatalog, CHAT_AGENT, toolsetPrefix, type Question } from '@sax/model';
 import { Redactor } from '@sax/redaction';
 import { openAIResponsesBody, systemOneAnswers, systemOneDecideBody } from '../../../services/gateway/src/providers.ts';
@@ -82,6 +82,7 @@ export function draftInput(c: RouteCase): string {
     cardsLine(c, m),
     `진행 중인 발급: ${p ? `세금계산서(거래처 ${m(p.cp)}, ${p.stage === 'preparing' ? '홈택스에서 준비 중' : '승인 대기'})` : '없음'}`,
     `직전에 되물은 칸: ${c.ctx.asked ? ASKED[c.ctx.asked] : '없음'}`,
+    ...reactedLine(c.ctx.reacted ?? 0),
     ...(c.ctx.prev.length ? ['[앞 대화]', ...c.ctx.prev.flatMap(([u, a]) => [`사용자: ${m(u)}`, `앱: ${m(a)}`])] : []),
     `사용자: ${m(c.say)}`,
   ].join('\n');

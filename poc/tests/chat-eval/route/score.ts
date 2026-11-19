@@ -30,8 +30,10 @@ export interface RouteRow {
 /** 반응 허용 목록(@sax/chat-core REACTIONS). 채점은 제품 routeAck와 같은 규칙으로 본다. */
 const REACTION_NAMES = new Set(['thumbs_up', 'eyes', 'check', 'pray']);
 /** 제품이 실제로 하는 일(routeAck와 같다): 문턱 넘은 reaction_only·react_then_work, 허용 반응, 세무 판단 아님 */
-export function shownMode(r: RouteRow): 'reaction_only' | 'react_then_work' | 'answer' {
+export function shownMode(r: RouteRow, c?: Pick<RouteCase, 'ctx'>): 'reaction_only' | 'react_then_work' | 'answer' {
   const m = r.reply;
+  // 연속 상한(capStreak): 바로 앞이 반응만이었으면 반응만으로 닫지 않는다
+  if (m?.got === 'reaction_only' && (c?.ctx.reacted ?? 0) >= 1) return 'answer';
   if (!m || m.got === null || m.conf === null || m.conf < SURE || (m.got !== 'reaction_only' && m.got !== 'react_then_work')) return 'answer';
   if (r.advice === null || r.advice >= 0.5) return 'answer';
   if (!r.reaction?.got || !REACTION_NAMES.has(r.reaction.got)) return 'answer';
@@ -75,14 +77,14 @@ export function scoreReply(cases: readonly RouteCase[], rows: readonly RouteRow[
   return {
     n: pair.length,
     accuracy: rate(pair.filter((x) => x.r.reply!.got === x.c.reply).length, pair.length),
-    shownAccuracy: rate(pair.filter((x) => shownMode(x.r) === x.c.reply).length, pair.length),
+    shownAccuracy: rate(pair.filter((x) => shownMode(x.r, x.c) === x.c.reply).length, pair.length),
     recall: recall(REPLIES, pair.map((x) => ({ label: x.c.reply, got: x.r.reply!.got }))),
     ece: ece(pair.filter((x) => x.r.reply!.conf !== null).map((x) => ({ conf: x.r.reply!.conf!, ok: x.r.reply!.got === x.c.reply }))),
-    wrongClose: rate(notAck.filter((x) => shownMode(x.r) === 'reaction_only').length, notAck.length),
-    ackClosed: rate(ack.filter((x) => shownMode(x.r) === 'reaction_only').length, ack.length),
-    workAcked: rate(work.filter((x) => shownMode(x.r) === 'react_then_work').length, work.length),
+    wrongClose: rate(notAck.filter((x) => shownMode(x.r, x.c) === 'reaction_only').length, notAck.length),
+    ackClosed: rate(ack.filter((x) => shownMode(x.r, x.c) === 'reaction_only').length, ack.length),
+    workAcked: rate(work.filter((x) => shownMode(x.r, x.c) === 'react_then_work').length, work.length),
     reactions,
-    byStyle: Object.fromEntries([...styles].sort().map(([k, xs]) => [k, { n: xs.length, shown: rate(xs.filter((x) => shownMode(x.r) === x.c.reply).length, xs.length) }])),
+    byStyle: Object.fromEntries([...styles].sort().map(([k, xs]) => [k, { n: xs.length, shown: rate(xs.filter((x) => shownMode(x.r, x.c) === x.c.reply).length, xs.length) }])),
   };
 }
 

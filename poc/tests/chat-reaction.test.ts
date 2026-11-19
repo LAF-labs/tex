@@ -4,7 +4,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
 import {
+  ACK_STREAK_MAX,
   CHAT_ROUTE_BUNDLE,
+  capStreak,
+  reactedLine,
   PhoneChat,
   PhoneGateway,
   REACTIONS,
@@ -40,6 +43,15 @@ describe('routeAck: 판정 답 → 받는 방식(PC와 폰이 같은 함수)', (
     assert.deepEqual(routeAck(ANS('reaction_only', 'pray', { mentions_tax_advice: pr(0.6) })), none, '세무 판단');
     assert.deepEqual(routeAck({ reply_mode: ch('reaction_only'), reaction: ch('pray') }), none, '세무 답이 없으면 묻는 쪽');
     assert.deepEqual(routeAck(null), none);
+  });
+
+  it('연속 상한: 바로 앞이 반응만이었으면 반응만을 answer로 바꾸고 반응은 남긴다. 일 맡기기는 그대로', () => {
+    assert.equal(ACK_STREAK_MAX, 1);
+    assert.deepEqual(capStreak({ mode: 'reaction_only', reaction: 'pray' }, 0), { mode: 'reaction_only', reaction: 'pray', capped: false });
+    assert.deepEqual(capStreak({ mode: 'reaction_only', reaction: 'pray' }, 1), { mode: 'answer', reaction: 'pray', capped: true });
+    assert.deepEqual(capStreak({ mode: 'react_then_work', reaction: 'eyes' }, 3), { mode: 'react_then_work', reaction: 'eyes', capped: false });
+    assert.deepEqual(reactedLine(0), []);
+    assert.deepEqual(reactedLine(2), ['직전 앱 답: 반응만 2번 연속']);
   });
 
   it('허용 목록은 넷이고 번들 reaction 선택지(unknown 빼고)와 같다. 폰이 쓰는 digest는 번들 파일과 같다', () => {
@@ -136,6 +148,12 @@ describe('PC 대화(AgentChat): 판정 → 반응 → 도구', () => {
     }
   });
 
+  it('맞장구가 이어져 반응만으로 닫지 않은 턴(capped)도 반응을 먼저 달고 답은 도구 루프가 낸다', async () => {
+    const t = pc(async () => ({ ...step('answer', 'pray'), capped: true }), [() => pcReply('별말씀을요.')]);
+    assert.equal((await t.chat.turn('고마워')).kind, 'agent');
+    assert.deepEqual(t.log, ['progress:thinking', 'route', 'reaction:pray', 'step:start']);
+  });
+
   it('판정이 비밀 모양을 막으면 chat.step도 부르지 않는다', async () => {
     const t = pc(async () => Promise.reject(Object.assign(new Error('chat.secret_rejected'), { code: 'chat.secret_rejected' })), []);
     const r = await t.chat.turn('비번 qwer1234!@');
@@ -224,6 +242,22 @@ describe('폰 대화(PhoneChat): PC와 같은 판정 → 반응', () => {
     t.set(ANS('answer', 'eyes'));
     await t.chat.send('이번 달 받을 돈 얼마야');
     assert.match(String(t.reqs.at(-1)!.text), /사용자: \[NAME_\d+\] 건 확인했어\n앱: \(반응 👍\)/);
+  });
+
+  it('맞장구가 이어지면(대표 피드백) 두 번째는 반응을 달고 모델이 짧게 답한다. 판정·모델 입력에 연속 줄과 짧게 답하라는 줄', async () => {
+    const t = phone(ANS('reaction_only', 'pray'));
+    assert.equal((await t.chat.send('고마워')).kind, 'reaction');
+    const r = await t.chat.send('고마워');
+    assert.equal(r.kind, 'reply');
+    assert.deepEqual(r.kind === 'reply' && r.user.reaction, 'pray');
+    assert.deepEqual(t.log, ['reaction:pray', 'reaction:pray']);
+    assert.doesNotMatch(t.routed[0]!, /직전 앱 답/);
+    assert.match(t.routed[1]!, /\n직전 앱 답: 반응만 1번 연속\n/);
+    assert.match(String(t.reqs[0]!.text), /앱 판단: 맞장구가 이어짐/);
+    const log = await t.chat.messages();
+    assert.deepEqual(log.map((m) => [m.from, m.reaction ?? null]), [['user', 'pray'], ['user', 'pray'], ['app', null]]);
+    // 말로 답했으니 다음은 다시 반응만
+    assert.equal((await t.chat.send('고마워')).kind, 'reaction');
   });
 
   it('일 맡기기: 반응이 먼저 오고 답은 모델이 낸다. 결과에 사용자 메시지 id와 반응이 있다', async () => {

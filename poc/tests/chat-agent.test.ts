@@ -687,6 +687,27 @@ describe('chat.route 판정(ADR-057): 받는 방식과 반응', () => {
     assert.match(userText(responds()[0]!.body!), /\[앞 대화\]\n사용자: \[NAME_\d+\] 건 고마워\n앱: \(반응 🙏\)/);
   });
 
+  it('맞장구가 이어지면(대표 피드백) 두 번째는 반응을 달고 대화 모델이 한 문장으로 답한다. 판정 입력에 연속 줄이 있다', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const thx = { reply_mode: 'reaction_only', reaction: 'pray', act: 'smalltalk', domain: 'none', mentions_tax_advice: 0.02 };
+    const first = await withAnswers(thx, () => route(a, pc, '고마워'));
+    assert.deepEqual([first.mode, first.capped], ['reaction_only', false]);
+    const second = await withAnswers(thx, () => route(a, pc, '고마워'));
+    assert.deepEqual([second.mode, second.reaction, second.capped], ['answer', 'pray', true]);
+    assert.match(String(decides()[1]!.body!.input), /\n직전 앱 답: 반응만 1번 연속\n/);
+    assert.doesNotMatch(String(decides()[0]!.body!.input), /직전 앱 답/);
+    script(() => reply({ kind: 'smalltalk', text: '별말씀을요.' }));
+    await say(a, pc, '고마워');
+    assert.match(userText(responds()[0]!.body!), /앱 판단: 맞장구가 이어짐\(앞 맞장구에는 반응만 했다\)\. 한 문장으로 짧게 답한다\n사용자: 고마워$/);
+    // 말로 답했으니 다음 맞장구는 다시 반응만
+    const third = await withAnswers(thx, () => route(a, pc, '고마워'));
+    assert.deepEqual([third.mode, third.capped], ['reaction_only', false]);
+    script(() => reply({ kind: 'answer', text: '네.' }));
+    await say(a, pc, '이번 달 매출은?');
+    assert.doesNotMatch(userText(responds().at(-1)!.body!), /앱 판단: 맞장구/);
+  });
+
   it('일 맡기기: 반응(👀)만 돌려주고 대화록은 그대로다(도구 루프는 chat.step이 돈다)', async () => {
     const a = agent();
     const r = await withAnswers({ reply_mode: 'react_then_work', reaction: 'eyes', act: 'task', domain: 'invoice', mentions_tax_advice: 0.02 }, () => route(a, new FakePc(), 'A상사 110만원 끊어줘'));

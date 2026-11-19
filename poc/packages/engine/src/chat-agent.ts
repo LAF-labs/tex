@@ -36,7 +36,7 @@ import {
   type ToolCall,
 } from '@sax/model';
 import type { Egress } from '@sax/net';
-import { AGENT_SHOW_MAX, OPEN_SCREENS, CHAT_ROUTE_BUNDLE, REACTIONS, REACTION_GTE, ReplyShapeError, TOOL_NEEDS, bandOf, braceTokens, checkAgentReply, chatInput, gluedName, parseKrw, registerChatRecords, routeAck, type OpenScreen, type ProbBand, type ReactionId, type ReplyMode, type RouteAnswer, type ToolNeed } from '@sax/chat-core';
+import { AGENT_SHOW_MAX, OPEN_SCREENS, ACK_REPLY_HINT, CHAT_ROUTE_BUNDLE, REACTIONS, REACTION_GTE, capStreak, reactedLine, ReplyShapeError, TOOL_NEEDS, bandOf, braceTokens, checkAgentReply, chatInput, gluedName, parseKrw, registerChatRecords, routeAck, type OpenScreen, type ProbBand, type ReactionId, type ReplyMode, type RouteAnswer, type ToolNeed } from '@sax/chat-core';
 import { CHAT_MAP_IDLE_MS, ChatTokenMaps, TOKEN_RE, detokenize, type Redactor } from '@sax/redaction';
 import { ChatError, chatSecretShaped, errorOf, type ChatErrorCode } from './chat.ts';
 import { INTENT_TEXT_MAX } from './intent.ts';
@@ -191,6 +191,8 @@ export interface RouteStep {
   kind: 'route';
   mode: ReplyMode;
   reaction: ReactionId | null;
+  /** 맞장구가 이어져 반응만으로 닫지 않았다(반응은 달고 대화 모델이 짧게 답한다) */
+  capped?: boolean;
   /** 운영 신호·평가용(턴 이벤트 route). 값이 아니라 열거다. */
   act: string | null;
   domain: string | null;
@@ -202,6 +204,8 @@ export interface RouteStep {
 export const CHAT_ROUTE_INPUT_MAX_BYTES = 4096;
 /** 판정 입력에 싣는 앞 대화 턴 수 */
 const ROUTE_PREV_TURNS = 2;
+/** 반응만으로 닫은 턴의 대화록 앱 줄 머리 */
+const REACTED_PREFIX = '(반응 ';
 const ASK_LABEL: Record<AgentAsk, string> = { counterparty: '거래처', amount: '금액', item: '품목', vat: '부가세', which_card: '고칠 카드', date: '작성일' };
 
 /** 대화록 한 턴. agent.text는 채우기 전(토큰·슬롯 그대로) 문장이다. 채운 문장은 이 타입에 들어오지 않는다. agent null은 답 없이 끝난 턴. */
@@ -310,6 +314,8 @@ interface Session {
   turn: Turn | null;
   /** 직전 답이 되물은 칸(판정 상태 줄용) */
   asked: AgentAsk | null;
+  /** 이번 턴은 맞장구가 이어져 반응만으로 닫지 않았다: chat.step 입력에 짧게 답하라는 한 줄을 싣는다 */
+  ackReply: boolean;
 }
 
 interface Turn {
@@ -374,7 +380,7 @@ export class ChatAgent {
       const line = (r: AgentTurnRecord) => `사용자: ${r.user}\n앱: ${r.agent ? r.agent.text : '(답 없음)'}`;
       const prev = s.transcript.slice(-ROUTE_PREV_TURNS);
       input = s.red.apply(
-        ['기기: PC', this.frameLine(s, cards), '진행 중인 발급: 없음', `직전에 되물은 칸: ${s.asked ? ASK_LABEL[s.asked] : '없음'}`, ...(prev.length ? ['[앞 대화]', ...prev.map(line)] : []), `사용자: ${user}`].join('\n'),
+        ['기기: PC', this.frameLine(s, cards), '진행 중인 발급: 없음', `직전에 되물은 칸: ${s.asked ? ASK_LABEL[s.asked] : '없음'}`, ...reactedLine(this.streak(s)), ...(prev.length ? ['[앞 대화]', ...prev.map(line)] : []), `사용자: ${user}`].join('\n'),
         { frame: 'none' },
       ).redacted;
     } catch {
@@ -390,7 +396,8 @@ export class ChatAgent {
       return fail;
     }
     if (!answers) return fail;
-    const ack = routeAck(answers);
+    const ack = capStreak(routeAck(answers), this.streak(s));
+    s.ackReply = ack.capped;
     const pick = (n: string) => {
       const a = answers![n];
       return a && a.type === 'choice' ? (a as { value: string; confidence: number }) : null;
@@ -399,10 +406,17 @@ export class ChatAgent {
     const conf = Math.min(mode?.confidence ?? 0, pick('act')?.confidence ?? 0, pick('domain')?.confidence ?? 0);
     if (ack.mode === 'reaction_only') {
       // 대화록에 반응으로 남긴다: 다음 턴 모델이 "고마워"에 답하지 않은 것을 안다
-      this.record(s, { user, agent: { text: `(반응 ${REACTIONS[ack.reaction!]})`, show: [] } });
+      this.record(s, { user, agent: { text: `${REACTED_PREFIX}${REACTIONS[ack.reaction!]})`, show: [] } });
       s.asked = null;
     }
-    return { kind: 'route', mode: ack.mode, reaction: ack.reaction, act: pick('act')?.value ?? null, domain: pick('domain')?.value ?? null, band: bandOf(mode?.confidence ?? 0), unsure: conf < REACTION_GTE, failed: false };
+    return { kind: 'route', mode: ack.mode, reaction: ack.reaction, capped: ack.capped, act: pick('act')?.value ?? null, domain: pick('domain')?.value ?? null, band: bandOf(mode?.confidence ?? 0), unsure: conf < REACTION_GTE, failed: false };
+  }
+
+  /** 대화록 끝에서 반응만으로 닫은 턴이 몇 번 이어졌나 */
+  private streak(s: Session): number {
+    let n = 0;
+    for (let i = s.transcript.length - 1; i >= 0 && s.transcript[i]!.agent?.text.startsWith(REACTED_PREFIX); i--) n++;
+    return n;
   }
 
   /** chat.step start와 chat.route의 입력 검사(나쁜 입력은 던진다) */
@@ -447,6 +461,8 @@ export class ChatAgent {
       this.register(s.red, said);
       user = s.red.apply(said, { frame: 'none' }).redacted;
       frameLine = this.frameLine(s, cards);
+      if (s.ackReply) frameLine = `${frameLine}\n${ACK_REPLY_HINT}`;
+      s.ackReply = false;
     } catch {
       throw new ChatError('chat.unavailable');
     }
@@ -850,7 +866,7 @@ export class ChatAgent {
     }
     if (!s) {
       const id = `chat_${randomUUID()}`;
-      s = { id, profileId, red: this.maps.get(id, profileId), transcript: [], refs: new Set(), cashRefs: new Set(), token: null, lastAt: t, turn: null, asked: null };
+      s = { id, profileId, red: this.maps.get(id, profileId), transcript: [], refs: new Set(), cashRefs: new Set(), token: null, lastAt: t, turn: null, asked: null, ackReply: false };
       this.current = s;
     }
     s.lastAt = t;

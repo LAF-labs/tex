@@ -31,7 +31,7 @@ import {
   type Vat,
 } from './tables.ts';
 import { estimateTokens } from './tokens.ts';
-import { REACTIONS, TurnRecorder, isReaction, routeAck, type ReactionId, type RouteAck, type TurnEvent } from './turn.ts';
+import { ACK_REPLY_HINT, REACTIONS, TurnRecorder, capStreak, isReaction, reactedLine, routeAck, type ReactionId, type RouteAck, type TurnEvent } from './turn.ts';
 
 // ── 상한 ──
 
@@ -267,6 +267,8 @@ interface Turn {
   retry?: boolean;
   /** 이번 사용자 말에 단 반응(판정, ADR-057) */
   reaction: ReactionId | null;
+  /** 맞장구가 이어져 반응만으로 닫지 않았다: 짧게 답하라는 한 줄을 싣는다 */
+  ackReply: boolean;
 }
 
 const KINDS: ReadonlySet<PhoneReplyKind> = new Set(PHONE_REPLY_KINDS);
@@ -475,7 +477,18 @@ export class PhoneChat {
    * 판정(ADR-057): 받는 방식과 반응만 고른다. 실패하면 null(판정 없이 늘 하던 대로, 막는 문이 아니다).
    * 입력은 PC 엔진 chat.route와 같은 꼴(기기·오늘·화면·진행 중인 발급·되물은 칸·앞 대화 두 턴·이번 문장)이다.
    */
-  private async route(st: State, s: Session, copy: PhoneCopy | null, now: number, user: RedactedText, cards: Array<PhoneDraft & { name: string }>): Promise<RouteAck | null> {
+  /** 기록 끝에서 반응만으로 닫은 사용자 말(뒤에 앱 답이 없는 것)이 몇 번 이어졌나 */
+  private streak(st: State): number {
+    let n = 0;
+    for (let i = st.phone.length - 1; i >= 0; i--) {
+      const m = st.phone[i]!;
+      if (m.from !== 'user' || !m.reaction || st.phone[i + 1]?.from === 'app') break;
+      n++;
+    }
+    return n;
+  }
+
+  private async route(st: State, s: Session, copy: PhoneCopy | null, now: number, user: RedactedText, cards: Array<PhoneDraft & { name: string }>): Promise<(RouteAck & { capped: boolean }) | null> {
     const model = this.ports.model;
     if (!model.route) return null;
     let input: RedactedText;
@@ -486,7 +499,7 @@ export class PhoneChat {
       const lastApp = [...st.phone].reverse().find((m) => m.from === 'app');
       const k = new Date(now + 9 * 3600_000);
       const frame = cards.length ? `화면: ${cards.map((c) => `카드 ${c.ref}(세금계산서, 거래처 ${mask(c.name)}, 금액 있음, 부가세 ${c.vat ? VAT_LABEL[c.vat] : '미정'}, 품목 ${c.item ? '있음' : '없음'})`).join('; ')}` : '화면: 열린 카드 없음';
-      input = mask(['기기: 폰', `오늘: ${k.getUTCFullYear()}년 ${k.getUTCMonth() + 1}월 ${k.getUTCDate()}일`, frame, '진행 중인 발급: 없음', `직전에 되물은 칸: ${lastApp?.kind === 'ask' ? '있음' : '없음'}`, ...(past.length ? ['[앞 대화]', ...past] : []), `사용자: ${user}`].join('\n'));
+      input = mask(['기기: 폰', `오늘: ${k.getUTCFullYear()}년 ${k.getUTCMonth() + 1}월 ${k.getUTCDate()}일`, frame, '진행 중인 발급: 없음', `직전에 되물은 칸: ${lastApp?.kind === 'ask' ? '있음' : '없음'}`, ...reactedLine(this.streak(st)), ...(past.length ? ['[앞 대화]', ...past] : []), `사용자: ${user}`].join('\n'));
     } catch {
       return null;
     }
@@ -495,7 +508,7 @@ export class PhoneChat {
       s.token ??= await this.ports.model.runToken(s.id);
       // 메서드로 부른다(PhoneGateway는 클래스라 떼어 부르면 this를 잃는다)
       const answers = await model.route!({ text: input, runToken: s.token });
-      return answers ? routeAck(answers) : null;
+      return answers ? capStreak(routeAck(answers), this.streak(st)) : null;
     } catch {
       s.token = null;
       return null;
@@ -522,7 +535,8 @@ export class PhoneChat {
     let reaction: ReactionId | null = null;
     if (ack) {
       rec.emit({ type: 'route', act: null, domain: null, mode: ack.mode, band: ack.reaction ? 'gte80' : 'lt80', unsure: !ack.reaction, failed: false });
-      if (ack.reaction && ack.mode !== 'answer') {
+      // 반응: 반응만·일 맡기기, 그리고 맞장구가 이어져 짧게 답하는 턴(capped)
+      if (ack.reaction && (ack.mode !== 'answer' || ack.capped)) {
         reaction = ack.reaction;
         rec.emit({ type: 'reaction', msgId: '', reaction });
         try {
@@ -540,7 +554,7 @@ export class PhoneChat {
       }
     } else rec.emit({ type: 'route', act: null, domain: null, mode: 'answer', band: 'lt80', unsure: true, failed: true });
     rec.emit({ type: 'path', path: 'tools', tools: [] });
-    const turn: Turn = { user, replay: [], done: new Map(), made: [], created: [], frameRefs: new Set(cards.map((c) => c.ref)), intent: issueIntent(user), screens: [], reaction };
+    const turn: Turn = { user, replay: [], done: new Map(), made: [], created: [], frameRefs: new Set(cards.map((c) => c.ref)), intent: issueIntent(user), screens: [], reaction, ackReply: !!ack?.capped };
     const facts = this.facts(st, s, copy, now, user);
     const message = this.compose(st, s, copy, now, turn, facts, cards);
     s.turns++;
@@ -634,7 +648,7 @@ export class PhoneChat {
         : '화면: 열린 카드 없음';
       // 앱이 읽은 발급 의도: "세금계산서"라는 말이 없어도("[AMT_1] 끊어줘") 모델이 카드 만들기로 읽게 한 줄 짚어 준다
       const hint = !turn.intent.issue ? '' : turn.retry ? '\n앱 판단: 세금계산서 발급 요청(앞 답이 발급으로 잇지 않았다. 카드를 만들거나 빈 칸 하나를 되묻는다)' : '\n앱 판단: 세금계산서 발급 요청';
-      const nowBlock = `[지금]\n${frame}${hint}\n사용자: ${turn.user}`;
+      const nowBlock = `[지금]\n${frame}${hint}${turn.ackReply ? `\n${ACK_REPLY_HINT}` : ''}\n사용자: ${turn.user}`;
       const copyLine = `PC: ${this.ports.pcOnline?.() ? '켜짐' : '꺼짐'}\n사본: ${this.copyState(copy, now)}`;
       let nFacts = factBlocks.length;
       let from = 0;

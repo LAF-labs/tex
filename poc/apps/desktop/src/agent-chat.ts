@@ -302,7 +302,8 @@ export class AgentChat {
       }
       if (route) {
         rec.emit({ type: 'route', act: route.act, domain: route.domain, mode: route.mode, band: route.band, unsure: route.unsure, failed: route.failed });
-        if (route.reaction && route.mode !== 'answer') {
+        // 반응: 반응만·일 맡기기, 그리고 맞장구가 이어져 짧게 답하는 턴(capped)에도 단다
+        if (route.reaction && (route.mode !== 'answer' || route.capped)) {
           rec.emit({ type: 'reaction', msgId, reaction: route.reaction });
           this.ports.onReaction?.(route.reaction);
         }

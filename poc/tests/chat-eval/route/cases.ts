@@ -39,6 +39,8 @@ export interface RouteCtx {
   asked: 'counterparty' | 'amount' | 'item' | 'vat' | 'date' | null;
   /** 최근 대화(사용자, 앱) */
   prev: Array<[string, string]>;
+  /** 바로 앞에서 반응만으로 닫은 턴 수(판정 입력 `직전 앱 답: 반응만 N번 연속`, ADR-057) */
+  reacted?: number;
 }
 export interface RouteCase {
   id: string;
@@ -514,6 +516,22 @@ g('task', 'invoice', { style: 'ack_task' }, [
 ]);
 g('task', 'bank', { style: 'ack_task' }, [['확인했어 이제 은행 연결해줘', { ctx: SHOWN }]]);
 g('followup', 'invoice', { style: 'ack_task', corrects: true }, [['좋아 근데 부가세는 포함으로 바꿔줘', { ctx: CARD_OPEN }]]);
+// 맞장구가 이어짐(대표 피드백 2026-11-19): 바로 앞 맞장구를 반응만으로 닫았으면 이번에는 짧게 답한다(answer, 반응은 단다)
+const THX1: Opt['ctx'] = { reacted: 1, prev: [...(DONE!.prev ?? []), ['고마워', '(반응 🙏)']] };
+const THX2: Opt['ctx'] = { reacted: 2, prev: [['고마워', '(반응 🙏)'], ['고마워요', '(반응 🙏)']] };
+g('smalltalk', 'none', { reply: 'answer', style: 'ack_repeat' }, [
+  ['고마워', { ctx: THX1 }],
+  ['진짜 고마워', { ctx: THX1 }],
+  ['ㅇㅋ', { ctx: THX1 }],
+  ['확인했어', { ctx: { reacted: 1, prev: [['지난달 매출 얼마야', '지난달 발급은 4건, 합계 520만원이에요.'], ['확인', '(반응 👍)']] } }],
+  ['감사합니다', { ctx: THX2 }],
+  ['고마워요 ㅎㅎ', { ctx: { ...THX1, device: 'phone' } }],
+]);
+// 대조: 앞 맞장구에 앱이 말로 답했으면 다음 맞장구는 다시 반응만
+g('smalltalk', 'none', { reply: 'reaction_only', style: 'ack_repeat' }, [
+  ['고마워', { ctx: { prev: [['고마워', '(반응 🙏)'], ['고마워', '별말씀을요. 또 필요하면 불러 주세요.']] } }],
+  ['알겠어요', { ctx: { prev: [['고마워', '(반응 🙏)'], ['고마워', '천만에요.']] } }],
+]);
 // 되물었는데 값 없이 맞장구 → 답(앱이 다시 묻는다)
 g('followup', 'invoice', { style: 'ack_asked', reply: 'answer' }, [
   ['알겠어', { ctx: { cards: [card('한빛상사', { item: false })], asked: 'item', prev: [['한빛상사 110만원 끊어줘', '품목은 뭐로 적을까요?']] } }],
