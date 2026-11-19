@@ -1,15 +1,15 @@
 // 실제 계정·릴레이 서비스(services/account·relay, #63) 위의 통합 시험 스택. 시뮬레이터 앱은 바꾸지 않는다.
-//   node --conditions=development dev/stack.ts   → http://localhost:8787 (운영처럼 계정·릴레이가 한 공개 origin, 팀장 결정 2026-11-05)
+//   node --conditions=development scripts/phone-stack/stack.ts (poc에서, 먼저 pnpm --dir scripts/phone-stack install)   → http://localhost:8787 (운영처럼 계정·릴레이가 한 공개 origin, 팀장 결정 2026-11-05)
 //   STACK_LIVE=0 이면 릴레이 라이브 WSS를 끄고 PC도 붙지 않는다(Phase 1처럼 큐만). 페어링 룸은 늘 켠다(RELAY_ROOMS=1).
-//   acct_claim은 계정 서비스가 시험 시드(dev/test-account-key.ts)로 서명한다(GET /v1/acct-claim). 개발 앱은 DEV_ACCOUNT_KEY로 검증한다.
-//   Node 폰 스모크: 이 스택을 띄운 뒤 node --conditions=development dev/smoke-phone.ts [--queue]
+//   acct_claim은 계정 서비스가 시험 시드(test-account-key.ts)로 서명한다(GET /v1/acct-claim). 개발 앱은 DEV_ACCOUNT_KEY로 검증한다.
+//   Node 폰 스모크: 이 스택을 띄운 뒤 taxoff-mobile에서 node dev/smoke-phone.ts [--queue]
 //   STACK_HOST=<소문자 LocalHostName>.local:8787 이면 같은 LAN의 실기기가 붙는다(공개 origin·QR의 릴레이 호스트가 이 이름이 된다).
 //     실기기 앱은 Metro를 EXPO_PUBLIC_TEX_DEV_HOST=<같은 값> 으로 띄운다. QR은 브라우저에서 /dev/qr.html 을 열어 폰 카메라로 찍는다.
 //   앞단 8787: /v1/mailboxes·/v1/rooms(WSS 포함) → 릴레이(127.0.0.1:8783), 나머지 /v1/* → 계정(127.0.0.1:8780), /dev/* → 더미 PC
 //   더미 PC: 계정 로그인(모의 메일 코드) → AIK 고정 → 기기 토큰 → POST /v1/rooms → 페어링 → SAS 일치 → 폰 대리 등록
 //            (POST /v1/devices/enroll, 데스크톱 기기 토큰 + roomId) → PUT /v1/device-list → POST /v1/mailboxes → pair.ok
 //            → 번들 PUT → 큐 드레인(GET → 개봉 → ack) + 라이브 우편함.
-// 비밀(토큰 서명 시드·큐 키·내부 토큰·한도 ID 키 등)은 기동마다 새로 만들고 출력하지 않는다. 로그에 금액·사진·토큰을 넣지 않는다. DB는 dev/out/stack-*.db(git 제외).
+// 비밀(토큰 서명 시드·큐 키·내부 토큰·한도 ID 키 등)은 기동마다 새로 만들고 출력하지 않는다. 로그에 금액·사진·토큰을 넣지 않는다. DB는 out/stack-*.db(git 제외).
 // 폰에는 계정 로그인이 없다. 폰의 계정 등록은 PC가 대신 하고(팀장 결정 2026-11-06, #115), 폰은 기기 목록을 서버에서 받지 않는다
 // (PAIR_OK의 AIK 서명 목록을 검사한다). STACK_NO_BUNDLE=1 이면 번들을 올리지 않는다(폰의 'PC 연결 확인 안 됨' 화면 확인용).
 import { randomBytes } from 'node:crypto';
@@ -24,11 +24,11 @@ import {
   AIK_PURPOSES, CAP, DesktopPairing, allowDevLanHosts, jcsBytes, DeviceTokenCache, ReceiveQueue, VD_PURPOSES, acceptDesktopSession, b64, b64url, certNotAfter, deviceAuthHeaders,
   drainQueue, ed25519Keygen, hpkeOpen, initialDeviceList, issueCert, makeQBundle, qbundleWindow, relayQueue, requestDeviceToken, softNoiseStatic, softSigner,
   uuid4, wsRelayClient, x25519Keygen, type DesktopKeys, type DeviceListJson, type HttpJson, type Link, type PairRecord, type WebSocketLike,
-} from '../../../packages/remote/src/index.ts';
-import { MockMailSender } from '../../../services/account/src/adapters.ts';
-import { startAccount } from '../../../services/account/src/main.ts';
-import { startRelay } from '../../../services/relay/src/main.ts';
-import { ed25519Private, ed25519RawPublic } from '../../../services/shared/src/index.ts';
+} from '../../packages/remote/src/index.ts';
+import { MockMailSender } from '../../services/account/src/adapters.ts';
+import { startAccount } from '../../services/account/src/main.ts';
+import { startRelay } from '../../services/relay/src/main.ts';
+import { ed25519Private, ed25519RawPublic } from '../../services/shared/src/index.ts';
 
 const FRONT = 8787;
 const ACCT = 8780;
@@ -191,7 +191,7 @@ async function startPairing(): Promise<string> {
   const p = new DesktopPairing({
     keys, deviceList, relayHost: HOST,
     // 7단계: SAS 일치 뒤, pair.ok 전(룸이 열려 있을 때) 데스크톱 기기 토큰 + 이 룸 id로 폰을 대신 등록한다.
-    // 설계 #120: 계정 서비스가 서명할 acct_claim. 서버 구현 전이라 시험 키(dev/test-account-key.ts)로 대신 서명한다.
+    // 설계 #120: 계정 서비스가 서명할 acct_claim. 서버 구현 전이라 시험 키(test-account-key.ts)로 대신 서명한다.
     // 계정 서비스가 서명한 acct_claim을 그대로 싣는다(운반 형식 b64(JCS({claim, sig}))).
     accountClaim: async () => b64(jcsBytes(expect(await call('GET', '/v1/acct-claim', { headers: await dauth('GET', `${ORIGIN}/v1/acct-claim`) }), 200, 'GET /v1/acct-claim'))),
     desktopName: '더미 PC',

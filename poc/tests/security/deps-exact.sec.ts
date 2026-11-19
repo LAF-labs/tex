@@ -1,6 +1,5 @@
 // RETRO A-14 공급망: 루트 pnpm 작업 공간의 package.json 의존성은 정확 버전(1.2.3, 1.2.3-rc.1) 또는 workspace:*만 쓴다.
 // 범위(^·~·>=·*·x·latest·태그)가 다시 들어오면 잠금 파일을 새로 풀 때 검토 안 된 판이 들어올 수 있다. minimumReleaseAge(pnpm-workspace.yaml)와 짝.
-// apps/mobile은 루트 작업 공간·잠금 파일 밖이다(pnpm-workspace.yaml '!apps/mobile', Expo SDK가 ~ 범위를 쓴다). 폰 앱 트랙 몫으로 따로 둔다.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -14,7 +13,7 @@ const okSpec = (v: string) => EXACT.test(v) || v === 'workspace:*';
 
 function manifests(): string[] {
   const out = execFileSync('git', ['ls-files', '--', 'package.json', '*/package.json'], { cwd: root, encoding: 'utf8' });
-  return out.split('\n').filter(Boolean).filter((f) => !f.startsWith('apps/mobile/') && !f.includes('node_modules/'));
+  return out.split('\n').filter(Boolean).filter((f) => !f.includes('node_modules/'));
 }
 
 describe('A-14 의존성 정확 버전', () => {

@@ -24,7 +24,7 @@ export type { AccountClient, CloudPorts, DeviceAuth, RelayHttpClient } from './r
 export interface CloudPortsOptions {
   egress: Egress;
   env: 'prod' | 'dev';
-  /** env = 'dev'일 때만: 개발 스택 앞단(apps/mobile/dev/stack.ts, 예: http://localhost:8787 · localhost:8787). Egress도 cloudDevLocal을 켜야 열린다 */
+  /** env = 'dev'일 때만: 개발 스택 앞단(scripts/phone-stack/stack.ts, 예: http://localhost:8787 · localhost:8787). Egress도 cloudDevLocal을 켜야 열린다 */
   dev?: { accountOrigin: string; relayHost: string };
 }
 

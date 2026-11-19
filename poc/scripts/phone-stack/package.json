@@ -1,0 +1,11 @@
+{
+  "name": "@sax/phone-stack",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.11.2",
+  "description": "실기기 폰 개발 스택(실제 계정·릴레이 + 더미 PC). poc 작업공간 밖의 도구라 의존성은 이 폴더에서 설치한다.",
+  "dependencies": {
+    "toqr": "0.1.1",
+    "ws": "8.22.1"
+  }
+}

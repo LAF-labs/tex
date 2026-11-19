@@ -1,4 +1,4 @@
-// 시험 전용 개발 스택(apps/mobile/dev/stack.ts와 같은 모양): 실제 계정·릴레이 서비스를 127.0.0.1에 띄우고 앞단 하나(http://localhost:<port>)로 묶는다.
+// 시험 전용 개발 스택(scripts/phone-stack/stack.ts와 같은 모양): 실제 계정·릴레이 서비스를 127.0.0.1에 띄우고 앞단 하나(http://localhost:<port>)로 묶는다.
 // /v1/mailboxes·/v1/rooms(WS 포함)는 릴레이, 나머지 /v1/*는 계정. 제품 배선(remote-wiring.ts → cloudPorts → @sax/net Egress cloudDevLocal)이 이 앞단에 붙는다.
 // 비밀은 기동마다 새로 만든다. 계정 확인 주장(acct_claim) 서명 키도 새로 만들어 공개키를 돌려준다(폰이 고정하는 키).
 import { randomBytes } from 'node:crypto';
