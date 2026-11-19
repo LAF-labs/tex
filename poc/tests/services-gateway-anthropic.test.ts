@@ -73,7 +73,7 @@ describe('게이트웨이: 생성만 Anthropic(GW_RESPOND_PROVIDER)', () => {
     assert.deepEqual(calls, ['base.decide', 'base.respond', 'gen.respond']);
   });
 
-  it('요청 본문: x-api-key, 머리말 캐시, effort, 출력 스키마, strict 도구(받지 않는 제약은 뺀다)', async () => {
+  it('요청 본문: x-api-key, 머리말 캐시, effort, 출력 스키마, 도구(strict 없음, 받지 않는 제약은 뺀다)', async () => {
     const sent: Sent[] = [];
     const p = new AnthropicProvider({ apiKey: 'sk-test', fetchFn: fakeFetch([{ body: { model: 'claude-haiku-5-5', stop_reason: 'end_turn', content: [{ type: 'text', text: '{}' }], usage: { input_tokens: 10, output_tokens: 2 } } }], sent) });
     await p.respond(spec(CHAT_AGENT, [user('안녕')]));
@@ -90,9 +90,9 @@ describe('게이트웨이: 생성만 Anthropic(GW_RESPOND_PROVIDER)', () => {
     assert.deepEqual(b.messages, [{ role: 'user', content: [{ type: 'text', text: '안녕' }] }]);
     assert.deepEqual((b.output_config as { effort: string }).effort, CHAT_AGENT.effort);
     assert.deepEqual((b.metadata as { user_id: string }).user_id, 'sid');
-    const tools = b.tools as Array<{ name: string; strict: boolean; input_schema: unknown }>;
+    const tools = b.tools as Array<{ name: string; strict?: boolean; input_schema: unknown }>;
     assert.equal(tools.length, CHAT_AGENT.tools.length);
-    assert.ok(tools.every((t) => t.strict === true));
+    assert.ok(tools.every((t) => t.strict === undefined));
     const json = JSON.stringify([b.tools, b.output_config]);
     for (const k of ['"maxLength"', '"maximum"', '"minimum"', '"maxItems"', '"pattern"']) assert.equal(json.includes(k), false, `${k} 없음`);
     assert.equal('fallbacks' in b, false, 'Haiku에는 서버 쪽 대체가 없다');
@@ -166,15 +166,17 @@ describe('게이트웨이: 생성만 Anthropic(GW_RESPOND_PROVIDER)', () => {
 
   it('거절은 refusal, 길이 상한은 incomplete, 429·5xx는 재시도, 400은 재시도 없음', async () => {
     const sent: Sent[] = [];
+    const events: string[] = [];
     const p = new AnthropicProvider({
       apiKey: 'k',
+      onEvent: (e) => events.push(e),
       fetchFn: fakeFetch(
         [
           { body: { stop_reason: 'refusal', content: [], usage: {} } },
           { body: { stop_reason: 'max_tokens', content: [{ type: 'text', text: '{"a' }], usage: {} } },
           { status: 429, body: {} },
           { status: 529, body: {} },
-          { status: 400, body: {} },
+          { status: 400, body: { type: 'error', error: { type: 'invalid_request_error', message: '사용자 글 sk-ant-x' } } },
         ],
         sent,
       ),
@@ -186,6 +188,9 @@ describe('게이트웨이: 생성만 Anthropic(GW_RESPOND_PROVIDER)', () => {
     for (const retryable of [true, true, false]) {
       await assert.rejects(p.respond(s), (e: unknown) => e instanceof ProviderError && e.retryable === retryable);
     }
+    // 상태 코드와 error.type만 이벤트로 남긴다(오류 글은 남기지 않는다)
+    assert.deepEqual(events.filter((e) => e.startsWith('upstream_anthropic_')), ['upstream_anthropic_429_unknown', 'upstream_anthropic_529_unknown', 'upstream_anthropic_400_invalid_request_error']);
+    assert.ok(!events.join(' ').includes('sk-ant'));
     await assert.rejects(p.decide(), ProviderError);
     await assert.rejects(p.respond({ ...s, decision: { state: 's', choices: { a: 'A' } } }), ProviderError);
   });
