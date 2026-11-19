@@ -9,7 +9,7 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import {
   approveMessage, b64, fromB64, ulid, verifyApprove,
-  type GateRefreshBody, type GateRequestBody, type GateResponseBody, type PxHw,
+  type GateRefreshBody, type GateRequestBody, type GateResolvedBody, type GateResolvedBy, type GateResponseBody, type PxHw,
 } from '@sax/remote';
 import { gateSelfCheck, remotePresenceRefusal, type GateRequest } from '@sax/engine/gate';
 import { kstToday, summarize } from './approval-gate.ts';
@@ -97,6 +97,8 @@ export class ApprovalLog {
 /** 그 폰의 라이브 세션 채널(approve.v1을 알린 세션만 붙인다) */
 export interface GateSink {
   send(type: 'gate.request', body: GateRequestBody): unknown;
+  /** v1.11: 보낸 게이트가 닫혔다(폰 승인 시트를 바로 닫게). sync.v1을 모르는 폰에는 phone-session이 보내지 않는다. */
+  send(type: 'gate.resolved', body: GateResolvedBody): unknown;
 }
 
 export interface PhoneGatePorts {
@@ -134,6 +136,8 @@ interface OpenGate {
   /** 지금 살아 있는 챌린지(1회용). 아직 못 보냈으면 null */
   pending: { challenge: Uint8Array; exp: number } | null;
   badSigs: number;
+  /** 폰에 gate.request를 한 번이라도 보냈다(닫힐 때 gate.resolved를 보낼 대상) */
+  sent: boolean;
 }
 
 export type AnswerResult =
@@ -192,7 +196,7 @@ export class PhoneGate {
   async offer(shellRunId: string, req: GateRequest, on: GateHandlers): Promise<boolean> {
     const t = this.#o.tracked(shellRunId);
     if (!t) return false;
-    const g: OpenGate = { shellRunId, req, pairId: t.pairId, runId: t.runId, reqId: ulid(this.#now()), on, refusal: null, pending: null, badSigs: 0 };
+    const g: OpenGate = { shellRunId, req, pairId: t.pairId, runId: t.runId, reqId: ulid(this.#now()), on, refusal: null, pending: null, badSigs: 0, sent: false };
     this.#open.set(shellRunId, g);
     g.refusal = await this.#refusal(g);
     // 기다리는 동안 닫혔거나(PC 승인·중지) 새 게이트로 바뀌었으면 보내지 않는다
@@ -240,6 +244,7 @@ export class PhoneGate {
     try {
       sink.send('gate.request', body);
       g.pending = { challenge, exp };
+      g.sent = true;
       this.#log('sent');
     } catch {
       // 봉투 규칙에 맞지 않는 값(너무 긴 칸 등)이거나 채널이 닫혔다. 다음 세션에서 다시 보낸다.
@@ -255,10 +260,27 @@ export class PhoneGate {
     this.#send(g);
   }
 
-  /** 게이트가 닫혔다(PC에서 승인·중지, 대기 만료, 실행 끝). 그 뒤의 폰 답은 받지 않는다. */
-  close(shellRunId: string, gateReqId?: string): void {
+  /**
+   * 게이트가 닫혔다(PC에서 승인·중지, 대기 만료, 실행 끝). 그 뒤의 폰 답은 받지 않는다.
+   * 폰에 보낸 게이트였으면 gate.resolved로 알려 폰 승인 시트를 바로 닫게 한다(다음 run.event를 기다리지 않게).
+   * 폰이 지금 붙어 있지 않으면 보내지 않는다: 다시 붙으면 attach가 닫힌 게이트를 다시 보내지 않고, 진행은 run.event로 안다.
+   */
+  close(shellRunId: string, gateReqId?: string, by: GateResolvedBy = 'pc'): void {
     const g = this.#open.get(shellRunId);
-    if (g && (gateReqId === undefined || g.req.reqId === gateReqId)) this.#open.delete(shellRunId);
+    if (!g || (gateReqId !== undefined && g.req.reqId !== gateReqId)) return;
+    this.#open.delete(shellRunId);
+    if (g.sent) this.#resolved(g, by);
+  }
+
+  #resolved(g: OpenGate, by: GateResolvedBy): void {
+    const sink = this.#sinks.get(g.pairId);
+    if (!sink) return;
+    try {
+      sink.send('gate.resolved', { runId: g.runId, reqId: g.reqId, by });
+      this.#log(`resolved_${by}`);
+    } catch {
+      this.#log('resolved_send_failed');
+    }
   }
 
   /** 폰의 답(gate.response). 한 번에 하나씩 판정한다(같은 답이 두 번 와도 한 번만 승인). */
@@ -307,6 +329,7 @@ export class PhoneGate {
     g.pending = null;
     if (body.decision === 'deny') {
       this.#open.delete(g.shellRunId);
+      this.#resolved(g, 'phone');
       await g.on.deny();
       return 'denied';
     }
@@ -327,6 +350,7 @@ export class PhoneGate {
     }
     if (this.#open.get(g.shellRunId) !== g) return 'no_request';
     this.#open.delete(g.shellRunId);
+    this.#resolved(g, 'phone');
     await g.on.approve();
     return 'approved';
   }
