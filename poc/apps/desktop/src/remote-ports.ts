@@ -260,9 +260,10 @@ export interface RelayHttpClient {
   /** POST /v1/rooms {roomId}(기기 토큰, 데스크톱만) → 룸 만료 시각(ms). QR을 보이기 전에 연다. */
   createRoom(auth: DeviceAuth, roomId: Uint8Array): Promise<{ expiresAt: number }>;
   /** POST /v1/mailboxes(기기 토큰): 우편함 등록(서버는 토큰 해시만). */
-  registerMailbox(auth: DeviceAuth, mbxId: Uint8Array, tokRead: Uint8Array, tokWrite: Uint8Array): Promise<void>;
+  registerMailbox(auth: DeviceAuth, mbxId: Uint8Array, tokRead: Uint8Array, tokWrite: Uint8Array, peer?: string): Promise<void>;
   /** DELETE /v1/mailboxes/:id(쓰기 토큰): 우편함을 만든 뒤 페어링이 실패하면 지운다. */
-  deleteMailbox(auth: DeviceAuth, mbxId: Uint8Array, tokWrite: Uint8Array): Promise<void>;
+  /** peer: 폰을 끊어 지우는 것이면 그 폰의 기기 ID(릴레이가 그 폰의 자리도 비운다) */
+  deleteMailbox(auth: DeviceAuth, mbxId: Uint8Array, tokWrite: Uint8Array, peer?: string): Promise<void>;
 }
 
 /** 클라우드 세션이 넘기는 묶음. 릴레이 WebSocket도 egress 경유(@sax/remote wsRelayClient의 open). */

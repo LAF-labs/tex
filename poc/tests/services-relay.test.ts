@@ -179,7 +179,8 @@ describe('M7-3 릴레이: 우편함 등록·능력 토큰·기기 토큰', () =>
     assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: m })).json.error, 'request.param_rejected');
     assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: { ...newMailbox(), tokWrite: m.tokRead } })).status, 201);
     assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: newMailbox() })).status, 201);
-    assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: newMailbox() })).json.error, 'relay.mailbox_limit');
+    // 폰을 알리지 않는 예전 PC의 우편함은 자리를 세지 않는다(v2, 자리는 아래 시험)
+    assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: newMailbox() })).status, 201);
     assert.equal((await e.call(e.phone, 'POST', '/v1/mailboxes', { body: newMailbox() })).json.error, 'account.scope_denied');
     assert.equal((await e.r('POST', '/v1/mailboxes', { headers: { authorization: `Bearer ${e.pc.session}` }, body: newMailbox() })).json.error, 'relay.unauthorized');
     const x = newMailbox();
@@ -190,13 +191,44 @@ describe('M7-3 릴레이: 우편함 등록·능력 토큰·기기 토큰', () =>
     assert.equal((await e.call(e.pc, 'DELETE', `/v1/mailboxes/${m.mbxId}`, { headers: { 'x-mbx-write': m.tokWrite } })).status, 204);
     const n = newMailbox();
     assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: n })).status, 201);
-    // 같은 우편함을 동시에 두 번 지워도 개수는 한 번만 줄어든다(한도 우회 없음)
+    // 같은 우편함을 동시에 지워도 한 번만 지워진다
     const del = () => e.call(e.pc, 'DELETE', `/v1/mailboxes/${n.mbxId}`, { headers: { 'x-mbx-write': n.tokWrite } });
     const both = await Promise.all([del(), del(), del()]);
     assert.ok(both.every((r) => r.status === 204 || r.json.error === 'relay.mailbox_not_found'));
-    assert.equal((await e.db.one<{ n: number }>('SELECT n FROM mailbox_quota'))!.n, 2);
-    assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: newMailbox() })).status, 201);
-    assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: newMailbox() })).json.error, 'relay.mailbox_limit');
+    assert.equal(both.filter((r) => r.status === 204).length, 1);
+  });
+
+  it('우편함 자리(v2): PC당 폰 3대. 같은 폰은 자리를 더 쓰지 않고, 끊긴·정지된 폰의 자리는 새로 만들 때·정지 훅에서 비운다(2026-11-19)', async () => {
+    const pc0 = e.pc as unknown as Signed;
+    const mk = (peer?: string) => e.call(e.pc, 'POST', '/v1/mailboxes', { body: { ...newMailbox(), ...(peer ? { peer } : {}) } });
+    const slots = async (owner: string) => (await e.db.all<{ peer_dev: string }>('SELECT peer_dev FROM mailbox_slots WHERE owner_dev = $1', [owner])).map((x) => x.peer_dev).sort();
+    // 같은 계정의 쓰이는 폰: 자리 하나. 다시 연결해도 자리를 더 쓰지 않는다
+    assert.equal((await mk(e.phone.id)).status, 201);
+    assert.equal((await mk(e.phone.id)).status, 201);
+    assert.deepEqual(await slots(pc0.d.id), [e.phone.id]);
+    // 모르는 폰·PC 자신은 받지 않는다(남의 기기 ID로 자리를 만들지 못하게)
+    assert.equal((await mk(device('mobile', 0).id)).json.error, 'request.param_rejected');
+    assert.equal((await mk(pc0.d.id)).json.error, 'request.param_rejected');
+    // 폰을 끊어 지우면(x-mbx-peer) 그 자리도 빈다
+    const m = { ...newMailbox(), peer: e.phone.id };
+    assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: m })).status, 201);
+    assert.equal((await e.call(e.pc, 'DELETE', `/v1/mailboxes/${m.mbxId}`, { headers: { 'x-mbx-write': m.tokWrite, 'x-mbx-peer': e.phone.id } })).status, 204);
+    assert.deepEqual(await slots(pc0.d.id), []);
+    // 계정 서비스가 폰을 정지하면(정지 훅) 그 자리가 빈다
+    assert.equal((await mk(e.phone.id)).status, 201);
+    assert.equal((await e.s.req('POST', `/v1/devices/${e.phone.id}/suspend`, { headers: { authorization: `Bearer ${pc0.session}` } })).status, 204);
+    assert.deepEqual(await slots(pc0.d.id), []);
+
+    // 자리는 PC당 RELAY.mailboxesPerDevice: 쓰이는 폰이 다 차면 다음 폰은 막히고, 쓰이지 않게 된 폰의 자리는 새로 만들 때 비운다
+    const owner = 'pc-limit';
+    const peers = Array.from({ length: RELAY.mailboxesPerDevice + 1 }, () => device('mobile', 0).id);
+    for (const p of peers.slice(0, -1)) await e.svc.createMailbox(owner, { ...newMailbox(), peer: p }, async () => true);
+    await assert.rejects(e.svc.createMailbox(owner, { ...newMailbox(), peer: peers.at(-1)! }, async () => true), /relay\.mailbox_limit/);
+    await e.svc.createMailbox(owner, { ...newMailbox(), peer: peers.at(-1)! }, async (p) => p !== peers[0]);
+    assert.deepEqual(await slots(owner), peers.slice(1).sort());
+    // 예전 PC(폰을 알리지 않음)의 우편함은 자리를 세지 않는다(지우기에 실패한 v1 개수가 남아도 막히지 않는다)
+    await e.db.run("INSERT INTO mailbox_quota (device_id, n) VALUES ($1, 3) ON CONFLICT (device_id) DO UPDATE SET n = 3", [owner]);
+    await e.svc.createMailbox(owner, newMailbox());
   });
 
   it('토큰이 틀리면 우편함이 없을 때와 같은 응답, IP당 10분 20회 실패 뒤에는 맞는 토큰도 거부', async () => {

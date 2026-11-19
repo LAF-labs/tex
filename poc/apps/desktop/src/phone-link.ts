@@ -90,9 +90,25 @@ export interface PhoneRecord {
   pxOff?: boolean;
 }
 
+/** 지우지 못한 우편함(폰을 끊을 때 릴레이 삭제가 실패했다). 다음에 켤 때 다시 지운다(30일까지). */
+export interface MailboxTrash {
+  mbxId: string;
+  /** 봉인한 {read, write}(기록의 tok 그대로) */
+  tok: string;
+  deviceId: string;
+  at: number;
+}
+const TRASH_KEEP_MS = 30 * 86_400_000;
+const isTrash = (x: unknown): x is MailboxTrash => {
+  const t = x as Partial<MailboxTrash> | null;
+  return !!t && typeof t.mbxId === 'string' && typeof t.tok === 'string' && typeof t.deviceId === 'string' && typeof t.at === 'number';
+};
+
 interface FileShape {
   v: 1;
   phones: PhoneRecord[];
+  /** 지우지 못한 우편함(없으면 빈 목록) */
+  trash?: MailboxTrash[];
 }
 
 /** 토큰 봉인. 제품은 Electron safeStorage(키체인·DPAPI). 시험은 그대로. */
@@ -135,6 +151,14 @@ const cleanPx = (r: PhoneRecord): PhoneRecord => {
 export class PhoneStore {
   #file: string;
   #chain: Promise<unknown> = Promise.resolve();
+  #trash: MailboxTrash[] = [];
+  /** 지우지 못한 우편함(load 뒤). save가 기록과 같이 쓴다 */
+  trash(): MailboxTrash[] {
+    return [...this.#trash];
+  }
+  setTrash(t: readonly MailboxTrash[]): void {
+    this.#trash = [...t];
+  }
   constructor(file: string) {
     this.#file = file;
   }
@@ -148,6 +172,7 @@ export class PhoneStore {
     try {
       const j = JSON.parse(raw) as Partial<FileShape>;
       if (j.v !== FILE_VERSION || !Array.isArray(j.phones)) return [];
+      this.#trash = Array.isArray(j.trash) ? j.trash.filter(isTrash) : [];
       return j.phones.filter(isRec).map(cleanPx);
     } catch {
       return [];
@@ -157,7 +182,7 @@ export class PhoneStore {
     const run = async () => {
       await fs.mkdir(path.dirname(this.#file), { recursive: true });
       const tmp = `${this.#file}.${process.pid}.tmp`;
-      await fs.writeFile(tmp, JSON.stringify({ v: FILE_VERSION, phones: [...phones] } satisfies FileShape), { mode: 0o600 });
+      await fs.writeFile(tmp, JSON.stringify({ v: FILE_VERSION, phones: [...phones], ...(this.#trash.length ? { trash: this.#trash } : {}) } satisfies FileShape), { mode: 0o600 });
       // Windows: 다른 프로세스(백신·색인·읽는 중)가 대상 파일을 열고 있으면 rename이 잠깐 EPERM·EBUSY로 실패한다
       for (let i = 0; ; i++) {
         try {
@@ -220,8 +245,8 @@ export interface PhoneLinkOptions {
   queue: (mbxId: Uint8Array, tok: MailboxTokens) => Pick<RelayQueue, 'list' | 'listPage' | 'ack' | 'putBundle'>;
   /** 페어 하나당 수신기(phone-receive.ts phoneReceiver) */
   receiver: (pairId: string) => PhoneReceiver;
-  /** 우편함 삭제(연결 해제). 실패해도 로컬 기록은 지운다. */
-  deleteMailbox?: (mbxId: Uint8Array, tokWrite: Uint8Array) => Promise<void>;
+  /** 우편함 삭제(연결 해제·같은 폰 다시 연결). peer를 주면 릴레이가 그 폰의 자리도 비운다. 실패하면 기록은 지우고 다음에 켤 때 다시 지운다(trash). */
+  deleteMailbox?: (mbxId: Uint8Array, tokWrite: Uint8Array, peer?: string) => Promise<void>;
   deviceListVersion: () => number;
   appVersion: string;
   capabilities?: () => readonly string[];
@@ -294,6 +319,37 @@ export class PhoneLink {
     this.#recs = await this.#o.store.load();
     for (const r of this.#recs) this.#run(r);
     this.#log('main.phone_link', { step: 'start', phones: this.#recs.length });
+    void this.#emptyTrash();
+  }
+
+  /** 지우지 못한 우편함을 다시 지운다. 지웠거나 30일이 지났거나 토큰을 열 수 없으면 목록에서 뺀다. */
+  async #emptyTrash(): Promise<void> {
+    const st = this.#o.store as Partial<Pick<PhoneStore, 'trash' | 'setTrash'>>;
+    const list = st.trash?.() ?? [];
+    if (!list.length || !this.#o.deleteMailbox) return;
+    const keep: MailboxTrash[] = [];
+    for (const t of list) {
+      if (this.#now() - t.at > TRASH_KEEP_MS) continue;
+      let write: Uint8Array;
+      try {
+        write = unpackTok(this.#o.seal.open(t.tok)).write;
+      } catch {
+        this.#log('main.phone_link', { step: 'mailbox_retry', result: 'unsealable' });
+        continue;
+      }
+      try {
+        await this.#o.deleteMailbox(fromB64(t.mbxId), write, t.deviceId);
+        this.#log('main.phone_link', { step: 'mailbox_retry', result: 'ok' });
+      } catch (e) {
+        const code = codeOf(e);
+        // 이미 없는 우편함이면 끝난 것이다
+        if (code === 'relay.mailbox_not_found') continue;
+        this.#log('main.phone_link', { step: 'mailbox_retry', result: code });
+        keep.push(t);
+      }
+    }
+    st.setTrash?.(keep);
+    await this.#o.store.save(this.#recs);
   }
 
   /** 페어링 결과를 저장하고 바로 지킨다. 같은 폰(deviceId)을 다시 연결하면 옛 기록을 바꾼다. */
@@ -340,11 +396,23 @@ export class PhoneLink {
     const rec = this.#recs.find((x) => x.pairId === pairId);
     if (!rec) return false;
     this.#stopRun(pairId);
+    let write: Uint8Array | null = null;
     try {
-      const t = unpackTok(this.#o.seal.open(rec.tok));
-      await this.#o.deleteMailbox?.(fromB64(rec.mbxId), t.write);
-    } catch (e) {
-      this.#log('main.phone_link', { step: 'remove_mailbox', result: codeOf(e) });
+      write = unpackTok(this.#o.seal.open(rec.tok)).write;
+    } catch {
+      // 토큰을 열 수 없다(다른 앱 서명의 키체인 등): 다시 해도 안 되니 남기지 않는다. 릴레이는 끊긴 폰의 자리를 스스로 비운다
+      this.#log('main.phone_link', { step: 'remove_mailbox', result: 'unsealable' });
+    }
+    if (write) {
+      try {
+        await this.#o.deleteMailbox?.(fromB64(rec.mbxId), write, rec.deviceId);
+      } catch (e) {
+        const code = codeOf(e);
+        this.#log('main.phone_link', { step: 'remove_mailbox', result: code });
+        // 네트워크 등으로 실패: 다음에 켤 때 다시 지운다
+        const st = this.#o.store as Partial<Pick<PhoneStore, 'trash' | 'setTrash'>>;
+        if (code !== 'relay.mailbox_not_found') st.setTrash?.([...(st.trash?.() ?? []), { mbxId: rec.mbxId, tok: rec.tok, deviceId: rec.deviceId, at: this.#now() }]);
+      }
     }
     this.#recs = this.#recs.filter((x) => x.pairId !== pairId);
     await this.#o.store.save(this.#recs);

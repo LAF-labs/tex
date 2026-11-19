@@ -229,6 +229,33 @@ describe('PC 폰 수신(phone-link)', () => {
     second.stop();
   });
 
+  it('우편함 지우기가 실패하면 기록은 지우고, 지울 일을 남겨 다음에 켤 때 다시 지운다(폰 자리도 같이, 2026-11-19)', async () => {
+    const x = await world();
+    const calls: Array<{ id: string; peer?: string }> = [];
+    let fail = true;
+    const del = async (id: Uint8Array, _w: Uint8Array, peer?: string) => {
+      calls.push({ id: b64(id), peer });
+      if (fail) throw Object.assign(new Error('net'), { code: 'net.offline' });
+    };
+    const link = x.mk(false, { deleteMailbox: del });
+    await link.start();
+    await link.add(x.pc);
+    assert.equal(await link.remove(x.pc.pairId), true);
+    assert.equal(link.list().length, 0, '목록에서는 빠진다');
+    assert.deepEqual(calls, [{ id: b64(x.pc.mbxId), peer: x.pc.phone.deviceId }], '폰 기기 ID를 같이 알린다(릴레이가 자리를 비운다)');
+    const saved = JSON.parse(await fs.readFile(x.file, 'utf8'));
+    assert.equal(saved.trash.length, 1);
+    assert.ok(!JSON.stringify(saved.trash).includes(b64(x.pc.tokWrite)), '토큰은 봉인된 채');
+    link.stop();
+    // 다음에 켜면 다시 지우고, 지웠으면 남기지 않는다
+    fail = false;
+    const again = x.mk(false, { deleteMailbox: del });
+    await again.start();
+    await until(() => calls.length === 2);
+    await until(() => !JSON.parse(readFileSync(x.file, 'utf8')).trash);
+    assert.deepEqual(calls[1], { id: b64(x.pc.mbxId), peer: x.pc.phone.deviceId });
+  });
+
   it('연결 해제는 우편함을 지우고 기록을 없앤다. 같은 폰을 다시 연결하면 옛 기록을 바꾼다', async () => {
     const x = await world();
     const link = x.mk(false);

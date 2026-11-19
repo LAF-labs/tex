@@ -1,5 +1,5 @@
 // 우편함 저장: 우편함 ID·토큰 해시, 오프라인 의도 봉투 큐(72시간·160건·6 MiB), 번들 슬롯, 기기당 개수, 메타 통계(우편함 ID 없음).
-// 우편함과 기기·계정은 같은 행에 두지 않는다. 기기 ID는 개수(mailbox_quota)에만 있고 어느 우편함인지는 모른다(D08 §8).
+// 우편함과 기기·계정은 같은 행에 두지 않는다. 기기 ID는 자리(mailbox_slots: 만든 PC, 이어진 폰)에만 있고 어느 우편함인지는 모른다(D08 §8).
 import { fail, kstDay, openAead, safeEqual, sealAead, sha256hex, type Sql } from '@sax/svc-shared';
 import { RELAY, sizeBucket } from './constants.ts';
 
@@ -36,21 +36,39 @@ export class RelayService {
     this.now = d.now;
   }
 
-  /** PC가 만든 32B 난수 우편함 ID·읽기·쓰기 토큰을 등록한다(서버는 해시만). 기기당 3개. */
-  async createMailbox(deviceId: string, o: { mbxId: string; tokRead: string; tokWrite: string }): Promise<void> {
+  /**
+   * PC가 만든 32B 난수 우편함 ID·읽기·쓰기 토큰을 등록한다(서버는 해시만). 자리는 PC당 폰 3대(mailbox_slots).
+   * peer: 이 우편함으로 이어질 폰의 기기 ID. 같은 폰을 다시 연결하면 자리를 더 쓰지 않는다.
+   * alive: 계정 서비스에서 그 폰이 아직 쓰이는지(활성·연결 중). 아니면 그 자리를 비운다(끊은 폰의 우편함 지우기가 실패했어도 자리가 풀린다).
+   * peer가 없는 예전 PC는 자리를 세지 않는다(v1 개수는 지우기가 실패하면 영영 남았다).
+   */
+  async createMailbox(deviceId: string, o: { mbxId: string; tokRead: string; tokWrite: string; peer?: string }, alive: (peer: string) => Promise<boolean> = async () => true): Promise<void> {
     const id = raw32(o.mbxId);
     const r = raw32(o.tokRead);
     const w = raw32(o.tokWrite);
     if (!id || !r || !w || id.equals(r) || id.equals(w) || r.equals(w)) fail('request.param_rejected');
+    // 계정 서비스는 트랜잭션 밖에서 묻는다(네트워크)
+    const slots = o.peer ? await this.d.db.all<{ peer_dev: string }>('SELECT peer_dev FROM mailbox_slots WHERE owner_dev = $1', [deviceId]) : [];
+    const gone: string[] = [];
+    for (const s of slots) if (s.peer_dev !== o.peer && !(await alive(s.peer_dev))) gone.push(s.peer_dev);
     await this.d.db.tx(async (q) => {
-      const cur = await q.one<{ n: number }>(`SELECT n FROM mailbox_quota WHERE device_id = $1${q.forUpdate}`, [deviceId]);
-      if (Number(cur?.n ?? 0) >= RELAY.mailboxesPerDevice) fail('relay.mailbox_limit');
+      for (const p of gone) await q.run('DELETE FROM mailbox_slots WHERE owner_dev = $1 AND peer_dev = $2', [deviceId, p]);
+      if (o.peer) {
+        const mine = await q.all<{ peer_dev: string }>(`SELECT peer_dev FROM mailbox_slots WHERE owner_dev = $1${q.forUpdate}`, [deviceId]);
+        if (!mine.some((x) => x.peer_dev === o.peer) && mine.length >= RELAY.mailboxesPerDevice) fail('relay.mailbox_limit');
+      }
       const key = mbxKeyOf(id!);
       if (await q.one('SELECT 1 AS x FROM mailboxes WHERE mbx_key = $1', [key])) fail('request.param_rejected');
       await q.run('INSERT INTO mailboxes (mbx_key, read_hash, write_hash) VALUES ($1, $2, $3)', [key, tokHash(r!), tokHash(w!)]);
-      await q.run('INSERT INTO mailbox_quota (device_id, n) VALUES ($1, 1) ON CONFLICT (device_id) DO UPDATE SET n = mailbox_quota.n + 1', [deviceId]);
+      if (o.peer) await q.run('INSERT INTO mailbox_slots (owner_dev, peer_dev) VALUES ($1, $2) ON CONFLICT (owner_dev, peer_dev) DO NOTHING', [deviceId, o.peer]);
     });
+    if (gone.length) this.d.onEvent?.('mailbox_slot_freed');
     this.d.onEvent?.('mailbox_created');
+  }
+
+  /** 계정 서비스가 폰을 끊거나 정지했다(정지 훅): 그 폰이 쓰던 자리를 비운다. 우편함 자체는 ID를 모르니 그대로다(토큰 없이는 못 쓴다). */
+  async freePeer(peer: string): Promise<number> {
+    return this.d.db.run('DELETE FROM mailbox_slots WHERE peer_dev = $1', [peer]);
   }
 
   /**
@@ -67,14 +85,17 @@ export class RelayService {
     return key;
   }
 
-  /** 우편함 삭제(재발급 mbx.reissue 뒤 옛 우편함, 기기 해제). 큐·번들도 함께. 호출 기기의 개수를 하나 줄인다. */
-  async deleteMailbox(deviceId: string, key: string): Promise<void> {
+  /**
+   * 우편함 삭제(재발급 mbx.reissue 뒤 옛 우편함, 기기 해제). 큐·번들도 함께.
+   * peer를 주면(폰 해제) 그 폰의 자리도 비운다. 재발급은 같은 폰의 새 우편함이 자리를 이어 쓰므로 peer를 주지 않는다.
+   */
+  async deleteMailbox(deviceId: string, key: string, peer?: string): Promise<void> {
     await this.d.db.tx(async (q) => {
-      // 동시에 같은 우편함을 지우면 둘 다 auth를 통과한다. 실제로 지운 쪽만 개수를 줄인다(한도 우회 방지)
+      // 동시에 같은 우편함을 지우면 둘 다 auth를 통과한다. 실제로 지운 쪽만 자리를 비운다
       if ((await q.run('DELETE FROM mailboxes WHERE mbx_key = $1', [key])) !== 1) return;
       await q.run('DELETE FROM queue WHERE mbx_key = $1', [key]);
       await q.run('DELETE FROM mailbox_bundles WHERE mbx_key = $1', [key]);
-      await q.run('UPDATE mailbox_quota SET n = n - 1 WHERE device_id = $1 AND n > 0', [deviceId]);
+      if (peer) await q.run('DELETE FROM mailbox_slots WHERE owner_dev = $1 AND peer_dev = $2', [deviceId, peer]);
     });
   }
 
