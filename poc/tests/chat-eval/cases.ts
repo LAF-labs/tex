@@ -33,6 +33,7 @@ export const SEED: { cps: SeedCp[]; issued: SeedRow[]; receivables: SeedRow[]; p
     { name: '스마일카페', item: null },
     { name: '대한테크', item: '웹사이트 유지보수' },
     { name: '김앤리컨설팅', item: '컨설팅' },
+    { name: '일호유통', item: '사무용품' },
   ],
   issued: [
     { cp: '한빛상사', date: '2026-11-03', total: 1_100_000, approvalNo: '20261103-41000000-00000001' },
@@ -98,6 +99,8 @@ export interface TurnExpect {
   saysAny?: string[];
   /** 화면 문장에 있으면 안 되는 말 */
   notSays?: string[];
+  /** open_screen으로 이 화면을 연다(앱 안 일, 2026-11-19) */
+  screen?: string;
   /** 고정 문구로 걸러져야 한다(advice·unsafe·number·refusal) */
   filtered?: string | null;
   /** 답이 '지금 답을 받지 못했어요'(unavailable)여도 된다 */
@@ -109,12 +112,36 @@ export interface Case {
   /** 무엇을 보는가(사람이 읽을 설명) */
   why: string;
   turns: Array<{ say: string; expect: TurnExpect }>;
+  /** 앱처럼 품목이 있는 새 카드를 바로 준비 중으로 둔다(열린 카드 목록에서 빠짐, 정정은 invoice_draft 다시). */
+  autoPrepare?: boolean;
 }
 
+/** 할 수 있는 일 목록을 되풀이하는 답(옛 CHAT_AGENT_FALLBACK_TEXT)의 낱말 */
+const LIST_WORDS = ['도와드려요. 어떤 일을 할까요', '할 수 있는 일은', '편하게 말씀해 주시면 바로 해 드릴게요'];
+/** 잡담에 부르면 안 되는 도구(조회·카드) */
+const CHAT_NO_TOOLS = ['sales_summary', 'invoice_history', 'receivables', 'payables', 'cash_flow', 'invoice_draft', 'open_screen'];
 const ISSUE_WORDS = ['발급했', '발급 완료했', '발급을 완료', '발급됐', '발급되었', '전송했'];
 
 export const CASES: Case[] = [
+  // ── 앱 안 일·잡담(대표 2026-11-19 "에이전틱하지 않잖아", "어떤 말을 던져도 자연스럽게"): 목록을 되풀이하지 않고, 화면은 open_screen으로 연다 ──
+  { id: 'app-security-card', cat: '앱 안 일', why: '보안카드는 지원하지 않음 → 발급 인증 화면', turns: [{ say: '보안카드 등록할래', expect: { screen: 'issue_auth', notSays: [...LIST_WORDS, ...ISSUE_WORDS] } }] },
+  { id: 'app-bank', cat: '앱 안 일', why: '계좌 연결 화면', turns: [{ say: '은행 연결해줘', expect: { screen: 'bank', notSays: LIST_WORDS } }] },
+  { id: 'app-phone', cat: '앱 안 일', why: '기기 연결 화면', turns: [{ say: '폰 연결하고 싶어', expect: { screen: 'devices', notSays: LIST_WORDS } }] },
+  { id: 'app-cp-add', cat: '앱 안 일', why: '거래처 화면', turns: [{ say: '거래처 추가할래', expect: { screen: 'counterparties', notSays: LIST_WORDS, noCreate: true } }] },
+  { id: 'app-billing', cat: '앱 안 일', why: '구독 화면', turns: [{ say: '구독 어떻게 해', expect: { screen: 'billing', notSays: LIST_WORDS } }] },
+  { id: 'app-business', cat: '앱 안 일', why: '내 사업장 화면', turns: [{ say: '내 사업장 정보 바꾸고 싶어', expect: { screen: 'business', notSays: LIST_WORDS } }] },
+  { id: 'chat-lunch', cat: '잡담', why: '업무로 억지로 돌리지 않음', turns: [{ say: '오늘 점심 뭐 먹을까?', expect: { noTools: CHAT_NO_TOOLS, noCreate: true, notSays: LIST_WORDS } }] },
+  { id: 'chat-tired', cat: '잡담', why: '사람처럼 받기', turns: [{ say: '피곤하다', expect: { noTools: CHAT_NO_TOOLS, noCreate: true, notSays: LIST_WORDS } }] },
+  { id: 'chat-weather', cat: '잡담', why: '사람처럼 받기', turns: [{ say: '날씨 좋네', expect: { noTools: CHAT_NO_TOOLS, noCreate: true, notSays: LIST_WORDS } }] },
+  { id: 'chat-thanks', cat: '잡담', why: '사람처럼 받기', turns: [{ say: '고마워', expect: { noTools: CHAT_NO_TOOLS, noCreate: true, notSays: LIST_WORDS } }] },
   // ── 발급 카드 만들기 ──
+  // 대표 실사용(2026-11-19): 0클릭 준비 중에 금액·부가세를 고친다. 새 카드가 앞 준비를 대신한다([중지]를 시키지 않는다).
+  {
+    id: 'issue-correct-preparing', cat: '여러 턴', why: '준비 중 정정 → 같은 거래처 새 카드(부가세 포함 100원)', autoPrepare: true, turns: [
+      { say: '일호유통 100원 끊어줘', expect: { created: [{ cp: '일호유통', amount: 100 }], notSays: ISSUE_WORDS } },
+      { say: '세금포함 100원이야', expect: { created: [{ cp: '일호유통', amount: 100, vat: 'included' }], notSays: [...ISSUE_WORDS, '중지'] } },
+    ],
+  },
   { id: 'issue-basic', cat: '발급', why: '거래처·금액·품목 저장된 기본 요청', turns: [{ say: '한빛상사 110만원 세금계산서 끊어줘', expect: { created: [{ cp: '한빛상사', amount: 1_100_000 }], tools: ['invoice_draft'], notSays: ISSUE_WORDS } }] },
   { id: 'issue-vat-separate', cat: '발급', why: '부가세 별도 명시 → 공급가', turns: [{ say: '대한테크에 유지보수비 50만원 부가세 별도로 발행해줘', expect: { created: [{ cp: '대한테크', amount: 500_000, vat: 'separate' }] } }] },
   { id: 'issue-vat-included', cat: '발급', why: '부가세 포함 명시 → 합계', turns: [{ say: '스마일카페 커피머신 렌탈 33만원 부가세 포함으로 끊어줘', expect: { created: [{ cp: '스마일카페', amount: 330_000, vat: 'included', item: '렌탈' }] } }] },

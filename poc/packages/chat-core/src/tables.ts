@@ -18,6 +18,16 @@ const DRAFT_EXTRA = {
   unit_price: NULLABLE_STRING,
 };
 
+/**
+ * 앱 안 화면을 바로 여는 도구(open_screen)의 대상(대표 지적 2026-11-19: 앱에서 할 수 있는 일을 말해도 할 수 있는 일 목록만 되풀이했다, "에이전틱하지 않잖아").
+ * 화면은 PC 앱에만 있다(폰 도구 표에서 뺀다). 여는 것까지만 하고 값은 사장님이 그 화면에서 넣는다(비밀 값은 대화로 받지 않는다).
+ */
+export const OPEN_SCREENS = ['issue_auth', 'business', 'bank', 'devices', 'billing', 'counterparties', 'docs', 'receivables', 'chrome', 'security_program'] as const;
+export type OpenScreen = (typeof OPEN_SCREENS)[number];
+
+export const AGENT_REPLY_KINDS = ['answer', 'did', 'ask', 'cannot', 'tax_advice', 'smalltalk'] as const;
+export const AGENT_ASKS = ['counterparty', 'amount', 'item', 'vat', 'which_card', 'date'] as const;
+
 /** 도구 표. counterparty는 거래처 토큰, amount는 금액 토큰이나 결과 슬롯, draft는 카드 ref(d#)다. */
 export const CHAT_AGENT_TOOLS = [
   { name: 'sales_summary', parameters: obj({ month_offset: { type: 'integer', minimum: -12, maximum: 0 } }) },
@@ -28,6 +38,11 @@ export const CHAT_AGENT_TOOLS = [
   { name: 'invoice_draft', parameters: obj({ counterparty: { type: 'string' }, amount: NULLABLE_STRING, vat: VAT, item: NULLABLE_STRING, ...DRAFT_EXTRA }) },
   { name: 'draft_edit', parameters: obj({ draft: { type: 'string' }, amount: NULLABLE_STRING, vat: VAT, item: NULLABLE_STRING, ...DRAFT_EXTRA }) },
   { name: 'draft_discard', parameters: obj({ draft: { type: 'string' } }) },
+  // say: 화면을 열며 사장님께 할 한두 문장. 엔진이 답 검사(checkAgentReply)를 거쳐 그대로 답으로 닫는다(두 번째 모델 호출 없음, 2026-11-19 DeepSeek가 opened 뒤 같은 호출을 되풀이해 턴 상한에 걸림).
+  { name: 'open_screen', parameters: obj({ screen: { type: 'string', enum: OPEN_SCREENS }, say: { type: 'string' } }) },
+  // 도구 없이 답할 때(잡담·인사·고맙다는 말·할 수 없는 일·세무 판단). DeepSeek는 도구가 있으면 늘 도구를 부른다(chat-eval 2026-11-19: 점심·날씨에
+  // open_screen·sales_summary를 부름). 답도 도구 하나로 쥐여 주면 엉뚱한 도구로 말하지 않는다. 엔진이 답 검사를 거쳐 그대로 닫는다. PC만(폰은 PHONE_OMITTED_TOOLS).
+  { name: 'reply', parameters: obj({ kind: { type: 'string', enum: ['answer', 'ask', 'smalltalk', 'cannot', 'tax_advice'] }, text: { type: 'string' }, ask: { type: ['string', 'null'], enum: [...AGENT_ASKS, null] } }) },
 ] as const;
 export type ChatAgentToolName = (typeof CHAT_AGENT_TOOLS)[number]['name'];
 
@@ -63,8 +78,6 @@ export const slotPattern = new RegExp(`^\\{(r[1-9]\\d{0,5})\\.(${SLOT_PATHS.map(
 /** 문장 안의 슬롯 전부(g). 쓸 때마다 새로 만든다(lastIndex를 나눠 쓰지 않게). */
 export const slotAnywhere = (): RegExp => new RegExp(slotPattern.source.slice(1, -1), 'g');
 
-export const AGENT_REPLY_KINDS = ['answer', 'did', 'ask', 'cannot', 'tax_advice', 'smalltalk'] as const;
-export const AGENT_ASKS = ['counterparty', 'amount', 'item', 'vat', 'which_card', 'date'] as const;
 export type AgentReplyKind = (typeof AGENT_REPLY_KINDS)[number];
 export type AgentAsk = (typeof AGENT_ASKS)[number];
 /** 답과 같이 보일 ref 상한 */
@@ -80,17 +93,18 @@ export type Vat = 'separate' | 'included';
 // ── 폰 대화(chat_phone, ADR-047 결정 3) ──
 
 /** 폰에 없는 도구(장부 전체·통장 거래내역이 있어야 답하는 조회. 낼 돈·돈 흐름은 폰 사본에 아직 없다). 이런 요청은 defer로 답하고 PC가 켜지면 PC가 이어받는다. */
-export const PHONE_OMITTED_TOOLS = ['sales_summary', 'payables', 'cash_flow'] as const;
+export const PHONE_OMITTED_TOOLS = ['sales_summary', 'payables', 'cash_flow', 'reply'] as const;
 /** 폰 앱 화면(말 한마디로 여는 곳). capture: 영수증·종이 증빙 찍기, cash: 현금 매출 적기, bizreg: 사업자등록증으로 거래처 추가, issue: 발급 작성(카드 없이) */
 export const PHONE_SCREENS = ['capture', 'cash', 'bizreg', 'issue'] as const;
 export type PhoneScreen = (typeof PHONE_SCREENS)[number];
-/** 폰에만 있는 도구: 앱 화면을 연다(사장님이 누를 단추를 대화에 붙인다. 값은 없다). */
+/** 폰에만 있는 도구: 앱 화면을 연다(사장님이 누를 단추를 대화에 붙인다. 값은 없다). PC의 open_screen(OPEN_SCREENS)과 이름은 같고 화면 목록이 다르다. */
 export const PHONE_ONLY_TOOLS = [{ name: 'open_screen', parameters: obj({ screen: { type: 'string', enum: [...PHONE_SCREENS] } }) }] as const;
-/** 폰 대화 도구 표: chat_agent 표에서 폰에 없는 것을 빼고(이름·인자 모양은 PC와 같다) 폰 화면 도구를 더한다. */
+const PHONE_OWN = new Set<string>([...PHONE_OMITTED_TOOLS, ...PHONE_ONLY_TOOLS.map((t) => t.name)]);
+/** 폰 대화 도구 표: chat_agent 표에서 폰에 없는 것과 폰이 따로 갖는 것(open_screen)을 빼고(이름·인자 모양은 PC와 같다) 폰 화면 도구를 더한다. */
 export const CHAT_PHONE_TOOLS = [
-  ...CHAT_AGENT_TOOLS.filter((t) => !(PHONE_OMITTED_TOOLS as readonly string[]).includes(t.name)),
+  ...CHAT_AGENT_TOOLS.filter((t) => !PHONE_OWN.has(t.name)),
   ...PHONE_ONLY_TOOLS,
-] as ReadonlyArray<Exclude<(typeof CHAT_AGENT_TOOLS)[number], { name: (typeof PHONE_OMITTED_TOOLS)[number] }> | (typeof PHONE_ONLY_TOOLS)[number]>;
+] as ReadonlyArray<Exclude<(typeof CHAT_AGENT_TOOLS)[number], { name: (typeof PHONE_OMITTED_TOOLS)[number] | 'open_screen' }> | (typeof PHONE_ONLY_TOOLS)[number]>;
 export type ChatPhoneToolName = Exclude<ChatAgentToolName, (typeof PHONE_OMITTED_TOOLS)[number]> | (typeof PHONE_ONLY_TOOLS)[number]['name'];
 
 /** 답 종류: PC와 같고 defer(PC가 켜지면 이어서 할 일)만 더 있다. */

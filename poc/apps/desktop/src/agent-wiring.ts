@@ -4,7 +4,7 @@
 // - 받을 돈은 #284(BankHost.receivables()) 전에는 null(계좌 연결 전)이다.
 import type { StepParams, StepResult } from '@sax/engine';
 import { kstToday } from './approval-gate.ts';
-import type { AgentChatPorts, AgentPhase, CashFlowValues, DraftCard, DraftExtraValues, DraftPatch, IssuedRow, ReceivableRow } from './agent-chat.ts';
+import type { AgentChatPorts, AgentPhase, CashFlowValues, DraftCard, DraftExtraValues, DraftPatch, IssuedRow, OpenScreen, ReceivableRow } from './agent-chat.ts';
 import { INVOICE_PLAYBOOK } from './run-history.ts';
 import type { Counterparty, RunView, VatMode } from './shell-model.ts';
 
@@ -41,6 +41,8 @@ export interface AgentWiring {
   /** 대화가 만든 초안. 해석 출처를 적고 이번 달 판을 다시 그린다. */
   onCreated(run: RunView): void;
   onProgress(phase: AgentPhase): void;
+  /** 대화가 고른 앱 안 화면을 연다(open_screen) */
+  openScreen?(screen: OpenScreen): void;
   receivables?: () => Promise<ReceivableRow[] | null>;
   /** 낼 돈·돈 흐름(11 §2·§3). 없으면 계좌 연결 전(not_set_up) */
   payables?: () => Promise<ReceivableRow[] | null>;
@@ -101,6 +103,7 @@ export function agentPorts(w: AgentWiring): AgentChatPorts {
     counterparties: () => w.runs.counterparties.map((c) => ({ id: c.id, name: c.name, item: c.item.trim() ? c.item : null })),
     today: () => kstToday(w.now?.() ?? Date.now()),
     onProgress: (phase) => w.onProgress(phase),
+    ...(w.openScreen ? { openScreen: w.openScreen } : {}),
     ...(w.now ? { now: w.now } : {}),
   };
 }

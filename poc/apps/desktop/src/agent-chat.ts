@@ -6,6 +6,9 @@
 import { draftDate, issueDateRule, lineSupply, parseQuantity } from '@sax/engine';
 import type { AgentReply, DomainCall, DraftExtra, ScreenFrame, ShownReply, StepParams, StepResult, ToolOutput, Vat } from '@sax/engine';
 import { CHAT_ERROR_TEXT } from './chat-reply.ts';
+
+/** 대화가 열 수 있는 앱 안 화면(@sax/chat-core OPEN_SCREENS) */
+export type OpenScreen = Extract<DomainCall, { tool: 'open_screen' }>['screen'];
 import { fillWithJosa, finalOf, fixJosa } from './josa.ts';
 import { cleanItem, split } from './shell-model.ts';
 
@@ -39,21 +42,21 @@ export const AGENT_STEP_MAX = 6;
 const AMOUNT_MAX = 1e12;
 const CHIP_CP_MAX = 8;
 
-export const AGENT_SETUP_TEXT = '대화를 쓰려면 먼저 내 사업장(사업자 정보)을 등록해 주세요.';
+export const AGENT_SETUP_TEXT = '대화로 일을 맡기려면 내 사업장 정보가 먼저 있어야 해요. 설정 > 내 사업장에서 등록해 주세요.';
 /** 돈 흐름 칸 중 확인 못 한 값(잔액을 모르는 계좌 등)을 물었을 때. 모르는 것을 0으로 말하지 않는다(11 §3.4). */
-export const AGENT_CASH_MISSING_TEXT = '그 값은 거래내역이 모자라 확인하지 못했어요. 은행 화면에서 계좌 거래내역을 더 들여 주시면 알려 드릴게요.';
+export const AGENT_CASH_MISSING_TEXT = '거래내역이 모자라서 그 값은 아직 몰라요. 계좌 거래내역을 더 가져오면 알려 드릴게요.';
 /** 채울 값이 없는 슬롯이 있으면 문장 전체를 이것으로 바꾼다(값을 지어내지 않는다). */
-export const AGENT_SLOT_MISSING_TEXT = '같이 보이는 표에서 값을 확인해 주세요.';
+export const AGENT_SLOT_MISSING_TEXT = '정확한 값은 아래 표에 있어요.';
 
 /** 모델 답을 받지 못했다(U8-5). 원인(인터넷·서버·모델)을 단정하지 않는다. */
-export const AGENT_UNAVAILABLE_TEXT = '지금 답을 받지 못했어요. 잠시 뒤 다시 시도해 주세요.';
+export const AGENT_UNAVAILABLE_TEXT = '답을 받지 못했어요. 잠시 뒤 [다시 시도]를 눌러 주세요.';
 
 /** chat.* 오류 → 대화 문장과 [다시 시도]. 표에 없는 코드는 chat.unavailable로 접는다. */
 export const AGENT_ERROR_TEXT: Record<string, { text: string; retry: boolean }> = {
   ...CHAT_ERROR_TEXT,
   'chat.unavailable': { text: AGENT_UNAVAILABLE_TEXT, retry: true },
   'chat.bad_response': { text: AGENT_UNAVAILABLE_TEXT, retry: true },
-  'chat.turn_limit': { text: '한 번에 하기 어려워요. 나눠서 말씀해 주세요.', retry: false },
+  'chat.turn_limit': { text: '한 번에 하기엔 일이 많아요. 하나씩 나눠서 말씀해 주세요.', retry: false },
   'chat.bad_tool_output': { text: AGENT_UNAVAILABLE_TEXT, retry: true },
   bad_text: CHAT_ERROR_TEXT['chat.input_too_large'],
 };
@@ -148,6 +151,8 @@ export interface AgentChatPorts {
   /** KST YYYY-MM-DD */
   today(): string;
   onProgress(phase: AgentPhase): void;
+  /** 대화가 고른 앱 안 화면을 연다(open_screen). 렌더러가 답을 그린 뒤 그 화면으로 간다. */
+  openScreen?(screen: OpenScreen): void;
   now?: () => number;
 }
 
@@ -202,6 +207,7 @@ const TOOL_PHASE: Record<DomainCall['tool'], Exclude<AgentPhase, 'thinking'>> = 
   invoice_draft: 'drafting',
   draft_edit: 'drafting',
   draft_discard: 'drafting',
+  open_screen: 'reading',
 };
 
 const out = (status: ToolOutput['status'], ref: string | null = null, needs: ToolNeed[] | null = null): ToolOutput => ({ ref, status, fields: null, needs });
@@ -392,6 +398,11 @@ export class AgentChat {
         created.push(r.runId);
         return out('card_shown', this.cardRef(s, r.runId));
       }
+      case 'open_screen': {
+        // 앱 안 화면을 연다(보안카드 등록·계좌 연결·기기 연결 등). 값은 사장님이 그 화면에 넣는다. 열 곳이 없으면(시험 대역) 그래도 opened로 닫는다.
+        this.ports.openScreen?.(call.screen);
+        return out('opened');
+      }
       case 'draft_edit':
       case 'draft_discard': {
         const runId = s.runOfRef.get(call.draft);
@@ -533,7 +544,7 @@ export class AgentChat {
     for (const runId of created) if (!cards.has(runId)) show.push({ type: 'card', runId });
     const name = reply.unknownName?.trim();
     // 장부에 이미 있는 이름이면(모델이 다른 토큰을 썼다) 안내하지 않는다
-    const unknown = name && !this.ports.counterparties().some((c) => c.name === name) ? { name, text: `${name}${finalOf(name) ? fixJosa(name, '은 장부에 없는 거래처예요.') : '은(는) 장부에 없는 거래처예요.'}` } : null;
+    const unknown = name && !this.ports.counterparties().some((c) => c.name === name) ? { name, text: `${name}${finalOf(name) ? fixJosa(name, '은 거래처 목록에 없어요.') : '은(는) 거래처 목록에 없어요.'}` } : null;
     return {
       kind: 'agent',
       text: slotted ? this.fill(s, reply) : reply.text,

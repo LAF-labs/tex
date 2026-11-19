@@ -25,7 +25,7 @@ export type IntentRoute =
 export const ADVICE_TEXT = '세무 판단은 하지 않아요. 세무 대리인과 상담해 주세요.';
 
 /** 판정을 못 했을 때(게이트웨이 불가·시간 초과·모양 다름) 대화에 보이는 문장. 렌더러가 [다시 시도]를 붙인다. */
-export const INTENT_UNAVAILABLE_TEXT = '지금 AI 모델에 연결하지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.';
+export const INTENT_UNAVAILABLE_TEXT = '지금은 답을 받을 수 없어요. 인터넷 연결을 확인하고 [다시 시도]를 눌러 주세요.';
 
 /** 온보딩 ②(모델 처리 동의) 전에 대화를 보냈을 때. 문장은 모델로 가지 않는다. */
 export const MODEL_CONSENT_FIRST_TEXT = '대화는 AI 모델로 해석해요. 등록 중인 화면에서 모델 처리에 동의하면 바로 쓸 수 있어요.';

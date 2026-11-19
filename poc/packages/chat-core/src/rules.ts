@@ -82,7 +82,9 @@ const NUMBER_SHAPES: RegExp[] = [
 ];
 
 /** 답 문장(슬롯·토큰을 뺀 것)에 수가 있는가: NFKC로 정규화한 뒤 모든 유니코드 숫자(전각·아랍-인도·원문자), 한글·한자 수, 고유어 건수. */
-export function numberShaped(bare: string): boolean {
+export function numberShaped(raw: string): boolean {
+  // 관용구 "천만에요"·"천만의 말씀"은 수가 아니다(chat-eval 2026-11-19 chat-thanks: "천만에요, 사장님"이 금액으로 걸려 고정 문장으로 바뀜)
+  const bare = raw.replace(/천만(?:에요|에\s*말씀|의\s*말씀)/gu, ' ');
   const t = normalizeForRedaction(bare).normalize('NFKC');
   return /\p{N}/u.test(bare) || /\p{N}/u.test(t) || NUMBER_SHAPES.some((re) => re.test(t)) || koNumberRun(t);
 }

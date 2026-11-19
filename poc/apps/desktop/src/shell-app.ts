@@ -47,7 +47,7 @@ import { answersPending, emptyDocStore, SETUP_LABEL, setupMissing, setupText, ty
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { readPastRuns, type PastRun } from './run-history.ts';
 import { pendingWork, RunResumeStore } from './run-resume.ts';
-import { BATCH_AUTO_NOTE, BATCH_CHANGED_NOTE, fatalText, REHEARSAL, ShellRuns, vaultNotice } from './shell-runs.ts';
+import { BATCH_AUTO_NOTE, BATCH_CHANGED_NOTE, fatalText, REHEARSAL, ShellRuns, vaultNotice, QUEUED_NOTE, REPLACED_NOTE, REPLACING_NOTE } from './shell-runs.ts';
 import { AgentChat, type AgentPhase } from './agent-chat.ts';
 import { agentPorts } from './agent-wiring.ts';
 import type { StepParams, StepResult } from '@sax/engine';
@@ -352,6 +352,7 @@ export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
 /** 새 PC 연결 중 쓰던 PC의 답을 보는 간격(ADR-048 결정 3). 서버 한도는 계정당 1,200회/시 */
 const LINK_POLL_MS = 4_000;
 const REVERIFY_WAIT_NOTE = '지난 발급을 홈택스 목록에서 확인하고 있어요. 끝나면 바로 시작해요.';
+/** 진행 중인 건이 있을 때 새 초안(queueIfBusy). 정정은 앞 준비를 바꾸고, 다른 건은 앞 건 뒤에 바로 이어 간다. */
 
 function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Array, store: DocStore, made: { host?: EngineHost }): Shell {
   // 공급사 직결(D04 예외)은 fixture 시연에만. 실제 홈택스 모드에서는 넘겨받아도 쓰지 않는다.
@@ -1287,6 +1288,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       // 시연: 씨앗 이력(승인번호 있는 것)도 지난 발급이다. 제품은 원장만.
       pastIssued: () => (seed?.past ?? []).flatMap((x) => (x.kind === 'issued' && x.approvalNo && x.who && x.day ? [{ counterpartyId: cps.find((c) => c.name === x.who)?.id ?? null, counterparty: x.who, date: x.day, total: x.total, approvalNo: x.approvalNo, documentId: x.documentId, mail: null }] : [])),
       onProgress: (phase: AgentPhase) => send({ type: 'chat-progress', phase }),
+      // 화면 열기(open_screen): 렌더러가 답을 그린 뒤 그 화면으로 간다. 값은 사장님이 그 화면에서 넣는다.
+      openScreen: (screen: string) => send({ type: 'open-screen', screen }),
     }),
   );
   const finishReply = (reply: ReturnType<typeof interpret>, via: 'model' | 'offline', note: string | null, sent: SentTo[]) => {
@@ -1310,9 +1313,49 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (!r || r.status !== 'draft' || (!r.cert && !String(r.item ?? '').trim())) return;
     setImmediate(() => {
       log.event('main.prepare_auto', {});
+      if (queueIfBusy(id)) return;
       prepareNow(id).catch((e: Error) => log.event('main.prepare_auto_failed', { code: e.message.slice(0, 60) }));
     });
   };
+  /**
+   * 실행은 한 번에 하나다(08 §5). 진행 중인 건이 있을 때 새 초안을 시작하려 하면 사장님께 [중지]를 시키지 않는다(대표 지적 2026-11-19).
+   * - 같은 거래처의 승인 전 준비면 정정으로 본다: 앞 준비를 멈추고(아무것도 보내지 않았다) 새 값으로 이어서 준비한다.
+   * - 그 밖에는 앞 건이 끝나면 바로 이어서 준비한다. 기다리는 초안은 하나다(새로 온 것이 앞에 기다리던 것을 대신한다, 그 카드는 [홈택스에서 준비]로 남는다).
+   * 바쁘지 않으면 false(부르는 쪽이 바로 시작한다).
+   */
+  let nextUp: string | null = null;
+  const queueIfBusy = (id: string): boolean => {
+    const active = runs.activeRun();
+    const d = runs.get(id);
+    if (!active || !d || active.id === id) return false;
+    if (nextUp && nextUp !== id) runs.dropNotice(nextUp, QUEUED_NOTE);
+    nextUp = id;
+    if (runs.replaceable(active.id) && active.counterparty.id === d.counterparty.id) {
+      log.event('main.prepare_replace', {});
+      runs.noteOn(id, REPLACING_NOTE);
+      runs.stop(active.id).then(
+        () => {
+          const prev = runs.get(active.id);
+          if (prev) prev.replaced = true;
+          runs.noteOn(active.id, REPLACED_NOTE);
+        },
+        (e: Error) => log.event('main.prepare_replace_failed', { code: e.message.slice(0, 60) }),
+      );
+    } else {
+      log.event('main.prepare_queued', {});
+      runs.noteOn(id, QUEUED_NOTE);
+    }
+    return true;
+  };
+  runs.on('update', () => {
+    if (!nextUp || runs.anyActive()) return;
+    const id = nextUp;
+    nextUp = null;
+    runs.dropNotice(id, QUEUED_NOTE);
+    runs.dropNotice(id, REPLACING_NOTE);
+    if (runs.get(id)?.status !== 'draft') return;
+    setImmediate(() => prepareNow(id).catch((e: Error) => log.event('main.prepare_next_failed', { code: e.message.slice(0, 60) })));
+  });
   const prepareNow = async (id: string) => {
     // 상한 이유와 남은 초를 코드에 붙인다(F-07: "잠시 뒤"만 보이던 것). 화면은 이유별 문장 + N초.
     const pause = runs.prepareWaitMs();
@@ -2200,7 +2243,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 실행 시작은 2초 안의 실제 입력이 있어야 하고, 사람 속도(분당 3회)·게이트 없이 끝난 연속 3회에서 멈춘다.
     'run.prepare': async (p) => {
       needGesture(2_000);
-      return prepareNow(String(p.id));
+      const id = String(p.id);
+      // 진행 중인 건이 있으면 [중지]를 시키지 않고 바꾸거나 이어서 준비한다(queueIfBusy)
+      if (queueIfBusy(id)) return runs.get(id);
+      return prepareNow(id);
     },
     'run.stop': (p) => runs.stop(String(p.id)),
     'run.resume': (p) => {
