@@ -310,9 +310,9 @@ const certLine = (run) => h('div', { class: 'sx-meta', 'data-cert-inputs': '' },
 /** [홈택스 창 보기]: 사람이 할 일이 홈택스 창에 있을 때(로그인·서명·사람 차례). 실행 Chrome 창을 앞으로 올리기만 한다. 다른 주요 단추가 없으면 이것이 주요 단추다. */
 const showBrowserBtn = (run, act, primary = false) => btn('홈택스 창 보기', () => act.showBrowser(run.id), primary ? 'sx-btn-primary' : '', { 'data-act': 'show-browser' });
 
-const INFO_NOTICE = /바로 준비해요|이어서 준비해요/;
+const INFO_NOTICE = /이 값으로 준비해요|이어서 준비해요/;
 /** 발급 뒤 확인 중 한 줄(main shell-runs verifyNow와 같은 말). */
-const verifyLine = (n) => (n && n > 1 ? `홈택스 반영이 늦어 발급 목록을 다시 보고 있어요(${n}번째)` : '홈택스 발급 목록에서 방금 건을 찾고 있어요. 1~2분 걸릴 수 있어요');
+const verifyLine = (n) => (n && n > 1 ? `발급 목록 다시 확인 중(${n}번째)` : '발급 목록 확인 중 · 1~2분 걸려요');
 /** 지금 단계 한 줄: 지금 하는 일 문장(main이 단계 메모로 준다)이 있으면 그 문장, 없으면 단계 이름. 할 일 줄이 같은 말을 하면 이름만(withNote false). */
 const stepLine = (now, withNote = true) => (now ? (withNote && now.note ? now.note : now.label) : '');
 /** 진행 막대(묶음 n/전체): 몇 분 걸리는 실행이 어디쯤인지 한눈에. 색은 무채(파랑은 차례·승인에만). */
@@ -338,37 +338,35 @@ const todoLine = (text, ...meta) => h('div', { class: 'sx-todo' }, h('p', {}, te
 function fold(card, run, step, stop = null) {
   // 확인 필요는 안내 상자 대신 카드의 황토 안쪽 선으로 보인다(내 차례의 파랑 선과 같은 규칙).
   card.classList.toggle('is-attention', run.status === 'attention');
+  // 발급 카드는 언제나 같은 틀이다(대표 2026-11-19 "카드가 매번 제각각", "너무 자세할 필요가 없어"):
+  // 머리(제목 · 칩 · [중지]) → 요약 한 줄(합계 · 부가세 · 품목) → 아래 면에 지금 하는 일과 진행. 나머지 값은 카드를 누르면 패널에 있다.
+  const info = (run.notices ?? []).filter((t) => INFO_NOTICE.test(t));
   card.replaceChildren(
     h('div', { class: 'sx-card-hd sx-run-hd' }, h('div', { class: 'sx-card-title' }, `${run.batch ? `${run.batch.index + 1}. ` : ''}${runTitle(run)}`), chip(shownStatus(run)), stop),
-    // 발급 카드는 언제나 같은 틀이다(대표 지적 2026-11-19 "카드가 매번 제각각"): 작성 카드와 같은 금액 줄·값 목록을 위에, 그 아래 지금 하는 일과 진행.
-    ...runFacts(run),
-    // 지금 하는 일 한 문장(대표 피드백 4번: 각 스텝이 어떤 상태인지)
-    step ? h('p', { class: 'sx-card-now', 'aria-live': 'polite' }, step) : null,
-    run.status === 'attention' || run.status === 'stopped' ? null : progressBar(run),
+    runSummary(run),
+    step || info.length
+      ? h(
+          'div',
+          { class: 'sx-run-foot' },
+          run.status === 'attention' || run.status === 'stopped' ? null : progressBar(run),
+          step ? h('p', { class: 'sx-card-now', 'aria-live': 'polite' }, step, progressCount(run)) : null,
+          // 정정·대기 알림은 상자 대신 같은 면의 조용한 한 줄
+          ...info.map((t) => h('p', { class: 'sx-run-info', 'data-run-info': '' }, t)),
+        )
+      : null,
   );
 }
 
-/**
- * 작성 카드와 같은 틀의 값(읽기 전용): 금액 줄(합계 · 공급가 + 세액) + 부가세 · 품목 · 작성일자 · 받는 이메일. 민원증명은 용도·제출처 줄.
- * 준비 중·사람 차례·확인 필요·멈춤 카드가 모두 이 틀을 쓴다. 승인 대기 카드만 ADR-021 결정 7로 접힌다(값은 main 승인 카드에만).
- */
-function runFacts(run) {
-  if (run.cert) return [certLine(run)];
-  return [
-    amount(run.total, run.supply, run.tax, null, true),
-    h(
-      'dl',
-      { class: 'sx-kv sx-draft sx-facts', 'data-run-facts': '' },
-      h('dt', {}, '부가세'),
-      h('dd', {}, run.vat === 'separate' ? '별도' : '포함'),
-      h('dt', {}, '품목'),
-      h('dd', {}, run.item || '—'),
-      h('dt', {}, '작성일자'),
-      h('dd', {}, writeDateText(run.writeDate)),
-      h('dt', {}, '받는 이메일'),
-      h('dd', {}, run.email?.value || '없음 · 메일은 보내지 않아요'),
-    ),
-  ];
+/** 요약 한 줄: 합계(굵게) · 부가세 별도/포함 · 품목. 민원증명은 용도 · 제출처. 공급가·세액 분해·작성일자·이메일은 패널에. */
+function runSummary(run) {
+  if (run.cert) return certLine(run);
+  return h('p', { class: 'sx-run-sum', 'data-run-facts': '' }, h('b', {}, won(run.total)), ` · 부가세 ${run.vat === 'separate' ? '별도' : '포함'}${run.item ? ` · ${run.item}` : ''}`);
+}
+/** 진행 n/전체(지금 문장 끝의 작은 글자) */
+function progressCount(run) {
+  if (run.status === 'attention' || run.status === 'stopped') return null;
+  const gs = runSteps(run);
+  return h('span', { class: 'sx-run-count' }, `${Math.min(gs.length, gs.filter((g) => g.state === 'done').length + 1)}/${gs.length}`);
 }
 const stopBtn = (run, act) => btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' });
 
@@ -394,7 +392,7 @@ export function taskCard(run, act) {
   const hd = h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, title), chip(shownStatus(run)));
   // 내 차례·확인 필요는 합계만(사람이 할 일이 먼저 보이게), 나머지는 분해까지.
   // 작성 중에는 부가세가 아래 두 칸 전환에 있으므로 금액 줄에 다시 쓰지 않는다. 민원증명은 금액 대신 용도·제출처 줄이다.
-  card.append(hd, run.cert ? certLine(run) : st === 'draft' ? null : amount(run.total, run.supply, run.tax, vatText(run), !['turn', 'attention'].includes(st)));
+  card.append(hd, st === 'draft' && !run.cert ? null : runSummary(run));
   const now = nowStep(run);
 
   if (st === 'draft' && run.cert) {
@@ -459,17 +457,21 @@ export function taskCard(run, act) {
           h('button', { type: 'button', class: run.vat === v ? 'is-on' : null, 'aria-pressed': String(run.vat === v), 'data-act': run.vat === v ? null : 'vat', onclick: run.vat === v ? null : () => act.vat(run.id, v) }, label),
         ),
       );
+      // 기본은 부가세·품목 두 줄(대표 "너무 자세할 필요가 없어"). 거래처·작성일자·받는 이메일은 [자세히]로 편다(오늘 아닌 작성일자·빈 이메일은 늘 보인다).
+      const more = (...kids) => h('div', { class: 'sx-draft-more', 'data-draft-more': '', hidden: act.draftMore?.has?.(run.id) ? null : '' }, ...kids);
       rows = [
-        h('dt', {}, '거래처'),
-        h('dd', {}, valBtn('거래처', run.counterparty.name, () => act.editCp(run.id), { act: 'draft-cp' })),
         h('dt', {}, '부가세'),
         h('dd', {}, vatSeg, run.vatGuessed ? h('span', { class: 'sx-tag' }, '기본값') : null),
         h('dt', {}, '품목'),
         h('dd', { 'data-draft-item': run.item ?? '' }, valBtn('품목', `${noItem ? '비어 있음' : run.item}`, () => act.editFields(run.id, 'item'), { act: 'fields-edit', cls: noItem ? 'is-missing' : run.itemGuessed ? 'is-guessed' : '' }), !noItem && run.itemGuessed ? h('span', { class: 'sx-tag' }, '저장 품목') : null),
-        h('dt', {}, '작성일자'),
-        h('dd', { 'data-draft-date': run.writeDate ?? '' }, writeDateText(run.writeDate), run.writeDateSet ? h('span', { class: 'sx-tag' }, '오늘 아님') : null),
-        h('dt', {}, '받는 이메일'),
-        h('dd', { 'data-draft-email': run.email.value ?? '' }, valBtn('받는 이메일', run.email.value || '없음 · 메일은 보내지 않아요', () => act.editFields(run.id, 'email'), { act: 'email-edit', cls: run.email.value ? '' : 'is-none' })),
+        ...(run.writeDateSet ? [h('dt', {}, '작성일자'), h('dd', { 'data-draft-date': run.writeDate ?? '' }, writeDateText(run.writeDate), h('span', { class: 'sx-tag' }, '오늘 아님'))] : []),
+        more(
+          h('dt', {}, '거래처'),
+          h('dd', {}, valBtn('거래처', run.counterparty.name, () => act.editCp(run.id), { act: 'draft-cp' })),
+          ...(run.writeDateSet ? [] : [h('dt', {}, '작성일자'), h('dd', { 'data-draft-date': run.writeDate ?? '' }, writeDateText(run.writeDate))]),
+          h('dt', {}, '받는 이메일'),
+          h('dd', { 'data-draft-email': run.email.value ?? '' }, valBtn('받는 이메일', run.email.value || '없음 · 메일은 보내지 않아요', () => act.editFields(run.id, 'email'), { act: 'email-edit', cls: run.email.value ? '' : 'is-none' })),
+        ),
       ];
     }
     const editing = act.editingCp === run.id || act.editing === run.id || act.editingFields === run.id;
@@ -479,7 +481,8 @@ export function taskCard(run, act) {
         'div',
         { class: 'sx-amount', 'data-draft-amount': '' },
         valBtn('금액', `${num(run.total)}원`, () => act.editAmount(run.id), { act: 'amount-edit', cls: noAmount ? 'is-total is-missing' : 'is-total' }),
-        h('span', { class: 'sx-amount-split' }, `${run.quantity && run.unitPrice ? `${num(run.quantity)} × ${num(run.unitPrice)} = ` : ''}공급가 ${num(run.supply)} + 세액 ${num(run.tax)}`),
+        // 공급가·세액 분해는 수량×단가일 때만(그 곱이 맞는지 보는 값이다). 나머지는 패널에 있다.
+        run.quantity && run.unitPrice ? h('span', { class: 'sx-amount-split' }, `${num(run.quantity)} × ${num(run.unitPrice)}`) : null,
       ),
     );
     card.append(
@@ -498,8 +501,18 @@ export function taskCard(run, act) {
             { class: 'sx-actions' },
             btn('홈택스에서 준비', () => act.prepare(run.id), 'sx-btn-primary', { 'data-act': 'prepare', disabled: noItem || noAmount || !!run.issueDateHeld }),
             btn('취소', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'cancel' }),
+            act.editingCp === run.id || act.editing === run.id || act.editingFields === run.id
+              ? null
+              : h('button', { type: 'button', class: 'sx-btn sx-btn-quiet sx-more-btn', 'data-act': 'draft-more', 'aria-expanded': String(!!act.draftMore?.has?.(run.id)), onclick: (e) => {
+                  const box = e.currentTarget.closest('[data-run]')?.querySelector('[data-draft-more]');
+                  if (!box) return;
+                  box.hidden = !box.hidden;
+                  e.currentTarget.textContent = box.hidden ? '자세히' : '접기';
+                  e.currentTarget.setAttribute('aria-expanded', String(!box.hidden));
+                  act.toggleDraftMore?.(run.id, !box.hidden);
+                } }, act.draftMore?.has?.(run.id) ? '접기' : '자세히'),
           ),
-      editing ? null : h('div', { class: 'sx-meta' }, noAmount ? '합계가 0원이에요. 금액을 눌러 고치면 준비할 수 있어요.' : noItem ? '품목을 넣으면 준비할 수 있어요.' : '값을 누르면 고칠 수 있어요 · 아직 아무것도 보내지 않았어요'),
+      editing ? null : h('div', { class: 'sx-meta' }, noAmount ? '합계가 0원이에요. 금액을 눌러 고치면 준비할 수 있어요.' : noItem ? '품목을 넣으면 준비할 수 있어요.' : '값을 누르면 고쳐요 · 아직 보낸 것은 없어요'),
     );
   } else if (st === 'preparing') {
     // v2.0(H3): 머리 한 줄(지금 단계) + 조용한 [중지]. "승인 전에는 발급하지 않아요"는 패널에 있다.
@@ -564,15 +577,20 @@ export function taskCard(run, act) {
       toggle.setAttribute('aria-expanded', String(!where.hidden));
     }, 'sx-btn-quiet', { 'aria-expanded': 'false' });
     card.append(
-      line(`발급했어요. ${mail}`),
-      r.approvalNo ? h('dl', { class: 'sx-kv is-start' }, h('dt', {}, run.cert ? '접수번호' : '승인번호'), h('dd', {}, h('span', { class: 'sx-id', 'data-approval-no': '' }, r.approvalNo), h('button', { type: 'button', class: 'sx-copy', onclick: () => act.copy(r.approvalNo) }, '복사'))) : null,
+      // 결과는 진행과 같은 아래 면(11-19 같은 틀): 발급했어요 한 줄 + 승인번호 · 복사
+      h(
+        'div',
+        { class: 'sx-run-foot' },
+        h('p', { class: 'sx-card-now' }, `발급했어요. ${mail}`),
+        r.approvalNo ? h('p', { class: 'sx-card-now sx-run-id' }, h('span', { class: 'sx-meta' }, run.cert ? '접수번호' : '승인번호'), h('span', { class: 'sx-id', 'data-approval-no': '' }, r.approvalNo), h('button', { type: 'button', class: 'sx-copy', onclick: () => act.copy(r.approvalNo) }, '복사')) : null,
+      ),
       r.noFile ? line(run.cert ? CERT_NO_FILE_TEXT : NO_FILE_TEXT, true) : null,
       h('div', { class: 'sx-actions' }, r.noFile ? null : btn('PDF 열기', () => act.openRunDoc(run), 'sx-btn-primary', { 'data-act': 'result-open' }), btn(run.cert ? '한 번 더 떼기' : '지난번과 같게', () => act.again(run), '', { 'data-act': 'again' }), toggle),
       where,
     );
   } else if (st === 'stopped' && run.replaced) {
     // 고친 내용으로 새로 준비해서 멈춘 앞 건(정정): 조용히 접힌 요약 한 줄. 새 카드가 바로 아래에 있다.
-    card.replaceChildren(h('div', { class: 'sx-card-hd sx-run-hd', 'data-replaced': '' }, h('div', { class: 'sx-card-title' }, runTitle(run)), h('span', { class: 'sx-meta sx-folded-line' }, `${won(run.total)} · 고친 카드로 바꿨어요`), chip(shownStatus(run))));
+    card.replaceChildren(h('div', { class: 'sx-replaced-line', 'data-replaced': '' }, h('span', {}, runTitle(run)), h('span', {}, `${won(run.total)} · 고친 값으로 바꿨어요`)));
     card.classList.add('is-folded', 'is-replaced');
     return card;
   } else if (st === 'stopped') {
@@ -616,7 +634,10 @@ export function taskCard(run, act) {
   }
   // 포털 안내 문구·금고 알림(텍스트 노드로만).
   // 정정·대기 안내(shell-runs REPLACING_NOTE·QUEUED_NOTE)는 할 일이 아니라 알림이라 안내 면(정보)이다. 나머지 포털 문구·금고 알림은 주의 면.
-  if (run.notices?.length) card.append(noteGroup(run.notices, !run.notices.every((t) => INFO_NOTICE.test(t))));
+  const warnNotices = (run.notices ?? []).filter((t) => !INFO_NOTICE.test(t));
+  if (warnNotices.length) card.append(noteGroup(warnNotices));
+  // 접히지 않는 카드(작성 중 등)의 대기 알림은 조용한 한 줄
+  if (!card.querySelector('[data-run-info]')) for (const t of (run.notices ?? []).filter((x) => INFO_NOTICE.test(x))) card.append(h('p', { class: 'sx-run-info', 'data-run-info': '' }, t));
   // 금고가 Chrome 확장을 보고 멈춘 실행이 발급 없이 끝났으면 [다시 시도]: 같은 요청을 입력창에 채우기만 한다(보내기·준비는 사용자가, [지난번과 같게]와 같은 길).
   if (run.retry && !run.result && !run.inDoubt && (st === 'stopped' || st === 'attention')) {
     card.append(h('div', { class: 'sx-actions' }, btn('다시 시도', () => act.again(run), 'sx-btn-primary', { 'data-act': 'retry' })));
@@ -808,7 +829,7 @@ export function browserPane(run, url, big, act) {
       h('span', { class: 'bp-state', 'data-bp-state': 'loading', title: '이 화면을 직접 눌러 조작할 수 있어요. 인증서 비밀번호는 앱의 비밀번호 창에서 받아요.' }, '여는 중'),
       h('button', { type: 'button', class: 'bp-icon', 'data-act': 'browser-size', 'aria-pressed': String(big), title: big ? '브라우저 작게' : '브라우저 크게', 'aria-label': big ? '브라우저 작게' : '브라우저 크게', onclick: () => act.browserSize(!big) }, icon(big ? 'shrink' : 'expand')),
     ),
-    h('div', { class: 'run-screen', 'data-run-screen': run.id }, h('p', { class: 'sx-meta' }, '홈택스 화면을 여는 중이에요')),
+    h('div', { class: 'run-screen', 'data-run-screen': run.id }, h('p', { class: 'sx-meta bp-wait' }, h('i', { class: 'bp-wait-dot', 'aria-hidden': 'true' }), '홈택스 여는 중')),
   );
 }
 
@@ -831,9 +852,8 @@ export function runDock(run, detail, open, onToggle) {
   return h(
     'div',
     { class: `bp-dock${open ? ' is-open' : ''}`, 'data-bp-dock': run.id },
-    h('div', { class: 'bp-dock-hd' }, h('div', { class: 'sx-card-title' }, runTitle(run)), chip(shownStatus(run)), more),
-    text ? h('p', { class: 'sx-card-now' }, text) : null,
-    run.status === 'attention' ? null : progressBar(run),
+    // 진행 문장·막대는 대화 카드에 있다(같은 것을 두 번 그리지 않는다). 여기는 지금 문장 한 줄과 [자세히]만.
+    h('div', { class: 'bp-dock-hd' }, h('div', { class: 'sx-card-title' }, runTitle(run)), text ? h('span', { class: 'bp-dock-now' }, text) : null, chip(shownStatus(run)), more),
     detail,
   );
 }
@@ -875,9 +895,9 @@ export function pastCard(p, act) {
     'section',
     { class: 'sx-card' },
     h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `${p.title} · ${p.who}`), chip('done')),
-    amount(p.total, p.supply, p.tax),
-    h('dl', { class: 'sx-kv is-start' }, h('dt', {}, '승인번호'), h('dd', {}, h('span', { class: 'sx-id' }, p.approvalNo), h('button', { type: 'button', class: 'sx-copy', onclick: () => act.copy(p.approvalNo) }, '복사'))),
-    h('div', { class: 'sx-meta' }, `${p.mail}로 보낸 것도 확인했어요`),
+    // 발급 카드와 같은 틀(11-19): 요약 한 줄 → 아래 면에 결과(승인번호 · 복사, 메일)
+    h('p', { class: 'sx-run-sum' }, h('b', {}, won(p.total))),
+    h('div', { class: 'sx-run-foot' }, h('p', { class: 'sx-card-now' }, h('span', { class: 'sx-id' }, p.approvalNo), h('button', { type: 'button', class: 'sx-copy', onclick: () => act.copy(p.approvalNo) }, '복사')), h('p', { class: 'sx-run-info' }, `${p.mail}로 보낸 것도 확인했어요`)),
   );
 }
 

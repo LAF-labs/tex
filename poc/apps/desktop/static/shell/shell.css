@@ -50,7 +50,7 @@ body.browser-big .frame { grid-template-columns: var(--l-rail) minmax(320px, 1fr
 .bp-state[data-bp-state='live']::before { background: var(--accent); }
 .bp-state[data-bp-state='gone']::before { background: var(--ink-3); }
 .bp-state[data-bp-state='paused']::before { background: var(--attention); }
-.bp .run-screen { margin: 0 8px; border-radius: var(--radius-md); min-height: 260px; background: var(--surface-tint); }
+.bp .run-screen { margin: 0 12px; border-radius: var(--radius-md); min-height: 260px; background: var(--surface-tint); }
 /* 브라우저 아래 진행 덩어리: 카드와 같은 머리 · 지금 하는 일 · 진행 막대. 값·단계는 [자세히]. */
 .bp-dock { flex: none; display: grid; gap: var(--space-3); padding: var(--space-3) var(--space-4) var(--space-4); }
 .bp-dock-hd { display: flex; align-items: center; gap: var(--space-3); min-height: 32px; }
@@ -67,7 +67,7 @@ body.browser-live.browser-embedded .frame { grid-template-columns: var(--l-rail)
 body.browser-live.browser-embedded #panel { display: flex; flex-direction: column; overflow: hidden; position: relative; }
 body.browser-live.browser-embedded #panel > .bp { flex: 1 1 auto; min-height: 0; }
 /* 화면 칸 왼쪽 6px는 비워 둔다: 실제 보기는 렌더러 위를 덮어 마우스를 가져가므로 경계 손잡이가 그 띠에 있어야 끌 수 있다 */
-body.browser-live.browser-embedded #panel > .bp .run-screen { flex: 1 1 auto; min-height: 0; margin: 0 8px 0 8px; }
+body.browser-live.browser-embedded #panel > .bp .run-screen { flex: 1 1 auto; min-height: 0; margin: 0 12px; }
 body.browser-live.browser-embedded #panel > :not(.bp) { flex: 0 1 auto; max-height: 45%; overflow-y: auto; }
 /* 사람 차례·[브라우저] 크게: 홈택스 인증서 창(높이 600px 남짓)이 잘리지 않게 작업 내용을 접고 화면 칸이 패널 높이를 다 쓴다(진행은 대화 열 카드에 있다) */
 body.browser-big.browser-embedded #panel > :not(.bp) { display: none; }
@@ -113,7 +113,7 @@ body.bp-dragging, body.bp-dragging * { cursor: col-resize !important; user-selec
 .chat { position: relative; height: 100%; display: flex; flex-direction: column; min-height: 0; }
 /* 폭은 #center 폭으로 렌더러가 정한 --col-w(스크롤 막대와 무관하게 안팎이 같은 폭). */
 .col { width: var(--col-w, min(var(--l-chat-max), calc(100% - 2 * var(--l-gutter)))); margin-left: auto; margin-right: auto; box-sizing: border-box; }
-.thread-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable both-edges; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px); mask-image: linear-gradient(to bottom, transparent 0, #000 20px); }
+.thread-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable both-edges; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 32px); mask-image: linear-gradient(to bottom, transparent 0, #000 32px); }
 .thread-scroll .sx-thread { padding: var(--space-4) 0 var(--space-6); max-width: none; }
 
 /* 이번 달 할 일(08 M-02, ADR-033): 대화 열 맨 위 한 줄. 대화를 가리지 않는다. 누르면 작업 패널에 목록이 열린다. 승인 버튼은 없다. */
@@ -587,3 +587,24 @@ section[data-view="bundle"] .rs-col { max-width: 920px; }
 .dev-done-mk svg { width: 16px; height: 16px; }
 /* 새 PC 연결: 쓰던 PC에 넣을 6자리를 크게 보인다(입력 칸이 아니다) */
 .acct-cells.is-show .acct-cell { height: 64px; font-size: 28px; }
+
+/* 11-19 간결한 카드: 작성 카드 [자세히]로 펴는 값 줄(dl 격자 안에서 dt·dd가 그대로 줄이 된다) */
+.sx-draft-more { display: contents; }
+.sx-draft-more[hidden] { display: none; }
+.sx-more-btn { margin-left: auto; }
+/* 앱 안 브라우저 아래: 제목 · 지금 한 줄 · 칩 · [자세히] 한 줄(진행 막대는 대화 카드에 있다) */
+.bp-dock-now { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 20px; color: var(--ink-2); }
+.bp-dock-hd .sx-card-title { flex: 0 1 auto; }
+/* 화면을 여는 동안: 가운데 숨 쉬는 점 + 짧은 말(회전 아이콘은 쓰지 않는다) */
+.bp-wait { display: inline-flex; align-items: center; gap: 8px; }
+.bp-wait-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); animation: bp-breathe var(--motion-pulse) ease-in-out infinite; }
+@keyframes bp-breathe { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .bp-wait-dot { animation: none; } }
+/* 대화 맨 위 이번 달 줄: 스크롤된 카드가 그 아래로 지나가며 잘려 보이지 않게 바탕을 깐다 */
+.board-line { background: var(--canvas); }
+.bp-dock { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+.bp-dock-hd { min-width: 0; }
+.bp-dock-hd .sx-card-title { flex: 0 1 auto; min-width: 0; }
+.sx-run-id { align-items: center; }
+.sx-run-id .sx-copy { margin-left: -4px; }
+body:not(.browser-embedded) .bp-dock-now { display: none; }

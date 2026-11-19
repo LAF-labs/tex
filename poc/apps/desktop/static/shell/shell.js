@@ -24,6 +24,8 @@ const state = {
   browser: { shown: false, available: false, embedded: false, width: 0 },
   /** 브라우저 아래 진행 덩어리의 [자세히] 펼침(사람이 고른 것, 실행이 바뀌어도 둔다) */
   dockOpen: false,
+  /** 작성 카드 [자세히]를 편 카드(다시 그려도 펼친 채) */
+  draftMore: new Set(),
   boot: null,
   today: new Date(),
   view: 'chat',
@@ -1045,7 +1047,7 @@ function putRun(run) {
 }
 
 function renderRun(run) {
-  const cardAct = { ...act, editing: state.editing, editingFields: state.editingFields, editingFocus: state.editingFocus, draftErr: state.draftErr, editingCp: state.editingCp, counterparties: state.cps };
+  const cardAct = { ...act, editing: state.editing, editingFields: state.editingFields, editingFocus: state.editingFocus, draftErr: state.draftErr, editingCp: state.editingCp, counterparties: state.cps, draftMore: state.draftMore, toggleDraftMore: (id, open) => (open ? state.draftMore.add(id) : state.draftMore.delete(id)) };
   // 여러 건 묶음은 한 카드(data-batch)로 그린다. 건은 지금 받은 값(run)과 들고 있는 나머지 건을 순번대로.
   if (run.batch) {
     const mates = [...state.runs.values()].filter((x) => x.batch?.id === run.batch.id && x.id !== run.id);
