@@ -4,6 +4,7 @@ import { g24Card, g24Panel } from './shell-g24.js';
 import { cardRegister } from './shell-card.js';
 import { onboardingView, showOnbError } from './shell-onboarding.js';
 import { accountCard, accountErrText, loginScreen } from './shell-account.js';
+import { pairErrText, pairSection, pairTtlText } from './shell-pair.js';
 import { bizEditStart, bizProfileCard } from './shell-biz.js';
 import { createBankAuto } from './shell-bank-auto.js';
 import { createBilling } from './shell-billing.js';
@@ -62,6 +63,9 @@ const state = {
   deletion: null, // 탈퇴 상태(설정 > 기기 연결): { deleteAfter: ms|null, confirm }
   account: null, // 계정 상태(main AccountView): 단계·이메일·코드 만료·오류 코드
   login: null, // 로그인 화면(A-01)이 열려 있으면 { screen, draft: { email, password, code, show }, busy }
+  pair: null, // 폰 연결 칸(main PairView: 단계·QR 이미지·만료·폰 이름·남은 횟수·오류 코드). null이면 쉬는 자리
+  pairBusy: false, // 폰 연결 요청을 기다리는 중(두 번 보내지 않게)
+  pairCode: '', // 6자리 칸에 넣던 값(다시 그려도 남게)
 };
 
 // ---- 공용 동작 ----
@@ -2124,14 +2128,48 @@ async function signOut() {
   }
 }
 
-/** [폰 연결]: main이 따로 창을 연다(QR·6자리는 그 창에만 있다). */
-async function openPair() {
+/** 폰 연결 칸(shell-pair.js): main이 준 PairView로 계정 카드 안에서 그 자리에 그린다(따로 창 없음). */
+function pairRow() {
+  return pairSection(state.pair, PAIR_ACT, state.pairBusy);
+}
+/** 폰 연결 요청 하나. 답(PairView)으로 다시 그린다. 못 보냈으면(실제 입력 없음·로그인 전) 알림 한 줄. */
+async function pairCall(method, params = {}) {
+  if (state.pairBusy) return;
+  const prev = state.pair?.step;
+  state.pairBusy = true;
+  pairRender(prev);
   try {
-    await call('pair.open', {});
+    state.pair = await call(method, params);
+    if (state.pair?.error === 'pair.sas_wrong') state.pairCode = '';
   } catch (err) {
-    toast(accountErrText(errText(err)));
+    toast(pairErrText(errText(err)));
+  } finally {
+    state.pairBusy = false;
+    pairRender(prev);
   }
 }
+const PAIR_ACT = {
+  open: () => ((state.pairCode = ''), pairCall('pair.open')),
+  retry: () => ((state.pairCode = ''), pairCall('pair.retry')),
+  cancel: () => ((state.pairCode = ''), pairCall('pair.cancel')),
+  submit: (code) => pairCall('pair.submit', { code: String(code).slice(0, 6) }),
+  codeOf: () => state.pairCode,
+  setCode: (v) => (state.pairCode = v),
+};
+/** 설정 > 기기 연결에 있을 때만 다시 그린다. 6자리 칸에 있던 초점은 그대로 두고, 6자리 단계로 막 넘어왔으면 칸에 둔다. */
+function pairRender(prevStep) {
+  if (state.view !== 'settings' || state.setTab !== 'devices') return;
+  const had = document.activeElement?.id === 'pair-sas';
+  render();
+  const step = state.pair?.step;
+  if (step === 'awaiting_sas' && (had || prevStep !== 'awaiting_sas')) $('#pair-sas')?.focus();
+  else if (prevStep && prevStep !== step && (step === 'idle' || !step)) $('[data-act=pair-open]')?.focus();
+}
+// QR 남은 시간(1초마다 글자만 고친다). 0이 되면 main이 '시간이 지났어요'로 바꿔 보낸다
+setInterval(() => {
+  const t = document.querySelector('[data-pair-ttl]');
+  if (t) t.textContent = pairTtlText(Number(t.dataset.pairTtl));
+}, 1000);
 
 function closeLogin() {
   if (!state.login) return;
@@ -2322,7 +2360,7 @@ function settingsView() {
       : state.setTab === 'bank'
       ? bankAuto.view()
       : state.setTab === 'devices'
-      ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 연결한 PC와 폰을 보고 끊어요. PC와 폰은 3대씩 연결할 수 있어요.')), devices.gone() ? null : accountCard(state.account, openLogin, openPair, signOut), ...devices.view(), deletionRow(), legalRow())
+      ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 연결한 PC와 폰을 보고 끊어요. PC와 폰은 3대씩 연결할 수 있어요.')), devices.gone() ? null : accountCard(state.account, openLogin, pairRow, signOut), ...devices.view(), deletionRow(), legalRow())
       : h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '발급 인증'), h('p', { class: 'sx-body-sm is-muted' }, '세금계산서를 발급할 때 쓰는 인증이에요.')), authCard()),
   );
 }
@@ -2747,6 +2785,12 @@ window.sax.onEvent((ev) => {
   if (ev.type === 'open' && ev.to === 'run' && typeof ev.id === 'string') return void boardGo({ to: 'run', id: ev.id });
   if (ev.type === 'say' && typeof ev.text === 'string') return void appendThread(h('div', { class: 'sx-app' }, ev.text.slice(0, 300)));
   if (ev.type === 'bankAuto') return bankAuto.onEvent(ev.event);
+  if (ev.type === 'pair') {
+    const prev = state.pair?.step;
+    state.pair = ev.pair;
+    if (state.pair?.step !== 'awaiting_sas') state.pairCode = '';
+    return void pairRender(prev);
+  }
   if (ev.type === 'account') {
     state.account = ev.account;
     if (state.view === 'settings' || loginGate()) render();

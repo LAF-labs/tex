@@ -18,6 +18,7 @@ const { buildCardHtml, barCss, barPalette, summarize, BAR_CSP } = await import(`
 const { barBounds, SHELL } = await import(`${DESK}/dist/shell-layout.js`);
 // 셸과 같은 응답 헤더(CSP·Trusted Types)로 띄운다. 미리보기가 통과하면 셸에서도 같은 정책에서 그려진다(M4-1).
 const { appHeaders } = await import(`${DESK}/dist/harden.js`);
+const { qrSvgDataUrl } = await import(`${DESK}/dist/remote-qr.js`);
 
 const ARGS = process.argv.slice(process.argv.findIndex((a) => a.endsWith('shell-preview.mjs')) + 1);
 const W = Number(ARGS[1] ?? 1440);
@@ -128,6 +129,10 @@ const devFail = (code) => {
   throw new Error(code);
 };
 Object.assign(S, { acct: signedIn, devices: DEV.normal(), devErr: null, reqs: [], pcMode: 'ok' });
+// 폰 연결 칸(S-03, shell-pair.js) 목업: 모양은 remote-pairing.ts PairView와 같다. QR은 실제 인코더로 만든 이미지(가짜 글자)
+const PAIR_IDLE = { step: 'idle', qr: null, expiresAt: null, phoneName: null, triesLeft: null, error: null };
+const pairQr = () => ({ ...PAIR_IDLE, step: 'waiting_phone', qr: qrSvgDataUrl(`sax1:preview:${'x'.repeat(120)}`), expiresAt: Date.now() + 103_000 });
+S.pair = PAIR_IDLE;
 
 const handlers = {
   'account.view': () => S.acct,
@@ -138,6 +143,11 @@ const handlers = {
   'devices.list': () => (S.devErr ? devFail(S.devErr) : { devices: S.devices }),
   'devices.unlink': (p) => ({ devices: (S.devices = S.devices.filter((d) => d.deviceId !== p.deviceId)) }),
   'devices.leave': () => devFail('account.last_desktop'),
+  'pair.view': () => S.pair,
+  'pair.open': () => (S.pair = pairQr()),
+  'pair.retry': () => (S.pair = pairQr()),
+  'pair.cancel': () => (S.pair = PAIR_IDLE),
+  'pair.submit': (p) => (S.pair = p.code === '482915' ? { ...S.pair, step: 'paired', error: null, triesLeft: null } : { ...S.pair, error: 'pair.sas_wrong', triesLeft: S.pair.triesLeft - 1 }),
   'pclink.list': () => ({ requests: S.reqs }),
   'pclink.begin': () => ({ requests: (S.reqs = [req('wait')]) }),
   'pclink.reject': () => ({ requests: (S.reqs = []) }),
@@ -645,6 +655,38 @@ Object.assign(scenes, {
     await devTab(win);
     await shot(win, '82-device-gone');
   },
+  // 폰 연결 칸(S-03): 쉬는 자리 → [폰 연결] → QR(남은 시간) → 폰이 찍음(6자리) → 틀림 → 연결됐어요 · 시간 지남([새 QR]) · 멈춤([다시 시도]) · QR 만드는 중
+  async pair(win) {
+    Object.assign(S, { acct: signedIn, devices: DEV.normal(), reqs: [], devErr: null, pair: PAIR_IDLE });
+    const push = async (v) => {
+      S.pair = v;
+      ev(win, { type: 'pair', pair: v });
+      await sleep(150);
+    };
+    await devTab(win);
+    await shot(win, '90-pair-rest');
+    await js(win, `document.querySelector('[data-act=pair-open]').click()`);
+    await sleep(200);
+    await shot(win, '91-pair-qr');
+    await push({ ...S.pair, step: 'awaiting_sas', qr: null, phoneName: '사장님 폰', triesLeft: 3 });
+    await shot(win, '92-pair-sas');
+    await js(win, `(() => { const i = document.querySelector('#pair-sas'); i.value = '482916'; i.dispatchEvent(new Event('input')); document.querySelector('[data-act=pair-submit]').click(); })()`);
+    await sleep(200);
+    await shot(win, '93-pair-sas-wrong');
+    await js(win, `(() => { const i = document.querySelector('#pair-sas'); i.value = '482915'; i.dispatchEvent(new Event('input')); document.querySelector('[data-act=pair-submit]').click(); })()`);
+    await sleep(200);
+    await shot(win, '94-pair-done');
+    await js(win, `document.querySelector('[data-act=pair-close]').click()`);
+    await sleep(150);
+    await shot(win, '95-pair-closed');
+    await push({ ...PAIR_IDLE, step: 'failed', error: 'pair.expired' });
+    await shot(win, '96-pair-expired');
+    await push({ ...PAIR_IDLE, step: 'failed', error: 'pair.handshake' });
+    await shot(win, '97-pair-failed');
+    await push({ ...PAIR_IDLE, step: 'opening' });
+    await shot(win, '98-pair-opening');
+    await push(PAIR_IDLE);
+  },
   // 새 PC 쪽: 로그인 뒤 쓰던 PC의 승인을 기다림 → 6자리 → '연결됐어요'가 떴나요? · PC 3대가 찬 계정
   async newPc(win) {
     Object.assign(S, { acct: { step: 'signed_out', email: null, codeExpiresAt: null, error: null, phones: 0 }, devErr: null });
@@ -682,7 +724,7 @@ Object.assign(scenes, {
   },
 });
 
-const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'browser', 'replace', 'openBank', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'newPc', ...(EMPTY ? ['empty'] : [])];
+const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'issueDate', 'attention', 'incidents', 'browser', 'replace', 'openBank', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', 'devices', 'pair', 'newPc', ...(EMPTY ? ['empty'] : [])];
 const agreed = { version: 'pv', choice: 'agreed', at: '' };
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {

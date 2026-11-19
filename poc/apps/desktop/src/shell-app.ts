@@ -33,7 +33,7 @@ import { certInfoInSandbox, DOCPARSE_SCHEME, ocrImageInSandbox, parsePdfInSandbo
 import { EngineHost } from './engine-host.ts';
 import type { FixtureMode } from './fixture-mode.ts';
 import { GestureClock, isGestureKey, isTypingKey, RateWindow } from './gesture.ts';
-import { appHeaders, assertNoDebugSwitches, hardenApp, hardenSession, hardenWindow, PAIR_CSP, SECRET_CSP } from './harden.ts';
+import { appHeaders, assertNoDebugSwitches, hardenApp, hardenSession, hardenWindow, SECRET_CSP } from './harden.ts';
 import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.ts';
 import { secretPageHtml, SecretWindowCoordinator, type SecretInputBind as OneShotInputBind } from './secret-labels.ts';
 import { openVaultInputWindow } from './secret-window.ts';
@@ -60,7 +60,7 @@ import { DesktopAccount, PendingCodeFile, RemoteIdentityFile, type AccountView }
 import { GatewayAuthHost } from './gateway-auth.ts';
 import { IssueLockHost } from './issue-lock-host.ts';
 import type { AccountClient, BillingView, CloudPorts, DeviceAuth, PcLinkVault, VaultKeysFactory } from './remote-ports.ts';
-import { PairingHost } from './remote-pairing.ts';
+import { PairingHost, type PairView } from './remote-pairing.ts';
 import { buildPhoneCopy } from './phone-copy.ts';
 import { CmdLog, PhoneIssue } from './phone-issue.ts';
 import { DESKTOP_CAPS, PhoneLink, PhoneStore, type TokenSeal } from './phone-link.ts';
@@ -72,7 +72,6 @@ import { phoneReceiver } from './phone-receive.ts';
 import { closeAction, shouldStartPhones, shouldStayAwake, StayAwake } from './phone-presence.ts';
 import type { VaultDesktopKeys } from './remote-keys.ts';
 import { qrSvgDataUrl } from './remote-qr.ts';
-import { PairWindow } from './pair-window.ts';
 import type { DemoModel, mergeParsed } from './demo-model.ts';
 import type { DemoSeed, startDemoSeed } from './demo-seed.ts';
 
@@ -84,7 +83,6 @@ const NO_BUSINESS: Profile = { kind: 'business', name: '내 사업장', email: '
 /** 제품에는 아직 개인 프로필 저장이 없다. 자리 표시만(내 사업장은 이 카드를 그리지 않는다). */
 const NO_PERSONAL: Profile = { kind: 'personal', name: '개인', email: '', auth: '', placeholder: true };
 const SHELL_URL = `${SHELL_SCHEME}://shell/shell.html`;
-const PAIR_URL = `${SHELL_SCHEME}://shell/pair.html`;
 
 export function registerShellSchemes(): void {
   // 한 번만 부를 수 있다(ready 전). 문서함 PDF 가져오기가 docparse 샌드박스를 쓰므로 그 스킴도 여기서 등록한다.
@@ -132,9 +130,7 @@ const FILES: Record<string, string> = {
   '/shell-pack.js': 'text/javascript',
   '/password-rules.js': 'text/javascript',
   '/common-passwords.js': 'text/javascript',
-  '/pair.html': 'text/html; charset=utf-8',
-  '/pair.js': 'text/javascript',
-  '/pair.css': 'text/css',
+  '/shell-pair.js': 'text/javascript',
   '/secret.js': 'text/javascript',
   '/secret.css': 'text/css',
   '/codef-secret.js': 'text/javascript',
@@ -165,8 +161,7 @@ function serve(): void {
     if (p === '/bundle.css') return new Response(bundleCss(), { headers: appHeaders('text/css') });
     const type = FILES[p];
     if (!type) return new Response('', { status: 404 });
-    // 폰 연결 창(S-03)은 비밀 창과 같은 좁은 CSP(연결·폼 전송 없음)
-    return new Response(await fs.readFile(path.join(STATIC, 'shell', p.slice(1))), { headers: appHeaders(type, p === '/pair.html' ? PAIR_CSP : undefined) });
+    return new Response(await fs.readFile(path.join(STATIC, 'shell', p.slice(1))), { headers: appHeaders(type) });
   });
   // 렌더러는 네트워크가 없다(D01 §2.1). 자기 스킴 밖 요청을 취소한다.
   session.defaultSession.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !d.url.startsWith(`${SHELL_SCHEME}://`) && !d.url.startsWith('devtools://') }));
@@ -1469,17 +1464,30 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   host.setIssueLock((m) => issueLock.handle(m));
   // 엔진이 죽으면 놓으라는 말을 못 했을 수 있다: main이 대신 놓는다(못 놓아도 서버 잠금은 90초 뒤 풀린다)
   host.on('exit', () => void issueLock.release());
-  // 폰 연결(S-03, remote-pairing.ts·pair-window.ts). 로그인(첫 PC 등록)을 마치고 클라우드 포트·QR 인코더가 있을 때만.
+  // 폰 연결(S-03, remote-pairing.ts). 로그인(첫 PC 등록)을 마치고 클라우드 포트·QR 인코더가 있을 때만.
+  // 따로 창을 띄우지 않고 설정 > 기기 연결의 연결 칸(shell-pair.js)에 그린다. 렌더러가 받는 값은 PairView뿐이고 QR은 main이 만든 이미지(data URL)다.
+  // QR·6자리가 화면에 있는 동안은 메인 창을 화면 캡처에서 가린다(setContentProtection, ADR-016). 끝나면 푼다.
   // 우편함 토큰·채널이 든 결과는 지금은 이 실행의 메모리에만 둔다(수신 배선 PR에서 금고 보관).
-  let pairWin: PairWindow | null = null;
+  let pairHost: PairingHost | null = null;
   const pairedThisRun: DesktopPairResult[] = [];
-  const pairWindow = (): PairWindow => {
-    if (pairWin) return pairWin;
+  let pairShielded = false;
+  const pairShield = (v: PairView) => {
+    const on = v.step === 'waiting_phone' || v.step === 'awaiting_sas' || v.step === 'checking';
+    if (on === pairShielded || win.isDestroyed()) return;
+    pairShielded = on;
+    win.setContentProtection(on);
+  };
+  const pairPush = (v: PairView) => {
+    pairShield(v);
+    send({ type: 'pair', pair: v });
+  };
+  const pairing = (): PairingHost => {
+    if (pairHost) return pairHost;
     const cloud = opts.remote?.cloud;
     const device = account.device();
     if (opts.remote?.pairing === false) throw new Error('pair_unavailable');
     if (!cloud || !device) throw new Error(device ? 'pair_unavailable' : 'account_required');
-    const host = new PairingHost({
+    pairHost = new PairingHost({
       account: cloud.account,
       relayHttp: cloud.relay,
       relay: opts.remote?.relayClient ?? wsRelayClient({ host: cloud.relayHost, open: cloud.openSocket, insecureLocal: cloud.insecureLocal }),
@@ -1489,7 +1497,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       qr: qrSvgDataUrl,
       desktopName: opts.remote?.deviceName ?? (process.platform === 'darwin' ? 'Mac PC' : 'Windows PC'),
       log: (n, d) => log.event(n, d),
-      onView: (v) => pairWin?.push(v),
+      onView: pairPush,
       onPaired: (r) => {
         pairedThisRun.push(r);
         // 수신 배선(phone-link.ts): 기록을 보관하고 이 폰의 우편함을 지킨다
@@ -1500,8 +1508,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         send({ type: 'account', account: account.view() });
       },
     });
-    pairWin = new PairWindow({ parent: win, url: PAIR_URL, host, onClosed: () => send({ type: 'account', account: account.view() }) });
-    return pairWin;
+    return pairHost;
+  };
+  /** 로그아웃·이 PC 나가기: 진행 중인 연결을 그만두고 다음 로그인 때 새 신원으로 다시 만든다. */
+  const pairReset = () => {
+    pairHost?.cancel();
+    pairHost = null;
   };
   /** 구독 경로 호출(기기 토큰). 로그인 전이면 account_required. 토큰 401이면 버리고 한 번 다시 */
   const billingCall = async <T>(f: (c: AccountClient, auth: DeviceAuth) => Promise<T>): Promise<T> => {
@@ -2354,8 +2366,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       needGesture(3_000);
       await accountInit();
       if (runs.anyActive()) throw new Error('run_active');
-      pairWin?.close();
-      pairWin = null;
+      pairReset();
       phoneLink?.stop();
       phoneLink = null;
       syncAwake();
@@ -2409,15 +2420,30 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       log.event('main.account_delete_cancel', { result: 'ok' });
       return { deleteAfter: null };
     },
-    // [폰 연결]: main 소유 창(S-03)을 연다. 창은 셸 렌더러와 통하지 않는다(QR·6자리는 그 창에만).
+    // [폰 연결](S-03): 설정 > 기기 연결의 연결 칸에서 QR을 띄운다(따로 창 없음). 동작은 다섯(열기·보기·6자리·다시 하기·취소)이고,
+    // 열기·6자리·다시 하기는 main이 메인 창에서 직접 본 실제 입력 뒤에만(ADR-027 결정 8). 화면 값은 PairView(pair 이벤트)뿐이다.
     'pair.open': async () => {
       needGesture(3_000);
       await accountInit();
       // 폰이 스스로 나간 자리가 목록에 남아 있으면 새 폰을 올릴 때 서버가 거부한다. 열기 전에 맞춘다
       await reconcileDevices();
-      pairWindow().open();
-      return {};
+      return pairing().start();
     },
+    'pair.view': async () => pairHost?.view() ?? { step: 'idle', qr: null, expiresAt: null, phoneName: null, triesLeft: null, error: null },
+    'pair.submit': async (p) => {
+      needGesture(3_000);
+      return pairing().submitSas(String(p.code).slice(0, 6));
+    },
+    'pair.retry': async () => {
+      needGesture(3_000);
+      await accountInit();
+      await reconcileDevices();
+      const h = pairing();
+      h.cancel();
+      return h.start();
+    },
+    // [취소]·[닫기]: 진행 중이면 그만두고(우편함 정리), 연결을 마친 칸이면 화면만 쉬는 자리로
+    'pair.cancel': async () => pairHost?.dismiss() ?? { step: 'idle', qr: null, expiresAt: null, phoneName: null, triesLeft: null, error: null },
     // 설정 > 기기 연결(ADR-048 결정 6). 목록은 읽기만(보기 전에 서버와 목록을 맞춘다), 끊기·나가기는 실제 입력 뒤에만.
     'devices.list': async () => {
       await accountInit();
@@ -2439,8 +2465,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       await accountInit();
       if (runs.anyActive()) throw new Error('run_active');
       await devicesOf().leave();
-      pairWin?.close();
-      pairWin = null;
+      pairReset();
       phoneLink?.stop();
       phoneLink = null;
       deviceMgr = null;
@@ -2819,7 +2844,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     clearInterval(idleTimer);
     for (const { kind, fn } of onSession) powerMonitor.removeListener(kind as 'resume', fn);
     updater?.stop();
-    pairWin?.dispose();
+    pairHost?.cancel();
     for (const r of pairedThisRun) r.channel.close();
     phoneLink?.stop();
     stayAwake.set(false);
