@@ -96,6 +96,7 @@ class WsLink implements RelayLink {
   #peer: (() => void)[] = [];
   #env: (() => void)[] = [];
   #close: (() => void)[] = [];
+  #gone: (() => void)[] = [];
   #hasPeer: boolean;
   #closed = false;
   closeCode: number | null = null;
@@ -112,7 +113,9 @@ class WsLink implements RelayLink {
   _peer(online: boolean) {
     // 상대가 나갔다 다시 오면 onPeer를 다시 부른다(폰은 그때 IK를 새로 연다).
     if (!online) {
+      const was = this.#hasPeer;
       this.#hasPeer = false;
+      if (was) for (const cb of this.#gone) cb();
       return;
     }
     if (this.#hasPeer) return;
@@ -140,6 +143,9 @@ class WsLink implements RelayLink {
   onPeer(cb: () => void) {
     this.#peer.push(cb);
     if (this.#hasPeer) cb();
+  }
+  onPeerGone(cb: () => void) {
+    this.#gone.push(cb);
   }
   onEnv(cb: () => void) {
     this.#env.push(cb);

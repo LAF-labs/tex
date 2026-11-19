@@ -15,7 +15,5 @@ step 빌드; pnpm build
 step 린트; pnpm lint
 step 시험; ${X[@]+"${X[@]}"} pnpm test 2>&1 | tee "$CI_OUT/test.log"
 step 보안 스위트; ${X[@]+"${X[@]}"} pnpm test:security 2>&1 | tee "$CI_OUT/test-security.log"
-step 폰 앱; pnpm --dir apps/mobile install --frozen-lockfile && pnpm --dir apps/mobile typecheck && pnpm --dir apps/mobile test
-step 폰 릴레이 스모크; node scripts/ci-phone-relay.mjs
 step 작업 트리 깨끗함; node scripts/ci-clean-tree.mjs
 echo "통과. 로그: $CI_OUT"

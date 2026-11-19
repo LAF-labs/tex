@@ -119,14 +119,19 @@ describe('ws-link(services/relay/API.md)', () => {
     ws.msg(JSON.stringify({ t: 'peer', online: false }));
     const link = await p;
     let peers = 0;
+    let gone = 0;
     link.onPeer(() => peers++);
+    link.onPeerGone!(() => gone++);
     assert.equal(peers, 0);
     ws.msg(JSON.stringify({ t: 'peer', online: true }));
     assert.equal(peers, 1);
     ws.msg(JSON.stringify({ t: 'peer', online: true }));
     assert.equal(peers, 1);
-    // 상대가 나갔다 다시 오면 다시 알린다
+    // 상대가 나갔다 다시 오면 다시 알린다. 나가면 onPeerGone(없던 상대가 또 없다고 와도 한 번)
+    assert.equal(gone, 0);
     ws.msg(JSON.stringify({ t: 'peer', online: false }));
+    ws.msg(JSON.stringify({ t: 'peer', online: false }));
+    assert.equal(gone, 1);
     ws.msg(JSON.stringify({ t: 'peer', online: true }));
     assert.equal(peers, 2);
     let envs = 0;

@@ -26,7 +26,7 @@ export type OutboxItem =
   | ({ kind: 'receipt'; msgId: string; offer: ReceiptOfferBody; createdAt: number; attempts: number } & QueuedMark)
   | ({ kind: 'cash'; msgId: string; entry: CashEntryBody; createdAt: number; attempts: number } & QueuedMark);
 
-/** 폰 보관함 저장소. 앱이 파일 보호 등급·백업 제외 폴더에 암호화해 둔다(apps/mobile). */
+/** 폰 보관함 저장소. 앱이 파일 보호 등급·백업 제외 폴더에 암호화해 둔다(taxoff-mobile). */
 export interface OutboxStore {
   list(): Promise<OutboxItem[]>;
   put(item: OutboxItem, photo?: Uint8Array): Promise<void>;
