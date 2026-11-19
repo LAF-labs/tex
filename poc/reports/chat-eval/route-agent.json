@@ -1,0 +1,5753 @@
+{
+  "summary": {
+    "target": "agent",
+    "model": "deepseek/deepseek-v4.1-flash-1017",
+    "resolvedModels": [],
+    "at": "2026-11-19T02:59:22.633Z",
+    "costUsd": 0.0945,
+    "costKrw": 137,
+    "score": {
+      "n": 362,
+      "errors": 0,
+      "act": {
+        "accuracy": 0.5608,
+        "coarse": 0.6657,
+        "recall": {
+          "task": {
+            "n": 169,
+            "recall": 0.4024
+          },
+          "lookup": {
+            "n": 61,
+            "recall": 0.7377
+          },
+          "followup": {
+            "n": 45,
+            "recall": 0.7111
+          },
+          "app_help": {
+            "n": 21,
+            "recall": 0.6667
+          },
+          "smalltalk": {
+            "n": 30,
+            "recall": 0.6667
+          },
+          "tax_advice": {
+            "n": 20,
+            "recall": 0.8
+          },
+          "other": {
+            "n": 16,
+            "recall": 0.5
+          }
+        },
+        "ece": null,
+        "confusion": {
+          "task": {
+            "task": 68,
+            "lookup": 20,
+            "other": 78,
+            "app_help": 2,
+            "followup": 1
+          },
+          "lookup": {
+            "lookup": 45,
+            "other": 11,
+            "app_help": 4,
+            "smalltalk": 1
+          },
+          "followup": {
+            "followup": 32,
+            "task": 7,
+            "other": 2,
+            "app_help": 1,
+            "lookup": 3
+          },
+          "app_help": {
+            "lookup": 3,
+            "smalltalk": 1,
+            "app_help": 14,
+            "tax_advice": 1,
+            "other": 2
+          },
+          "smalltalk": {
+            "lookup": 8,
+            "smalltalk": 20,
+            "task": 2
+          },
+          "tax_advice": {
+            "tax_advice": 16,
+            "lookup": 4
+          },
+          "other": {
+            "lookup": 1,
+            "other": 8,
+            "smalltalk": 3,
+            "followup": 1,
+            "tax_advice": 1,
+            "task": 1,
+            "app_help": 1
+          }
+        }
+      },
+      "domain": {
+        "accuracy": 0.5497,
+        "recall": {
+          "invoice": {
+            "n": 120,
+            "recall": 0.8583
+          },
+          "records": {
+            "n": 41,
+            "recall": 1
+          },
+          "cert_doc": {
+            "n": 23,
+            "recall": 0
+          },
+          "bank": {
+            "n": 18,
+            "recall": 0
+          },
+          "auth": {
+            "n": 17,
+            "recall": 0
+          },
+          "phone_link": {
+            "n": 15,
+            "recall": 0
+          },
+          "counterparty": {
+            "n": 14,
+            "recall": 0
+          },
+          "pack": {
+            "n": 11,
+            "recall": 0
+          },
+          "capture": {
+            "n": 13,
+            "recall": 0
+          },
+          "settings": {
+            "n": 15,
+            "recall": 0
+          },
+          "none": {
+            "n": 75,
+            "recall": 0.7333
+          }
+        },
+        "ece": null
+      },
+      "joint": 0.511,
+      "corrects": {
+        "accuracy": 0.9392,
+        "recall": 0.7308,
+        "falsePositive": 0.0446
+      },
+      "advice": {
+        "recall": 0.7391,
+        "falsePositive": 0.0029
+      },
+      "sure": null,
+      "gate": {
+        "issueMiss": 0.0517,
+        "falseOpen": 0.3333,
+        "joint": 0.511
+      },
+      "byStyle": {
+        "advice_mix": {
+          "n": 2,
+          "joint": 1
+        },
+        "ambiguous_cp": {
+          "n": 1,
+          "joint": 1
+        },
+        "amend": {
+          "n": 6,
+          "joint": 0
+        },
+        "amount_only": {
+          "n": 1,
+          "joint": 1
+        },
+        "answer_ask": {
+          "n": 16,
+          "joint": 0.8125
+        },
+        "chain": {
+          "n": 3,
+          "joint": 0
+        },
+        "colloquial": {
+          "n": 26,
+          "joint": 0.3077
+        },
+        "cp_only": {
+          "n": 1,
+          "joint": 1
+        },
+        "date": {
+          "n": 6,
+          "joint": 1
+        },
+        "dialect": {
+          "n": 7,
+          "joint": 0.7143
+        },
+        "edit_card": {
+          "n": 19,
+          "joint": 1
+        },
+        "edit_pending": {
+          "n": 7,
+          "joint": 0
+        },
+        "english": {
+          "n": 1,
+          "joint": 1
+        },
+        "followup_like": {
+          "n": 2,
+          "joint": 1
+        },
+        "greeting_mix": {
+          "n": 2,
+          "joint": 1
+        },
+        "inject": {
+          "n": 5,
+          "joint": 0.2
+        },
+        "korean_number": {
+          "n": 2,
+          "joint": 1
+        },
+        "multi": {
+          "n": 2,
+          "joint": 1
+        },
+        "new_while_open": {
+          "n": 5,
+          "joint": 1
+        },
+        "noise": {
+          "n": 3,
+          "joint": 0
+        },
+        "odd_value": {
+          "n": 1,
+          "joint": 1
+        },
+        "pc": {
+          "n": 1,
+          "joint": 0
+        },
+        "phone": {
+          "n": 21,
+          "joint": 0.4762
+        },
+        "plain": {
+          "n": 158,
+          "joint": 0.3861
+        },
+        "polite": {
+          "n": 11,
+          "joint": 0.6364
+        },
+        "purpose": {
+          "n": 2,
+          "joint": 0
+        },
+        "qty": {
+          "n": 4,
+          "joint": 1
+        },
+        "repeat": {
+          "n": 1,
+          "joint": 0
+        },
+        "scope": {
+          "n": 1,
+          "joint": 0
+        },
+        "secret": {
+          "n": 2,
+          "joint": 1
+        },
+        "short": {
+          "n": 14,
+          "joint": 0.5714
+        },
+        "skip_confirm": {
+          "n": 1,
+          "joint": 1
+        },
+        "slang": {
+          "n": 13,
+          "joint": 0.4615
+        },
+        "status": {
+          "n": 1,
+          "joint": 1
+        },
+        "typo": {
+          "n": 3,
+          "joint": 1
+        },
+        "unknown_cp": {
+          "n": 2,
+          "joint": 1
+        },
+        "unsupported": {
+          "n": 6,
+          "joint": 0.8333
+        },
+        "vague": {
+          "n": 3,
+          "joint": 1
+        }
+      },
+      "latencyMs": {
+        "p50": 1204,
+        "p95": 2406
+      },
+      "inputTokensMean": 4907
+    }
+  },
+  "rows": [
+    {
+      "id": "task.invoice.01",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1283.053083,
+      "inputTokens": 4906
+    },
+    {
+      "id": "task.invoice.02",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1483.159833,
+      "inputTokens": 4913
+    },
+    {
+      "id": "task.invoice.03",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1475.184916,
+      "inputTokens": 4913
+    },
+    {
+      "id": "task.invoice.04",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1312.551042,
+      "inputTokens": 4902
+    },
+    {
+      "id": "task.invoice.05",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1686.3327499999998,
+      "inputTokens": 4901
+    },
+    {
+      "id": "task.invoice.06",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1831.454834,
+      "inputTokens": 4902
+    },
+    {
+      "id": "task.invoice.07",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1629.1609999999998,
+      "inputTokens": 4908
+    },
+    {
+      "id": "task.invoice.08",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1362.071667,
+      "inputTokens": 4900
+    },
+    {
+      "id": "task.invoice.09",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1040.1710000000003,
+      "inputTokens": 4904
+    },
+    {
+      "id": "task.invoice.10",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1469.6765,
+      "inputTokens": 4901
+    },
+    {
+      "id": "task.invoice.11",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1138.348042,
+      "inputTokens": 4906
+    },
+    {
+      "id": "task.invoice.12",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1110.5417919999995,
+      "inputTokens": 4902
+    },
+    {
+      "id": "task.invoice.13",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1347.6440420000004,
+      "inputTokens": 4920
+    },
+    {
+      "id": "task.invoice.14",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 781.8027089999996,
+      "inputTokens": 4909
+    },
+    {
+      "id": "task.invoice.15",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1201.091958,
+      "inputTokens": 4910
+    },
+    {
+      "id": "task.invoice.16",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1298.955167,
+      "inputTokens": 4901
+    },
+    {
+      "id": "task.invoice.17",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1148.0764580000005,
+      "inputTokens": 4909
+    },
+    {
+      "id": "task.invoice.18",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2260.4012090000006,
+      "inputTokens": 4911
+    },
+    {
+      "id": "task.invoice.19",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1452.3262090000007,
+      "inputTokens": 4911
+    },
+    {
+      "id": "task.invoice.20",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 3749.337916999999,
+      "inputTokens": 4908
+    },
+    {
+      "id": "task.invoice.21",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1326.8114579999992,
+      "inputTokens": 4911
+    },
+    {
+      "id": "task.invoice.22",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1443.7170420000002,
+      "inputTokens": 4908
+    },
+    {
+      "id": "task.invoice.23",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1109.214167000001,
+      "inputTokens": 4909
+    },
+    {
+      "id": "task.invoice.24",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1322.04875,
+      "inputTokens": 4893
+    },
+    {
+      "id": "task.invoice.25",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 869.8242919999993,
+      "inputTokens": 4897
+    },
+    {
+      "id": "task.invoice.26",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 789.6710830000011,
+      "inputTokens": 4894
+    },
+    {
+      "id": "task.invoice.27",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1857.2977919999994,
+      "inputTokens": 4892
+    },
+    {
+      "id": "task.invoice.28",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1516.6976250000007,
+      "inputTokens": 4896
+    },
+    {
+      "id": "task.invoice.29",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1339.2679580000004,
+      "inputTokens": 4902
+    },
+    {
+      "id": "task.invoice.30",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1255.8540830000002,
+      "inputTokens": 4904
+    },
+    {
+      "id": "task.invoice.31",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1093.9697909999995,
+      "inputTokens": 4913
+    },
+    {
+      "id": "task.invoice.32",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1040.7834160000002,
+      "inputTokens": 4898
+    },
+    {
+      "id": "task.invoice.33",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1063.7193749999988,
+      "inputTokens": 4903
+    },
+    {
+      "id": "task.invoice.34",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1033.021458000001,
+      "inputTokens": 4903
+    },
+    {
+      "id": "task.invoice.35",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 932.0389169999999,
+      "inputTokens": 4907
+    },
+    {
+      "id": "task.invoice.36",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1048.9640419999996,
+      "inputTokens": 4904
+    },
+    {
+      "id": "task.invoice.37",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1139.733542,
+      "inputTokens": 4901
+    },
+    {
+      "id": "task.invoice.38",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 3260.2559170000004,
+      "inputTokens": 4897
+    },
+    {
+      "id": "task.invoice.39",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1667.664084,
+      "inputTokens": 4900
+    },
+    {
+      "id": "task.invoice.40",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1222.7381249999999,
+      "inputTokens": 4907
+    },
+    {
+      "id": "task.invoice.41",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1263.1493329999994,
+      "inputTokens": 4906
+    },
+    {
+      "id": "task.invoice.42",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1147.1879580000004,
+      "inputTokens": 4909
+    },
+    {
+      "id": "task.invoice.43",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1046.5397090000006,
+      "inputTokens": 4908
+    },
+    {
+      "id": "task.invoice.44",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1130.064624999999,
+      "inputTokens": 4906
+    },
+    {
+      "id": "task.invoice.45",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1449.830167,
+      "inputTokens": 4914
+    },
+    {
+      "id": "task.invoice.46",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1259.4658340000005,
+      "inputTokens": 4915
+    },
+    {
+      "id": "task.invoice.47",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1147.4648749999997,
+      "inputTokens": 4915
+    },
+    {
+      "id": "task.invoice.48",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1289.1407499999987,
+      "inputTokens": 4909
+    },
+    {
+      "id": "task.invoice.49",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1183.8243750000001,
+      "inputTokens": 4906
+    },
+    {
+      "id": "task.invoice.50",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1541.050374999999,
+      "inputTokens": 4903
+    },
+    {
+      "id": "task.invoice.51",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1779.6232909999999,
+      "inputTokens": 4924
+    },
+    {
+      "id": "task.invoice.52",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1069.4957500000019,
+      "inputTokens": 4906
+    },
+    {
+      "id": "task.invoice.53",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1211.809083,
+      "inputTokens": 4908
+    },
+    {
+      "id": "task.invoice.54",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1409.159208000001,
+      "inputTokens": 4906
+    },
+    {
+      "id": "task.invoice.55",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2648.4357910000035,
+      "inputTokens": 4920
+    },
+    {
+      "id": "task.invoice.56",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2275.3430829999998,
+      "inputTokens": 4917
+    },
+    {
+      "id": "task.invoice.57",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1069.3575420000016,
+      "inputTokens": 4895
+    },
+    {
+      "id": "task.invoice.58",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1061.0918330000022,
+      "inputTokens": 4906
+    },
+    {
+      "id": "task.invoice.59",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1213.5341249999983,
+      "inputTokens": 4901
+    },
+    {
+      "id": "task.invoice.60",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 3967.8164160000015,
+      "inputTokens": 4897
+    },
+    {
+      "id": "task.invoice.61",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1437.8617080000004,
+      "inputTokens": 4932
+    },
+    {
+      "id": "task.invoice.62",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1720.2645830000001,
+      "inputTokens": 4928
+    },
+    {
+      "id": "task.invoice.63",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1179.3672079999997,
+      "inputTokens": 4900
+    },
+    {
+      "id": "task.invoice.64",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1270.9477079999997,
+      "inputTokens": 4902
+    },
+    {
+      "id": "task.invoice.65",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 3090.884541000003,
+      "inputTokens": 4928
+    },
+    {
+      "id": "task.invoice.66",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 913.2459579999995,
+      "inputTokens": 4908
+    },
+    {
+      "id": "task.invoice.67",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1588.2659999999996,
+      "inputTokens": 4921
+    },
+    {
+      "id": "task.invoice.68",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1589.4240839999984,
+      "inputTokens": 4896
+    },
+    {
+      "id": "task.invoice.69",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1250.1577499999985,
+      "inputTokens": 4911
+    },
+    {
+      "id": "task.invoice.70",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 959.3975830000018,
+      "inputTokens": 4911
+    },
+    {
+      "id": "task.invoice.71",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1122.8036659999998,
+      "inputTokens": 4912
+    },
+    {
+      "id": "task.cert_doc.01",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1109.4177500000005,
+      "inputTokens": 4897
+    },
+    {
+      "id": "task.cert_doc.02",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 980.4602919999998,
+      "inputTokens": 4897
+    },
+    {
+      "id": "task.cert_doc.03",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1067.2121669999979,
+      "inputTokens": 4898
+    },
+    {
+      "id": "task.cert_doc.04",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1111.7505829999973,
+      "inputTokens": 4895
+    },
+    {
+      "id": "task.cert_doc.05",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1328.707459000001,
+      "inputTokens": 4893
+    },
+    {
+      "id": "task.cert_doc.06",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 948.6677080000009,
+      "inputTokens": 4894
+    },
+    {
+      "id": "task.cert_doc.07",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1279.1813330000004,
+      "inputTokens": 4899
+    },
+    {
+      "id": "task.cert_doc.08",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1029.8459999999977,
+      "inputTokens": 4897
+    },
+    {
+      "id": "task.cert_doc.09",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1440.117374999998,
+      "inputTokens": 4901
+    },
+    {
+      "id": "task.cert_doc.10",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1200.3361250000016,
+      "inputTokens": 4900
+    },
+    {
+      "id": "task.cert_doc.11",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1120.9293749999997,
+      "inputTokens": 4899
+    },
+    {
+      "id": "task.cert_doc.12",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1200.7532089999986,
+      "inputTokens": 4892
+    },
+    {
+      "id": "task.cert_doc.13",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 4448.961041999999,
+      "inputTokens": 4894
+    },
+    {
+      "id": "task.cert_doc.14",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1126.3972079999985,
+      "inputTokens": 4898
+    },
+    {
+      "id": "task.cert_doc.15",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1153.8999589999985,
+      "inputTokens": 4899
+    },
+    {
+      "id": "task.cert_doc.16",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1150.9504589999997,
+      "inputTokens": 4894
+    },
+    {
+      "id": "task.cert_doc.17",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1215.4893330000014,
+      "inputTokens": 4898
+    },
+    {
+      "id": "task.cert_doc.18",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1331.6265829999975,
+      "inputTokens": 4896
+    },
+    {
+      "id": "task.bank.01",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1268.6188750000001,
+      "inputTokens": 4891
+    },
+    {
+      "id": "task.bank.02",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2014.8960840000036,
+      "inputTokens": 4895
+    },
+    {
+      "id": "task.bank.03",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1203.6313750000045,
+      "inputTokens": 4896
+    },
+    {
+      "id": "task.bank.04",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1527.4447499999987,
+      "inputTokens": 4897
+    },
+    {
+      "id": "task.bank.05",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1398.0065000000031,
+      "inputTokens": 4898
+    },
+    {
+      "id": "task.bank.06",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1684.7588749999995,
+      "inputTokens": 4893
+    },
+    {
+      "id": "task.bank.07",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1781.2836249999964,
+      "inputTokens": 4897
+    },
+    {
+      "id": "task.bank.08",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 752.4985419999939,
+      "inputTokens": 4898
+    },
+    {
+      "id": "task.bank.09",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1432.9717919999966,
+      "inputTokens": 4891
+    },
+    {
+      "id": "task.bank.10",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1339.9381250000006,
+      "inputTokens": 4891
+    },
+    {
+      "id": "task.bank.11",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1486.6665409999987,
+      "inputTokens": 4892
+    },
+    {
+      "id": "task.bank.12",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1188.6572500000038,
+      "inputTokens": 4896
+    },
+    {
+      "id": "task.auth.01",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1244.9190000000017,
+      "inputTokens": 4895
+    },
+    {
+      "id": "task.auth.02",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1769.0506669999959,
+      "inputTokens": 4896
+    },
+    {
+      "id": "task.auth.03",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1476.7918340000033,
+      "inputTokens": 4899
+    },
+    {
+      "id": "task.auth.04",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1270.3670420000053,
+      "inputTokens": 4893
+    },
+    {
+      "id": "task.auth.05",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1020.3474160000042,
+      "inputTokens": 4901
+    },
+    {
+      "id": "task.auth.06",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1430.716124999999,
+      "inputTokens": 4896
+    },
+    {
+      "id": "task.auth.07",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1331.347332999998,
+      "inputTokens": 4898
+    },
+    {
+      "id": "task.auth.08",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1264.841625000001,
+      "inputTokens": 4899
+    },
+    {
+      "id": "task.auth.09",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 979.549957999996,
+      "inputTokens": 4895
+    },
+    {
+      "id": "task.auth.10",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1368.5441250000003,
+      "inputTokens": 4901
+    },
+    {
+      "id": "task.auth.11",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 832.2856249999968,
+      "inputTokens": 4892
+    },
+    {
+      "id": "task.auth.12",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1129.2981670000008,
+      "inputTokens": 4895
+    },
+    {
+      "id": "task.phone_link.01",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1128.4304580000025,
+      "inputTokens": 4891
+    },
+    {
+      "id": "task.phone_link.02",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1347.4945000000007,
+      "inputTokens": 4897
+    },
+    {
+      "id": "task.phone_link.03",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1620.9467079999959,
+      "inputTokens": 4896
+    },
+    {
+      "id": "task.phone_link.04",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1270.9248750000042,
+      "inputTokens": 4898
+    },
+    {
+      "id": "task.phone_link.05",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1553.3960829999996,
+      "inputTokens": 4897
+    },
+    {
+      "id": "task.phone_link.06",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1768.7785409999997,
+      "inputTokens": 4891
+    },
+    {
+      "id": "task.phone_link.07",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1349.9528750000027,
+      "inputTokens": 4894
+    },
+    {
+      "id": "task.phone_link.08",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1433.2932090000031,
+      "inputTokens": 4892
+    },
+    {
+      "id": "task.phone_link.09",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1260.0298750000002,
+      "inputTokens": 4894
+    },
+    {
+      "id": "task.phone_link.10",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1499.639750000002,
+      "inputTokens": 4889
+    },
+    {
+      "id": "task.counterparty.01",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 951.0310830000017,
+      "inputTokens": 4900
+    },
+    {
+      "id": "task.counterparty.02",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1467.9914169999975,
+      "inputTokens": 4892
+    },
+    {
+      "id": "task.counterparty.03",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1142.8644170000043,
+      "inputTokens": 4898
+    },
+    {
+      "id": "task.counterparty.04",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1929.0174160000024,
+      "inputTokens": 4901
+    },
+    {
+      "id": "task.counterparty.05",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1198.5485409999965,
+      "inputTokens": 4899
+    },
+    {
+      "id": "task.counterparty.06",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1294.5979999999981,
+      "inputTokens": 4904
+    },
+    {
+      "id": "task.counterparty.07",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1591.3129159999953,
+      "inputTokens": 4902
+    },
+    {
+      "id": "task.counterparty.08",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1004.1926250000033,
+      "inputTokens": 4898
+    },
+    {
+      "id": "task.counterparty.09",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1134.8195419999975,
+      "inputTokens": 4896
+    },
+    {
+      "id": "task.counterparty.10",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 848.9156670000011,
+      "inputTokens": 4900
+    },
+    {
+      "id": "task.counterparty.11",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1818.6397079999952,
+      "inputTokens": 4894
+    },
+    {
+      "id": "task.counterparty.12",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2116.8121249999967,
+      "inputTokens": 4907
+    },
+    {
+      "id": "task.pack.01",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1858.4168329999957,
+      "inputTokens": 4900
+    },
+    {
+      "id": "task.pack.02",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2150.3148750000037,
+      "inputTokens": 4897
+    },
+    {
+      "id": "task.pack.03",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1910.4677080000038,
+      "inputTokens": 4896
+    },
+    {
+      "id": "task.pack.04",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1811.5242500000022,
+      "inputTokens": 4902
+    },
+    {
+      "id": "task.pack.05",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1838.8174169999984,
+      "inputTokens": 4894
+    },
+    {
+      "id": "task.pack.06",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 3469.391582999997,
+      "inputTokens": 4903
+    },
+    {
+      "id": "task.pack.07",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1655.9851659999986,
+      "inputTokens": 4894
+    },
+    {
+      "id": "task.pack.08",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1860.2537500000035,
+      "inputTokens": 4895
+    },
+    {
+      "id": "task.pack.09",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2129.3645000000033,
+      "inputTokens": 4904
+    },
+    {
+      "id": "task.pack.10",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2313.9262090000047,
+      "inputTokens": 4895
+    },
+    {
+      "id": "task.capture.01",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1240.107415999999,
+      "inputTokens": 4892
+    },
+    {
+      "id": "task.capture.02",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1240.6524999999965,
+      "inputTokens": 4894
+    },
+    {
+      "id": "task.capture.03",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1360.1031670000011,
+      "inputTokens": 4897
+    },
+    {
+      "id": "task.capture.04",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1691.1530829999974,
+      "inputTokens": 4899
+    },
+    {
+      "id": "task.capture.05",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1611.5332500000004,
+      "inputTokens": 4903
+    },
+    {
+      "id": "task.capture.06",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1030.8505420000001,
+      "inputTokens": 4897
+    },
+    {
+      "id": "task.capture.07",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1279.878582999998,
+      "inputTokens": 4895
+    },
+    {
+      "id": "task.capture.08",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2518.897791999996,
+      "inputTokens": 4891
+    },
+    {
+      "id": "task.capture.09",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 3209.5269169999956,
+      "inputTokens": 4903
+    },
+    {
+      "id": "task.capture.10",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1546.2731249999997,
+      "inputTokens": 4891
+    },
+    {
+      "id": "task.capture.11",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2137.8776660000003,
+      "inputTokens": 4898
+    },
+    {
+      "id": "task.capture.12",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1075.4733749999941,
+      "inputTokens": 4896
+    },
+    {
+      "id": "task.settings.01",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 900.9142920000013,
+      "inputTokens": 4892
+    },
+    {
+      "id": "task.settings.02",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1239.1386669999993,
+      "inputTokens": 4896
+    },
+    {
+      "id": "task.settings.03",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1098.3959590000013,
+      "inputTokens": 4892
+    },
+    {
+      "id": "task.settings.04",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1598.3915839999972,
+      "inputTokens": 4891
+    },
+    {
+      "id": "task.settings.05",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1479.2352079999982,
+      "inputTokens": 4897
+    },
+    {
+      "id": "task.settings.06",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1611.3329999999987,
+      "inputTokens": 4898
+    },
+    {
+      "id": "task.settings.07",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 881.3795419999951,
+      "inputTokens": 4900
+    },
+    {
+      "id": "task.settings.08",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1268.375500000002,
+      "inputTokens": 4897
+    },
+    {
+      "id": "task.settings.09",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 907.286874999998,
+      "inputTokens": 4890
+    },
+    {
+      "id": "task.settings.10",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1719.1796250000043,
+      "inputTokens": 4895
+    },
+    {
+      "id": "task.settings.11",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1401.9442090000011,
+      "inputTokens": 4895
+    },
+    {
+      "id": "task.settings.12",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 980.4650409999958,
+      "inputTokens": 4896
+    },
+    {
+      "id": "lookup.records.01",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 741.5731249999953,
+      "inputTokens": 4901
+    },
+    {
+      "id": "lookup.records.02",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 691.1154590000006,
+      "inputTokens": 4899
+    },
+    {
+      "id": "lookup.records.03",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 655.8047080000033,
+      "inputTokens": 4894
+    },
+    {
+      "id": "lookup.records.04",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 659.3400409999958,
+      "inputTokens": 4903
+    },
+    {
+      "id": "lookup.records.05",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 798.4998749999941,
+      "inputTokens": 4894
+    },
+    {
+      "id": "lookup.records.06",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 779.0379999999932,
+      "inputTokens": 4900
+    },
+    {
+      "id": "lookup.records.07",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 924.1258339999986,
+      "inputTokens": 4904
+    },
+    {
+      "id": "lookup.records.08",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 670.9723749999976,
+      "inputTokens": 4895
+    },
+    {
+      "id": "lookup.records.09",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 991.4997500000027,
+      "inputTokens": 4896
+    },
+    {
+      "id": "lookup.records.10",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 958.5160000000033,
+      "inputTokens": 4895
+    },
+    {
+      "id": "lookup.records.11",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 780.2344999999987,
+      "inputTokens": 4892
+    },
+    {
+      "id": "lookup.records.12",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 680.5011670000022,
+      "inputTokens": 4901
+    },
+    {
+      "id": "lookup.records.13",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 659.143250000001,
+      "inputTokens": 4894
+    },
+    {
+      "id": "lookup.records.14",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 730.489582999995,
+      "inputTokens": 4899
+    },
+    {
+      "id": "lookup.records.15",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 785.9597500000018,
+      "inputTokens": 4898
+    },
+    {
+      "id": "lookup.records.16",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 702.091499999995,
+      "inputTokens": 4895
+    },
+    {
+      "id": "lookup.records.17",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 679.6772500000006,
+      "inputTokens": 4902
+    },
+    {
+      "id": "lookup.records.18",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1453.2216670000053,
+      "inputTokens": 4896
+    },
+    {
+      "id": "lookup.records.19",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 724.5156669999997,
+      "inputTokens": 4896
+    },
+    {
+      "id": "lookup.records.20",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1000.3081669999956,
+      "inputTokens": 4894
+    },
+    {
+      "id": "lookup.records.21",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 5708.71875,
+      "inputTokens": 4893
+    },
+    {
+      "id": "lookup.records.22",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1697.902958000006,
+      "inputTokens": 4895
+    },
+    {
+      "id": "lookup.records.23",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1374.494916999989,
+      "inputTokens": 4896
+    },
+    {
+      "id": "lookup.records.24",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 753.5523749999993,
+      "inputTokens": 4900
+    },
+    {
+      "id": "lookup.records.25",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 864.1300829999964,
+      "inputTokens": 4891
+    },
+    {
+      "id": "lookup.records.26",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 757.1006249999919,
+      "inputTokens": 4894
+    },
+    {
+      "id": "lookup.records.27",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 781.2856250000041,
+      "inputTokens": 4896
+    },
+    {
+      "id": "lookup.records.28",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1007.8452079999988,
+      "inputTokens": 4895
+    },
+    {
+      "id": "lookup.records.29",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 734.6136249999981,
+      "inputTokens": 4896
+    },
+    {
+      "id": "lookup.records.30",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 714.9058329999971,
+      "inputTokens": 4893
+    },
+    {
+      "id": "lookup.records.31",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1031.9939160000067,
+      "inputTokens": 4894
+    },
+    {
+      "id": "lookup.records.32",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1267.8726669999887,
+      "inputTokens": 4901
+    },
+    {
+      "id": "lookup.records.33",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1317.2718329999916,
+      "inputTokens": 4900
+    },
+    {
+      "id": "lookup.records.34",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 939.9757499999978,
+      "inputTokens": 4898
+    },
+    {
+      "id": "lookup.records.35",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 871.0111659999966,
+      "inputTokens": 4899
+    },
+    {
+      "id": "lookup.records.36",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1206.1377499999944,
+      "inputTokens": 4939
+    },
+    {
+      "id": "lookup.records.37",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 891.8745830000116,
+      "inputTokens": 4935
+    },
+    {
+      "id": "lookup.records.38",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 701.7567920000001,
+      "inputTokens": 4894
+    },
+    {
+      "id": "lookup.records.39",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 878.5355419999978,
+      "inputTokens": 4890
+    },
+    {
+      "id": "lookup.records.40",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 958.5475829999923,
+      "inputTokens": 4901
+    },
+    {
+      "id": "lookup.records.41",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1718.8840000000055,
+      "inputTokens": 4900
+    },
+    {
+      "id": "lookup.cert_doc.01",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2103.5982080000103,
+      "inputTokens": 4898
+    },
+    {
+      "id": "lookup.cert_doc.02",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1383.9638330000016,
+      "inputTokens": 4897
+    },
+    {
+      "id": "lookup.cert_doc.03",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1566.8910000000033,
+      "inputTokens": 4900
+    },
+    {
+      "id": "lookup.cert_doc.04",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1409.3121249999967,
+      "inputTokens": 4894
+    },
+    {
+      "id": "lookup.cert_doc.05",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1220.3875420000113,
+      "inputTokens": 4892
+    },
+    {
+      "id": "lookup.bank.01",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 752.9647909999912,
+      "inputTokens": 4892
+    },
+    {
+      "id": "lookup.bank.02",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 827.3392089999979,
+      "inputTokens": 4894
+    },
+    {
+      "id": "lookup.bank.03",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2405.9089999999997,
+      "inputTokens": 4900
+    },
+    {
+      "id": "lookup.bank.04",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1641.0514580000017,
+      "inputTokens": 4893
+    },
+    {
+      "id": "lookup.auth.01",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1238.9963750000024,
+      "inputTokens": 4895
+    },
+    {
+      "id": "lookup.auth.02",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1421.331750000012,
+      "inputTokens": 4896
+    },
+    {
+      "id": "lookup.auth.03",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1339.2554579999996,
+      "inputTokens": 4895
+    },
+    {
+      "id": "lookup.phone_link.01",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1409.1419999999925,
+      "inputTokens": 4892
+    },
+    {
+      "id": "lookup.phone_link.02",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1215.5889159999933,
+      "inputTokens": 4892
+    },
+    {
+      "id": "lookup.phone_link.03",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1451.1728339999972,
+      "inputTokens": 4892
+    },
+    {
+      "id": "lookup.settings.01",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1191.755375000008,
+      "inputTokens": 4892
+    },
+    {
+      "id": "lookup.settings.02",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1665.3987909999996,
+      "inputTokens": 4896
+    },
+    {
+      "id": "lookup.settings.03",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1319.4495000000024,
+      "inputTokens": 4896
+    },
+    {
+      "id": "lookup.counterparty.01",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2139.8530420000025,
+      "inputTokens": 4896
+    },
+    {
+      "id": "lookup.counterparty.02",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1785.402917000014,
+      "inputTokens": 4898
+    },
+    {
+      "id": "followup.invoice.01",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1467.8675000000076,
+      "inputTokens": 4975
+    },
+    {
+      "id": "followup.invoice.02",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1356.677542000005,
+      "inputTokens": 4968
+    },
+    {
+      "id": "followup.invoice.03",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1224.1108340000064,
+      "inputTokens": 4959
+    },
+    {
+      "id": "followup.invoice.04",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1143.6005000000005,
+      "inputTokens": 4963
+    },
+    {
+      "id": "followup.invoice.05",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1031.0812089999963,
+      "inputTokens": 4965
+    },
+    {
+      "id": "followup.invoice.06",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1039.5320000000065,
+      "inputTokens": 4967
+    },
+    {
+      "id": "followup.invoice.07",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1935.0481250000012,
+      "inputTokens": 4959
+    },
+    {
+      "id": "followup.invoice.08",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1073.8085830000055,
+      "inputTokens": 4936
+    },
+    {
+      "id": "followup.invoice.09",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1340.756625000009,
+      "inputTokens": 4940
+    },
+    {
+      "id": "followup.invoice.10",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1237.5240420000046,
+      "inputTokens": 4937
+    },
+    {
+      "id": "followup.invoice.11",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1104.4724579999893,
+      "inputTokens": 4961
+    },
+    {
+      "id": "followup.invoice.12",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1030.348417000001,
+      "inputTokens": 4960
+    },
+    {
+      "id": "followup.invoice.13",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 996.6287500000035,
+      "inputTokens": 4963
+    },
+    {
+      "id": "followup.invoice.14",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1149.7263749999984,
+      "inputTokens": 4958
+    },
+    {
+      "id": "followup.invoice.15",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 2109.7185409999947,
+      "inputTokens": 4960
+    },
+    {
+      "id": "followup.invoice.16",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1028.7815830000036,
+      "inputTokens": 4963
+    },
+    {
+      "id": "followup.invoice.17",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1011.8265410000022,
+      "inputTokens": 4978
+    },
+    {
+      "id": "followup.invoice.18",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1109.3837090000015,
+      "inputTokens": 4964
+    },
+    {
+      "id": "followup.invoice.19",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1074.0827080000017,
+      "inputTokens": 4974
+    },
+    {
+      "id": "followup.invoice.20",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 768.5660419999913,
+      "inputTokens": 4967
+    },
+    {
+      "id": "followup.invoice.21",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1082.956250000003,
+      "inputTokens": 5021
+    },
+    {
+      "id": "followup.invoice.22",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 991.0234580000106,
+      "inputTokens": 4969
+    },
+    {
+      "id": "followup.invoice.23",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 2231.0978750000068,
+      "inputTokens": 4979
+    },
+    {
+      "id": "followup.invoice.24",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 708.1332079999993,
+      "inputTokens": 4965
+    },
+    {
+      "id": "followup.invoice.25",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1127.4312500000087,
+      "inputTokens": 4972
+    },
+    {
+      "id": "followup.invoice.26",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1342.762333999999,
+      "inputTokens": 4966
+    },
+    {
+      "id": "followup.invoice.27",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 948.3022080000082,
+      "inputTokens": 4969
+    },
+    {
+      "id": "followup.invoice.28",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 985.3115830000024,
+      "inputTokens": 4961
+    },
+    {
+      "id": "followup.invoice.29",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 744.3188749999972,
+      "inputTokens": 4962
+    },
+    {
+      "id": "followup.invoice.30",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 708.5391669999954,
+      "inputTokens": 5011
+    },
+    {
+      "id": "followup.invoice.31",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 790.249667000011,
+      "inputTokens": 5006
+    },
+    {
+      "id": "followup.invoice.32",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 942.0745420000021,
+      "inputTokens": 4972
+    },
+    {
+      "id": "followup.invoice.33",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 1166.611832999988,
+      "inputTokens": 4971
+    },
+    {
+      "id": "followup.invoice.34",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 2467.186042000001,
+      "inputTokens": 4966
+    },
+    {
+      "id": "followup.invoice.35",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 954.5066250000091,
+      "inputTokens": 4973
+    },
+    {
+      "id": "followup.invoice.36",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 3775.954541999992,
+      "inputTokens": 4940
+    },
+    {
+      "id": "followup.invoice.37",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2370.5006670000002,
+      "inputTokens": 4938
+    },
+    {
+      "id": "followup.invoice.38",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2534.918749999997,
+      "inputTokens": 4941
+    },
+    {
+      "id": "followup.invoice.39",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 3401.6710840000014,
+      "inputTokens": 4948
+    },
+    {
+      "id": "followup.invoice.40",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2156.120834000001,
+      "inputTokens": 4936
+    },
+    {
+      "id": "followup.invoice.41",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1498.8784999999916,
+      "inputTokens": 4941
+    },
+    {
+      "id": "followup.invoice.42",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1894.3695829999924,
+      "inputTokens": 4940
+    },
+    {
+      "id": "followup.invoice.43",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1061.4462080000085,
+      "inputTokens": 4942
+    },
+    {
+      "id": "followup.invoice.44",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 912.719207999995,
+      "inputTokens": 4943
+    },
+    {
+      "id": "followup.invoice.45",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1249.264083999995,
+      "inputTokens": 4936
+    },
+    {
+      "id": "app_help.none.01",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 759.2596670000057,
+      "inputTokens": 4891
+    },
+    {
+      "id": "app_help.none.02",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 992.0473749999946,
+      "inputTokens": 4893
+    },
+    {
+      "id": "app_help.none.03",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1278.232707999996,
+      "inputTokens": 4890
+    },
+    {
+      "id": "app_help.none.04",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1408.9375839999993,
+      "inputTokens": 4896
+    },
+    {
+      "id": "app_help.none.05",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 681.2226249999949,
+      "inputTokens": 4891
+    },
+    {
+      "id": "app_help.none.06",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1123.5283749999944,
+      "inputTokens": 4891
+    },
+    {
+      "id": "app_help.none.07",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 730.9374580000003,
+      "inputTokens": 4898
+    },
+    {
+      "id": "app_help.none.08",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1049.7734999999957,
+      "inputTokens": 4891
+    },
+    {
+      "id": "app_help.none.09",
+      "act": {
+        "got": "tax_advice",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 1,
+      "ms": 1088.4598339999939,
+      "inputTokens": 4899
+    },
+    {
+      "id": "app_help.invoice.01",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1390.7548749999987,
+      "inputTokens": 4895
+    },
+    {
+      "id": "app_help.invoice.02",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1114.9260829999985,
+      "inputTokens": 4895
+    },
+    {
+      "id": "app_help.invoice.03",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2361.327000000005,
+      "inputTokens": 4897
+    },
+    {
+      "id": "app_help.invoice.04",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1242.096417000008,
+      "inputTokens": 4894
+    },
+    {
+      "id": "app_help.bank.01",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1100.4945000000007,
+      "inputTokens": 4892
+    },
+    {
+      "id": "app_help.bank.02",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1413.871082999991,
+      "inputTokens": 4896
+    },
+    {
+      "id": "app_help.auth.01",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1518.9259999999922,
+      "inputTokens": 4894
+    },
+    {
+      "id": "app_help.auth.02",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1810.012333000006,
+      "inputTokens": 4894
+    },
+    {
+      "id": "app_help.phone_link.01",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1872.1582920000073,
+      "inputTokens": 4896
+    },
+    {
+      "id": "app_help.phone_link.02",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2345.063875000007,
+      "inputTokens": 4897
+    },
+    {
+      "id": "app_help.pack.01",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 4356.878084000011,
+      "inputTokens": 4897
+    },
+    {
+      "id": "app_help.capture.01",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1579.2965840000106,
+      "inputTokens": 4893
+    },
+    {
+      "id": "smalltalk.none.01",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 693.2111670000013,
+      "inputTokens": 4897
+    },
+    {
+      "id": "smalltalk.none.02",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 859.463917000001,
+      "inputTokens": 4888
+    },
+    {
+      "id": "smalltalk.none.03",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1089.7980830000015,
+      "inputTokens": 4888
+    },
+    {
+      "id": "smalltalk.none.04",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 789.3052500000049,
+      "inputTokens": 4889
+    },
+    {
+      "id": "smalltalk.none.05",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 741.0132090000116,
+      "inputTokens": 4889
+    },
+    {
+      "id": "smalltalk.none.06",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 808.9349999999977,
+      "inputTokens": 4893
+    },
+    {
+      "id": "smalltalk.none.07",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1011.3800419999898,
+      "inputTokens": 4895
+    },
+    {
+      "id": "smalltalk.none.08",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 770.0089169999992,
+      "inputTokens": 4889
+    },
+    {
+      "id": "smalltalk.none.09",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1120.0052089999954,
+      "inputTokens": 4893
+    },
+    {
+      "id": "smalltalk.none.10",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 677.0399579999939,
+      "inputTokens": 4890
+    },
+    {
+      "id": "smalltalk.none.11",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 939.3831659999996,
+      "inputTokens": 4894
+    },
+    {
+      "id": "smalltalk.none.12",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1600.542499999996,
+      "inputTokens": 4890
+    },
+    {
+      "id": "smalltalk.none.13",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1133.5537079999922,
+      "inputTokens": 4890
+    },
+    {
+      "id": "smalltalk.none.14",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 799.5495420000079,
+      "inputTokens": 4890
+    },
+    {
+      "id": "smalltalk.none.15",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 849.2580420000013,
+      "inputTokens": 4891
+    },
+    {
+      "id": "smalltalk.none.16",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1110.5586670000048,
+      "inputTokens": 4893
+    },
+    {
+      "id": "smalltalk.none.17",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 924.9405830000032,
+      "inputTokens": 4892
+    },
+    {
+      "id": "smalltalk.none.18",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1140.3119589999988,
+      "inputTokens": 4891
+    },
+    {
+      "id": "smalltalk.none.19",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 789.7764160000079,
+      "inputTokens": 4887
+    },
+    {
+      "id": "smalltalk.none.20",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1154.111042000004,
+      "inputTokens": 4889
+    },
+    {
+      "id": "smalltalk.none.21",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 849.044332999998,
+      "inputTokens": 4890
+    },
+    {
+      "id": "smalltalk.none.22",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 999.6088749999908,
+      "inputTokens": 4889
+    },
+    {
+      "id": "smalltalk.none.23",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1010.4447079999954,
+      "inputTokens": 4893
+    },
+    {
+      "id": "smalltalk.none.24",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 899.6444170000032,
+      "inputTokens": 4888
+    },
+    {
+      "id": "smalltalk.none.25",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1020.150542000003,
+      "inputTokens": 4889
+    },
+    {
+      "id": "smalltalk.none.26",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 989.8049580000079,
+      "inputTokens": 4891
+    },
+    {
+      "id": "smalltalk.none.27",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 809.9748749999999,
+      "inputTokens": 4890
+    },
+    {
+      "id": "smalltalk.none.28",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1500.3115839999955,
+      "inputTokens": 4886
+    },
+    {
+      "id": "smalltalk.none.29",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1228.5522499999934,
+      "inputTokens": 4933
+    },
+    {
+      "id": "smalltalk.none.30",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1099.374416999999,
+      "inputTokens": 4966
+    },
+    {
+      "id": "tax_advice.none.01",
+      "act": {
+        "got": "tax_advice",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 1,
+      "ms": 1019.015458000009,
+      "inputTokens": 4896
+    },
+    {
+      "id": "tax_advice.none.02",
+      "act": {
+        "got": "tax_advice",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 1,
+      "ms": 1116.6952500000043,
+      "inputTokens": 4899
+    },
+    {
+      "id": "tax_advice.none.03",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2437.3672499999957,
+      "inputTokens": 4895
+    },
+    {
+      "id": "tax_advice.none.04",
+      "act": {
+        "got": "tax_advice",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 1,
+      "ms": 899.6735839999892,
+      "inputTokens": 4899
+    },
+    {
+      "id": "tax_advice.none.05",
+      "act": {
+        "got": "tax_advice",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 1,
+      "ms": 910.7917919999891,
+      "inputTokens": 4902
+    },
+    {
+      "id": "tax_advice.none.06",
+      "act": {
+        "got": "tax_advice",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 1,
+      "ms": 1225.7649999999994,
+      "inputTokens": 4901
+    },
+    {
+      "id": "tax_advice.none.07",
+      "act": {
+        "got": "tax_advice",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 1,
+      "ms": 1469.266208000001,
+      "inputTokens": 4899
+    },
+    {
+      "id": "tax_advice.none.08",
+      "act": {
+        "got": "tax_advice",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 1,
+      "ms": 1483.0462499999994,
+      "inputTokens": 4893
+    },
+    {
+      "id": "tax_advice.none.09",
+      "act": {
+        "got": "tax_advice",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 1,
+      "ms": 843.6104170000035,
+      "inputTokens": 4894
+    },
+    {
+      "id": "tax_advice.none.10",
+      "act": {
+        "got": "tax_advice",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 1,
+      "ms": 952.0649579999881,
+      "inputTokens": 4895
+    },
+    {
+      "id": "tax_advice.none.11",
+      "act": {
+        "got": "tax_advice",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 1,
+      "ms": 850.5280000000057,
+      "inputTokens": 4896
+    },
+    {
+      "id": "tax_advice.none.12",
+      "act": {
+        "got": "tax_advice",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 1,
+      "ms": 870.3504160000011,
+      "inputTokens": 4893
+    },
+    {
+      "id": "tax_advice.none.13",
+      "act": {
+        "got": "tax_advice",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 1,
+      "ms": 2580.4679580000084,
+      "inputTokens": 4898
+    },
+    {
+      "id": "tax_advice.none.14",
+      "act": {
+        "got": "tax_advice",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 1,
+      "ms": 1168.914459000007,
+      "inputTokens": 4895
+    },
+    {
+      "id": "tax_advice.none.15",
+      "act": {
+        "got": "tax_advice",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 1,
+      "ms": 1060.2983749999985,
+      "inputTokens": 4893
+    },
+    {
+      "id": "tax_advice.none.16",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1288.9007500000007,
+      "inputTokens": 4892
+    },
+    {
+      "id": "tax_advice.none.17",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 690.6033329999918,
+      "inputTokens": 4894
+    },
+    {
+      "id": "tax_advice.none.18",
+      "act": {
+        "got": "tax_advice",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 1,
+      "ms": 910.0749579999974,
+      "inputTokens": 4893
+    },
+    {
+      "id": "tax_advice.none.19",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 731.4495000000024,
+      "inputTokens": 4901
+    },
+    {
+      "id": "tax_advice.none.20",
+      "act": {
+        "got": "tax_advice",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 1,
+      "ms": 989.3618330000027,
+      "inputTokens": 4902
+    },
+    {
+      "id": "other.none.01",
+      "act": {
+        "got": "lookup",
+        "conf": null
+      },
+      "domain": {
+        "got": "records",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1010.2439579999918,
+      "inputTokens": 4909
+    },
+    {
+      "id": "other.none.02",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 2908.6773749999993,
+      "inputTokens": 4902
+    },
+    {
+      "id": "other.none.03",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1264.823000000004,
+      "inputTokens": 4901
+    },
+    {
+      "id": "other.none.04",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1029.635249999992,
+      "inputTokens": 4900
+    },
+    {
+      "id": "other.none.05",
+      "act": {
+        "got": "followup",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 1,
+      "advice": 0,
+      "ms": 790.9329580000049,
+      "inputTokens": 4896
+    },
+    {
+      "id": "other.none.06",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1394.1068750000122,
+      "inputTokens": 4902
+    },
+    {
+      "id": "other.none.07",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1230.3902090000047,
+      "inputTokens": 4903
+    },
+    {
+      "id": "other.none.08",
+      "act": {
+        "got": "tax_advice",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 1,
+      "ms": 954.0992079999996,
+      "inputTokens": 4897
+    },
+    {
+      "id": "other.none.09",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 905.625166999991,
+      "inputTokens": 4906
+    },
+    {
+      "id": "other.none.10",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1019.6473750000005,
+      "inputTokens": 4890
+    },
+    {
+      "id": "other.none.11",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1409.7042500000098,
+      "inputTokens": 4889
+    },
+    {
+      "id": "other.none.12",
+      "act": {
+        "got": "task",
+        "conf": null
+      },
+      "domain": {
+        "got": "invoice",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1628.2474169999914,
+      "inputTokens": 4894
+    },
+    {
+      "id": "other.none.13",
+      "act": {
+        "got": "smalltalk",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1227.6929579999996,
+      "inputTokens": 4886
+    },
+    {
+      "id": "other.none.14",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1381.6211660000117,
+      "inputTokens": 4897
+    },
+    {
+      "id": "other.none.15",
+      "act": {
+        "got": "app_help",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1181.3060840000107,
+      "inputTokens": 4893
+    },
+    {
+      "id": "other.none.16",
+      "act": {
+        "got": "other",
+        "conf": null
+      },
+      "domain": {
+        "got": "none",
+        "conf": null
+      },
+      "corrects": 0,
+      "advice": 0,
+      "ms": 1070.5712499999936,
+      "inputTokens": 4898
+    }
+  ]
+}
