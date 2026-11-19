@@ -25,6 +25,9 @@ const DRAFT_EXTRA = {
 export const OPEN_SCREENS = ['issue_auth', 'business', 'bank', 'devices', 'billing', 'counterparties', 'docs', 'receivables', 'chrome', 'security_program'] as const;
 export type OpenScreen = (typeof OPEN_SCREENS)[number];
 
+export const AGENT_REPLY_KINDS = ['answer', 'did', 'ask', 'cannot', 'tax_advice', 'smalltalk'] as const;
+export const AGENT_ASKS = ['counterparty', 'amount', 'item', 'vat', 'which_card', 'date'] as const;
+
 /** 도구 표. counterparty는 거래처 토큰, amount는 금액 토큰이나 결과 슬롯, draft는 카드 ref(d#)다. */
 export const CHAT_AGENT_TOOLS = [
   { name: 'sales_summary', parameters: obj({ month_offset: { type: 'integer', minimum: -12, maximum: 0 } }) },
@@ -39,7 +42,7 @@ export const CHAT_AGENT_TOOLS = [
   { name: 'open_screen', parameters: obj({ screen: { type: 'string', enum: OPEN_SCREENS }, say: { type: 'string' } }) },
   // 도구 없이 답할 때(잡담·인사·고맙다는 말·할 수 없는 일·세무 판단). DeepSeek는 도구가 있으면 늘 도구를 부른다(chat-eval 2026-11-19: 점심·날씨에
   // open_screen·sales_summary를 부름). 답도 도구 하나로 쥐여 주면 엉뚱한 도구로 말하지 않는다. 엔진이 답 검사를 거쳐 그대로 닫는다. PC만(폰은 PHONE_OMITTED_TOOLS).
-  { name: 'reply', parameters: obj({ kind: { type: 'string', enum: ['answer', 'smalltalk', 'cannot', 'tax_advice'] }, text: { type: 'string' } }) },
+  { name: 'reply', parameters: obj({ kind: { type: 'string', enum: ['answer', 'ask', 'smalltalk', 'cannot', 'tax_advice'] }, text: { type: 'string' }, ask: { type: ['string', 'null'], enum: [...AGENT_ASKS, null] } }) },
 ] as const;
 export type ChatAgentToolName = (typeof CHAT_AGENT_TOOLS)[number]['name'];
 
@@ -75,8 +78,6 @@ export const slotPattern = new RegExp(`^\\{(r[1-9]\\d{0,5})\\.(${SLOT_PATHS.map(
 /** 문장 안의 슬롯 전부(g). 쓸 때마다 새로 만든다(lastIndex를 나눠 쓰지 않게). */
 export const slotAnywhere = (): RegExp => new RegExp(slotPattern.source.slice(1, -1), 'g');
 
-export const AGENT_REPLY_KINDS = ['answer', 'did', 'ask', 'cannot', 'tax_advice', 'smalltalk'] as const;
-export const AGENT_ASKS = ['counterparty', 'amount', 'item', 'vat', 'which_card', 'date'] as const;
 export type AgentReplyKind = (typeof AGENT_REPLY_KINDS)[number];
 export type AgentAsk = (typeof AGENT_ASKS)[number];
 /** 답과 같이 보일 ref 상한 */

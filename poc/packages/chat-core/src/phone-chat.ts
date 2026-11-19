@@ -60,7 +60,7 @@ const NAME_MAX = 40;
 
 // ── 고정 문구 ──
 
-export const PHONE_FALLBACK_TEXT = '세금계산서 카드 만들기와 발급 기록·받을 돈 확인을 도와드려요. 어떤 일을 할까요?';
+export const PHONE_FALLBACK_TEXT = '네, 말씀해 주세요. 필요한 일을 편하게 말씀해 주시면 바로 해 드릴게요.';
 export const PHONE_NUMBER_TEXT = '결과를 아래에 보여 드렸어요. 금액과 날짜는 표와 카드에 있어요.';
 /**
  * 폰이 직접 되묻는 고정 문장(되묻기 칸별). 모델이 되묻는 문장에 숫자를 섞었거나 틀린 슬롯을 썼을 때 쓴다(PC의 CHAT_AGENT_ASK_TEXT와 같은 쓰임).

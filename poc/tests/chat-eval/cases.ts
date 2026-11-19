@@ -117,7 +117,7 @@ export interface Case {
 }
 
 /** 할 수 있는 일 목록을 되풀이하는 답(옛 CHAT_AGENT_FALLBACK_TEXT)의 낱말 */
-const LIST_WORDS = ['도와드려요. 어떤 일을 할까요', '할 수 있는 일은'];
+const LIST_WORDS = ['도와드려요. 어떤 일을 할까요', '할 수 있는 일은', '편하게 말씀해 주시면 바로 해 드릴게요'];
 /** 잡담에 부르면 안 되는 도구(조회·카드) */
 const CHAT_NO_TOOLS = ['sales_summary', 'invoice_history', 'receivables', 'payables', 'cash_flow', 'invoice_draft', 'open_screen'];
 const ISSUE_WORDS = ['발급했', '발급 완료했', '발급을 완료', '발급됐', '발급되었', '전송했'];

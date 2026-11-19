@@ -41,7 +41,8 @@ export const CHAT_AGENT_INPUT_MAX_BYTES = 8192;
 /** 대화록에 붙이는 최근 턴 수 */
 export const CHAT_AGENT_TRANSCRIPT_TURNS = 12;
 /** 답 문장을 쓸 수 없을 때(식별자·링크·비밀 유도 말, 모델 거절)의 고정 안내 */
-export const CHAT_AGENT_FALLBACK_TEXT = '세금계산서 카드 만들기와 발급 기록·매출·받을 돈·낼 돈·돈 흐름 확인을 도와드려요. 어떤 일을 할까요?';
+// 모델 답을 쓸 수 없을 때(숫자·안전 검사에 걸림, 거절)의 문장. 할 수 있는 일 목록을 늘어놓지 않는다(대표 2026-11-19 "에이전틱하지 않잖아").
+export const CHAT_AGENT_FALLBACK_TEXT = '네, 말씀해 주세요. 필요한 일을 편하게 말씀해 주시면 바로 해 드릴게요.';
 /**
  * 답 문장에 슬롯·토큰 밖의 숫자가 있을 때(모델이 셈하거나 지어낸 값일 수 있다). 문장은 버리고 같이 보일 표·카드는 그대로 둔다.
  * 다시 묻지 않는 이유: 한 번 더 부르면 3~4초가 늘고 또 틀릴 수 있다. 표·카드의 값은 PC가 낸 것이라 언제나 맞다.
@@ -428,7 +429,7 @@ export class ChatAgent {
       const said = tc.find((c) => c.name === 'reply');
       if (said) {
         const a = said.arguments as Record<string, unknown>;
-        return this.finish(s, this.checkReply(s, turn, { kind: a.kind, text: a.text, show: [], ask: null }));
+        return this.finish(s, this.checkReply(s, turn, { kind: a.kind, text: a.text, show: [], ask: a.kind === 'ask' ? (a.ask ?? null) : null }));
       }
       // 다음 호출이 툴셋 턴 상한·replay 상한을 넘으면 도구를 실행하지 않는다(결과를 모델에 돌려줄 수 없다).
       const turns = turn.replay.filter((x) => x.kind === 'model_output' && (x.item.item as { type?: string }).type !== 'reasoning').length;
