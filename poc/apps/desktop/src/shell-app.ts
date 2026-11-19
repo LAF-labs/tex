@@ -15,6 +15,7 @@ import { findInstalledChrome, pageAddress, SESSION_IDLE_REPORT_MS } from '@sax/v
 import { execFile } from 'node:child_process';
 import { app, autoUpdater as nativeUpdater, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, ShareMenu, shell as desktop } from 'electron';
 import { deviceModel } from './device-model.ts';
+import { runVersion } from './run-version.ts';
 import { AccountantPack, isPackMonth, packAsk } from './accountant-pack.ts';
 import { ACTION_TEXT, actionText, issueLocalApproval, kstToday, verifyLocalApproval, verifyLocalAttestation, type LocalApproval } from './approval-gate.ts';
 import { CERT_DOCS_SHOWN, certDocByCode, certInputsFor, type CertDocDef } from './cert-docs.ts';
@@ -364,7 +365,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const root = fixture?.root ?? opts.engine?.root;
   const log = new FileEventLog(appPaths(root ?? defaultAppRoot()).logs, 'main');
   const embedded = opts.externalChrome !== true;
-  const host = new EngineHost({ vault: fixture ? fixture.vault : 'process', root, portal: fixture?.portal ?? opts.engine!.portal, log, appVersion: app.getVersion(), embeddedBrowser: embedded });
+  const host = new EngineHost({ vault: fixture ? fixture.vault : 'process', root, portal: fixture?.portal ?? opts.engine!.portal, log, appVersion: runVersion(app.isPackaged, process.env, () => app.getVersion()), embeddedBrowser: embedded });
   made.host = host;
   let business: Profile | null = null;
   /** 사업자 프로필 DB id(대화 에이전트 세션 기준). 없으면 대화가 등록부터 안내한다. */
@@ -1604,7 +1605,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
           for (const k of keys) k.fill(0);
         }
       },
-      appVersion: app.getVersion(),
+      appVersion: runVersion(app.isPackaged, process.env, () => app.getVersion()),
       capabilities: () => [...DESKTOP_CAPS, ...SESSION_CAPS, ...APPROVE_CAPS],
       session: phoneSession({
         issue: phoneIssueOf(),
