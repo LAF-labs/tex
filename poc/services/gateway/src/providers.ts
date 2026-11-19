@@ -513,7 +513,9 @@ export function anthropicMessagesBody(s: RespondSpec, messages: AnthropicMessage
     max_tokens: s.maxOutputTokens,
     system: [{ type: 'text', text: s.prefix, cache_control: { type: 'ephemeral' } }],
     messages,
-    ...(s.tools.length ? { tools: s.tools.map((x) => ({ name: x.name, input_schema: anthropicSchema(x.parameters), strict: true })), tool_choice: { type: 'auto' } } : {}),
+    // 도구는 strict로 보내지 않는다: 엄격 스키마 전체의 합집합형(null 허용) 인자 상한을 대화 툴셋이 넘어 400이 났다(2026-11-19 운영).
+    // 도구 인자는 PC와 폰이 원래 스키마로 다시 검사한다. 출력 형식(output_config.format)은 그대로 엄격하다.
+    ...(s.tools.length ? { tools: s.tools.map((x) => ({ name: x.name, input_schema: anthropicSchema(x.parameters) })), tool_choice: { type: 'auto' } } : {}),
     output_config: { effort: s.effort, format: { type: 'json_schema', schema: anthropicSchema(s.output.schema) } },
     metadata: { user_id: s.safetyId },
     // 안전 분류기가 거절하면 같은 호출 안에서 다른 모델로 다시 돌린다(서버 쪽 대체). Haiku에는 서버 쪽 대체가 없다
@@ -585,8 +587,15 @@ export class AnthropicProvider implements ModelProvider {
       throw new ProviderError('retryable');
     }
     this.o.onEvent('upstream_anthropic');
-    if (res.status === 429 || res.status >= 500) throw new ProviderError('retryable');
-    if (res.status !== 200) throw new ProviderError('fatal');
+    if (res.status !== 200) {
+      // 원인을 보려고 상태 코드와 오류 종류(error.type)만 이벤트 이름으로 남긴다. 오류 글과 본문은 남기지 않는다
+      const kind = await res
+        .json()
+        .then((e: { error?: { type?: unknown } }) => (typeof e?.error?.type === 'string' && /^[a-z_]{1,40}$/.test(e.error.type) ? e.error.type : 'unknown'))
+        .catch(() => 'unknown');
+      this.o.onEvent(`upstream_anthropic_${res.status}_${kind}`);
+      throw new ProviderError(res.status === 429 || res.status >= 500 ? 'retryable' : 'fatal');
+    }
     let d: Record<string, unknown>;
     try {
       d = (await res.json()) as Record<string, unknown>;
