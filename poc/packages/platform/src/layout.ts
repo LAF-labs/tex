@@ -7,9 +7,7 @@ import { appPaths, type AppPaths } from './paths.ts';
 export interface PreparedLayout {
   paths: AppPaths;
   root: AclCheck;
-  /** 기동 시 정리한 staging 잔존 파일 수(D07 §1). */
   stagingCleared: number;
-  /** 하위 폴더 자리에 파일·링크가 있어 루트 안에서 이름을 바꿔 치운 항목. */
   setAside: string[];
 }
 
@@ -22,9 +20,6 @@ export async function prepareLayout(root?: string, guard: DirGuard = dirGuard())
   await guard.excludeFromIndex(paths.root);
   const setAside: string[] = [];
   for (const dir of [paths.userData, paths.db, paths.vault, paths.chromeProfile, paths.staging, paths.logs, paths.crashDumps]) {
-    // 폴더 자리의 파일·링크(정션 포함)는 치우고 새로 만든다. 파일이면 mkdir이 실패해 앱이 뜨지 않고,
-    // 링크면 이후 앱 데이터가 루트 밖에 쓰이며 아래 staging 정리가 링크 대상의 파일을 지운다.
-    // userData·logs·crashDumps는 Electron에 넘기는 폴더라, main은 이 함수를 setPath 앞에서 부른다.
     const st = await fs.lstat(dir).catch(() => null);
     if (st && !st.isDirectory()) setAside.push(await moveAside(dir));
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
@@ -39,16 +34,11 @@ export async function prepareLayout(root?: string, guard: DirGuard = dirGuard())
 
 export interface PreparedDir {
   check: AclCheck;
-  /** 처음 확인에서 나온 문제. 이미 맞았으면 빈 배열. */
   before: AclProblem[];
-  /** 치우기로 판단한 문제(도구 예외면 unreadable). 새 폴더도 맞지 않아 되돌렸으면 setAside 없이 이것만 있다. */
   reason?: AclProblem[];
-  /** 제자리에서 고칠 수 없어 같은 부모 안에서 이름을 바꿔 치운 원래 항목. */
   setAside?: string;
 }
 
-// 권한을 고쳐도 소용없는 문제: 폴더가 우리 것이 아니다. 다른 계정 소유(소유자는 DACL을 다시 열 수 있고 POSIX chmod는 거부된다), 링크, 파일,
-// 그리고 우리가 읽거나 고칠 수 없는 폴더(우리 소유라면 OWNER RIGHTS ACE로 막지 않는 한 READ_CONTROL·WRITE_DAC가 늘 있다).
 const NOT_OURS: readonly AclProblem[] = ['not_owner', 'reparse_point', 'not_dir', 'unreadable'];
 const notOurs = (c: AclCheck): boolean => c.problems.some((p) => NOT_OURS.includes(p));
 
@@ -68,7 +58,6 @@ interface Judged {
  *    호출자는 그 폴더를 쓰지 않는다(D05 §3.1).
  */
 export async function preparePrivateDir(dir: string, guard: DirGuard = dirGuard()): Promise<PreparedDir> {
-  // 도구 예외는 unreadable로 받되 예외를 함께 들고 다닌다. 폴더 탓이 아니면 그 예외를 그대로 던진다.
   const attempt = async (f: () => Promise<AclCheck>): Promise<Judged> => {
     try {
       return { check: await f() };
@@ -77,12 +66,10 @@ export async function preparePrivateDir(dir: string, guard: DirGuard = dirGuard(
     }
   };
   const inspect = async (): Promise<Judged> => {
-    // 파일·링크는 OS 도구에 넘기지 않는다. icacls·Get-Acl은 링크를 따라가 대상의 ACL을 읽고, 대상이 없으면 실패한다.
     const st = await fs.lstat(dir).catch(() => null);
     if (st && !st.isDirectory()) return { check: { ok: false, problems: [st.isSymbolicLink() ? 'reparse_point' : 'not_dir'] } };
     return attempt(() => guard.checkPrivate(dir));
   };
-  // 고쳤거나, 새 폴더를 만들어도 같은 이유로 실패할 문제면 제자리 복구 결과로 끝낸다.
   const repair = async (j: Judged): Promise<Judged> => (j.check.ok || notOurs(j.check) ? j : attempt(() => guard.ensurePrivate(dir)));
   const first = await inspect();
   const before = first.check.problems;
@@ -93,7 +80,6 @@ export async function preparePrivateDir(dir: string, guard: DirGuard = dirGuard(
     return { check: judged.check, before };
   }
   if (judged.error) {
-    // 도구 예외로 판단했으면 한 번 더 해 본다. 일시적인 실패(PowerShell 기동 실패 등) 한 번으로 정상 프로필을 치우지 않게.
     judged = await repair(await inspect());
     if (!notOurs(judged.check)) return { check: judged.check, before };
   }
@@ -104,11 +90,9 @@ export async function preparePrivateDir(dir: string, guard: DirGuard = dirGuard(
     return guard.ensurePrivate(dir);
   });
   if (fresh.check.ok) return { check: fresh.check, before, reason, setAside };
-  // 새 폴더를 못 만들었거나 맞지 않으면 원래 폴더 탓이 아니다(쓰기 도구가 막힘 등). 되돌려 놓고 실패한다.
-  // 원래 프로필을 잃지 않고, 재시도마다 쌓이지 않는다.
   try {
     await fs.rmdir(dir).catch((e: NodeJS.ErrnoException) => {
-      if (e.code !== 'ENOENT') throw e; // mkdir이 실패했으면 없다
+      if (e.code !== 'ENOENT') throw e;
     });
     await retryingOnWindows(() => fs.rename(path.join(path.dirname(dir), setAside), dir));
   } catch {
@@ -119,7 +103,6 @@ export async function preparePrivateDir(dir: string, guard: DirGuard = dirGuard(
   return { check: fresh.check, before, reason };
 }
 
-/** 링크는 따라가지 않고 링크 자체의 이름을 바꾼다. 같은 부모 안이라 볼륨을 넘지 않는다. */
 async function moveAside(entry: string): Promise<string> {
   const name = `${path.basename(entry)}.untrusted-${Date.now()}-${randomBytes(3).toString('hex')}`;
   await retryingOnWindows(() => fs.rename(entry, path.join(path.dirname(entry), name)));
@@ -131,7 +114,6 @@ async function retryingOnWindows<T>(op: () => Promise<T>): Promise<T> {
     try {
       return await op();
     } catch (e) {
-      // Windows: 백신·색인기가 항목을 잠깐 열고 있으면 이름 바꾸기·만들기가 거부된다. 잠깐 기다렸다 다시 한다(최대 약 1초).
       const code = (e as NodeJS.ErrnoException).code ?? '';
       if (process.platform !== 'win32' || i >= 4 || !['EPERM', 'EACCES', 'EBUSY'].includes(code)) throw e;
       await new Promise((r) => setTimeout(r, 100 * (i + 1)));

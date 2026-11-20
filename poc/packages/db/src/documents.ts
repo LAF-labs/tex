@@ -1,4 +1,3 @@
-// 보관함 문서 행(D07 §2 documents, v1 스키마 그대로). 파일 쓰기·메타 해석은 엔진(DocumentService)이 한다.
 import { ValidationError } from './repo.ts';
 import type { Db } from './open.ts';
 
@@ -13,7 +12,6 @@ export interface DocumentRow {
   path: string;
   bytes: number;
   sha256: string;
-  /** 종류별 추가 필드(발급번호·추출 이유 등). 로컬 전용 */
   meta: Record<string, unknown> | null;
   runId: string | null;
   createdAt: string;
@@ -63,7 +61,6 @@ export class DocumentRepo {
     return r ? toDocument(r as Row) : null;
   }
 
-  /** 최근 발급순(발급일 없으면 등록 시각) */
   list(): DocumentRow[] {
     return this.db.prepare('SELECT * FROM documents ORDER BY COALESCE(issued_at, substr(created_at, 1, 10)) DESC, created_at DESC').all().map((r) => toDocument(r as Row));
   }
@@ -78,7 +75,6 @@ export class DocumentRepo {
     return this.get(id)!;
   }
 
-  /** 사용자가 바꾼 유효 일수(validity_rules.user_override_days). 행이 없으면 null. */
   overrideDays(docType: string): number | null {
     const r = this.db.prepare('SELECT user_override_days AS d FROM validity_rules WHERE doc_type = ?').get(docType) as { d: number | null } | undefined;
     return r?.d ?? null;

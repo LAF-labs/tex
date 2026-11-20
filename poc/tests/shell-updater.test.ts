@@ -1,5 +1,3 @@
-// 앱 업데이트 배선(update-host.ts·update-electron.ts, D14 M4-9, ADR-028, D11 §4): packages/updater README "배선 순서" 1~5단계.
-// Electron 없이: 원천·설치기(electron-updater 모양 가짜)·시계·타이머를 주입한다. 키는 updater-verify.test.ts와 같은 시드 규칙(release-1 = 0x61).
 import assert from 'node:assert/strict';
 import { createHash, createPrivateKey, createPublicKey, randomBytes, sign } from 'node:crypto';
 import fs from 'node:fs';
@@ -31,7 +29,6 @@ function manifest(version = '1.2.0', over: Partial<ReleaseManifest> = {}, signer
     ...rest,
   };
   const ed = (content: unknown, seed: number) => sign(null, Buffer.from(jcs(content), 'utf8'), seedKey(seed)).toString('base64url');
-  // 기간은 레지스트리 타임스탬프 키(0x51)가 {contentDigest, issuedAt, expiresAt}에 서명한다
   const stampContent = { contentDigest: createHash('sha256').update(jcs(u)).digest('hex'), issuedAt, expiresAt };
   return { ...u, signature: { keyId: 'release-1', alg: 'ed25519', sig: ed(u, signer) }, issuedAt, expiresAt, timestamp: { keyId: 'timestamp-1', alg: 'ed25519', sig: ed(stampContent, 0x51) } } as ReleaseManifest;
 }
@@ -131,7 +128,6 @@ describe('update-host: 배선 순서 1~5', () => {
     const s = readState(r);
     assert.equal(s.channels.stable.highestSeen.version, '1.2.0');
     assert.equal(s.channels.stable.lastSuccessAt, NOW);
-    // 설치를 시작한 뒤에는 다시 확인·설치하지 않는다
     assert.deepEqual(await h.check(), { result: 'busy' });
     assert.equal(h.tryInstall(), false);
     assert.equal(r.calls.filter((c) => c === 'install').length, 1);
@@ -202,7 +198,6 @@ describe('update-host: 배선 순서 1~5', () => {
     assert.deepEqual(await startUpdateHost(r.opts).check(), { result: 'feed_mismatch' });
     assert.ok(!r.calls.includes('download'));
     assert.deepEqual(r.logs.find(([n]) => n === 'main.update_held')?.[1], { code: 'update.feed_mismatch', security: true });
-    // 새 버전이 없다고 하면(null) 같은 판정
     const r2 = rig();
     r2.set({ feed: null });
     assert.deepEqual(await startUpdateHost(r2.opts).check(), { result: 'feed_mismatch' });
@@ -235,7 +230,6 @@ describe('update-host: 배선 순서 1~5', () => {
       const h = startUpdateHost(r.opts);
       assert.deepEqual(await h.check(), { result: 'downloaded', installed: false });
       assert.ok(r.logs.some(([n]) => n === 'main.update_install_deferred'));
-      // 미룬 동안의 주기 확인은 다시 받지 않는다
       assert.deepEqual(await h.check(), { result: 'downloaded', installed: false });
       assert.equal(r.calls.filter((c) => c === 'download').length, 1);
       r.set({ idle: { runActive: false, commitZone: false, daemonRunning: false } });
@@ -279,7 +273,6 @@ describe('update-host: 배선 순서 1~5', () => {
     r.now.t = NOW + 16 * DAY + 1;
     await h.check();
     assert.equal(r.stale, 2);
-    // 확인에 성공하면(최신) 다시 조용하다
     r.now.t += 2 * DAY;
     const fresh = manifest('1.2.0', { issuedAt: new Date(r.now.t - DAY).toISOString(), expiresAt: new Date(r.now.t + DAY).toISOString() });
     const r2 = rig({ installedVersion: '1.2.0', now: () => r.now.t, stateFile: r.opts.stateFile });

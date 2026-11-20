@@ -1,5 +1,3 @@
-// 거래처 저장 품목(08 §144 "자주 쓰는 품목을 저장한다", 데스크톱 #141): v7 saved_items_json, CounterpartyRepo.getItems·setItems,
-// data-service counterparty.setItems·getItems. 품목은 이름·단가·단위, 거래처당 상한 20개. 개인정보·비밀이 아니라 평문 열이다(D07 §2).
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -64,10 +62,8 @@ describe('거래처 저장 품목', () => {
     ];
     assert.deepEqual(saved, want);
     assert.deepEqual(await svc.handle('counterparty.getItems', { id: cp.id }), want);
-    // 통째로 바꾼다
     assert.deepEqual(await svc.handle('counterparty.setItems', { id: cp.id, items: [{ name: '유지보수', unitPrice: 300_000, unit: '월' }] }), [{ name: '유지보수', unitPrice: 300_000, unit: '월' }]);
     assert.deepEqual(await svc.handle('counterparty.getItems', { id: cp.id }), [{ name: '유지보수', unitPrice: 300_000, unit: '월' }]);
-    // 빈 배열은 지운다(열은 NULL)
     assert.deepEqual(await svc.handle('counterparty.setItems', { id: cp.id, items: [] }), []);
     assert.equal(db.prepare('SELECT saved_items_json FROM counterparties WHERE id = ?').pluck().get(cp.id), null);
     assert.deepEqual(await svc.handle('counterparty.getItems', { id: cp.id }), []);
@@ -100,7 +96,6 @@ describe('거래처 저장 품목', () => {
     await code(set([{ name: '큰값', unitPrice: 1e15 }]), 'bad_item_price');
     await code(set([{ name: '단위', unit: 'u'.repeat(21) }]), 'bad_item_unit');
     await code(set([{ name: '단위', unit: 7 }]), 'bad_item_unit');
-    // 100자 이름(한글 기준 글자 수)은 받는다
     assert.equal(((await set([{ name: '가'.repeat(100) }])) as Array<{ name: string }>)[0]!.name.length, 100);
   });
 
@@ -125,7 +120,6 @@ describe('거래처 저장 품목', () => {
   });
 
   it('protocol: 두 명령은 COMMANDS에 있고 렌더러에 열린다(거래처 추가·수정과 같다)', () => {
-    // 뒤에 더한 명령(셸 이어 하기 resume.*)이 있어 끝 자리는 묻지 않는다. 둘이 나란히 있는지만 본다
     const i = COMMANDS.indexOf('counterparty.setItems');
     assert.deepEqual(COMMANDS.slice(i, i + 2), ['counterparty.setItems', 'counterparty.getItems']);
     for (const m of ['counterparty.setItems', 'counterparty.getItems']) assert.ok(!(MAIN_ONLY as readonly string[]).includes(m), m);

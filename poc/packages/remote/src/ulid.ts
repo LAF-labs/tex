@@ -1,5 +1,3 @@
-// ULID(Crockford base32, 48비트 ms 시각 + 80비트 난수). 봉투 id·pairId·msgId.
-
 import { randomBytes } from './crypto.ts';
 
 const ALPHA = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';

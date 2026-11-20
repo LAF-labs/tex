@@ -1,17 +1,4 @@
-// PoC-8 실물 측정: 사람이 git 작업 폴더 밖에 둔 홈택스 민원증명 PDF(납세증명서·사업자등록증명)를 앱과 같은 경로
-// (docparse 샌드박스 → 필요하면 OCR로 다시 읽기 → 메타 규칙 → 만료 규칙)로 읽고, 사람이 쓴 정답(labels.json)과 비교한다.
-// 합격: 두 종류가 모두 있고, 두 종류 표본 중 95% 이상(20건이면 19건)이 종류·발급일·유효기간(납세증명서는 문서에서 읽은 값) 모두 맞고,
-// "확인 없이 확정했는데 틀린 건"이 0건.
-//
-// 실행(빌드 뒤):
-//   electron apps/desktop/e2e-dist/poc8-measure.js <폴더> --draft   → <폴더>/labels.draft.json(파일 목록만 든 빈 정답 틀). 사람이 PDF를 보고
-//                                                                  종류·날짜·번호를 채워 labels.json으로 저장한다(추출값을 미리 채우지 않는다: 정답이 추출기 쪽으로 쏠리지 않게)
-//   electron apps/desktop/e2e-dist/poc8-measure.js <폴더>           → 순번별 결과. 저장소에는 값 없는 요약(reports/raw/poc-8-real.json)만 쓴다
-// 열기 암호가 걸린 PDF는 --password-stdin으로 한 줄 넣는다(셸 기록·파일에 남기지 않는다). 오래된 표본은 SAX_POC8_TODAY=YYYY-MM-DD.
-//
-// labels.json: [{ "file": "a.pdf", "docType": "national_tax_cert" | "biz_registration_cert" | "other",
-//                 "issuedOn": "YYYY-MM-DD" | null, "validUntil": "YYYY-MM-DD" | null, "docNo"?: "XXXX-XXX-XXXX-XXX", "bizNo"?: "숫자 10자리" }]
-import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
+import './os-guard.js';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -35,7 +22,6 @@ interface Label {
 
 const REPO = path.resolve(import.meta.dirname, '../../../..');
 
-/** git 작업 폴더 안이면 거부한다(이 저장소든 다른 체크아웃이든 실수로 커밋될 수 있다). */
 function insideGitWorkTree(dir: string): boolean {
   try {
     return execFileSync('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() === 'true';
@@ -54,7 +40,6 @@ async function readPasswordFromStdin(): Promise<string | undefined> {
   return buf.split('\n')[0]!.replace(/\r$/, '') || undefined;
 }
 
-/** 앱(vault-import → DocumentService)과 같은 읽기: 텍스트 층에서 핵심 칸을 못 뽑으면 OCR로 다시 읽고 나은 쪽을 쓴다. */
 async function readLikeApp(bytes: Uint8Array, password: string | undefined): Promise<{ run: PdfExtractRun; meta: DocMetaExtract; ocrGrade: boolean }> {
   const x = await parsePdfInSandbox(bytes, { password });
   const first = validateDocMeta(extractDocMeta(x.text));
@@ -63,7 +48,7 @@ async function readLikeApp(bytes: Uint8Array, password: string | undefined): Pro
   const y = await parsePdfInSandbox(bytes, { password, forceOcr: true }).catch(() => null);
   if (!y) return { run: x, meta: first, ocrGrade: x.scanned };
   const second = validateDocMeta(extractDocMeta(y.text));
-  if (!second) throw new Error('schema'); // 엔진도 스키마를 어긴 읽기는 저장하지 않는다
+  if (!second) throw new Error('schema');
   if (readScore(first) >= readScore(second)) return { run: x, meta: first, ocrGrade: x.scanned };
   return { run: { ...y, ms: x.ms + y.ms }, meta: second, ocrGrade: true };
 }
@@ -103,7 +88,6 @@ async function main(): Promise<number> {
   for (const [i, l] of labels.entries()) {
     const row: Record<string, unknown> = { n: i + 1, docType: l.docType };
     rows.push(row);
-    // 읽기 실패도 그 표본의 실패로 센다(측정 전체를 멈추지 않는다)
     const r = await fs
       .readFile(path.join(dir, l.file))
       .then((b) => readLikeApp(new Uint8Array(b), password))
@@ -116,7 +100,6 @@ async function main(): Promise<number> {
     const expiry = decideExpiry(meta, today);
     const typeOk = (meta.docType ?? 'other') === l.docType;
     const issuedOk = l.docType === 'other' || meta.issuedOn.value === l.issuedOn;
-    // 납세증명서 유효기간은 문서에서 읽어 맞아야 맞음이다(규칙 추정이 우연히 같아도 맞음으로 세지 않는다)
     const validOk = l.docType === 'national_tax_cert' ? meta.validUntil.value === l.validUntil && expiry.source === 'document' && expiry.expiresOn === l.validUntil : true;
     const coreOk = typeOk && issuedOk && validOk;
     const needsUser = expiry.needsUser || ocrGrade;
@@ -134,13 +117,11 @@ async function main(): Promise<number> {
       validOk,
       coreOk,
       needsUser,
-      // 가장 나쁜 실패: 확인 없이 확정했는데 틀림
       silentWrong: !coreOk && !needsUser,
       reasons: { issuedOn: meta.issuedOn.reason, validUntil: meta.validUntil.reason, expiry: expiry.reasons },
       docNoOk: l.docNo == null ? null : meta.docNo.value === l.docNo,
       bizNoOk: l.bizNo == null ? null : meta.subjectBizNo.value === l.bizNo,
       issuerFound: meta.issuer.value !== null,
-      // L0 그림자(doc_meta_check_v1): 값 대신 답했는지·맞았는지만
       l0: { issuedAnswered: l0Issued !== null, issuedOk: l0Issued === null ? null : l0Issued === l.issuedOn, validAnswered: l0Valid !== null, validOk: l0Valid === null ? null : l0Valid === l.validUntil },
     });
   }
@@ -167,7 +148,7 @@ async function main(): Promise<number> {
     errors: rows.filter((r) => r.error).map((r) => r.error),
     msMedian: ms[Math.floor(ms.length / 2)] ?? null,
     msMax: ms[ms.length - 1] ?? null,
-    rows, // 순번·참거짓·코드만. 파일명·추출값은 남기지 않는다
+    rows,
   };
   for (const r of rows) console.log(`#${r.n} ${r.docType} ${r.coreOk ? 'ok  ' : r.silentWrong ? 'SILENT-WRONG' : 'FAIL'} ${r.error ?? `종류 ${r.typeOk} 발급일 ${r.issuedOk} 유효기간 ${r.validOk} 확인필요 ${r.needsUser} ${r.ocrConfidence != null ? 'OCR' : r.scanned ? '스캔층' : '텍스트'} ${r.ms}ms`}`);
   console.log(`두 종류 ${target.length}건 중 종류·발급일·유효기간 모두 맞음 ${core}건, 확인 없이 틀림 ${silent}건 → ${summary.acceptance}`);

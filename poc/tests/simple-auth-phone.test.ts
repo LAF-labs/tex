@@ -1,4 +1,3 @@
-// 폰에서 시작하는 간편인증(대표 결정 2026-11-19 A): 값 검사, 폰 답 해석, PC가 연 요청에만 받기, 셸 차례 코드.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
@@ -76,13 +75,11 @@ describe('PhoneIssue 간편인증', () => {
     const hr = sink.sent.find((x) => x.type === 'human.request')!.body as { reqId: string; runId: string; kind: string; prompt: string };
     assert.deepEqual([hr.runId, hr.kind, hr.prompt], [ack.runId, 'manual', 'simple_auth']);
     assert.ok(encodeEnvelope(makeEnvelope('human.request' as never, hr as never, { pairId: ulid(), from: 'desktop', seq: 1 })), '스키마 통과');
-    // 다른 reqId·다른 폰은 받지 않는다
     assert.equal(await p.human('p', sink, { runId: ack.runId, reqId: ulid(), value: 'sa1:done' }), false);
     assert.equal(await p.human('q', sink, { runId: ack.runId, reqId: hr.reqId, value: 'sa1:done' }), false);
     assert.equal(calls.length, 0);
     assert.equal(await p.human('p', sink, { runId: ack.runId, reqId: hr.reqId, value: 'sa1:req:kakao:19900101:01012345678:홍길동' }), true);
     assert.deepEqual(calls[0], ['run-1', 'request', { provider: 'kakao', birth: '19900101', phone: '01012345678', name: '홍길동' }]);
-    // 셸이 요청을 보낸 차례: 폰에는 앱과 마감
     runs.set('run-1', { ...runs.get('run-1')!, handoff: { phase: 'login', afterGate: false, kind: 'login', code: SIMPLE_SENT }, simpleAuth: { provider: 'kakao', deadline: NOW + 300_000 } });
     p.update(runs.get('run-1')!);
     const ev = sink.sent.filter((x) => x.type === 'run.event').at(-1)!.body as RunEventBody;
@@ -114,7 +111,7 @@ describe('셸 간편인증 차례', () => {
     assert.ok(a.kind === 'draft');
     await runs.prepare(a.run.id);
     const r0 = runs.get(a.run.id)!;
-    r0.certRetryOf = 'run-0'; // 이미 한 번 다시 했다
+    r0.certRetryOf = 'run-0';
     host.emit('run', { runId: a.run.id, type: 'handoff', phase: 'login', code: 'login.simple_auth' });
     host.reply['run.simpleAuth'] = { ok: true };
     const r = await runs.simpleAuth(a.run.id, 'request', { provider: 'kakao', name: '홍길동', birth: '19900101', phone: '01012345678' });

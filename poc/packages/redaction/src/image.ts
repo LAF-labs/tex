@@ -1,5 +1,3 @@
-// D06 §5 스크린샷 마스킹 인터페이스. Phase 1은 모델에 이미지를 보내지 않는다(B-18): applyImage는 항상 거부한다.
-// 박스 덮기 원리(maskRgba)만 순수 함수로 두고 시험한다. PNG 해독·OCR 추가 탐지·사진 영역 덮기는 Phase 2 재검토 때 붙인다.
 import { RedactionError } from './tree.ts';
 
 export interface Box {
@@ -7,7 +5,6 @@ export interface Box {
   y: number;
   width: number;
   height: number;
-  /** 덮는 이유(엔티티 노드·img 역할). 감사 카운트용. */
   reason: 'entity' | 'img' | 'ocr';
 }
 

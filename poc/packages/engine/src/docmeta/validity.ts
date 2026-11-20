@@ -1,11 +1,8 @@
-// 서류 종류별 유효기간 규칙(D07 §3)과 만료일·남은 기간. 날짜는 모두 한국 시간 달력 날짜(YYYY-MM-DD)다.
 import type { DocMetaExtract, DocType, Field } from './extract.ts';
 
 export interface ValidityRule {
   rule: 'fixed_days';
-  /** 발급일을 포함해 센 날수. 만료일 = 발급일 + (days - 1). 초일 산입 여부는 실물로 확인 전이라 짧은 쪽(보수)으로 둔다. */
   days: number;
-  /** 서류에 유효기간이 적히는가(적힌 값이 우선) */
   documentStates: boolean;
   basis: string;
 }
@@ -21,7 +18,6 @@ export type ExpirySource = 'document' | 'rule' | 'user';
 export interface ExpiryDecision {
   expiresOn: string | null;
   source: ExpirySource | null;
-  /** 사용자 확인 없이 만료일을 확정하지 않는다(D17 §1 5단계) */
   needsUser: boolean;
   reasons: string[];
 }
@@ -69,7 +65,6 @@ export function decideExpiry(meta: DocMetaExtract, today: string, overrideDays?:
   if (!issued) reasons.push(`issued_on_${meta.issuedOn.reason ?? 'not_found'}`);
   else if (issued > today || issued < '2000-01-01') reasons.push('issued_on_out_of_range');
   else if (meta.uncertain.includes('issuedOn')) reasons.push('issued_on_uncertain');
-  // 사용자 조정 일수도 문서가 법정 유효기간을 갖는 종류(납세증명서)는 그 상한을 넘지 못한다
   const days = rule.documentStates ? Math.min(overrideDays ?? rule.days, rule.days) : (overrideDays ?? rule.days);
   const ruleExpiry = issued ? addDays(issued, days - 1) : null;
   if (!rule.documentStates) return { expiresOn: ruleExpiry, source: ruleExpiry ? 'rule' : null, needsUser: reasons.length > 0, reasons };
@@ -78,8 +73,6 @@ export function decideExpiry(meta: DocMetaExtract, today: string, overrideDays?:
     return { expiresOn: stated, source: 'document', needsUser: reasons.length > 0, reasons };
   }
   reasons.push(stated ? 'valid_until_out_of_range' : `valid_until_${meta.validUntil.reason ?? 'not_found'}`);
-  // 유효기간을 정하지 못했어도(후보가 여럿, 오독 흔적) 발급일 이후 문서 후보 중 가장 이른 날짜가 규칙 날짜보다 이르면 그 날짜로 둔다.
-  // 짧은 쪽(보수): 확인 전에도 문서보다 늦은 날짜를 보여 주지 않고, 그대로 확인해도 문서보다 늦은 날짜가 확인되지 않는다.
   const candidate = stated ? undefined : validityCandidate(meta.validUntil, issued);
   if (candidate && issued && ruleExpiry && candidate < ruleExpiry) return { expiresOn: candidate, source: 'document', needsUser: true, reasons };
   return { expiresOn: ruleExpiry, source: ruleExpiry ? 'rule' : null, needsUser: true, reasons };

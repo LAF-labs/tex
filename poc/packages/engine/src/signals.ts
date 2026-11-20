@@ -1,29 +1,21 @@
 import type { Dialog, Frame, Page, Response } from 'playwright-core';
 import { normalizeForDetection } from '@sax/redaction';
 
-// 결정적 차단 신호(D03 §7 (b)(c)(d), C-24). 모델 판정과 독립으로 매 네비게이션·대화상자·응답에서 본다.
-// 사전에는 실물 근거가 있는 항목만 둔다. 홈택스 차단·추가 인증·캡차 화면 문구는 공개 근거가 없어(2026-11 리서치,
-// reports/PoC-10.md) 비워 두고 PoC-3 실측에서 채운다. 페이지 문구는 저장·기록하지 않고 맞은 항목 id만 넘긴다.
 
-/** busy는 혼잡 대기열(차단 아님): 실행만 멈추고 쿨다운·연속 횟수에 넣지 않는다. */
 /** maintenance는 포털 점검(IR rev v1.3.7): 차단이 아니다. 실행만 즉시 멈추고 쿨다운·연속 횟수에 넣지 않는다. */
 export type SignalKind = 'block' | 'maintenance' | 'extra_auth' | 'captcha' | 'busy';
 
 export interface SignalEntry {
   id: string;
   kind: SignalKind;
-  /** 주소 전체(href)에 거는 정규식. */
   url?: string;
-  /** 본문·대화상자 문구에 들어 있는 문구. NFKC·제로폭 제거·공백 제거 뒤 비교한다. */
   text?: string;
-  /** 근거(출처·조회일). */
   source: string;
 }
 
 export interface SignalHit {
   kind: SignalKind;
   id: string;
-  /** maintenance: 안내 글에서 읽은 중단 끝 시각(ISO, +09:00). 못 읽으면 없다. */
   until?: string;
 }
 
@@ -33,7 +25,6 @@ const MAINT = 'hometax.go.kr 점검 중 모든 주소가 307 → /info_page.html
 
 export const SIGNAL_DICT: Record<'hometax' | 'fixture', readonly SignalEntry[]> = {
   hometax: [
-    // block·extra_auth·captcha: 근거 있는 문구·URL 없음(TODO(PoC-3) 실측). 응답 상태는 HTTP_RULES가 본다.
     { id: 'hometax.maintenance.url', kind: 'maintenance', url: '^https://(?:www\\.)?hometax\\.go\\.kr/info_page\\.html(?:[?#]|$)', source: MAINT },
     { id: 'hometax.maintenance.text', kind: 'maintenance', text: '홈택스 시스템 점검 안내', source: MAINT },
     { id: 'hometax.netfunnel.wait', kind: 'busy', text: '접속대기 중입니다', source: NETFUNNEL },
@@ -66,7 +57,6 @@ const squash = (s: string) => normalizeForDetection(s).replace(/\s+/g, '');
  */
 export const SIGNAL_INSPECT_EXPR = "(() => ({ text: document.body ? document.body.innerText : '', status: ((performance.getEntriesByType('navigation')[0] || {}).responseStatus) || 0 }))()";
 
-/** \uae08\uace0 \uc911\uacc4 \uac70\ubd80 \uba54\uc2dc\uc9c0(I-5). \ube44\ubc00 \ucc3d \ub54c\ubb38\uc5d0 \ud654\uba74\uc744 \ubcfc \uc218 \uc5c6\uc5c8\ub2e4\ub294 \ub73b\uc774\ub2e4(\ud0c0\uc784\uc544\uc6c3\u00b7\ube48 \ud654\uba74\uacfc \ub2e4\ub974\ub2e4). */
 const RELAY_DENIED = /vault relay denied \S+ \((secret_window_(?:active|tainted))\)/;
 export type InspectUnavailable = 'secret_window_active' | 'secret_window_tainted';
 
@@ -112,14 +102,10 @@ export function maintenanceUntil(text: string): string | null {
 
 export interface WatchOptions {
   dict: SignalDict;
-  /** 포털 호스트(응답 상태·네비게이션 수를 셀 대상). */
   portalHost: (hostname: string) => boolean;
   onHit: (h: SignalHit) => void;
-  /** 대화상자 응답은 부르는 쪽(Actuator)이 한다. 문구는 그 전에 본다. */
   onDialog: (d: Dialog) => void;
-  /** 단조 시각(403 창). */
   mono: () => number;
-  /** 금고가 화면 확인 식을 거부했다(비밀 창 활성·오염). 부르는 쪽이 fail-closed로 판단한다. */
   onUnavailable?: (reason: InspectUnavailable) => void;
 }
 
@@ -148,7 +134,7 @@ export class SignalWatch {
     const onDom = () => this.track(this.inspect(p));
     const onDialog = (d: Dialog) => {
       const text = d.message();
-      this.o.onDialog(d); // 먼저 답한다(열린 대화상자는 페이지를 멈춘다)
+      this.o.onDialog(d);
       this.hit({ text });
     };
     const onPopup = (q: Page) => {
@@ -175,7 +161,6 @@ export class SignalWatch {
     }
   }
 
-  /** Playwright 리스너 안에서 부르므로 던지지 않는다. */
   private hit(where: { url?: string; text?: string }): void {
     try {
       const h = matchSignal(this.o.dict, where);
@@ -185,7 +170,6 @@ export class SignalWatch {
     }
   }
 
-  /** 포털 문서·요청의 HTTP 상태(HTTP_RULES). */
   private httpStatus(url: string, s: number, document: boolean): void {
     if (!this.portal(url)) return;
     if (s === 429) return this.o.onHit({ kind: 'block', id: 'http.429' });
@@ -219,10 +203,6 @@ export class SignalWatch {
     }
   }
 
-  /**
-   * 지금 화면의 프레임별 URL·본문(보이는 글자)·문서 응답 상태(navigation timing responseStatus)를 본다. 문서 상태는
-   * 응답 이벤트가 보이지 않는 조회 팝업의 첫 문서용이다. 3초 안에 못 읽은 프레임은 넘긴다(URL은 이미 봤다).
-   */
   async inspect(p: Page): Promise<void> {
     if (p.isClosed()) return;
     const frames = p.frames();
@@ -250,10 +230,6 @@ export class SignalWatch {
     });
   }
 
-  /**
-   * 지금 진행 중인 화면 확인이 끝날 때까지. 그 뒤 새로 시작된 확인은 기다리지 않는다(새로고침·리다이렉트가 이어지는
-   * 화면에서도 끝나야 한다). 각 확인은 프레임당 3초로 끝이 있다.
-   */
   async idle(): Promise<void> {
     await Promise.all([...this.pending]);
   }

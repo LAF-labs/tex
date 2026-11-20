@@ -1,7 +1,3 @@
-// 시연 전용 채팅 해석(SAX_DEMO_MODEL=openrouter, fixture 모드만). OpenRouter Chat Completions(OpenAI 호환)로 문장에서
-// interpret가 쓰는 구조(의도·거래처·금액·부가세·품목)를 뽑는다. 되묻기·초안은 그대로 interpret가 만든다(shell-mock.ts).
-// D04 예외: 클라이언트가 공급사 키를 직접 든다. 키는 main 메모리에만 두고 렌더러·로그·보고서·저널에 남기지 않는다(길이도).
-// 보내는 것은 채팅 문장과 가상 거래처 이름 목록뿐이다. 키 없음·HTTP 오류·4초 초과·스키마 불일치면 null(정규식 해석으로 간다).
 import fs from 'node:fs';
 import path from 'node:path';
 import { DemoEgress } from '@sax/net/demo';
@@ -9,7 +5,6 @@ import type { Parsed } from './shell-mock.ts';
 
 export const DEFAULT_MODEL = 'upstage/solar-pro4';
 const TIMEOUT_MS = 4_000;
-/** 송신이 실패하면(네트워크·HTTP 오류) 이만큼은 모델을 건너뛴다. 와이파이가 끊긴 시연에서 문장마다 4초씩 기다리지 않게. */
 const COOL_MS = 60_000;
 const PATH = '/api/v1/chat/completions';
 const ENV_FILE = path.join(import.meta.dirname, '../../../.env.local');
@@ -21,7 +16,6 @@ interface DemoModelConfig {
   model: string;
 }
 
-/** .env.local에서 두 이름만 읽는다(셸로 실행하지 않는다). `export `·따옴표·주석 줄을 견딘다. */
 function readEnvFile(file: string): Record<string, string> {
   let text: string;
   try {
@@ -37,10 +31,6 @@ function readEnvFile(file: string): Record<string, string> {
   return out;
 }
 
-/**
- * SAX_DEMO_MODEL=openrouter일 때만 설정을 돌려준다. 키는 환경 변수가 먼저, 없으면 poc/.env.local.
- * 플래그와 상관없이 키·모델 변수는 process.env에서 지운다(금고가 띄우는 Chrome 등 자식에 남지 않게). allowed=false(홈택스 모드)면 읽지 않는다.
- */
 export function demoModelConfig(env: NodeJS.ProcessEnv = process.env, file = ENV_FILE, allowed = true): DemoModelConfig | null {
   const fromEnv = { key: env[KEY], model: env[MODEL] };
   delete env[KEY];
@@ -87,14 +77,12 @@ export function requestBody(model: string, text: string, names: string[]) {
       { role: 'user', content: JSON.stringify({ sentence: text, counterparties: names }) },
     ],
     response_format: { type: 'json_schema', json_schema: { name: 'request', strict: true, schema: schema(names) } },
-    // 구조화 출력을 지원하는 공급 경로로만 보낸다.
     provider: { require_parameters: true },
     temperature: 0,
     max_tokens: 300,
   };
 }
 
-/** 응답(비신뢰)을 Parsed로. 하나라도 틀리면 null. 거래처는 목록에 있는 이름만, 금액은 1원~1조원 정수만. */
 export function toParsed(json: unknown, names: string[]): Parsed | null {
   const content = (json as { choices?: Array<{ message?: { content?: unknown } }> } | null)?.choices?.[0]?.message?.content;
   if (typeof content !== 'string') return null;
@@ -117,16 +105,10 @@ export function toParsed(json: unknown, names: string[]): Parsed | null {
     counterparties: [...new Set(counterparties as string[])].filter((c) => names.includes(c)),
     amount: amount as number | null,
     vat: vat as Parsed['vat'],
-    // 품목은 카드에 그대로 보이고 홈택스에 들어간다. 짧은 한 줄만 받는다.
     item: it && it.length <= 40 && !/[\p{Cc}\p{Cf}]/u.test(it) ? it : null,
   };
 }
 
-/**
- * 모델 값과 정규식 값을 합친다. 정규식이 알아본 것(의도·거래처·숫자 금액·부가세)은 정규식이 먼저다. 모델은 정규식이 못 읽는 것만 보탠다:
- * 의도(정규식이 other일 때), 한글 금액("오백오십만 원"), 문장에 부가세 말이 있을 때의 부가세, 문장에 그대로 있는 품목.
- * 숫자가 있는데 정규식이 금액으로 보지 않았으면("330", "1억 2천") 일부러 되묻는 자리라 모델 금액도 버린다.
- */
 export function mergeParsed(model: Parsed, regex: Parsed, text: string): Parsed {
   const item = model.item;
   return {
@@ -148,7 +130,6 @@ export class DemoModel {
     this.egress = egress;
   }
 
-  /** 모델 해석. 실패는 던지지 않고 null(호출하는 쪽이 정규식으로 간다). */
   async parse(text: string, names: string[]): Promise<Parsed | null> {
     if (Date.now() < this.offUntil) return null;
     try {

@@ -1,6 +1,3 @@
-// D06 §7 합성 마스킹 코퍼스: 유효 체크섬을 갖는 가짜 주민번호·사업자번호·법인번호·카드(Luhn)·계좌 등 10,000건.
-// 변형: 구분자(하이픈·공백·점·없음·유니코드 대시), 전각 숫자, 보이지 않는 문자 삽입, 한글 숫자, 노드 분절(셀·span),
-// 화면 밖·투명·크기 0·title 속성 텍스트, 입력값. 시드 고정이라 실행마다 같은 코퍼스다. 실제 사람 데이터는 없다.
 import type { A11yNode } from '@sax/redaction';
 
 export type Kind = 'RRN' | 'BIZNO' | 'CORPNO' | 'CARD' | 'ACCT' | 'PHONE' | 'EMAIL' | 'APPROVAL' | 'DLN' | 'PASSPORT' | 'NHIS' | 'ADDR' | 'NAME' | 'AMT';
@@ -24,13 +21,9 @@ export interface CorpusItem {
   id: number;
   kind: Kind;
   variant: Variant;
-  /** 원값(정규형). 누락 판정 기준. */
   value: string;
-  /** 평문 입력(트리 변형이면 undefined) */
   text?: string;
-  /** 트리 입력 */
   tree?: A11yNode;
-  /** 누락 판정: 출력에 남으면 안 되는 문자열들(숫자형은 숫자 골격 기준) */
   leaks: { digits?: string; substrings?: string[] };
 }
 
@@ -51,7 +44,6 @@ const pick = <T>(r: R, xs: readonly T[]): T => xs[Math.floor(r() * xs.length)]!;
 const ds = (r: R, n: number) => Array.from({ length: n }, () => String(int(r, 0, 9))).join('');
 const pad = (n: number, w: number) => String(n).padStart(w, '0');
 
-// ── 체크섬 생성기 ──
 export function rrn(r: R): string {
   const yy = pad(int(r, 0, 99), 2);
   const mm = pad(int(r, 1, 12), 2);
@@ -75,7 +67,6 @@ export function corpno(r: R): string {
   const b = `${int(r, 110, 285)}${pad(int(r, 1, 99), 2)}${ds(r, 1)}${ds(r, 6)}`;
   const sum = [...b].reduce((a, c, i) => a + Number(c) * (i % 2 ? 2 : 1), 0);
   const d = `${b}${(10 - (sum % 10)) % 10}`;
-  // 7번째 자리가 0·9면 주민번호 패턴과 구별된다(1~8이면 RRN으로 잡혀도 누락은 아니다).
   return `${d.slice(0, 6)}-${d.slice(6)}`;
 }
 
@@ -132,7 +123,6 @@ export function address(r: R): { text: string; road: string; num: string; dong: 
 const EMAIL_DOMAINS = ['example.co.kr', 'test.com', 'corp.example', '예시.한국', 'mail.example.org'];
 export const email = (r: R) => `${pick(r, ['kim', 'lee', 'park', 'tax', 'acct', 'ceo', 'info'])}${pick(r, ['', '.', '_'])}${ds(r, int(r, 0, 3))}${pick(r, ['ab', 'xy', 'k', ''])}@${pick(r, EMAIL_DOMAINS)}`;
 
-// ── 변형 ──
 const KO = ['공', '일', '이', '삼', '사', '오', '육', '칠', '팔', '구'];
 const INVIS = ['­', '​', '‎', '͏', '️', '⁠'];
 
@@ -182,7 +172,6 @@ const NUMERIC: Kind[] = ['RRN', 'BIZNO', 'CORPNO', 'CARD', 'ACCT', 'PHONE', 'APP
 const TEXT_VARIANTS: Variant[] = ['plain', 'nosep', 'space', 'dot', 'unidash', 'fullwidth', 'invisible', 'korean'];
 const TREE_VARIANTS: Variant[] = ['split', 'split_nosep', 'offscreen', 'title', 'input_value', 'aria'];
 
-/** 종류별로 의미 있는 변형만 만든다(예: 승인번호는 홈택스가 하이픈 형식으로만 보인다). */
 export function variantsFor(kind: Kind): Variant[] {
   if (kind === 'APPROVAL') return ['plain', 'unidash', 'fullwidth', 'invisible', 'split', 'offscreen', 'title', 'aria'];
   if (kind === 'DLN') return ['plain', 'nosep', 'unidash', 'fullwidth', 'invisible', 'split', 'split_nosep', 'offscreen', 'title', 'input_value'];
@@ -275,7 +264,6 @@ function sentence(kind: Kind, label: string, v: string, r: R): string {
     if (f === 1) return `${label}: ${v}`;
     return `${v} ${pick(r, ['님', '대표님', '사장님', '씨'])} 안녕하세요`;
   }
-  // 날짜·시각 바로 옆의 식별자(날짜 보호 구간이 식별자를 가리지 않는지)
   const when = r() < 0.25 ? `${pick(r, ['2026-11-05', '2026.10.31', '2026/01/02'])}${pick(r, ['', ' 14:32', ' 09:05:11'])} ` : '';
   return when + pick(r, [`${label} ${v}`, `${label}: ${v}`, `${label}(${v})`, `${v} ${label}`, `${label}${v}`]);
 }
@@ -291,7 +279,6 @@ function tree(kind: Kind, variant: Variant, value: string, r: R): A11yNode {
         { role: 'cell', name: label },
         { role: 'cell', children: splitParts(value, r, variant === 'split').map((p) => ({ role: 'StaticText', name: p })) },
       ];
-      // 셀 자체를 여러 셀로 나누는 경우(표 셀 분절)
       if (r() < 0.5) target = [{ role: 'cell', name: label }, ...splitParts(value, r, variant === 'split').map((p) => ({ role: 'cell', name: p }))];
       target = [{ role: 'row', children: target }];
       break;
@@ -338,9 +325,6 @@ export function buildCorpus(n = 10_000, seed = 0x5a7e06): CorpusItem[] {
   return out;
 }
 
-/**
- * 오탐 점검용 정상 문구(치환되면 안 되는 홈택스 화면 문구·날짜·시각). 과치환 수만 보고한다(게이트 아님).
- */
 export const BENIGN: string[] = [
   '전자세금계산서 발급이 완료되었습니다.',
   '작성일자 2026-11-05',

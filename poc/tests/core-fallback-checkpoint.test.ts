@@ -1,6 +1,3 @@
-// 폴백 체크포인트 재진입(core/fallback.ts checkpointBefore): 이 실행이 지난 체크포인트로만 돌아간다.
-// 2026-11-19 실기기: 인증서 로그인 뒤 건별발급 화면 대기(s10a)가 늦자, 순서상 앞이지만 지나지 않은 간편인증 갈래(s7)로 뛰어
-// "공동인증서로 로그인하지 못했어요"로 사람에게 넘겼다. 지난 세션 체크포인트(s0)로 돌아가 다시 해야 한다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { FallbackChain, type PlaybookIR, type SelectorDict, type Step } from '@sax/engine/core';
@@ -33,7 +30,6 @@ describe('폴백 체크포인트 재진입', () => {
     c.confirmed('s10');
     assert.deepEqual(await c.recover('s10a', 'step.timeout'), { from: 's0' });
     assert.deepEqual(j.find(([t]) => t === 'fallback.checkpoint')?.[1], { stepId: 's10a', checkpoint: 's0', code: 'step.timeout' });
-    // 두 번째는 같은 체크포인트로 다시 돌지 않고 사람에게
     assert.equal(await c.recover('s10a', 'step.timeout'), false);
   });
   it('지난 체크포인트가 없으면 돌아가지 않는다(사람에게)', async () => {

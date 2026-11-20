@@ -1,7 +1,3 @@
-// 조회 포트 IrLookupPort(팀장 결정 2026-11-09 (가)): 서명 조회 패키지 IR을 허용 origin 팝업에서 돌리고 결과 표를 읽는다.
-// 조건(팀장): ① 조회 실패는 게이트 전에 핸드오프로 멈춘다(verify.baseline_missing, 발급 0, fail-closed). ② 커밋 뒤 verify도 조회는 읽기만 한다(V-22).
-// 조회 패키지는 제품 원본(packages/engine/playbooks/hometax.invoice.*)을 그대로 쓰고, 이동 주소·도메인만 시험 페이지(127.0.0.1)로 바꾼다.
-// 실제 금고 중계 + Chrome(headless). 실제 포털 접속 없음.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fsp from 'node:fs/promises';
@@ -25,13 +21,10 @@ const LOOKUP = 'hometax.invoice.lookup';
 const MAIL = 'hometax.invoice.email_status';
 
 interface Row { [col: string]: string }
-/** 시험 페이지 상태(시험이 바꾼다). */
 const page = {
   heads: ['승인번호', '공급받는자 등록번호', '작성일자', '공급가액', '세액'],
   rows: [] as Row[],
-  /** 건수 문구에 더할 값(0이 아니면 표와 어긋난다). */
   countSkew: 0,
-  /** 검색어 칸을 지운다(셀렉터가 틀린 경우). */
   noSearch: false,
   requests: [] as string[],
 };
@@ -60,7 +53,6 @@ document.getElementById('go').onclick = () => {
 </script>`;
 };
 
-/** 게시본 2.1.1 조회 패키지(머리글·건수 문구 관례) → 시험 페이지(fixture 포털 규칙, 127.0.0.1). 스텝·셀렉터·문구는 그대로. 실화면 판(data-col_id·idle)은 h01-real-dryrun이 본다. */
 function testLookup(id: string, origin: string, mutate: (f: PackageFiles) => void = () => {}): LoadedPackage {
   const f = golden(id);
   f.manifest = { ...f.manifest, portal: FIXTURE_PORTAL, domains: ['127.0.0.1'] };
@@ -260,7 +252,6 @@ describe('제품 조회 패키지 원본(게시할 판): IrLookupPort 관례', (
   }
   it('H-01 2.3.x의 lookupsUsed는 조회 1.2.0 두 개, verify match 열은 모두 조회 패키지 열이 있다', () => {
     const g = loadPkg('hometax.invoice.issue');
-    // 판 번호 자체는 묻지 않는다(H-01은 실화면 맞춤마다 패치가 오른다). 2.3 줄에서 조회 두 개를 쓰는지만 본다
     assert.match(g.manifest.version, /^2\.3\.\d+$/);
     assert.deepEqual(g.manifest.lookupsUsed.map((l) => `${l.id}@${l.version}`), [`${LOOKUP}@1.2.0`, `${MAIL}@1.2.0`]);
     const flat: Step[] = [];

@@ -1,7 +1,3 @@
-// docparse e2e(Electron): 합성 서류 PDF → 샌드박스(pdf.js, 텍스트 층이 없으면 OCR) → 메타 규칙(S4) → 기대값 비교, S13b 측정(PoC-8).
-// M1-8 자기 점검(창 안 송신 0·eval 0), M6-4 합성 영수증 사진 → 샌드박스 OCR → 규칙 정확도 표, M6-5 표 파일, M6-12 시드 코퍼스(거부·무시·송신 0).
-// 실행: pnpm build && electron apps/desktop/dist/docparse-e2e.js. 결과 JSON은 SAX_E2E_OUT(없으면 임시 폴더)에 쓴다(측정 산출물은 커밋하지 않는다).
-// SAX_DOCPARSE_E2E=receipts|sheets|seeds|all(기본 all, PoC-8 서류 부분 포함). 앱 폴더·키체인을 쓰지 않는다.
 import dgram from 'node:dgram';
 import fs from 'node:fs/promises';
 import net from 'node:net';
@@ -15,9 +11,8 @@ import { addDays, breakToUnicode, encryptedTestPdf, multiPageHtml, scannedTestPd
 
 protocol.registerSchemesAsPrivileged([{ scheme: DOCPARSE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.setPath('userData', path.join(app.getPath('temp'), `sax-poc8-e2e-${process.pid}`));
-app.on('window-all-closed', () => {}); // 창이 모두 닫혀도 e2e가 끝날 때까지 유지
+app.on('window-all-closed', () => {});
 
-/** 만료 판단 기준일(합성 발급일은 모두 이보다 앞이다) */
 const TODAY = '2026-11-01';
 const results: Array<{ name: string; ok: boolean; detail?: unknown }> = [];
 const check = (name: string, ok: boolean, detail?: unknown) => results.push({ name, ok, detail });
@@ -32,7 +27,6 @@ async function htmlToPdf(html: string): Promise<Uint8Array> {
   }
 }
 
-/** 서류를 약 290dpi로 찍는다. 스캔처럼 0.6° 기울인다. */
 async function capture(html: string): Promise<Electron.NativeImage> {
   const zoom = 3;
   const w = new BrowserWindow({ show: false, width: 794 * zoom, height: 1123 * zoom, webPreferences: { offscreen: true, javascript: false, zoomFactor: zoom } });
@@ -45,16 +39,11 @@ async function capture(html: string): Promise<Electron.NativeImage> {
   }
 }
 
-/** 그림 한 장짜리 PDF(텍스트 층 없음 = 스캔·이미지 인쇄 흉내). */
 async function htmlToImagePdf(html: string): Promise<Uint8Array> {
   const png = (await capture(html)).toPNG();
   return htmlToPdf(`<!doctype html><style>@page{size:A4;margin:0}body{margin:0}img{width:210mm;height:297mm;display:block}</style><img src="data:image/png;base64,${png.toString('base64')}">`);
 }
 
-/**
- * docparse 창 안에서 하는 송신 시험(D17 §2 "docparse 렌더러의 네트워크 요청 0"). 실제 docparse 페이지(CSP 있음)와
- * CSP 없는 data: 페이지 두 곳에서 fetch·WebSocket·WebRTC(STUN UDP, TURN TCP)를 시도하고 로컬 리스너에 닿은 수를 센다.
- */
 async function egressProbe(): Promise<Record<string, unknown>> {
   const udp = dgram.createSocket('udp4');
   let udpHits = 0;
@@ -110,7 +99,6 @@ interface SampleResult {
   timing: PdfExtractRun['timing'];
   peakMemoryKb: number;
   kind: string;
-  /** 서류 종류·발급일·만료일이 모두 맞는가(합격 판정 단위) */
   coreOk: boolean;
   fields: Record<string, boolean>;
   mismatches: Record<string, { got: string | null; want: string | null; reason: string | null }>;
@@ -137,7 +125,6 @@ function compare(c: SyntheticCert, meta: DocMetaExtract): Pick<SampleResult, 'co
 
 async function runSample(c: SyntheticCert, flavor: SampleResult['flavor'], pdf: Uint8Array): Promise<SampleResult> {
   const r = await parsePdfInSandbox(pdf);
-  // 규칙을 고칠 때 추출 원문을 본다(합성 자료라 가짜 값뿐). 저장소 밖 폴더를 준다.
   if (process.env.SAX_POC8_DUMP) {
     await fs.writeFile(path.join(process.env.SAX_POC8_DUMP, `${c.id}.${flavor}.txt`), r.text);
     await fs.writeFile(path.join(process.env.SAX_POC8_DUMP, `${c.id}.${flavor}.pdf`), pdf);
@@ -156,7 +143,6 @@ function stats(xs: number[]): { n: number; median: number; p90: number; max: num
 }
 
 async function certificates(): Promise<Record<string, unknown>> {
-  // 세션 준비(죽은 프록시)가 한 번 실패해도 다음 작업은 다시 준비해 성공한다(스킴 처리기를 두 번 걸지 않는다). 첫 docparse 작업보다 먼저 한다.
   const proto = Object.getPrototypeOf(session.fromPartition('sax-docparse')) as { setProxy: (c: unknown) => Promise<void> };
   const realSetProxy = proto.setProxy;
   let failOnce = true;
@@ -194,7 +180,6 @@ async function certificates(): Promise<Record<string, unknown>> {
   check('그림 PDF(붉은 직인·0.6° 기울기)는 텍스트 층 없음으로 보고 OCR로 읽는다', samples.filter((s) => s.flavor === 'image').every((s) => !s.hasTextLayer && s.ocrConfidence !== null));
   check('ToUnicode를 끊은 PDF: 깨진 텍스트 층을 쓰지 않는다(OCR로 넘어가거나 정상 복원)', samples.filter((s) => s.flavor === 'broken_tounicode').every((s) => s.coreOk), { replacedKeys: brokenReplaced, viaOcr: samples.filter((s) => s.flavor === 'broken_tounicode' && !s.hasTextLayer).length });
 
-  // S13b: 5쪽 문서(작업당 ≤ 3초, 앞 5쪽만)
   const seven = await htmlToPdf(multiPageHtml(7));
   const multi = await parsePdfInSandbox(seven);
   check('7쪽 문서는 앞 5쪽만 읽는다', multi.pages === 5 && multi.totalPages === 7, { pages: multi.pages, totalPages: multi.totalPages });
@@ -203,7 +188,6 @@ async function certificates(): Promise<Record<string, unknown>> {
   const first = syntheticCerts()[0]!.expected;
   check('여러 쪽 문서도 같은 값으로 추출한다', multiMeta.docType === 'national_tax_cert' && multiMeta.issuedOn.value === first.issuedOn && multiMeta.validUntil.value === first.validUntil, { issuedOn: multiMeta.issuedOn, validUntil: multiMeta.validUntil });
 
-  // 스캐너·복합기의 '검색 가능 PDF': 그림 위 보이지 않는 글자 층은 원본 텍스트로 믿지 않는다(scanned)
   const shot = await capture(syntheticCerts()[0]!.html);
   const size = shot.getSize();
   const scannedPdf = scannedTestPdf(shot.toJPEG(80), size.width, size.height, 'SYNTHETIC SCANNED CERTIFICATE WITH AN INVISIBLE OCR TEXT LAYER 2026');
@@ -215,7 +199,6 @@ async function certificates(): Promise<Record<string, unknown>> {
   const forcedMeta = extractDocMeta(forced.text);
   check('forceOcr: 텍스트 층이 있어도 OCR로 다시 읽는다(엔진의 다시 읽기 요청)', forced.hasTextLayer && forced.ocrConfidence !== null && forcedMeta.docType === 'biz_registration_cert' && forcedMeta.issuedOn.value === syntheticCerts()[8]!.expected.issuedOn, { ocrConfidence: forced.ocrConfidence, docType: forcedMeta.docType, issuedOn: forcedMeta.issuedOn });
 
-  // 암호 PDF: 권한 암호만이면 그냥 열리고, 열기 암호는 코드로 묻는다(암호는 저장하지 않는다)
   const body = 'PASSWORD PROTECTED SYNTHETIC CERTIFICATE 2026 FOR DOCPARSE TEST';
   const locked = encryptedTestPdf('test1234', 'owner-pw', body);
   const noOcr: PdfOptions = { ocrPages: 0 };
@@ -226,7 +209,6 @@ async function certificates(): Promise<Record<string, unknown>> {
   const ownerOnly = await parsePdfInSandbox(encryptedTestPdf('', 'owner-pw', body), noOcr);
   check('권한 암호만 걸린 PDF는 암호 없이 열린다', ownerOnly.text.includes('PASSWORD PROTECTED'));
 
-  // 잘못된 입력·상한
   const textPdf = await htmlToPdf(syntheticCerts()[0]!.html);
   check('빈 입력 거부', (await errCode(parsePdfInSandbox(new Uint8Array(0)))) === 'input_size');
   check('PDF 머리 없는 입력 거부', (await errCode(parsePdfInSandbox(new TextEncoder().encode('not a pdf at all')))) === 'not_pdf');
@@ -234,7 +216,6 @@ async function certificates(): Promise<Record<string, unknown>> {
   check('잘린 PDF는 코드로 끝난다(창 파기)', ['ok', 'invalid_pdf', 'parse_failed'].includes(cut), cut);
   check('시간 상한 초과 → timeout(창 파기)', (await errCode(parsePdfInSandbox(textPdf, { timeoutMs: 1 }))) === 'timeout');
   check('메모리 상한 초과 → memory_limit(창 파기)', (await errCode(parsePdfInSandbox(textPdf, { memoryLimitKb: 1 }))) === 'memory_limit');
-  // 작업 도중(OCR 중)에 상한을 넘겨도 끊고 창을 파기한다: 창은 0.1초 안에 뜨고 OCR은 1초 넘게 걸린다(약 600MB)
   const imagePdf = await htmlToImagePdf(syntheticCerts()[0]!.html);
   check('OCR 도중 시간 상한 → timeout', (await errCode(parsePdfInSandbox(imagePdf, { timeoutMs: 700 }))) === 'timeout');
   check('OCR 도중 메모리 상한(300MB) → memory_limit', (await errCode(parsePdfInSandbox(imagePdf, { memoryLimitKb: 300_000 }))) === 'memory_limit');
@@ -256,7 +237,6 @@ async function certificates(): Promise<Record<string, unknown>> {
   return { s13b, fivePages: { ms: multi.ms, timing: multi.timing, peakMemoryKb: multi.peakMemoryKb }, samples };
 }
 
-/** M1-8 자기 점검: docparse 창 안에서 eval·Function·문자열 setTimeout이 CSP로 막힌다(eval 0) */
 async function selfCheck(): Promise<Record<string, unknown>> {
   const win = await createDocparseWindow();
   try {
@@ -272,7 +252,6 @@ async function selfCheck(): Promise<Record<string, unknown>> {
   }
 }
 
-/** 영수증 그림(JPEG). 기울기·바랜 글씨를 섞는다 */
 async function receiptJpeg(r: SyntheticReceipt, k: number): Promise<Uint8Array> {
   const html = receiptHtml(r, { tilt: [0, 0.8, -0.6, 1.5][k % 4], faded: k % 3 === 2 });
   const w = new BrowserWindow({ show: false, width: 640, height: 1100, webPreferences: { offscreen: true, javascript: false, zoomFactor: 1.5 } });
@@ -291,7 +270,6 @@ function receiptScore(r: ReceiptResult, e: SyntheticReceipt['expected']): Record
   return { amount: r.amount.value === e.amount, issuedOn: r.issuedOn.value === e.issuedOn, merchant: r.merchant.value === e.merchant, bizNo: r.merchantBizNo.value === e.bizNo };
 }
 
-/** M6-4 정확도 표: 합성 24장 × OCR 모델 2종. 칸별 일치율, 잘못 읽은 값의 신뢰도(높은데 틀리면 위험) */
 async function receipts(): Promise<Record<string, unknown>> {
   const R = syntheticReceipts();
   const images = await Promise.all(R.map((r, k) => receiptJpeg(r, k)));
@@ -318,11 +296,9 @@ async function receipts(): Promise<Record<string, unknown>> {
     table[model] = { n: rows.length, amount: rate('amount'), issuedOn: rate('issuedOn'), merchant: rate('merchant'), bizNo: rate('bizNo'), allFour: all, wrongButConfident: wrongHigh, ms: stats(ms), rows };
     console.log(`receipts[${model}] n=${rows.length} 금액 ${rate('amount')} 날짜 ${rate('issuedOn')} 상호 ${rate('merchant')} 사업자번호 ${rate('bizNo')} 넷 다 ${all} 틀렸는데 신뢰도≥0.8 ${wrongHigh} ms중앙 ${stats(ms).median}`);
   }
-  // 사진 기본 모델(best_int)로 판정한다. tessdata 표는 비교용
   const best = table.best_int as { amount: number; issuedOn: number; n: number; wrongButConfident: number };
   check(`M6-4 합성 영수증 ${R.length}장(사진 OCR): 금액·날짜 각 80% 이상`, best.amount >= 0.8 * best.n && best.issuedOn >= 0.8 * best.n, { amount: best.amount, issuedOn: best.issuedOn });
   check('M6-4 틀린 칸의 신뢰도가 0.8 이상인 영수증은 2장 이하(높은 신뢰도로 틀리지 않는다)', best.wrongButConfident <= 2, best.wrongButConfident);
-  // 폰 사진 경로(M7-4): 같은 parse(receipt) 입구에 EXIF 없는 JPEG을 넣는다. PNG도 같은 길
   const png = await (async () => {
     const w = new BrowserWindow({ show: false, width: 640, height: 1100, webPreferences: { offscreen: true, javascript: false, zoomFactor: 1.5 } });
     try {
@@ -340,7 +316,6 @@ async function receipts(): Promise<Record<string, unknown>> {
   return table;
 }
 
-/** M6-5 표 파일: 샌드박스에서 읽은 결과가 Node에서 읽은 것과 같고, 규칙까지 통과한다 */
 async function sheets(): Promise<Record<string, unknown>> {
   const out: Record<string, unknown> = {};
   for (const fx of [deliveryXlsx(), marketCsv()]) {
@@ -360,7 +335,6 @@ async function sheets(): Promise<Record<string, unknown>> {
   return out;
 }
 
-/** M6-12 시드 코퍼스를 실제 샌드박스에: 거부 코드, 무시 경고, 표지 문자열 없음, 시드가 가리키는 주소로 송신 0 */
 async function seeds(): Promise<Record<string, unknown>> {
   let hits = 0;
   const tcp = net.createServer((sock) => {
@@ -413,7 +387,6 @@ async function seeds(): Promise<Record<string, unknown>> {
 async function main(): Promise<void> {
   const part = process.env.SAX_DOCPARSE_E2E ?? 'all';
   const report: Record<string, unknown> = { platform: process.platform, arch: process.arch, electron: process.versions.electron, chrome: process.versions.chrome, today: TODAY };
-  // 서류 부분이 맨 앞이다: 첫 docparse 작업 전에 세션 준비 실패를 흉내 낸다
   if (part === 'all') Object.assign(report, await certificates());
   report.self = await selfCheck();
   if (part === 'all' || part === 'receipts') report.receipts = await receipts();

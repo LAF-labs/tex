@@ -1,6 +1,3 @@
-// 릴리스 매니페스트 검증(ADR-028 결정 1·3, D09 §8.2·§8.4, D11 §4 자동 업데이트 행, services/registry API.md).
-// 서명 바이트는 SIGNING.md §1·§3(맥락 문자열 없음, JCS, base64url 서명, 핀 키만 센다, 폐기 키는 세지 않는다).
-// 실패는 모두 던진다(fail-closed). 부르는 쪽은 실패면 설치본을 그대로 두고 "업데이트를 확인하지 못했습니다"만 보인다.
 import { createHash, createPublicKey, verify as edVerify } from 'node:crypto';
 import { jcs } from './jcs.ts';
 import { fail, parseManifest, semverCmp, type Channel, type ReleaseManifest, type Sig } from './manifest.ts';
@@ -21,11 +18,8 @@ export interface Revocation {
 }
 
 export const LIMITS = {
-  /** releaseDate가 지금 + 5분보다 미래면 거부(D09 §8.4) */
   futureSkewMs: 5 * 60_000,
-  /** 릴리스 매니페스트 유효 기간 상한 14일(API.md) */
   maxValidityMs: 14 * 24 * 3600_000,
-  /** 뿌리 변경 릴리스의 루트 서명 정족수(ADR-028 결정 3) */
   rootQuorum: 2,
 } as const;
 
@@ -72,7 +66,6 @@ export function countQuorum(content: unknown, sigs: readonly Sig[], role: Role, 
 
 const without = (o: object, keys: readonly string[]): Record<string, unknown> => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
 
-/** 서명 바이트에서 빼는 칸: 사람 서명과 서버 신선도(issuedAt·expiresAt·timestamp). 서버가 기간만 다시 붙여도 내용 서명은 그대로다 */
 const RELEASE_FRESHNESS = ['signature', 'issuedAt', 'expiresAt', 'timestamp'];
 
 /** 릴리스 키가 서명하는 바이트: 매니페스트 − 서명·신선도(API.md, services/registry verifyRelease와 같다) */
@@ -101,13 +94,10 @@ export interface SeenRelease {
 export const filesDigest = (m: ReleaseManifest): string => createHash('sha256').update(jcs(m.files), 'utf8').digest('hex');
 
 export interface VerifyInput {
-  /** latest.json을 JSON.parse한 값 */
   doc: unknown;
-  /** 이 앱이 구독하는 채널(설정값). 매니페스트 channel과 경로 채널이 모두 이것이어야 한다 */
   channel: Channel;
   trust: TrustRoot;
   revocation: Revocation;
-  /** 이 채널에서 지금까지 검증을 통과한 가장 높은 릴리스(저장값). 처음이면 null */
   highestSeen: SeenRelease | null;
   now: number;
 }
@@ -115,7 +105,6 @@ export interface VerifyInput {
 export interface VerifiedRelease {
   manifest: ReleaseManifest;
   releaseKeyId: string;
-  /** 뿌리 변경 릴리스면 센 루트 keyId */
   rootKeyIds: string[];
 }
 
@@ -125,25 +114,21 @@ export interface VerifiedRelease {
  */
 export function verifyRelease(input: VerifyInput): VerifiedRelease {
   const m = parseManifest(input.doc);
-  // 폐기 목록을 24시간 안에 확인하지 못했으면 새 로드를 보류한다(D09 §8.4: 설치본 유지)
   if (!input.revocation.fresh) fail('registry.revocation_stale');
   if (m.channel !== input.channel) fail('update.channel_mismatch');
   const [releaseKeyId] = countQuorum(releaseContent(m), [m.signature], 'release', input.trust, input.revocation.keyIds, 1);
   let rootKeyIds: string[] = [];
   if (m.rootChange) {
     const rc = m.rootChange;
-    // keyEpoch를 바꾸면 커져야 하고, 안 바꾸면 그대로여야 한다(세대 교체는 루트 서명으로만, D09 §8.4)
     const epochUp = rc.changes.includes('keyEpoch');
     if (epochUp ? rc.keyEpoch <= input.trust.keyEpoch : rc.keyEpoch !== input.trust.keyEpoch) fail('update.root_change_unsigned');
     try {
       rootKeyIds = countQuorum(rootChangeContent(m), rc.signatures, 'root', input.trust, input.revocation.keyIds, LIMITS.rootQuorum);
     } catch (e) {
-      // 루트 서명이 모자란 뿌리 변경 릴리스는 릴리스 키 1인 서명만으로 설치하지 않는다
       if ((e as { code?: string }).code === 'registry.key_revoked') throw e;
       fail('update.root_change_unsigned');
     }
   }
-  // 기간은 서버 타임스탬프 키가 붙인다(게시 때와 재서명 cron). 폐기된 타임스탬프 키는 세지 않는다
   try {
     countQuorum(releaseStampContent(m), [m.timestamp], 'timestamp', input.trust, input.revocation.keyIds, 1);
   } catch {
@@ -154,7 +139,6 @@ export function verifyRelease(input: VerifyInput): VerifiedRelease {
   if (Date.parse(m.releaseDate) > input.now + LIMITS.futureSkewMs || issued > input.now + LIMITS.futureSkewMs) fail('registry.issued_in_future');
   if (expires <= issued || expires - issued > LIMITS.maxValidityMs) fail('update.validity_too_long');
   if (expires <= input.now) fail('registry.expired');
-  // 단조: 이 채널에서 본 가장 높은 버전보다 낮으면 롤백(동결·되감기 공격). 같은 버전은 신선도 재발행이라 파일이 같을 때만 받는다
   if (input.highestSeen !== null) {
     const c = semverCmp(m.version, input.highestSeen.version);
     if (c < 0 || (c === 0 && filesDigest(m) !== input.highestSeen.filesDigest)) fail('registry.version_rollback');

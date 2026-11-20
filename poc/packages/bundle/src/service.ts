@@ -1,8 +1,3 @@
-// 급여대장·세무사 꾸러미·S-06 엔진 명령(팀장 결정 2026-11-06, data-payroll-track 제안표). 엔진 프로세스에서만 돈다(DB 소유는 엔진 하나, D07 §1.3).
-// 이름 목록은 @sax/engine/protocol의 PAYROLL_READ_QUERIES·PAYROLL_COMMANDS다. 모두 main 전용이다(PAYROLL_MAIN_ONLY): 급여·이름·파일 경로가 담긴다.
-// 형식은 엔진 data-service를 따른다: 인자 검사 → 저장소·계산기 오류는 code만 가진 BundleServiceError로, 모르는 이름은 unknown_method.
-// 모델을 부르지 않는다. 신고세액 계산·절세 판단·신고서 작성을 하지 않는다. 로그를 남기지 않는다(급여·개인정보 값이 섞이지 않게).
-// 계산 결과는 엔진이 다시 계산해 저장한다: main이 금액을 지어 보내 저장하는 길이 없다(payroll.saveDraft는 compute와 같은 입력을 받는다).
 import path from 'node:path';
 import {
   BundleExportRepo, BundleRepo, CardRepo, ColumnCipherError, DocumentRepo, EmployeeRepo, PayrollRepo, ProfileRepo, RateTableRepo, ShiftRepo, ValidationError,
@@ -76,7 +71,6 @@ function notices(v: unknown): Partial<NoticeAmounts> | undefined {
   return out;
 }
 
-/** 직원별 이달 입력(이달만 바뀐 수당·근로일수·고지액). 키는 직원 id */
 interface LineInput {
   extras?: ExtraItem[];
   workDays?: number | null;
@@ -102,7 +96,6 @@ function lineInputs(v: unknown): Map<string, LineInput> {
 
 function takeHomeSettings(v: unknown): TakeHomeSettings {
   if (!isObj(v)) return fail('bad_settings');
-  // 칸 범위는 takeHome이 검사한다(invalid_pct 등). 여기서는 모양만 본다.
   const nontax = v.nontax === undefined ? {} : isObj(v.nontax) ? (v.nontax as TakeHomeSettings['nontax']) : fail('bad_settings');
   return {
     nontax,
@@ -117,7 +110,6 @@ function takeHomeSettings(v: unknown): TakeHomeSettings {
   };
 }
 
-/** docparse insurance_notice 결과(main이 샌드박스에서 받은 것)를 S-06 매칭 입력으로. 이름·생년월일·금액만 받는다 */
 function noticeRows(v: unknown): InsuranceNoticeMatchInput['rows'] {
   if (!Array.isArray(v) || v.length > MAX_ROWS) return fail('bad_notice_rows');
   return v.map((r) => {
@@ -141,7 +133,6 @@ function choices(v: unknown): Record<string, string | null> {
   return v as Record<string, string | null>;
 }
 
-/** H-02 결과(main이 넘긴다). 모양만 본다. 중복·합계 차이는 내보내기가 정리한다 */
 function taxInvoices(v: unknown): TaxInvoiceRow[] | undefined {
   if (v === undefined || v === null) return undefined;
   if (!Array.isArray(v) || v.length > 20_000) return fail('bad_tax_invoices');
@@ -175,7 +166,6 @@ const toPayrollEmployee = (e: Employee): PayrollEmployee => ({
   healthBase: e.healthBase,
 });
 
-/** PayrollResult에서 저장할 칸만(PayrollLine). 확인 표시·계산방법 문장은 저장하지 않는다(다시 계산하면 나온다) */
 const toLine = (employeeId: string, r: PayrollResult) => ({
   employeeId,
   workDays: r.workDays, workMinutes: r.workMinutes, overtimeMinutes: r.overtimeMinutes, nightMinutes: r.nightMinutes, holidayMinutes: r.holidayMinutes,
@@ -188,11 +178,8 @@ const toLine = (employeeId: string, r: PayrollResult) => ({
 const payrollEnabledKey = (profileId: string): string => `profile.${profileId}.payroll.enabled`;
 
 export interface BundleServiceOptions {
-  /** 꾸러미·급여 기록 파일을 둘 폴더(엔진이 정한다. main·렌더러가 경로를 고르지 않는다). 그 안에 프로필 id 폴더를 만든다 */
   exportDir: string;
-  /** 시험용 시각 */
   now?: () => Date;
-  /** daemon.snapshot의 정책·status. 엔진이 서명 정책·status를 들고 있게 되면 넘긴다. 없으면 둘 다 null */
   daemon?: DaemonSnapshotSources;
 }
 
@@ -226,7 +213,6 @@ export class BundleService {
     return v;
   }
 
-  /** 설정 profile.<id>.payroll.enabled. 없으면 직원이 한 명이라도 있는가(ADR-032 결정 11: 급여 기능을 안 쓰는 업체는 파일 첨부 칸) */
   private payrollEnabled(profileId: string): boolean {
     const v = this.db.prepare('SELECT value_json FROM settings WHERE key = ?').pluck().get(payrollEnabledKey(profileId)) as string | undefined;
     if (v !== undefined) return JSON.parse(v) === true;
@@ -246,7 +232,6 @@ export class BundleService {
     return pickTables(availableTables(new RateTableRepo(this.db).list(), loadBundledPackage()), { taxDate, insuranceDate: `${monthValue}-01` });
   }
 
-  /** 그달 재직 직원 전부를 계산한다(저장하지 않는다). 확인 표시(notes)·임금명세서 누락 항목(P-1~P-6)은 경고일 뿐 막지 않는다 */
   private compute(p: Params) {
     const profileId = this.profile(p.profileId);
     const m = month(p.month);
@@ -287,7 +272,6 @@ export class BundleService {
 
   private async dispatch(method: string, p: Params): Promise<unknown> {
     switch (method) {
-      // ── 조회 ──
       case 'db.query.payroll.month': {
         const profileId = this.profile(p.profileId);
         const m = month(p.month);
@@ -300,11 +284,9 @@ export class BundleService {
       case 'db.query.payroll.employees': {
         const profileId = this.profile(p.profileId);
         const repo = new EmployeeRepo(this.db, this.cipher);
-        // 주민번호는 가린 값만(revealRrn은 부르지 않는다). month를 빼면 퇴사자까지 모든 직원(직원 목록 화면, M6-9)
         const m = p.month === undefined || p.month === null ? undefined : month(p.month);
         return repo.list(profileId, m ? { activeInMonth: m } : {}).map((e) => employeeView(repo, e));
       }
-      // ── 직원 입력·지난달과 같나요?·급여 기능 켜기(08 D-06, M6-9). 직원을 지우는 명령은 없다(임금대장 3년 보관, 퇴사는 leftOn) ──
       case 'db.query.payroll.carryOver':
         return carryOver(this.db, this.cipher, this.profile(p.profileId), month(p.month));
       case 'db.query.payroll.enabled': {
@@ -318,7 +300,6 @@ export class BundleService {
         this.db.prepare('INSERT INTO settings (key, value_json) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json').run(payrollEnabledKey(profileId), JSON.stringify(on));
         return { enabled: on };
       }
-      // ── 꾸러미 PC 입력: 현금매출·종이 증빙 확인·항목 상태 표시(08 D-05, M6-2·M6-4) ──
       case 'db.query.cash.month':
         return cashMonthView(this.db, this.profile(p.profileId), month(p.month));
       case 'cash.put':
@@ -346,7 +327,6 @@ export class BundleService {
         return monthStatus(this.ctx(p));
       case 'db.query.bundle.missing':
         return missingView(missingReport(this.ctx(p)));
-      // ── 사업용 카드 내역(08 D-04, M6-3). 읽기·메모만, [최신화] 실행은 플레이북 몫 ──
       case 'db.query.card.list':
         return cardMonthView(this.db, this.profile(p.profileId), month(p.month), this.opts.now?.() ?? new Date());
       case 'card.setMemo': {
@@ -370,7 +350,6 @@ export class BundleService {
         return { packageId: RATE_TABLES_PACKAGE_ID, installed, tables };
       }
 
-      // ── 급여대장 ──
       case 'payroll.compute':
         return this.compute(p);
       case 'payroll.saveDraft': {
@@ -383,7 +362,6 @@ export class BundleService {
           const draft = pr.openDraft(c.profileId, c.month, c.rateTableIds, c.paidOn);
           pr.updateDraft(c.profileId, c.month, draft.revision, { paidOn: c.paidOn, rateTableIds: c.rateTableIds, ...(noticeDocIds ? { noticeDocIds: [...new Set(noticeDocIds)] } : {}) });
           const keep = new Set(c.lines.map((l) => l.employeeId));
-          // 초안 줄은 그달 재직 직원과 같게 맞춘다(퇴사·삭제로 빠진 직원 줄은 지운다)
           for (const old of pr.lines(c.profileId, c.month, draft.revision)) if (!keep.has(old.employeeId)) pr.removeLine(c.profileId, c.month, draft.revision, old.employeeId);
           for (const l of c.lines) pr.putLine(c.profileId, c.month, draft.revision, toLine(l.employeeId, l.result));
           return { ...c, draft: pr.get(c.profileId, c.month, draft.revision) };
@@ -402,17 +380,14 @@ export class BundleService {
         return takeHome({ month: m, gross: p.gross as number, settings: takeHomeSettings(p.settings) }, T);
       }
 
-      // ── S-06 고지내역 확인 카드 ──
       case 'notice.card':
         return noticeConfirmCard(this.db, this.cipher, this.noticeInput(p));
       case 'notice.confirm': {
-        // 카드는 엔진이 같은 입력으로 다시 만든다(main이 넘긴 카드를 믿지 않는다). 결과는 payroll.saveDraft의 inputs[직원].notices·noticeDocIds로 넣는다.
         const input = this.noticeInput(p);
         const map = confirmNoticeCard(noticeConfirmCard(this.db, this.cipher, input), choices(p.choices));
         return { month: input.month, noticeDocId: input.noticeDocId, notices: Object.fromEntries(map) };
       }
 
-      // ── 세무사 꾸러미 ──
       case 'bundle.ensureItems': {
         const profileId = this.profile(p.profileId);
         const industries = Array.isArray(p.industries) && p.industries.every((i) => INDUSTRIES.includes(i as Industry)) ? (p.industries as Industry[]) : fail('bad_industries');
@@ -421,12 +396,10 @@ export class BundleService {
       case 'bundle.addItem': {
         const profileId = this.profile(p.profileId);
         const cadence = CADENCES.includes(p.cadence as BundleCadence) ? (p.cadence as BundleCadence) : fail('bad_cadence');
-        // 붙여 넣은 요청에서 고른 후보는 source 'pasted_request'로 남긴다(M6-7). 빼면 'user'(기존 동작)
         const source = p.source === undefined || p.source === 'user' ? 'user' : p.source === 'pasted_request' ? 'pasted_request' : fail('bad_item_source');
         return addCustomItem(new BundleRepo(this.db), profileId, text(p.name, 'bad_item_name', 60), cadence, source);
       }
       case 'bundle.requestCandidates': {
-        // 세무사 요청 붙여넣기 → 항목 후보(M6-7, 규칙 사전, 모델 없음). 읽기만 한다(DB에 쓰지 않음, 글을 저장·기록하지 않음)
         const profileId = this.profile(p.profileId);
         return { candidates: requestCandidates({ text: p.text as string, items: new BundleRepo(this.db).items(profileId) }) };
       }
@@ -444,7 +417,6 @@ export class BundleService {
       }
       case 'bundle.export': {
         const ctx = this.ctx(p);
-        // 암호는 저장하지 않는다. 결과로 한 번만 돌려주고 main이 화면에 보인다(사장님이 문자 등 다른 길로 전한다).
         const password = generatePassword();
         const r = await exportBundle({ ...ctx, outDir: this.outDir(ctx.profileId), password, now: this.opts.now });
         return { ...r, password };
@@ -468,7 +440,6 @@ export class BundleService {
         const r = await exportPayrollRecord({ db: this.db, cipher: this.cipher, profileId, outDir: this.outDir(profileId), password, fromMonth: optMonth(p.fromMonth), toMonth: optMonth(p.toMonth), now: this.opts.now });
         return { ...r, password };
       }
-      // ── 데몬(D10 §3) ──
       case 'daemon.snapshot':
         return daemonSnapshot(this.db, this.cipher, this.opts.daemon ?? { policy: () => null, status: () => null }, {
           now: this.opts.now?.() ?? new Date(),

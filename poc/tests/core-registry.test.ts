@@ -1,6 +1,3 @@
-// M1-4 레지스트리 신뢰(D03 §3.1·§7.1, D09 §8): Ed25519 2-of-3(서로 다른 핀 키), 폐기 목록(루트 2-of-3·24시간·축소 금지),
-// keyEpoch 안 단조 버전(+1000), 타임스탬프 신선도 서명, issuedAt 미래 거부, 정책 수용(긴급 키·보류), status(하향 전용·72시간 긴급 만료),
-// 투명성 로그 헤드 비교(RFC 9162 일관성 증명, E-14).
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';

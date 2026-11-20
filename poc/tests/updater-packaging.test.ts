@@ -1,4 +1,3 @@
-// 패키징 설정(D14 M4-9): 서명 판정(미서명 = 베타 불가), 퓨즈(D11 §4), 사용자별 설치(D07 §1.1), 게시 없음. 실제 빌드는 pnpm package:win.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -48,7 +47,6 @@ test('설정: 퓨즈·asar·사용자별 NSIS·게시 없음·미서명이면 �
   assert.equal(c.win.signExecutable, false);
   assert.equal(c.win.verifyUpdateCodeSignature, false);
   assert.equal(c.win.azureSignOptions, undefined);
-  // 게시 설정은 앱 안 app-update.yml을 만들려고만 둔다(주소는 앱이 setFeedURL로 덮고, 빌드는 publish: 'never'로 게시하지 않는다)
   assert.deepEqual(c.publish, { provider: 'generic', url: 'https://tax.laf-co.com/releases/stable/' });
   assert.equal(c.generateUpdatesFilesForAllChannels, false);
   assert.equal(c.extraMetadata.version, '1.2.3');
@@ -64,7 +62,6 @@ test('설치 폴더: 원클릭 사용자별 NSIS가 고르는 폴더 이름이 i
   assert.equal(c.nsis.perMachine, false);
   assert.equal(c.extraMetadata.name, identity.installDirName);
   assert.equal(identity.installDirName, identity.productName, 'harden.ts는 Programs\\<productName>을 기대한다');
-  // electron-builder가 실제로 쓰는 함수로 확인한다(NsisTarget: APP_FILENAME = getWindowsInstallationDirName(appInfo, !oneClick || perMachine)).
   const req = createRequire(createRequire(path.join(import.meta.dirname, '../apps/desktop/package.json')).resolve('electron-builder'));
   const lib = createRequire(req.resolve('app-builder-lib'));
   const { getWindowsInstallationDirName } = lib('./targets/targetUtil.js') as { getWindowsInstallationDirName: (a: object, b: boolean) => string };
@@ -75,7 +72,6 @@ test('설치 폴더: 원클릭 사용자별 NSIS가 고르는 폴더 이름이 i
 
 test('제외 목록: 소스·지도·시험·다른 OS 네이티브', () => {
   for (const p of ['!**/*.ts', '!**/*.map', '!src/**', '!node_modules/@sax/*/src/**', '!build/**', '!node_modules/@napi-rs/canvas*/**']) assert.ok((EXCLUDE as string[]).includes(p), p);
-  // 실행 코드가 src/ 아래인 의존성(debug·tesseract.js main, officecrypto-tool ./src)을 지우면 설치본 엔진이 import에서 끝난다
   assert.ok(!(EXCLUDE as string[]).some((p) => p === '!**/src/**' || p === '!node_modules/**/src/**'), 'node_modules 전체 src 제외 금지');
 });
 
@@ -86,8 +82,6 @@ test('설치 경로: 설치 폴더 이름이 데이터 루트 이름과 같아�
   assert.match(nsh, /!macro customInit/);
   assert.match(nsh, /Quit/);
 });
-
-// ── macOS 배포(고객 PoC, CUSTOMER-DIST §2): Apple Silicon만, Developer ID 서명·공증은 키체인 신원 + notarytool 프로필이 있을 때만 ──
 
 const DEV_ID = 'Developer ID Application: Example Name (ABCDE12345)';
 const FIND_IDENTITY = `  1) ${'A'.repeat(40)} "Apple Development: someone@example.com (ZZZZZ99999)"\n  2) ${'B'.repeat(40)} "${DEV_ID}"\n     2 valid identities found\n`;
@@ -134,7 +128,6 @@ test('macOS 설정: Developer ID면 접두어 없는 신원으로 서명, 하드
   const keys = [...ent.matchAll(/<key>([^<]+)<\/key>\s*<true\/>/g)].map((m) => m[1]).sort();
   assert.deepEqual(keys, ['com.apple.security.cs.allow-jit', 'com.apple.security.cs.allow-unsigned-executable-memory'], '권한은 JIT 둘만(라이브러리 검증 끄기·샌드박스 없음)');
   assert.equal(c.win.signExecutable, false, 'macOS 서명이 Windows 서명을 켜지 않는다');
-  // 서명만(공증 생략): 같은 신원·하드닝 런타임·권한, 공증만 끈다
   const only = makeConfig({ identity, version: '1.2.3', buildDir: BUILD, outDir: '/tmp/out', signing: macSigningFrom({ env: {}, platform: 'darwin', identities: [DEV_ID] }), icon: null, target: MAC });
   assert.deepEqual([only.mac.identity, only.mac.hardenedRuntime, only.mac.notarize, only.mac.entitlements], ['Example Name (ABCDE12345)', true, false, c.mac.entitlements]);
 });

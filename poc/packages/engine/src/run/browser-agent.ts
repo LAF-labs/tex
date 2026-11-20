@@ -1,11 +1,3 @@
-// 브라우저 에이전트(browser-use식, 2026-11-13): 판정이 agent_mode를 고르면, 막힌 스텝부터 이어지는 "그냥 입력" 스텝 묶음을
-// 모델이 한 걸음씩(최대 AGENT_MAX_ACTIONS) 대신한다. 끝나면 결정적 스크립트의 다음 확인 스텝(대화상자 대기·반복 확인·되읽기·게이트)으로 돌아간다.
-// - 묶음: fill·click·select·press·wait(selector|idle|navigation)만. 확인 스텝(wait dialog·text, assert, readback, repeat, gate, checkpoint…)은 넣지 않는다.
-//   그래서 사업자번호 확인 alert·합계 확인·미리보기 되읽기(R-C1)·게이트 본문 대조는 늘 스크립트가 한다. 하나라도 다르면 지금처럼 사람에게 간다.
-// - 값: 모델은 {{inputs.counterpart.bizNo}} 같은 값토큰만 쓴다. 엔진이 그 실행 값으로 바꿔 넣는다(값은 모델로 가지 않는다).
-// - 동작: 목록 번호의 요소를 실행 사본 사전의 임시 항목(__agent__)으로 해석해 GuardedActuator로 한다(R-A1·정책·비밀 칸 가드 그대로).
-//   커밋 항목 요소는 누르지 않는다. 금지 이름(확인·발급…)의 단추는 그 걸음의 목표 click 스텝이 패키지에서 검토된(reviewNote) 항목이고
-//   요소 이름이 그 항목의 이름 규칙에 맞을 때만 누른다(예: [확인] 사업자번호 확인, [발급미리보기]).
 import { AGENT_MAX_ACTIONS, COMPUTER_MAX_ACTIONS } from '@sax/model';
 import { flatten } from '../core/cfg.ts';
 import { isDenyActionName, normalizeName } from '../core/constants.ts';
@@ -25,7 +17,6 @@ export interface ScreenDeps {
   page: PageReader;
   dict: SelectorDict;
   act: Actuator;
-  /** 요소를 찾는 프레임(H-01은 main) */
   frame: string;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
 }
@@ -76,11 +67,8 @@ export interface BrowserAgentDeps extends ScreenDeps {
   scope: RunScope;
   irreversible: ReadonlySet<string>;
   model: AgentModel;
-  /** 에이전트 길 기억(0원 다시 걷기). 없으면 남기지도 다시 걷지도 않는다. */
   paths?: AgentPathMemory;
-  /** 서명 패키지 사전(길 지문용). 없으면 dict. */
   pkg?: SelectorDict;
-  /** 화면 보기(computer_use) 모델. 없으면 화면 보기 칸을 쓰지 않는다. */
   vision?: VisionModel;
 }
 
@@ -100,7 +88,6 @@ export class BrowserAgent {
     return planSignature(p.goal, p.resume, this.d.pkg ?? this.d.dict);
   }
 
-  /** 기억한 길로 다시 걸을 수 있는 스텝인가(첫 게이트 앞, 묶음이 있고, 지문이 같은 길이 있다). */
   replayable(stepId: string): boolean {
     const v = this.info.get(stepId);
     if (!this.d.paths?.has(stepId) || !v || v.order >= this.firstGate || this.d.irreversible.has(stepId)) return false;
@@ -108,16 +95,11 @@ export class BrowserAgent {
     return !!p && !!this.d.paths.get(stepId, this.sig(p));
   }
 
-  /**
-   * 기억한 길을 모델 없이 다시 걷는다. 걸음마다 지금 화면 목록에서 같은 요소(기록에 DOM id가 있으면 id·역할, 없으면 역할·정확한 이름. 지금 id가 붙었어도 맞힌다. 유일)를 찾아
-   * run과 같은 exec(가드 그대로)로 한다. 하나라도 안 되면 길을 버리고 null(원래 사슬로). 되면 돌아갈 스텝 id.
-   */
   async replay(stepId: string): Promise<string | null> {
     const p = this.plan(stepId);
     const path = p && this.d.paths ? this.d.paths.get(stepId, this.sig(p)) : null;
     if (!p || !path || !this.d.paths) return null;
     this.d.journal('agentpath.replay', { stepId, actions: path.actions.length, resume: path.resume });
-    // 재시도를 건너뛰고 왔으니(fastEscalate) 화면이 그려지기를 한 번 기다린다
     await this.d.page.waitIdle(5_000).catch(() => false);
     for (const [i, a] of path.actions.entries()) {
       let index: number | null = null;
@@ -138,18 +120,12 @@ export class BrowserAgent {
     return path.resume;
   }
 
-  /** 화면 보기 칸을 쓸 수 있는 스텝인가(모델·사진·상자 포트가 있고, 첫 게이트 앞, 묶음이 있다). */
   visionable(stepId: string): boolean {
     const v = this.info.get(stepId);
     if (!this.d.vision || !this.d.page.maskedShot || !this.d.page.box || !v || v.order >= this.firstGate || this.d.irreversible.has(stepId)) return false;
     return !!this.plan(stepId);
   }
 
-  /**
-   * 화면 보기(computer-use, 대표 결정 2026-11-16): 목록 에이전트로도 안 될 때 가린 화면 사진을 보내 좌표 동작을 받는다.
-   * 좌표는 엔진이 그 자리의 상호작용 요소(목록 요소 상자 중 그 점을 담는 가장 작은 것)로 바꿔 exec(같은 가드)로 한다.
-   * 넘기면 걸은 요소로 에이전트 길 기억에 남겨, 다음에는 모델 없이 다시 걷는다.
-   */
   async vision(stepId: string): Promise<string | null> {
     const p = this.plan(stepId);
     if (!p || !this.d.vision || !this.d.page.maskedShot || !this.d.page.box) return null;
@@ -209,7 +185,6 @@ export class BrowserAgent {
     return null;
   }
 
-  /** 막힌 스텝부터 이어지는 "그냥 입력" 묶음과 돌아갈 스텝. 묶음이 비면 null. */
   plan(stepId: string): { goal: GoalItem[]; resume: string } | null {
     const order = [...this.info.values()].filter((v) => !v.repeats.length).sort((a, b) => a.order - b.order);
     const at = order.findIndex((v) => v.step.id === stepId);
@@ -232,12 +207,10 @@ export class BrowserAgent {
         if (v === undefined) return goal.length ? { goal, resume: s.id } : null;
         goal.push({ stepId: s.id, kind: 'select', key: s.target, what: `select ${s.target} option ${v.token}`, token: v.token, value: v.value });
       }
-      // press(Tab 등)·wait는 목표에 넣지 않는다: type은 입력 뒤 Tab을 누르고, 모델은 wait를 쓸 수 있다.
     }
     return null;
   }
 
-  /** 값토큰(이중 중괄호)과 실제 값. 없는 선택 입력은 {{empty}}(칸 비우기). 상수는 패키지 허용 상수만. */
   private value(raw: string, entry: SelectorEntry): { token: string; value: string } | undefined {
     if (!isRef(raw)) return entry.allowedConstants?.includes(raw) ? { token: `{{const.${raw}}}`, value: raw } : undefined;
     const v = readRef(this.d.scope, raw);
@@ -246,7 +219,6 @@ export class BrowserAgent {
     return s === null ? undefined : { token: `{{${raw.slice(1)}}}`, value: s };
   }
 
-  /** 한 번의 agent_mode. 성공이면 돌아갈 스텝 id, 아니면 null(사람에게). */
   async run(stepId: string): Promise<string | null> {
     const p = this.plan(stepId);
     if (!p) {
@@ -284,7 +256,6 @@ export class BrowserAgent {
       if (code !== 'ok') {
         const k = (refused.get(sig) ?? 0) + 1;
         refused.set(sig, k);
-        // 같은 동작이 두 번 거부되면 그만(모델에게도 같은 규칙)
         if (k >= 2) {
           this.d.journal('agent.end', { stepId, result: 'refused_twice', actions: n });
           return null;
@@ -296,7 +267,6 @@ export class BrowserAgent {
   }
 
   private async exec(a: { action: string; index: number | null; token: string | null; option: string | null; step: string | null }, els: InteractiveElement[], goal: GoalItem[]): Promise<string> {
-    // 목록은 화면 밖 요소도 담고 동작은 요소로 스크롤하므로 scroll은 할 일이 없다
     if (a.action === 'scroll') return 'ok';
     if (a.action === 'wait') {
       await this.d.page.waitIdle(1_500).catch(() => false);
@@ -304,11 +274,9 @@ export class BrowserAgent {
     }
     const x = a.index !== null ? els[a.index - 1] : undefined;
     if (!x) return 'agent.no_element';
-    // 금지 이름 단추: 그 걸음의 목표 click 스텝이 검토된(reviewNote, commits:false) 항목이고, 요소 이름이 그 항목 이름 규칙에 맞을 때만
     const g = a.step ? goal.find((y) => y.stepId === a.step && y.kind === 'click') : undefined;
     const ge = g ? this.d.dict.entries[g.key] : undefined;
     const allowDeny = a.action === 'click' && !!ge && !ge.commits && !!ge.reviewNote && ge.role === x.role && nameMatches(ge.namePattern, x.name);
-    // 이름 없는 단추·링크는 그 걸음의 목표 click 스텝 항목이 빈 이름을 허용할 때만(예: 실화면 [확인] 사업자번호 확인 ^(확인)?$)
     if (a.action === 'click' && !normalizeName(x.name) && !(ge && !ge.commits && ge.role === x.role && nameMatches(ge.namePattern, x.name))) return 'agent.unnamed';
     const r = await resolveListed(this.d, x, allowDeny, a.action === 'click' || a.action === 'select');
     if (!r.ok) {
@@ -326,7 +294,6 @@ export class BrowserAgent {
         if (x.role !== 'textbox' && x.role !== 'combobox') return 'agent.not_field';
         const o = item.value === '' ? await this.d.act.clear(r.t) : await this.d.act.fill(r.t, item.value, { keyEvents: true });
         if (!o.ok) return o.code;
-        // 칸을 떠나며 화면 계산(합계 등)을 돌린다(플레이북의 press Tab과 같다)
         await this.d.act.press('Tab', r.t).catch(() => undefined);
         return 'ok';
       }

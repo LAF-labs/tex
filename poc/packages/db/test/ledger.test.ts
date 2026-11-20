@@ -1,4 +1,3 @@
-// 원장 후속 API(엔진 트랙 요청, PR #59 M2-3 전): statesByRun, observedManual, observed_manual에서 resolve, armFollowUp. D03 §4.
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -69,7 +68,6 @@ describe('원장 후속 API', () => {
     l.resolve('m-not', 'issue', 'not_committed', 'attested');
     assert.equal((db.prepare("SELECT reason FROM irreversible_log WHERE intent_id = 'm-not'").pluck().get() as string), 'attested', '증언 바 사유(ADR-021 결정 5)');
     assert.throws(() => l.observedManual(arm(run, 'm-not')), code('ledger_not_committed'));
-    // observed_manual에서 resolve 가능
     l.resolve('m-new', 'issue', 'committed', null, 'verify-ref');
     assert.equal(l.get('m-new', 'issue')!.state, 'committed');
   });

@@ -1,5 +1,3 @@
-// 급여대장 한 줄 계산(ADR-031, 02 §16). 결과는 사장님이 확인한다. 모델을 부르지 않는 결정적 산술이다.
-// 지급 항목 → 비과세 한도 적용(넘는 만큼 과세) → 원천징수(간이세액표) → 4대보험 예상치 → 고지액이 있으면 그것을 공제에 쓴다 → 실지급액.
 import { insurance, type InsuranceResult } from './insurance.ts';
 import { won } from './money.ts';
 import { hourlyPay, monthHours, type ShiftLike } from './shifts.ts';
@@ -9,9 +7,7 @@ import { withholding } from './withholding.ts';
 /** 급여 계산에 필요한 직원 정보(@sax/db Employee의 부분집합) */
 export interface PayrollEmployee {
   payType: 'monthly' | 'hourly';
-  /** monthly면 월급, hourly면 시급 */
   basePay: number;
-  /** 비과세 종류 코드 → 월 금액 */
   nontax: Partial<Record<NontaxKind, number>>;
   dependents: number;
   children8to20: number;
@@ -25,9 +21,7 @@ export interface PayrollEmployee {
 
 export interface ExtraItem {
   name: string;
-  /** 수당은 양수, 결근 공제 같은 차감은 음수 */
   amount: number;
-  /** 임금명세서의 계산방법 문장. 이 항목은 과세다. 비과세는 직원의 nontax 칸으로 넣는다(한도 검사) */
   calc: string;
 }
 
@@ -41,14 +35,10 @@ export interface NoticeAmounts {
 export interface PayrollInput {
   month: string;
   employee: PayrollEmployee;
-  /** 이달만 바뀐 수당·공제(과세) */
   extras?: ExtraItem[];
-  /** 월급제의 근로일수·시간(임금대장 기재). 시급제는 shifts에서 계산한다 */
   workDays?: number | null;
   workMinutes?: number | null;
-  /** 시급제: 이달 근무표 */
   shifts?: readonly ShiftLike[];
-  /** 공단 고지액(근로자 부담). 있으면 공제에 이 값을 쓴다(정본) */
   notices?: Partial<NoticeAmounts>;
   employerSize?: EmployerSizeBand;
   industrialAccidentPpm?: number | null;
@@ -93,9 +83,7 @@ export interface PayrollResult {
     industrialAccidentNotice: null;
   };
   netPay: number;
-  /** 공제 칸별 계산방법 문장(임금명세서) */
   deductionCalc: Record<'incomeTax' | 'localIncomeTax' | 'pension' | 'health' | 'ltc' | 'employment', string>;
-  /** 사장님에게 보일 확인 표시(판정 아님). 예: nontax_over_limit:meal, table_needs_review:<id> */
   notes: string[];
   rateTableIds: string[];
 }
@@ -128,7 +116,6 @@ export function computePayroll(input: PayrollInput, tables: TableSet): PayrollRe
     items.push({ name: x.name.trim(), amount: x.amount, taxable: true, calc: x.calc });
   }
 
-  // 비과세: 한도까지만 비과세, 넘는 만큼은 과세 항목으로 나눈다
   for (const [kind, amount] of Object.entries(e.nontax) as Array<[NontaxKind, number]>) {
     if (!int(amount)) throw new TableError('invalid_nontax');
     if (amount === 0) continue;

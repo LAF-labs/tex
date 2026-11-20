@@ -1,7 +1,3 @@
-// 정산내역 형식 규칙(M6-5, J-01 배달앱·J-02 오픈마켓). 사장님이 관리자 페이지에서 내려받은 엑셀·CSV를 읽는다.
-// 형식 근거: 각 플랫폼의 공개 도움말·화면 설명에 나오는 칸 이름(정산일·주문금액·수수료·정산금액 등)으로 만든 "추정" 규칙이다.
-// 실물 파일을 받기 전까지 모든 프로필은 estimated=true이고 결과에 format_estimated 경고가 붙는다(README §정산 형식).
-// 세액 계산·매출 신고 판단은 하지 않는다. 더한 값은 표시용이고 파일 안 합계 줄과 다르면 경고만 단다.
 import type { SheetOutput } from './sandbox/index.ts';
 import { cellText, findHeader, headText, isTotalRow, sheetWarnings, type RoleRule } from './table.ts';
 import type { Extracted, SettlementChannel, SettlementColumn, SettlementPlatform, SettlementResult, SettlementRole, SettlementRow, WarningCode } from './types.ts';
@@ -18,7 +14,6 @@ const ROLES: RoleRule<SettlementRole>[] = [
   { role: 'date', any: ['정산일', '정산예정일', '정산기준일', '지급일', '입금일', '입금예정일', '주문일', '주문일시', '결제일', '거래일', '매출일', '판매일', '구매확정일', '일자', '날짜'] },
 ];
 
-/** 플랫폼 이름(시트·앞쪽 글자에서). 판정이 아니라 화면에 "배달의민족 정산으로 보여요" 정도로 쓴다 */
 const PLATFORMS: Array<[RegExp, SettlementPlatform, SettlementChannel]> = [
   [/배달의민족|배민/, 'baemin', 'delivery'],
   [/쿠팡이츠|coupangeats/i, 'coupang_eats', 'delivery'],
@@ -46,7 +41,6 @@ const sumOrNull = (xs: Array<number | null>) => (xs.some((x) => x !== null) ? xs
 export function parseSettlement(out: SheetOutput, expected?: SettlementChannel): { result: SettlementResult | null; warnings: WarningCode[]; confidence: number } {
   const warnings = new Set<WarningCode>(sheetWarnings(out));
   warnings.add('format_estimated');
-  // 날짜와, 정산금액 또는 매출 칸 하나는 있어야 정산 표로 본다
   const header = findHeader(out, ROLES, ['date', 'payout']) ?? findHeader(out, ROLES, ['date', 'gross']);
   if (!header) {
     warnings.add('header_not_found');
@@ -69,7 +63,6 @@ export function parseSettlement(out: SheetOutput, expected?: SettlementChannel):
       fileTotals = { gross: entry.gross, fees: entry.fees, payout: entry.payout };
       continue;
     }
-    // 날짜도 금액도 없는 줄(안내 문구·빈 줄)은 뺀다
     if (entry.date === null && entry.gross === null && entry.payout === null) continue;
     rows.push(entry);
     if (rows.length >= 5000) {
@@ -90,7 +83,6 @@ export function parseSettlement(out: SheetOutput, expected?: SettlementChannel):
   const channel: Extracted<SettlementChannel> = found ? { value: found.channel, confidence: 0.8, reason: null } : expected ? { value: expected, confidence: 0.5, reason: null } : { value: null, confidence: 0, reason: 'not_found' };
   if (expected && found && found.channel !== expected) warnings.add('channel_mismatch');
   const platform: Extracted<SettlementPlatform> = found ? { value: found.platform, confidence: 0.8, reason: null } : { value: null, confidence: 0, reason: 'not_found' };
-  // 신뢰도: 칸을 찾은 정도(정산금액·매출·수수료) × 파일 합계와 맞음. 추정 규칙이라 0.85를 넘기지 않는다
   const coverage = [col('payout') !== undefined, col('gross') !== undefined, feeCols.length > 0].filter(Boolean).length / 3;
   const confidence = conf(Math.min(0.85, (0.45 + 0.4 * coverage) * (totalsAgree === false ? 0.7 : totalsAgree ? 1 : 0.9) * (rows.length ? 1 : 0)));
   const result: SettlementResult = {

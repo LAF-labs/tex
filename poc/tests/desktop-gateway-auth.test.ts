@@ -1,6 +1,3 @@
-// 엔진 → 게이트웨이 인증 호스트(gateway-auth.ts, ADR-040 예정, 클라우드 설계 노트 gateway-auth-design.md 2번).
-// 시험: 허용 밖 경로·메서드 거부(기기 세션을 부르지 않음), 로그인 안 됨이면 account.signed_out, 게이트웨이 토큰 캐시 무효화(전체 범위 토큰과 따로),
-// 서버가 범위를 줄이지 않으면 그 토큰을 엔진에 주지 않음, 토큰·헤더·htu는 기록에 없음, 엔진 auth 포트 배선.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -18,7 +15,6 @@ import { softDesktopKeys } from './remote-dev-stack.ts';
 const src = (f: string) => readFileSync(path.join(import.meta.dirname, '..', f), 'utf8');
 const DECIDE = GATEWAY_ORIGIN + GATEWAY_PATHS.decide;
 
-/** 헤더를 돌려주는 가짜 기기 세션. 부른 횟수를 센다. */
 function fakeDevice(over: Partial<GatewayDevice> = {}) {
   const calls: string[] = [];
   let cleared = 0;
@@ -81,7 +77,6 @@ describe('게이트웨이 인증 호스트: 허용 목록', () => {
     for (const [i, [htm, htu]] of bad.entries()) assert.deepEqual(await h.handle({ t: 'gw.auth', id: i, htm, htu }), { t: 'gw.auth.result', id: i, code: 'auth.denied' }, `${htm} ${htu}`);
     assert.deepEqual(await h.handle({ t: 'gw.auth', id: 99, htm: 'POST', htu: 42 }), { t: 'gw.auth.result', id: 99, code: 'auth.bad_request' });
     assert.deepEqual(f.calls, []);
-    // 기록은 이름·결과 코드만(htu는 엔진이 보낸 값이라 남기지 않는다)
     assert.ok(logs.every(([n, x]) => n === 'main.gw_auth' && JSON.stringify(x) === JSON.stringify({ result: x.result })));
     assert.ok(!JSON.stringify(logs).includes('evil'));
   });
@@ -138,12 +133,10 @@ describe('게이트웨이 인증 호스트: invalidate', () => {
     now += 60_000;
     await h.handle({ t: 'gw.auth.invalidate' });
     assert.equal(f.cleared(), GW_INVALIDATE_PER_MIN + 1);
-    // 로그인 전이면 지울 것이 없다(오류 없음)
     assert.equal(await hostWith(null).h.handle({ t: 'gw.auth.invalidate' }), null);
   });
 });
 
-/** 기기 토큰을 세는 가짜 계정 클라이언트(범위를 주면 그대로, 없으면 전체 범위). */
 function tokenClient(o: { ignoreScopes?: boolean } = {}) {
   const asked: Array<readonly string[] | undefined> = [];
   let n = 0;
@@ -222,7 +215,6 @@ describe('모델 처리 동의(온보딩 ②) 거절이면 게이트웨이 헤�
     for (const [i, htu] of [...GATEWAY_AUTH_HTU].entries()) assert.deepEqual(await h.handle({ t: 'gw.auth', id: i, htm: 'POST', htu }), { t: 'gw.auth.result', id: i, code: 'consent.model_declined' });
     assert.deepEqual([devices, f.calls.length, issued.length], [0, 0, 0]);
     assert.ok(logs.every((l) => l.includes('consent.model_declined')) && !logs.join().includes('sxd1'));
-    // 동의로 바뀌면 기존대로 헤더를 내준다
     allowed = true;
     assert.deepEqual(await h.handle({ t: 'gw.auth', id: 9, htm: 'POST', htu: DECIDE }), { t: 'gw.auth.result', id: 9, headers: { authorization: 'DPoP sxd1.gw-token', dpop: 'proof.jwt' } });
     assert.deepEqual(issued, [GATEWAY_PATHS.decide]);
@@ -268,8 +260,6 @@ describe('엔진 auth 포트 배선(소스)', () => {
   it('엔진 init 포트 순서는 [중계, 게이트, auth]. 답하는 쪽이 붙기 전에는 account.signed_out', () => {
     assert.ok(host.includes('this.engine.postMessage(init, [relay.port2, gate.port1, auth.port1]);'));
     assert.ok(/r = h \? await h\(m\) : id === null \? null : \{ t: 'gw\.auth\.result', id, code: 'account\.signed_out' \}/.test(gw));
-    // EngineHost는 auth 포트를 authPortResponder(받은 순서대로 하나씩)로만 처리한다.
-    // 발급 잠금 메시지(lock.*)만 따로 답하고(ADR-048 결정 7), 나머지는 전부 authPortResponder로 간다.
     assert.ok(host.includes('const onAuth = authPortResponder(') && host.includes("this.authPort.on('message', (e) => (isIssueLockMessage(e.data) ? onLock(e.data) : void onAuth(e.data)));"));
     assert.ok(!host.includes('private async onAuth('));
   });
@@ -282,7 +272,6 @@ describe('엔진 auth 포트 배선(소스)', () => {
 
 describe('auth 포트 순서(엔진 #216 시험에서 찾은 경합)', () => {
   const HTU = GATEWAY_ORIGIN + GATEWAY_PATHS.decide;
-  /** 실제 GatewayAuthHost + 캐시를 지우면 새 토큰을 주는 기기. slow번째 device() 호출(invalidate 쪽)만 계정 읽기가 늦다. */
   function realHost(slow: number) {
     let gen = 0;
     let calls = 0;

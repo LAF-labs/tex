@@ -1,5 +1,3 @@
-// D08 §2 Noise 구현을 공개 시험 벡터(cacophony·snow)와 대조한다. XXpsk0 단독 벡터는 없어
-// psk 위치 처리를 XXpsk3·XXpsk0+psk1·XXpsk0+psk2로, 패턴을 XX·IK로 확인한다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -58,8 +56,7 @@ describe('Noise 시험 벡터', () => {
       const a = init.split();
       const b = resp.split();
       const ia = new CipherState(a.send), ib = new CipherState(b.recv), ra = new CipherState(b.send), rb = new CipherState(a.recv);
-      // 핸드셰이크 뒤 메시지는 개시자→응답자, 응답자→개시자가 번갈아 온다(벡터 관례).
-      let fromInit = pattern === 'XX' ? false : true; // XX 3메시지 뒤 첫 전송은 응답자, IK 2메시지 뒤는 개시자
+      let fromInit = pattern === 'XX' ? false : true;
       for (; i < v.messages.length; i++) {
         const m = v.messages[i]!;
         const [enc, dec] = fromInit ? [ia, ib] : [ra, rb];

@@ -1,6 +1,3 @@
-// 서비스 간 내부 HTTP 호출 서명(팀장 결정 2026-11-06 #135 (1)). 같은 배포 안의 호출은 HTTP 없이 함수로 부르고(cloud 진입점),
-// HTTP가 꼭 필요한 곳(함수 ↔ 룸 호스트)만 이 서명을 쓴다. 서명 범위: 메서드·경로(쿼리 포함)·본문 SHA-256·시각(±60초)·1회용 nonce.
-// 키는 INTERNAL_CALL_KEY(32바이트 hex, 이름만 env에). 비교는 상수 시간. 실패는 모두 같은 401(어느 단계인지 알려 주지 않는다).
 import { randomBytes } from 'node:crypto';
 import { b64u, hmac, safeEqual, sha256hex } from './crypto.ts';
 import { fail } from './errors.ts';
@@ -71,7 +68,6 @@ export class InternalAuth implements InternalCheck {
     const q = ctx.query.toString();
     const want = b64u(hmac(this.key, internalCallInput(ctx.method, q ? `${ctx.path}?${q}` : ctx.path, ctx.rawBody, ts, nonce!)));
     if (!safeEqual(want, sig!)) fail('account.unauthorized');
-    // 서명이 맞은 뒤에만 nonce를 기록한다(서명 없는 요청으로 표를 채울 수 없게). 창이 끝난 뒤까지 둔다
     if (!(await this.nonces.claim(nonce!, ts + INTERNAL_CALL_SKEW_MS + 1, now))) fail('account.unauthorized');
   }
 }

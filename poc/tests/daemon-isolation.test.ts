@@ -1,8 +1,3 @@
-// 데몬 격리 증명(D14 M4-8 완료 기준, ADR-026, D10 §6): @sax/daemon은 네트워크·금고·엔진 실행·Electron을 부르지 않는다.
-// 1) 정적: 소스의 import를 허용 목록과 대조한다. 값 import는 @sax/engine/core의 상수·순수 판정 함수 셋뿐이고,
-//    @sax/db·@sax/bundle은 타입만 쓴다. fetch·소켓·자식 프로세스·환경 변수·실제 시계(Date.now·new Date())도 없다.
-// 2) 엔진 core가 끌어오는 모듈도 core 밖(금고·네트워크·브라우저)으로 나가지 않는다.
-// 3) 실행: 네트워크 전역을 덫으로 바꾼 뒤 스케줄러 한 바퀴를 돌려도 덫이 울리지 않는다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,7 +8,6 @@ const root = path.resolve(import.meta.dirname, '..');
 const src = path.join(root, 'packages/daemon/src');
 const files = fs.readdirSync(src).filter((f) => f.endsWith('.ts'));
 const read = (f: string) => fs.readFileSync(path.join(src, f), 'utf8');
-/** 주석을 지운 코드(주석 속 설명 문구에 걸리지 않게) */
 const code = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
 
 interface Imp {
@@ -78,7 +72,6 @@ describe('정적 격리', () => {
   });
   it('엔진 core가 끌어오는 모듈은 core 안과 node:crypto·fs·module·ajv·@sax/db(로컬 원장 오류 타입)뿐(금고·네트워크·브라우저 없음)', () => {
     const core = path.join(root, 'packages/engine/src/core');
-    // ../gate.ts는 CBOR 부호화(token.ts)만 쓰고 node:crypto뿐이다(아래에서 확인)
     const ok = new Set(['@sax/db', '../gate.ts', 'node:crypto', 'node:fs', 'node:module', 'node:path', 'node:url', 'ajv', 'ajv/dist/2020.js', 'ajv-formats']);
     for (const f of fs.readdirSync(core).filter((x) => x.endsWith('.ts'))) {
       for (const m of code(fs.readFileSync(path.join(core, f), 'utf8')).matchAll(/(?:import|export)\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)?'([^']+)'/g)) {

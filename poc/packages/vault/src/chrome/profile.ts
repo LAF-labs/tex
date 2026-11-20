@@ -55,14 +55,8 @@ export async function verifyProfileSettings(profileDir: string, extra: Array<[st
   return bad;
 }
 
-// Chrome extensions::mojom::ManifestLocation: 5 = kComponent, 10 = kExternalComponent
 const COMPONENT_LOCATIONS = new Set([5, 10]);
 
-/**
- * 불러올 확장이 없는 기록 항목. Chrome은 외부 구성요소(웹 스토어 결제 등, location 10)를 받는 동안 업데이트 확인 기록(`{lastpingday}`)만 든 항목을
- * 먼저 쓰고, 설치가 끝나면 location·path·manifest를 채운다. 느린 Windows 실기기에서 새 프로필 기동 뒤 10~20초 이 상태가 보였다(reports/WIN-REALDEVICE.md §5.1).
- * location·path·manifest가 모두 없으면 Chrome이 불러올 수 없으므로 설치 확장으로 세지 않는다. 셋 중 하나라도 있으면 그대로 센다.
- */
 function isRecordOnly(s: unknown): boolean {
   if (!s || typeof s !== 'object') return true;
   const e = s as Json;
@@ -93,7 +87,6 @@ export async function hasGoogleSignin(profileDir: string): Promise<boolean> {
   return (Array.isArray(accounts) && accounts.length > 0) || typeof getPath(prefs, 'google.services.last_gaia_id') === 'string';
 }
 
-/** 프로필 아래 크래시 덤프 폴더. Windows·macOS는 Crashpad, Linux는 Crash Reports. */
 const CRASH_DUMP_DIRS = ['Crashpad', 'Crash Reports'];
 
 async function countFiles(dir: string): Promise<number> {
@@ -125,9 +118,7 @@ export const PROFILE_RESIDUE_PATHS = [
  *   `onFailed`로 실패 경로 수를 알린다(§6.3: 예전에는 첫 실패에서 멈추고 아무 기록도 없었다).
  */
 export interface RemoveOptions {
-  /** 시험 전용. 기본 fs.rm. */
   rm?: (p: string, o: { recursive: true; force: true }) => Promise<void>;
-  /** 다시 시도 간격 기본값(ms, 시도마다 늘어난다). 시험은 0. */
   retryDelayMs?: number;
   onFailed?: (count: number) => void;
 }
@@ -137,7 +128,6 @@ export const RESIDUE_RM_ATTEMPTS = 6;
 export const RESIDUE_RETRY_BUDGET_MS = 3_000;
 const BUSY_CODES = new Set(['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY']);
 
-/** 지우고 성공 여부를 돌려준다. 잠금 오류만 다시 시도한다. */
 async function rmWithRetry(p: string, o: RemoveOptions, budget: { until: number }): Promise<boolean> {
   const rm = o.rm ?? ((x, opt) => fs.rm(x, opt));
   const step = o.retryDelayMs ?? 100;

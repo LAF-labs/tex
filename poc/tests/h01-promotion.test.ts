@@ -1,6 +1,3 @@
-// h01 공용 부분 이동(ADR-035 승격 점검 (라), 팀장 결정 2026-11-07 (가)): 제품 모듈은 h01을 import하지 않고,
-// h01에 남은 것은 PoC 실행기(runner.ts)·PoC 플레이북(playbook.ts)뿐이다. 그 둘은 RunService IR 전환 PR까지 runs.ts가 쓴다.
-// 음성 시험: h01/runner.ts 첫 줄에 '// PoC 폐기 대상' 표지를 잠시 붙이면 점검(라)가 제품 진입점 → runs.ts → runner.ts를 실제로 잡는다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -12,7 +9,6 @@ const POC = path.resolve(import.meta.dirname, '..');
 const SRC = path.join(POC, 'packages/engine/src');
 const ENTRY = 'packages/engine/src/entry.ts';
 
-/** 파일 첫 줄에 표지를 붙인 채로 f를 돌리고, 끝나면 바이트 그대로 되돌린다. */
 function withMarker<T>(file: string, f: () => T): T {
   const orig = fs.readFileSync(file);
   fs.writeFileSync(file, Buffer.concat([Buffer.from('// PoC 폐기 대상: 시험용 임시 표지\n'), orig]));

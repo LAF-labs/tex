@@ -1,21 +1,14 @@
-// 내용 없는 구조화 로그(D09 §1.1 "로그·APM: 바디 수집 금지. 오류 경로 포함 로그 스키마 고정", §3 본문 무저장).
-// 접근 로그는 아래 고정 필드만 갖는다. 경로는 실제 경로가 아니라 라우트 패턴이다(경로의 ID·우편함 ID·사업자번호가 남지 않게).
-// 계정 식별자는 서비스가 허용한 경우에만 일 회전 HMAC(`aid`)으로 남긴다. 평문 IP·헤더·쿼리·본문 필드는 스키마에 없다.
 
 export interface AccessLogEntry {
-  /** 로그 시각(ISO, 초 단위로 자름) */
   t: string;
   svc: string;
   m: string;
-  /** 라우트 패턴(예: /v1/devices/:id/suspend). 일치 없음은 '-' */
   route: string;
   status: number;
-  /** 오류 코드(D16) 또는 '' */
   code: string;
   bytesIn: number;
   bytesOut: number;
   ms: number;
-  /** 계정 식별자의 일 회전 HMAC. 진위확인 프록시·릴레이 같은 경로는 비운다. */
   aid?: string;
 }
 
@@ -77,7 +70,6 @@ export class Logger {
  */
 export function looksSensitive(line: string): boolean {
   return [
-    // 숫자 식별자는 영숫자 경계에서만(32자 hex 해시 안의 숫자 연속은 식별자가 아니다)
     /(?<![0-9A-Za-z])\d{6}-?[1-8]\d{6}(?![0-9A-Za-z])/,
     /(?<![0-9A-Za-z])\d{3}-?\d{2}-?\d{5}(?![0-9A-Za-z])/,
     /(?<![0-9A-Za-z])\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}(?![0-9A-Za-z])/,

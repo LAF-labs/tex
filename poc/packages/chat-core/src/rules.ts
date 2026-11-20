@@ -1,5 +1,3 @@
-// 대화 경로 가림 규칙(D06 §8, PR #296 판정 ②)과 금액·이름 읽기. PC 엔진(chat-agent.ts)과 폰 대화 코어가 같은 코드를 쓴다(ADR-047 결정 4):
-// 같은 문장은 PC와 폰에서 같게 가려져야 한다. 순수 함수만 둔다(DB·Node API 없음). 장부는 부르는 쪽이 ChatRecord 목록으로 넘긴다.
 import { normalizeForRedaction, type Redactor } from '@sax/redaction';
 
 const KO_NUM: Record<string, string> = { 영: '0', 공: '0', 일: '1', 이: '2', 삼: '3', 사: '4', 오: '5', 육: '6', 륙: '6', 칠: '7', 팔: '8', 구: '9' };
@@ -7,18 +5,12 @@ const SMALL: Record<string, number> = { 십: 10, 백: 100, 천: 1000 };
 const BIG: Record<string, number> = { 만: 1e4, 억: 1e8 };
 
 const SINO = '영일이삼사오육칠팔구십백천만억';
-/** 수 뒤에 올 수 있는 단위·조사(이 밖의 한글이 붙으면 낱말의 일부다: "천천히", "만들다") */
 const NUM_TAIL = '(?=$|[^가-힣]|(?:원|건|월|일|년|개월|번째|에|에서|으로|로|을|를|이|가|은|는|도|만|짜리|정도|쯤|씩|예요|이에요|였|이었))';
-/** 세션 Redactor별 대화 경로 추가 마스킹 상태(이번 장부 이름 정규식, 장부 이메일 조각 정규식). */
 const CHAT_MASKS = new WeakMap<Redactor, { names: Array<{ re: RegExp }>; emails: RegExp[] }>();
 const BARE_AMOUNT = /(?<![\dA-Za-z.,\-/_])(?:\d{1,3}(?:,\d{3})+|\d{5,})(?![\dA-Za-z.,\-/_])/gu;
-/** 공백·점으로 끊은 금액: 550 000, 550.000, 1 100 000, 55 0000(만 단위) */
 const SPLIT_AMOUNT = /(?<![\dA-Za-z.,\-/_])(?:\d{1,3}(?:[ .]\d{3})+|\d{1,4} \d{4})(?![\dA-Za-z,\-/_]|\.\d)/gu;
-/** 통화 글자가 붙은 금액: KRW550000, 550000KRW, ₩550000, x550000 */
 const CURRENCY_AMOUNT = /(?<![A-Za-z\d])(?:(?:KRW|₩|x)\s?(?:\d{1,3}(?:,\d{3})+|\d{4,})|(?:\d{1,3}(?:,\d{3})+|\d{4,})\s?KRW)(?![A-Za-z\d])/giu;
-/** 기본 규칙이 놓치는 사업자번호 구분자(/·_·,·:, 앞뒤 한 칸 공백까지) */
 const BIZNO_SLASH = /(?<![\d,])\d{3} ?[/_,:] ?\d{2} ?[/_,:] ?\d{5}(?![\d,])/gu;
-/** 이메일 조각으로 가리지 않는 흔한 낱말(메일 업체·도메인 단계) */
 const EMAIL_GENERIC = new Set(['www', 'mail', 'com', 'net', 'org', 'gmail', 'naver', 'daum', 'hanmail', 'kakao', 'nate', 'hotmail', 'outlook', 'yahoo', 'icloud']);
 const escapeRe = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -34,9 +26,7 @@ export function emailFragmentRes(emails: readonly string[]): RegExp[] {
   return [...frags].sort((x, y) => y.length - x.length).map((f) => new RegExp(`(?<![A-Za-z0-9])${escapeRe(f)}(?![A-Za-z0-9])`, 'giu'));
 }
 
-/** 띄어 쓴 한글 금액(오십 만, 오 십 만, 백 만): 한 칸씩 띄운 한글 수 중 백·천·만·억이 든 것 */
 const KO_AMOUNT_SPACED = new RegExp(`(?<![가-힣])[${SINO}](?: ?[${SINO}])+${NUM_TAIL}`, 'gu');
-/** 한글 금액처럼 보이지만 인사·관용구인 것: "이만 끝낼게", "천만에요" */
 const NOT_AMOUNT = (m: string, after: string) => (m === '이만' && /^\s?(?:끝|줄|하|가|갈|됐|되|마치|실례|들어가|일어나)/u.test(after)) || (m === '천만' && /^에요/u.test(after));
 
 /**
@@ -66,30 +56,21 @@ export function chatMaskSpans(t: string, names: ReadonlyArray<{ re: RegExp }>, e
   return out;
 }
 
-// 답 숫자 규칙(PR #296 판정 ①): 슬롯·토큰 밖에 숫자가 있으면 답을 버린다. 숫자는 ASCII만이 아니다.
-/** 단위 없는 한글 금액: 백·천·만·억이 든 한글 수 두 자 이상(오십만, 이백만, 삼천). 날짜(십오일)는 금액으로 보지 않는다. */
 const KO_AMOUNT = new RegExp(`(?<![가-힣])(?=[${SINO}]*[백천만억])[${SINO}]{2,}${NUM_TAIL}`, 'gu');
 const NUMBER_SHAPES: RegExp[] = [
-  // 한글 수 두 자 이상이고 십·백·천·만·억이 든 것: 백이십일만, 일백이십일만, 십오일, 오십만
   new RegExp(`(?<![가-힣])(?=[${SINO}]*[십백천만억])[${SINO}]{2,}${NUM_TAIL}`, 'u'),
-  // 달 이름(이월은 회계 낱말 "이월"과 같아서 뺀다)
   new RegExp(`(?<![가-힣])(?:시월|유월|십일월|십이월|[일삼사오육칠팔구]월)${NUM_TAIL}`, 'u'),
-  // 고유어 건수: 두 건, 열한 건
-  // "한 건씩"은 건수가 아니라 하나하나라는 말이다(chat-eval look-payables-sum: "화면에서 한 건씩 확인해 보세요"가 걸림)
   /(?<![가-힣])(?:한(?!\s*건씩)|두|세|네|다섯|여섯|일곱|여덟|아홉|열|스무|스물|서른|마흔|쉰)(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉)?\s*건(?!물|강|설|축|너|전)/u,
-  // 한자 수
   /[〇一二三四五六七八九十百千万萬億兆]/u,
 ];
 
 /** 답 문장(슬롯·토큰을 뺀 것)에 수가 있는가: NFKC로 정규화한 뒤 모든 유니코드 숫자(전각·아랍-인도·원문자), 한글·한자 수, 고유어 건수. */
 export function numberShaped(raw: string): boolean {
-  // 관용구 "천만에요"·"천만의 말씀"은 수가 아니다(chat-eval 2026-11-19 chat-thanks: "천만에요, 사장님"이 금액으로 걸려 고정 문장으로 바뀜)
   const bare = raw.replace(/천만(?:에요|에\s*말씀|의\s*말씀)/gu, ' ');
   const t = normalizeForRedaction(bare).normalize('NFKC');
   return /\p{N}/u.test(bare) || /\p{N}/u.test(t) || NUMBER_SHAPES.some((re) => re.test(t)) || koNumberRun(t);
 }
 
-/** 띄어 쓴 한글 수(백 만 원, 오 십 만)와 한 글자 수 + 단위(만 원, 천 원, 십 원): 십·백·천·만·억이 들고, 두 자 이상이거나 단위가 붙은 것 */
 const KO_NUM_RUN = new RegExp(`(?<![가-힣])[${SINO}](?: ?[${SINO}])*${NUM_TAIL}`, 'gu');
 function koNumberRun(t: string): boolean {
   for (const m of t.matchAll(KO_NUM_RUN)) {
@@ -107,7 +88,6 @@ export function parseKrw(raw: string): number | null {
   const s = normalizeForRedaction(raw)
     .replace(/[\s,원]/g, '')
     .replace(/[영공일이삼사오육륙칠팔구]/g, (c) => KO_NUM[c]!)
-    // 단위 없이 점으로 세 자리씩 끊은 수(550.000)는 천 단위 구분이다(원에는 소수가 없다)
     .replace(/^\d{1,3}(?:\.\d{3})+$/, (v) => v.replace(/\./g, ''));
   if (!s) return null;
   let total = 0;
@@ -150,16 +130,8 @@ export interface ChatRecord {
   bizNos: string[];
 }
 
-/**
- * 대화 경로 추가 마스킹(PR #296 판정 ②). 대화록과 도구 왕복으로 같은 문장이 여러 번 나가므로 기본 규칙이 놓치는 두 가지를 이 경로에서 가린다.
- * - 단위 없는 금액: 다섯 자리 이상 맨숫자·콤마 숫자(550000, 1,100,000), 백·천·만·억이 든 한글 수(오십만, 이백만).
- * - 구분자가 / · _ 인 사업자번호(100/64/14392).
- * - 장부 이름의 대소문자·띄어쓰기 변형(a상사, A 상사, LAF 테크, 한빛  전자, 김 철수). 그 이름의 레코드가 하나면 토큰을 레코드에 묶어 도구 인자로도 풀린다.
- * 가리는 것만 더한다(SpanFinder는 기본 규칙 뒤에 돌고 겹치면 기본 규칙이 이긴다).
- */
 function maskVariants(red: Redactor, text: string, recs: ReadonlyArray<Pick<ChatRecord, 'recordId' | 'names' | 'emails'>>): void {
   const loose = (v: string) => v.replace(/\s+/g, '').toLowerCase();
-  // 긴 이름부터 맞춘다(A상사몰이 A상사보다 먼저). 짧은 이름이 긴 이름의 앞을 먹지 않게 한다.
   const names = recs
     .flatMap((r) => r.names.map((n) => ({ recordId: r.recordId, name: normalizeForRedaction(n).replace(/\s+/g, ' ').trim() })))
     .filter((x) => [...loose(x.name)].length >= 2)
@@ -176,8 +148,6 @@ function maskVariants(red: Redactor, text: string, recs: ReadonlyArray<Pick<Chat
   }
   st.names = res;
   st.emails = emailFragmentRes(recs.flatMap((r) => r.emails));
-  // 이번 문장의 변형 낱말을 사전에 올리고 그 레코드에 묶는다. 사전에 올려야 기본 사전의 짧은 정확한 이름("A상사 몰"의 A상사)보다 긴 변형이 먼저 잡힌다.
-  // 긴 이름의 변형 안에 든 짧은 이름 변형은 건너뛴다. 주인이 둘 이상인 이름의 변형은 가리기만 한다(되묻기).
   const t = normalizeForRedaction(text);
   const taken: Array<[number, number]> = [];
   for (const x of res) {
@@ -225,10 +195,8 @@ export function registerChatRecords(red: Redactor, text: string, recs: readonly 
   }
 }
 
-/** 거래처 이름 뒤에 붙어도 이름의 일부가 아닌 말: 조사, 이다 꼴(인데·이고·라고), 건·거·꺼·것·쪽·측·님·서(에서 줄임) */
 const NAME_TAIL = /^(?:입니다|이라고|이니까|이라서|에다가|이에요|에서|에게|인데|이고|이니|이라|라고|이지|이었|에다|보고|더러|인|였|한테|께서|이랑|으로|부터|까지|하고|처럼|보다|이나|이요|예요|이야|께|에|도|랑|와|과|은|는|이|가|을|를|의|로|만|나|요|야|건|거|꺼|것|쪽|측|님|서)*(?![\p{L}\p{N}])/u;
 
-/** 잘린 이름 뒤에 붙는 격조사(끝 글자가 이것이면 오타가 아니라 잘린 이름 + 조사로 본다). 야·요·이처럼 이름 끝 글자로도 흔한 것은 뺀다. */
 const CASE_JOSA = /^(?:에서|에게|한테|께서|이랑|으로|에|께|도|랑|와|과|은|는|을|를|의|로|만)(?![가-힣])/u;
 
 /**
@@ -247,7 +215,6 @@ export function gluedName(user: string, tok: string, spaced = false): boolean {
   return true;
 }
 
-/** 띄어 쓴 이름 뒤에 한 글자 낱말이 이어지는가("A 상사 몰에"): 이름을 띄어 쓰는 사람에게 그 글자는 이름의 끝일 수 있다. 조사·흔한 한 글자 부사는 아니다. */
 const ONE_SYLLABLE_WORDS = new Set([...'좀또꼭더다잘딱막쫌왜총약각첫새앞뒤몇한두세네전분씨및등']);
 function trailingSyllable(after: string): boolean {
   const m = /^ ([가-힣])/u.exec(after);
@@ -278,8 +245,6 @@ export function typoAliases(text: string, cps: Array<{ recordId: string; name: s
       if (knownSet.has(low) || [...low].filter((ch, k) => ch !== n[k]).length !== 1) continue;
       const inner = knownLow.filter((k) => low.includes(k));
       if (inner.length) {
-        // 가장 긴 장부 이름이 앞에 있고 뒤가 조사·이다 꼴이면 그 이름이 이긴다(별칭 아님). 그 이름이 이 거래처 이름의 앞이기도 하고
-        // 남은 글자가 둘 이상이면 긴 이름의 오타다(A상사몰코리야 → A상사몰코리아). 아니면 어느 쪽인지 모르니 되묻는다(A상사물).
         const head = inner.filter((k) => low.startsWith(k)).sort((x, y) => [...y].length - [...x].length)[0];
         const len = head ? [...head].length : 0;
         if (head && NAME_TAIL.test(t.slice(i + len).join(''))) continue;
@@ -288,7 +253,6 @@ export function typoAliases(text: string, cps: Array<{ recordId: string; name: s
           continue;
         }
       }
-      // 끝 글자만 다르고 거기서 조사가 시작하면 잘린 이름 + 조사다(A상사몰코리에, A상에). 어느 거래처인지 모르니 되묻는다.
       if (low.at(-1) !== n.at(-1) && CASE_JOSA.test(t.slice(i + n.length - 1).join(''))) {
         asks.add(word);
         continue;
@@ -302,23 +266,14 @@ export function typoAliases(text: string, cps: Array<{ recordId: string; name: s
   ];
 }
 
-// ── 발급 의도(사장님이 "세금계산서"라고 말하지 않아도) ──
-
-/** 발급을 시키는 말. 사장님들이 실제로 쓰는 말: 끊다·떼다·발급·발행·끊어 주다, 줄임말(세계·계산서), 띄어 쓴 꼴 */
 const ISSUE_VERB_RE = /(?:끊|떼|뗴|발급|발행|세금\s?계산서|세계|계산서|전자\s?세금|세금계산|tax\s?invoice)/iu;
-/** 시키는 끝말(해 줘·하자·할게·해·부탁·ㄱㄱ). 끊어/떼/발급 뒤에 오거나 금액 뒤에 바로 온다. */
 const ASK_END_RE = /^\s?(?:줘|주|줄|달|해|하|할|자|게|께|ㄱ|고고|부탁|드|요청|좀|요|\?|$)/u;
-/** 발급이 아니라 조회·취소·질문으로 읽히는 말. 이게 있으면 발급 의도로 보지 않는다. */
 const NOT_ISSUE_RE = /(?:끊은|끊었|뗀|뗐|발급한|발급했|발행한|발행했|발급된|발급 된|기록|내역|목록|보여|알려|얼마|몇\s?건|몇 개|언제|있어\?|있나|했어\?|했나|됐어|됐나|취소|수정|정정|지워|삭제|받을\s?돈|못\s?받|입금|매출|합계|어떻게|뭐야|무슨|왜)/u;
-/** 금액만 말하고 시키는 꼴: "[AMT_1] 해 줘", "[AMT_1]짜리 하나", "[NAME_1] [AMT_1]" */
 const AMOUNT_ASK_RE = /\[AMT_\d+\]\s?(?:짜리|어치|만큼|으로|로)?\s?(?:하나|한 장|한장|한 건|한건)?\s?(?:해|좀|부탁|ㄱㄱ|고고|요청|줘|주세요)/u;
 
 export interface IssueIntent {
-  /** 세금계산서를 만들어 달라는 말로 읽힌다 */
   issue: boolean;
-  /** 문장에 금액 토큰이 있다 */
   amount: boolean;
-  /** 문장에 거래처 이름 토큰이 있다 */
   counterparty: boolean;
 }
 
@@ -337,12 +292,10 @@ export function issueIntent(masked: string): IssueIntent {
   const verb = ISSUE_VERB_RE.exec(t);
   if (verb) {
     const after = t.slice(verb.index + verb[0].length).replace(/^\s?(?:[어아여을를]|어\s?서)?/u, '');
-    // "계산서"·"세계" 같은 이름말은 시키는 끝말이 없어도 금액·거래처와 함께면 발급이다("[NAME_1] 계산서 [AMT_1]")
     const noun = /계산서|세계|전자|tax/iu.test(verb[0]);
     if (ASK_END_RE.test(after) || (noun && (amount || counterparty))) return { issue: true, ...base };
   }
   if (amount && AMOUNT_ASK_RE.test(t)) return { issue: true, ...base };
-  // 거래처와 금액만 말한 문장("[NAME_1] [AMT_1]", "[NAME_1]에 [AMT_1]요")은 이 앱에서 발급을 시키는 말이다
   if (amount && counterparty && t.replace(/\[(?:AMT|NAME)_\d+\]/gu, '').replace(/[\s.,!~]/gu, '').length <= 3) return { issue: true, ...base };
   return { issue: false, ...base };
 }

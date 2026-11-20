@@ -1,8 +1,3 @@
-// Playwright aria 스냅숏(YAML 모양) → 마스킹 입력 트리(A11yNode, D06 §3)(M2-2 B). L0 관측은 이 트리에서 만든다(run/decide.ts).
-// - 스냅숏은 접근성 트리에서 숨김 요소가 이미 빠진 것이다. 레이아웃(화면 밖·투명·전경=배경)은 알 수 없다(못 한 것: DOMSnapshot).
-// - 입력 역할(textbox·combobox·searchbox·spinbutton)의 인라인 값은 value로만 둔다. renderTree가 버리고 L0 관측에도 넣지 않는다.
-// - 비밀 칸(셀렉터 사전 secretKind·password 항목의 이름과 맞는 입력)은 secret으로 표시해 값은 물론 길이도 남기지 않는다(V-20 런타임 가드).
-// - 속성 줄(`- /url: …`)은 버린다. 문법이 틀린 줄은 건너뛰지 않고 던진다(fail-closed, 호출 측은 portal.unobservable).
 import type { A11yNode } from '@sax/redaction';
 
 const INPUT_ROLES = new Set(['textbox', 'combobox', 'searchbox', 'spinbutton']);
@@ -16,14 +11,12 @@ export class AriaParseError extends Error {
   }
 }
 
-/** YAML 따옴표 한 겹 벗기기(Playwright가 특수 문자 있는 줄을 '…'·"…"로 감싼다). */
 function unquote(s: string): string {
   if (s.length >= 2 && s.startsWith("'") && s.endsWith("'")) return s.slice(1, -1).replace(/''/g, "'");
   if (s.length >= 2 && s.startsWith('"') && s.endsWith('"') && !/^"[^"]*"\s/.test(s)) return JSON.parse(s) as string;
   return s;
 }
 
-/** `key: inline` 나누기. key 안 따옴표 이름 속의 ':'는 건너뛴다. */
 function splitItem(item: string): { key: string; inline: string | null; open: boolean } {
   let inQ = false;
   for (let i = 0; i < item.length; i++) {
@@ -68,9 +61,8 @@ export function ariaToTree(snapshot: string, o: { rootRole?: string; isSecret?: 
     const m = /^(\s*)- (.*)$/.exec(raw);
     if (!m) throw new AriaParseError(i + 1);
     const indent = m[1]!.length;
-    // 특수 문자가 든 항목은 Playwright가 통째로 '…'로 감싼다(`- 'text: 문의: 고객센터'`).
     const body = m[2]!.startsWith("'") && m[2]!.endsWith("'") ? unquote(m[2]!) : m[2]!;
-    if (body.startsWith('/')) continue; // 속성 줄(/url·/placeholder)
+    if (body.startsWith('/')) continue;
     const { key: rawKey, inline } = splitItem(body);
     const key = unquote(rawKey);
     while (stack.length > 1 && stack.at(-1)!.indent >= indent) stack.pop();
@@ -80,7 +72,6 @@ export function ariaToTree(snapshot: string, o: { rootRole?: string; isSecret?: 
     else {
       const k = KEY_RE.exec(key);
       if (!k) {
-        // 이름 없는 텍스트 노드: `- 본문 문장`
         if (!/[:[\]"]/.test(key)) node = { role: 'text', name: key };
         else throw new AriaParseError(i + 1);
       } else {
@@ -126,8 +117,6 @@ export function ariaValue(snapshot: string, role: string): string {
   const m = /^- [a-z]+(?: "(?:[^"\\]|\\.)*")?(?: \[[^\]]*\])*(?::(.*))?$/.exec(lines[0] ?? '');
   if (m?.[1] === undefined) return '';
   if (m[1].trim() !== '') return unq(m[1]);
-  // 자리표시 글(placeholder)이 있는 입력 칸은 값이 자식 줄로 내려간다(「- textbox "과세년도":」 아래 「- /placeholder: …」「- text: "2025"」).
-  // 5차 예행 run-d2bbd1df(H-09 과세년도): 첫 줄만 보면 빈 값으로 읽어 readback_mismatch였다. 바로 아래 자식의 text 줄을 값으로 본다.
   const child = lines.slice(1).map((l) => /^ {2}- text: (.*)$/.exec(l)).find(Boolean);
   return child ? unq(child[1]!) : '';
 }

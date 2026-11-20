@@ -1,6 +1,3 @@
-// 시행일 단위 표(ADR-031 결정 5, D07 rate_tables, D14 M6-10). 표는 코드에 박지 않고 데이터 패키지로 받는다.
-// 형태는 schema/rate-table-package.schema.json 이 정본이고, 여기 타입은 그 모양을 그대로 옮긴 것이다.
-// 요율은 백만분율(ppm, 1% = 10,000), 금액은 원 단위 정수.
 import fs from 'node:fs';
 import ajv2020 from 'ajv/dist/2020.js';
 import type { ValidateFunction } from 'ajv';
@@ -12,11 +9,8 @@ export type TableKind = 'insurance_rate' | 'pension_bounds' | 'simple_tax_table'
 export interface TableMeta {
   id: string;
   kind: TableKind;
-  /** 포함 시작일 'YYYY-MM-DD' */
   effectiveFrom: string;
-  /** 포함 끝날. null이면 같은 종류의 다음 표가 시작하기 전날까지 */
   effectiveTo: string | null;
-  /** 이 표의 최종 금액 끝처리 */
   rounding: Rounding;
   review: 'confirmed' | 'needs_review';
   sources: Array<{ title: string; url: string }>;
@@ -25,25 +19,19 @@ export interface TableMeta {
 
 /** 근로소득 간이세액표(소득세법 시행령 별표 2) */
 export interface SimpleTaxBody {
-  /** [이상(원), 미만(원), 가족 1명 세액, …, 가족 11명 세액]. 월급여액은 비과세·학자금 제외. 마지막 행은 표 끝값(over.top) 한 점 */
   rows: Array<[number, number, ...number[]]>;
-  /** 표 끝(예: 10,000천원)을 넘는 월급여: 끝값 세액 + addWon + (월급여 − above) × num/den. 위 구간부터 찾는다 */
   over: { top: number; brackets: Array<{ above: number; addWon: number; num: number; den: number }> };
-  /** 8세 이상 20세 이하 자녀 공제: amounts[n]은 자녀 n명 공제액, 배열 끝을 넘으면 마지막 값 + extraPerChild × 넘은 수 */
   children: { amounts: number[]; extraPerChild: number };
-  /** 공제대상가족 11명 초과: 11명 세액 − (10명 세액 − 11명 세액) × 초과 인원(0 미만이면 0) */
   familyOver11: 'extrapolate_10_11';
 }
 
 export interface InsuranceBody {
   pension: { employeePpm: number; employerPpm: number; rounding: Rounding };
   health: { employeePpm: number; employerPpm: number; rounding: Rounding; minBase?: number; maxBase?: number };
-  /** 장기요양보험료 = 건강보험료 × (장기요양보험료율 ÷ 건강보험료율) */
   ltc: { ratePpm: number; healthRatePpm: number; rounding: Rounding };
   employment: {
     employeePpm: number;
     employerUnemploymentPpm: number;
-    /** 고용안정·직업능력개발(사업주만). 규모 구간 코드 → ppm */
     employerStabilityPpm: Record<EmployerSizeBand, number>;
     rounding: Rounding;
   };
@@ -52,10 +40,8 @@ export interface InsuranceBody {
 export type EmployerSizeBand = 'under150' | 'priority150plus' | 'from150to999' | 'over1000';
 
 export interface PensionBoundsBody {
-  /** 기준소득월액 하한·상한(원) */
   minBase: number;
   maxBase: number;
-  /** 기준소득월액 끝처리(천원 미만 절사 = floor_1000) */
   baseRounding: Rounding;
 }
 
@@ -109,7 +95,6 @@ function schemaValidator(): ValidateFunction {
 }
 
 const dayBefore = (d: string): string => new Date(Date.parse(`${d}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
-/** 열린 표(effectiveTo null)는 other가 더 늦게 시작하면 그 전날 끝난다 */
 const endAgainst = (x: TableMeta, other: TableMeta): string => x.effectiveTo ?? (other.effectiveFrom > x.effectiveFrom ? dayBefore(other.effectiveFrom) : '9999-12-31');
 /** 같은 날을 두 표가 덮는가: 시작일이 같거나, 닫힌 기간이 다른 표의 기간과 겹친다(@sax/db rateSpansConflict와 같은 규칙) */
 export const tableSpansOverlap = (a: TableMeta, b: TableMeta): boolean => a.effectiveFrom <= endAgainst(b, a) && b.effectiveFrom <= endAgainst(a, b);
@@ -153,7 +138,6 @@ function checkSimpleTax(t: RateTable<'simple_tax_table'>): string[] {
     if (i > 0) for (let f = 2; f < r.length; f++) if (r[f]! < rows[i - 1]![f]!) bad.push(`simple_tax_pay_order:${t.id}:${i}`);
   });
   const last = rows[rows.length - 1];
-  // 마지막 행은 표 끝값 한 점(예: 10,000천원)이고 over.top과 같아야 한다
   if (last && t.body.over.top !== last[0]) bad.push(`simple_tax_top:${t.id}`);
   const br = t.body.over.brackets;
   for (let i = 1; i < br.length; i++) if (br[i]!.above <= br[i - 1]!.above) bad.push(`simple_tax_over_order:${t.id}`);

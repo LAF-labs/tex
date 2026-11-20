@@ -1,6 +1,3 @@
-// 어댑터 소유 재시도 정책(D04 §1). SDK 자동 재시도는 끈다(maxRetries: 0).
-// 429 결제·한도 코드는 재시도하지 않는다. 503·5xx·일반 429는 Retry-After(없으면 지수 백오프) + 지터로 최대 2회.
-// 판정은 실행 흐름 안에 있으므로 Retry-After가 상한을 넘으면 기다리지 않고 unknown으로 끝낸다.
 import { AdapterError, type AdapterErrorCode } from './types.ts';
 
 export interface RetryPolicy {

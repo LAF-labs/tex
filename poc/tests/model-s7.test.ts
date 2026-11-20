@@ -1,5 +1,3 @@
-// S7 회귀 스크립트(D04 §9, D14 M3-7)가 모의 모드에서 끝까지 돌고 게이트 판정을 내는지 확인한다.
-// 정확도 수치 자체는 모의 서버의 키워드 응답이라 의미가 없다(실측은 키가 있을 때 scripts/s7-regression.ts).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -16,7 +14,6 @@ describe('S7 회귀 스크립트(모의)', () => {
     const env = { ...process.env };
     delete env.OPENAI_API_KEY;
     delete env.OPENROUTER_API_KEY;
-    // --gate 없이: 모의 답의 합격 여부는 의미가 없고, 판정 계산만 본다.
     const r = spawnSync(process.execPath, ['--conditions=development', 'scripts/s7-regression.ts', '--mock', `--n=${n}`, `--out=${out}`], { cwd: root, env, encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
     return JSON.parse(fs.readFileSync(out, 'utf8'));

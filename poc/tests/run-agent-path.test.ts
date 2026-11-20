@@ -1,4 +1,3 @@
-// 에이전트 길 기억(run/agent-path.ts): 돌아간 확인 스텝이 통과해야 남기고, 확인이 실패하면 남기지 않으며, 다시 걸은 길이 틀리면 버린다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { AgentPathMemory, planSignature, type AgentPathFile, type JsonStore } from '@sax/engine';

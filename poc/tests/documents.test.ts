@@ -1,4 +1,3 @@
-// PoC-8 보관함: 엔진이 PDF를 보관함 폴더에 쓰고 v1 documents 행으로 등록한다(D07 §1.3·§4). 임시 DB·임시 폴더만 쓴다.
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import fsp from 'node:fs/promises';
@@ -12,12 +11,11 @@ import { Egress } from '@sax/net';
 
 const BIZ = syntheticBizNo(7);
 const OTHER = syntheticBizNo(8);
-const NOW = new Date('2026-11-10T03:00:00Z'); // 한국 시간 2026-11-10 12:00
+const NOW = new Date('2026-11-10T03:00:00Z');
 
 const taxText = (biz = BIZ, valid = '2026년 11월 30일') =>
   `발급번호 0123-457-5258-910\n납세증명서\n주민등록번호(사업자등록번호) ${formatBizNo(biz)}\n유효기간 ${valid}\n「국세징수법」 … 다른 체납액이 없음을 증명합니다.\n담당부서 민원봉사실\n2026년 11월 1일\n가나세무서장 직인`;
 const bizText = `발급번호 T123-472-2634-650\n사업자등록증명\n사업자등록번호 ${formatBizNo(BIZ)}\n개업일 2019년 04월 11일 사업자등록일 2019년 04월 14일\n위와 같이 증명합니다.\n2026년 10월 06일\n아자세무서장 (인)`;
-/** 내용이 다른 가짜 PDF 바이트(엔진은 머리만 본다. 글자는 docparse가 준 텍스트로 받는다) */
 const pdf = (tag: string) => new Uint8Array(Buffer.from(`%PDF-1.7\n% ${tag} ${randomBytes(8).toString('hex')}\n%%EOF\n`));
 const extract = (text: string, o: { hasTextLayer?: boolean; scanned?: boolean; ocrConfidence?: number | null } = {}) => ({ text, pages: 1, totalPages: 1, hasTextLayer: o.hasTextLayer ?? true, scanned: o.scanned ?? false, ocrConfidence: o.ocrConfidence ?? null });
 
@@ -44,7 +42,6 @@ describe('보관함(DocumentService)', () => {
     db.close();
   });
   const business = (biz = BIZ) => call('profile.upsert', { kind: 'business', displayName: '주식회사 가나다테크', bizNo: biz });
-  /** 화면처럼 지금 저장값을 본 값(seen)으로 붙여 보낸다 */
   const upd = async (id: string, patch: Record<string, unknown>) => {
     const cur = (await call<DocumentView[]>('db.query.documents.list')).find((d) => d.id === id);
     return call<DocumentView>('document.update', { id, patch, seen: cur && { docType: cur.docType, issuedOn: cur.issuedOn, expiresOn: cur.expiresOn } });
@@ -114,7 +111,6 @@ describe('보관함(DocumentService)', () => {
     assert.match((await fsp.readdir(vault))[0]!, /^other_20261110_/);
   });
 
-  // 화면(셸 문서함)은 바뀐 칸만 보낸다. 엔진은 저장값과 같은 값을 '바뀌지 않음'으로도 본다(화면이 세 칸을 다 보내도 같은 결과).
   it('사용자 확인: 그대로 확인하면 추정이 확인함으로, 날짜를 넣으면 그 값, 종류·발급일을 바꾸면 규칙으로 다시', async () => {
     await business();
     const b = await call<DocumentView>('document.import', { bytes: pdf('b'), extract: extract(bizText) });
@@ -126,7 +122,6 @@ describe('보관함(DocumentService)', () => {
     assert.deepEqual([re.issuedOn, re.expiresOn, re.expirySource, re.needsUser, re.reasons], ['2026-11-02', '2027-01-30', 'rule', true, ['expiry_recomputed']], '다시 계산한 만료일은 보여 준 뒤 한 번 더 확인받는다');
     const reConfirmed = await upd(b.id, {});
     assert.deepEqual([reConfirmed.expiresOn, reConfirmed.expirySource, reConfirmed.needsUser], ['2027-01-30', 'user', false]);
-    // 세 칸을 다 보내도(만료일은 저장값 그대로) 발급일만 바뀌었으면 규칙으로 다시 정한다
     const all = await upd(b.id, { docType: 'biz_registration_cert', issuedOn: '2026-10-06', expiresOn: '2027-01-30' });
     assert.deepEqual([all.issuedOn, all.expiresOn, all.expirySource], ['2026-10-06', '2027-01-03', 'rule']);
     const x = await call<DocumentView>('document.import', { bytes: pdf('x'), extract: extract('영수증'), final: true });
@@ -145,7 +140,6 @@ describe('보관함(DocumentService)', () => {
     const seen = { docType: b.docType, issuedOn: b.issuedOn, expiresOn: b.expiresOn };
     const first = await call<DocumentView>('document.update', { id: b.id, patch: { issuedOn: '2026-11-02' }, seen });
     assert.deepEqual([first.needsUser, first.reasons], [true, ['expiry_recomputed']]);
-    // 확인을 두 번 눌러 같은 요청이 다시 오면: 이제 저장값과 같아 '확인'이 될 요청이지만, 본 값이 옛 값이라 거부한다
     await assert.rejects(call('document.update', { id: b.id, patch: { issuedOn: '2026-11-02' }, seen }), /stale/);
     await assert.rejects(call('document.update', { id: b.id, patch: {}, seen }), /stale/);
     const still = (await call<DocumentView[]>('db.query.documents.list')).find((d) => d.id === b.id)!;
@@ -158,7 +152,6 @@ describe('보관함(DocumentService)', () => {
     assert.notEqual(two, taxText());
     const d = await call<DocumentView>('document.import', { bytes: pdf('two'), extract: extract(two) });
     assert.deepEqual([d.expiresOn, d.expirySource, d.needsUser, d.reasons, d.suggested.validUntil], ['2026-11-05', 'document', true, ['valid_until_ambiguous'], '2026-11-05']);
-    // 발급일을 첫 후보 뒤로 고치면, 쓸 수 있는 다음 후보(11-30)가 잠정 만료일·후보가 된다(규칙 12-05로 돌아가지 않는다)
     const moved = await upd(d.id, { issuedOn: '2026-11-06' });
     assert.deepEqual([moved.expiresOn, moved.expirySource, moved.needsUser, moved.suggested.validUntil], ['2026-11-30', 'document', true, '2026-11-30']);
     const back = await upd(d.id, { issuedOn: '2026-11-01' });
@@ -220,10 +213,8 @@ describe('보관함(DocumentService)', () => {
     assert.deepEqual(await fsp.readdir(vault), [], '아직 쓰지 않는다');
     const d = await call<DocumentView>('document.import', { bytes, extract: extract(taxText(), { hasTextLayer: true, ocrConfidence: 85 }), altText: header, final: true });
     assert.deepEqual([d.docType, d.textSource, d.needsUser, d.reasons], ['national_tax_cert', 'ocr', true, ['read_by_ocr']]);
-    // OCR이 낫지 않으면 처음 텍스트 층 결과
     const e = await call<DocumentView>('document.import', { bytes: pdf('retry2'), extract: extract('알아볼 수 없는 OCR 결과', { ocrConfidence: 40 }), altText: bizText, final: true });
     assert.deepEqual([e.docType, e.textSource, e.needsUser], ['biz_registration_cert', 'text', false]);
-    // 알아본 지원 밖 서류는 다시 읽지 않는다
     const local = await call<DocumentView>('document.import', { bytes: pdf('local'), extract: extract('지방세 납세증명서\n가나구청장') });
     assert.equal(local.kind, 'localtax_cert');
   });
@@ -329,7 +320,6 @@ describe('보관함(DocumentService)', () => {
 describe('main 경계: document.import·document.file은 렌더러가 부를 수 없다', () => {
   it('MAIN_ONLY에 두고, 셸 렌더러 요청 표에는 엔진 명령이 없다(docparse 결과를 붙이는 명령, 보관함 파일 경로)', async () => {
     for (const m of ['bizcert.parse', 'document.file', 'document.import']) assert.ok(MAIN_ONLY.includes(m as never), m);
-    // 렌더러 요청은 셸 표(SHELL_METHODS)로만 온다. 엔진 명령 이름을 그대로 넘기는 길이 없다(개발 콘솔 RENDERER_METHODS는 W-1에서 지웠다).
     const { SHELL_METHODS } = await import('../apps/desktop/src/ipc.ts');
     for (const m of MAIN_ONLY) assert.ok(!(m in SHELL_METHODS), m);
     const src = await fsp.readFile(path.resolve(import.meta.dirname, '../apps/desktop/src/shell-app.ts'), 'utf8');

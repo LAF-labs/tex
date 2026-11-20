@@ -1,6 +1,3 @@
-// remote-envelope.schema.json(D08 정본)에서 검증기 코드를 미리 만든다(Ajv standalone).
-// 폰(Hermes)은 런타임 코드 생성(new Function)을 쓰지 않으므로 생성된 코드를 저장소에 둔다.
-// 스키마를 고치면: pnpm --filter @sax/remote gen:schema. tests/remote-envelope.test.ts가 최신인지 확인한다.
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -51,11 +48,8 @@ export function generate() {
   const Ajv2020 = require('ajv/dist/2020').default;
   const standalone = require('ajv/dist/standalone').default;
   const schema = JSON.parse(fs.readFileSync(SCHEMA_PATH, 'utf8'));
-  // 검증 함수 하나가 너무 길면 tsc의 흐름 분석이 스택 한계에 닿는다(v1.8에서 드러남, 빌드가 가끔 RangeError로 죽는다).
-  // $ref를 인라인하지 않고(inlineRefs: false), 타입별 body 스키마를 $defs로 올려 함수 하나씩으로 나눈다. 판정은 같다(스키마 파일은 그대로다).
   const ajv = new Ajv2020({ allErrors: false, strict: false, inlineRefs: false, code: { source: true, esm: true, lines: false } });
   const validate = ajv.compile(splitBodies(schema));
-  // ajv 런타임 require를 없애 의존 없는 ESM으로 만든다(Metro·Node 공용). 남은 require가 있으면 실패한다.
   const code = standalone(ajv, validate).replace('require("ajv/dist/runtime/ucs2length").default', '__ucs2length');
   if (/\brequire\(/.test(code)) throw new Error('standalone code still has require()');
   const keys = binaryKeys(schema);

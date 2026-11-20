@@ -1,10 +1,7 @@
-// 응답 정리(D05 §3.4). 엔진으로 가는 CDP 메시지에서 비밀 평문이 실릴 수 있는 필드를 지운다.
-// 입력: 엔진행 메시지(이미 파싱됨), 비밀 노드 집합. 메시지를 제자리에서 고친다.
 
 type Json = Record<string, unknown>;
 
 export interface SecretNodes {
-  /** 금고가 입력한 노드, human:secret 대상 노드, type=password 노드의 backendNodeId. */
   backendIds: ReadonlySet<number>;
 }
 
@@ -127,7 +124,6 @@ export function scrubAxNodes(nodes: unknown, secrets: SecretNodes): number {
     }
     const name = node.name as Json | undefined;
     if (name && typeof name.value === 'string' && name.value !== '' && (MASK_ONLY.test(name.value) || !secrets.backendIds.has(Number(node.backendDOMNodeId)))) {
-      // 자손 텍스트·마스킹 이름만 지운다(비밀 칸 자신의 라벨 이름은 남긴다).
       name.value = '';
       delete name.sources;
       n++;

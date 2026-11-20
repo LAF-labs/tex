@@ -1,5 +1,3 @@
-// D06 §7 합성 코퍼스(10,000건 × 시드 2개): 식별자 누락 0, 마스킹 출력은 egress 트립와이어에 걸리지 않음, 정상 문구 과치환 0.
-// 측정표는 node --conditions=development scripts/redaction-corpus.ts 로 다시 만든다(reports/M1-5.md).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { piiTripwire } from '@sax/net';

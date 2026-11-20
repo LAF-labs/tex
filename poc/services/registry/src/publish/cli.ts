@@ -1,10 +1,3 @@
-// 패키지 게시 CLI(PUBLISH-H01.md). 실행: node --conditions=development services/registry/src/publish/cli.ts <명령> …(poc/ 에서)
-//   dry-run   실제 레지스트리는 읽기만, 서명은 임시 키, 게시는 로컬 레지스트리에만(운영 PUT 0건)
-//   prepare   패키지 묶기 → manifest·정책·status·폐기 목록 서명 대상과 확인 코드, 사용자 서명 명령(ceremony sign)
-//   assemble  서명 모으기 → .sxp → 엔진 로더·관문 규칙 → 인덱스 초안과 확인 코드
-//   push      인덱스 서명 모으기 → 게시 관문 PUT(폐기 목록 → 정책 → status → 패키지 → 인덱스) → 되읽기 → 투명성 로그 포함 증명 → record.json
-//   verify    PUT 없이 push의 사후 확인만(되읽기·로그 포함 증명 → record.json). push가 publish.log_invalid·readback_failed로 끝났을 때
-// 운영자 토큰은 터미널에서 보이지 않게 묻는다(파이프·인자로 받지 않는다). --token-env를 주면 그 이름의 env에서 읽는다(값은 출력·파일에 남기지 않는다).
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -19,10 +12,8 @@ export interface PublishCliDeps {
   out(line: string): void;
   now(): number;
   registry(origin: string): RegistryClient;
-  /** 보이지 않는 입력(운영자 토큰) */
   secret(prompt: string): Promise<string>;
   env: NodeJS.ProcessEnv;
-  /** 사후 확인 다시 읽기(CDN 캐시 대기). 시험은 바로 돌려주는 sleep을 준다 */
   settle?: { sleep?: (ms: number) => Promise<void>; settleMs?: number };
 }
 
@@ -125,7 +116,6 @@ export async function main(argv: readonly string[], deps: PublishCliDeps = defau
   };
   const work = (): Work => ({ dir: one('work'), fs: deps.fs });
   const planInputs = () => {
-    // --ceiling hometax=assisted(여러 번), --kill <playbook id>(여러 번). 둘 다 없으면 status를 만들지 않는다
     const ceilings = flags.get('ceiling') ?? [];
     const kills = flags.get('kill') ?? [];
     const statusFile = one('status', false);
@@ -143,12 +133,10 @@ export async function main(argv: readonly string[], deps: PublishCliDeps = defau
     }
     const revokedFile = one('revoked', false);
     const revoked = revokedFile ? readJson<RevokedKeys>(revokedFile) : undefined;
-    // --policy services/registry/policy/<ver>.json: 정책 초안(정책 키 2-of-3으로 서명한다)
     const policyFile = one('policy', false);
     const policy = policyFile ? readJson<Record<string, unknown>>(policyFile) : undefined;
     if (policy !== undefined && (!policy || typeof policy !== 'object' || Array.isArray(policy))) throw new CeremonyError('ceremony.file_invalid', policyFile);
     const rollout = one('rollout', false);
-    // --min-app-version 0.1.11: 이번에 새로 올리는 패키지 항목에만 minAppVersion(그보다 낮은 앱은 받지 않는다)
     const minApp = one('min-app-version', false);
     return { status, revoked, policy, channel: (one('channel', false) || 'stable') as Channel, rolloutPercent: rollout ? Number(rollout) : 100, ...(minApp ? { minAppVersion: minApp } : {}) };
   };

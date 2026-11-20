@@ -1,5 +1,3 @@
-// 대화 판정 평가 A층(tests/chat-eval/route, ADR-051 6절)의 라벨 세트·채점·러너 배선 시험. 키도 네트워크도 쓰지 않는다(--fake·--estimate).
-// 실모델 기준선은 여기서 보지 않는다(reports/chat-eval/route-baseline-*.md).
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
@@ -25,7 +23,6 @@ describe('대화 판정 평가 A층', () => {
     assert.ok(ROUTE_CASES.filter((c) => c.corrects).length >= 20);
     assert.ok(ROUTE_CASES.filter((c) => c.ctx.device === 'phone').length >= 20);
     assert.ok(ROUTE_CASES.some((c) => c.act === 'task' && c.advice));
-    // 새 계산서는 카드가 열려 있어도 고치는 말이 아니다
     assert.ok(ROUTE_CASES.some((c) => c.act === 'task' && !c.corrects && (c.ctx.cards.length || c.ctx.pending)));
   });
 
@@ -37,7 +34,6 @@ describe('대화 판정 평가 A층', () => {
     const rows = perfect().map((r) => (r.id === issue.id ? { ...r, act: { got: 'smalltalk', conf: 0.9 } } : r.id === small.id ? { ...r, act: { got: 'task', conf: 0.5 } } : r));
     const t = scoreRoute(ROUTE_CASES, rows, OPTS);
     assert.ok(t.gate.issueMiss! > 0);
-    // 확신이 낮은 잘못 열기는 unsure(도구 전부)라 관문에 걸리지 않는다
     assert.equal(t.gate.falseOpen, 0);
     assert.ok(t.sure!.unsure! > 0);
   });
@@ -55,7 +51,6 @@ describe('대화 판정 평가 A층', () => {
       await node(['--target=draft', '--fake', '--limit=5', `--out=${out}`]);
       const rep = JSON.parse(fs.readFileSync(out, 'utf8')) as { summary: { model: string; score: { n: number; errors: number } }; rows: RouteRow[] };
       assert.deepEqual([rep.summary.model, rep.summary.score.n, rep.summary.score.errors, rep.rows.length], ['fake', 5, 0, 5]);
-      // 가짜 답(이름 키 객체)도 게이트웨이 정규화(systemOneAnswers)를 지나 채점까지 간다
       assert.deepEqual([rep.rows[0]!.act, rep.rows[0]!.domain, rep.rows[0]!.corrects, rep.rows[0]!.advice], [{ got: 'task', conf: 0.9 }, { got: 'invoice', conf: 0.9 }, 0.1, 0.05]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

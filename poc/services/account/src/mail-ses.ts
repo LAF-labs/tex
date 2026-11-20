@@ -1,11 +1,3 @@
-// AWS SES v2 메일 어댑터(D09 §1 Phase 1 환경 "AWS SES 서울"). 공급사 종속 코드는 이 파일 한 곳이다(ADR-015).
-// 켜는 조건: MAIL_PROVIDER=ses(기본은 mock). 운영 env·자격 증명은 저장소에 없다(deploy README "SES 켜기 — 사용자 단계").
-//
-// 송신 허용 목록(이 파일이 강제): POST https://email.<허용 리전>.amazonaws.com/v2/email/outbound-emails 하나뿐이다.
-// 리디렉션은 따르지 않는다. 엔진의 packages/net Egress(PC 송신 관문)에는 넣지 않는다: 서버만 SES로 보내고, PC 허용 목록을 넓히지 않는다.
-//
-// 본문은 종류별 고정 문구다. 값으로 들어가는 것은 6자리 코드뿐이다(이메일 주소·계정·기기 이름·IP 없음). 수신 주소는 Destination에만 있다.
-// 로그·이벤트·오류에는 주소·코드·응답 본문을 넣지 않는다(이벤트 이름만).
 import { createHash, createHmac } from 'node:crypto';
 import type { MailSender, NoticeKind } from './adapters.ts';
 
@@ -29,7 +21,6 @@ export function sesEndpointAllowed(url: string): boolean {
 /** 메일 실패. code는 이벤트 이름에 쓰는 고정 값이고, 응답 본문(주소를 되풀이할 수 있다)은 담지 않는다 */
 export class MailError extends Error {
   readonly code: 'mail.throttled' | 'mail.unavailable' | 'mail.auth_failed' | 'mail.config' | 'mail.rejected' | 'mail.not_allowed';
-  /** 같은 메일을 나중에 다시 보내면 될 수 있는가(429·5xx·네트워크·시간 초과). 아니면 설정·거부라 다시 보내도 같다 */
   readonly retryable: boolean;
   constructor(code: MailError['code'], retryable: boolean) {
     super(code);
@@ -38,21 +29,15 @@ export class MailError extends Error {
   }
 }
 
-// ---------- 서명(AWS Signature Version 4) ----------
-
 const sha256Hex = (b: string | Buffer) => createHash('sha256').update(b).digest('hex');
 const hmac = (k: Buffer | string, s: string) => createHmac('sha256', k).update(s, 'utf8').digest();
 
 export interface SigV4Input {
   method: string;
-  /** 이미 URI 인코딩된 경로 */
   path: string;
-  /** 정규화된 쿼리 문자열(없으면 빈 문자열) */
   query?: string;
-  /** 서명할 헤더(이름은 소문자, host·x-amz-date 포함) */
   headers: Record<string, string>;
   payloadSha256: string;
-  /** YYYYMMDDTHHMMSSZ */
   amzDate: string;
   region: string;
   service: string;
@@ -77,8 +62,6 @@ export function sigv4(i: SigV4Input): string {
 }
 
 export const amzDate = (ms: number) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-
-// ---------- 본문(고정 문구) ----------
 
 export type MailKind = 'code' | 'reset_code' | 'reauth_code' | NoticeKind;
 
@@ -110,7 +93,6 @@ export function mailContent(kind: MailKind, code?: string): { subject: string; t
   if (kind === 'code' || kind === 'reset_code' || kind === 'reauth_code') {
     if (!code || !/^\d{6}$/.test(code)) throw new MailError('mail.rejected', false);
     const what = kind === 'code' ? '로그인' : kind === 'reset_code' ? '비밀번호 재설정' : '본인 확인';
-    // 코드는 본문에만(알림 미리보기·잠금 화면에 제목이 보인다)
     return { subject: `${PREFIX}${what} 코드`, text: `${what} 코드: ${code}\n10분 동안 쓸 수 있어요. 요청하지 않았다면 이 메일을 무시하세요.${FOOTER}` };
   }
   const t = NOTICE_TEXT[kind];
@@ -118,24 +100,19 @@ export function mailContent(kind: MailKind, code?: string): { subject: string; t
   return { subject: PREFIX + t.subject, text: t.body + FOOTER };
 }
 
-// ---------- 송신 ----------
-
 export interface SesOptions {
   region: SesRegion;
-  /** 보내는 주소(SES에서 인증한 도메인) */
   from: string;
   accessKeyId: string;
   secretAccessKey: string;
   fetchFn?: typeof fetch;
   now?: () => number;
   timeoutMs?: number;
-  /** 이벤트 이름만(`account.mail_ses.<결과>`) */
   onEvent?: (name: string) => void;
 }
 
 const ADDRESS = /^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,}$/;
 
-/** SES 오류 종류 → 분류. 400 중 설정 문제(계정 정지·발송 중지·도메인 미인증)는 다시 보내도 같다 */
 function classify(status: number, errorType: string): MailError {
   const t = errorType.split(':')[0]!.trim();
   if (status === 429 || t === 'TooManyRequestsException' || t === 'LimitExceededException') return new MailError('mail.throttled', true);
@@ -154,18 +131,15 @@ export class SesMailSender implements MailSender {
     if (!ADDRESS.test(o.from)) throw new Error('config_SES_FROM_ADDRESS');
     if (!/^[A-Z0-9]{16,128}$/.test(o.accessKeyId)) throw new Error('config_SES_ACCESS_KEY_ID');
     if (!/^[A-Za-z0-9/+=]{20,128}$/.test(o.secretAccessKey)) throw new Error('config_SES_SECRET_ACCESS_KEY');
-    // undefined로 넘긴 선택 값이 기본값을 덮지 않게 ??로 채운다
     this.#o = { ...o, fetchFn: o.fetchFn ?? fetch, now: o.now ?? Date.now, timeoutMs: o.timeoutMs ?? 10_000, onEvent: o.onEvent ?? (() => undefined) };
     this.#endpoint = sesOrigin(o.region) + SES_PATH;
   }
 
-  /** 계정 서비스 env(접두 뺀 이름): SES_FROM_ADDRESS·SES_ACCESS_KEY_ID ⚿·SES_SECRET_ACCESS_KEY ⚿. 리전은 서울 고정 */
   static fromEnv(env: NodeJS.ProcessEnv, extra: Pick<SesOptions, 'fetchFn' | 'now' | 'onEvent'> = {}): SesMailSender {
     const need = (n: string) => env[n] || (() => { throw new Error(`config_${n}`); })();
     return new SesMailSender({ region: 'ap-northeast-2', from: need('SES_FROM_ADDRESS'), accessKeyId: need('SES_ACCESS_KEY_ID'), secretAccessKey: need('SES_SECRET_ACCESS_KEY'), ...extra });
   }
 
-  /** 비밀이 직렬화·로그로 새지 않게 */
   toJSON(): unknown {
     return { provider: 'ses', region: this.#o.region };
   }
@@ -199,7 +173,6 @@ export class SesMailSender implements MailSender {
     const payloadSha256 = sha256Hex(body);
     const headers: Record<string, string> = { 'content-type': 'application/json', host, 'x-amz-content-sha256': payloadSha256, 'x-amz-date': date };
     const authorization = sigv4({ method: 'POST', path: SES_PATH, headers, payloadSha256, amzDate: date, region: this.#o.region, service: 'ses', accessKeyId: this.#o.accessKeyId, secretAccessKey: this.#o.secretAccessKey });
-    // host는 fetch가 URL로 붙인다(서명에는 넣었다)
     const sent = Object.fromEntries(Object.entries(headers).filter(([k]) => k !== 'host'));
     let res: Response;
     try {
@@ -208,10 +181,8 @@ export class SesMailSender implements MailSender {
       this.#o.onEvent('account.mail_ses.unavailable');
       throw new MailError('mail.unavailable', true);
     }
-    // 응답 본문은 읽어 버린다(연결 재사용). 내용은 오류에도 이벤트에도 넣지 않는다
     const text = await res.text().catch(() => '');
     if (res.ok) {
-      // 2xx면 SES가 받았다. MessageId가 없어도 다시 보내지 않는다(중복 발송보다 낫다)
       let id: unknown;
       try {
         id = (JSON.parse(text) as { MessageId?: unknown }).MessageId;

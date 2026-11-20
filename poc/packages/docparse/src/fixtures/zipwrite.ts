@@ -1,5 +1,3 @@
-// 테스트용 ZIP·xlsx 쓰기(합성 픽스처·퍼징 시드 전용, 제품 경로에서 쓰지 않는다). 머리 크기를 일부러 속일 수 있다.
-
 const CRC_TABLE = (() => {
   const t = new Uint32Array(256);
   for (let n = 0; n < 256; n++) {
@@ -26,11 +24,8 @@ export async function deflateRaw(b: Uint8Array): Promise<Uint8Array> {
 export interface ZipItem {
   name: string;
   data: Uint8Array | string;
-  /** 기본 deflate */
   store?: boolean;
-  /** 중앙 디렉터리에 적을 풀린 크기(거짓말 시험) */
   lieSize?: number;
-  /** 일반 목적 플래그(암호 비트 시험) */
   flags?: number;
   method?: number;
 }
@@ -158,7 +153,6 @@ export async function writeXlsx(sheets: FixtureSheet[], extra: ZipItem[] = [], o
   ]);
 }
 
-/** EUC-KR 인코딩(플랫폼 TextDecoder로 역표를 만든다. 합성 CSV 전용) */
 let eucMap: Map<string, number[]> | null = null;
 export function encodeEucKr(s: string): Uint8Array {
   if (!eucMap) {

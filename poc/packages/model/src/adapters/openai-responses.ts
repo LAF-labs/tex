@@ -1,6 +1,3 @@
-// OpenAI Responses(Terra) 어댑터 최소판(D04 §4). store:false 고정, previous_response_id 미사용,
-// 이전 output을 replay로 그대로 이어 붙인다. 응답 도구 호출은 로컬 툴셋 정의·스키마로 다시 검증한다(C-24).
-// BYOK에는 게이트웨이 태그가 없으므로 어댑터가 실행 범위 HMAC 태그를 붙이고 replay 때 확인한다(gateway-request replay 규칙과 같은 모양).
 import { createHmac, randomBytes } from 'node:crypto';
 import ajv2020 from 'ajv/dist/2020.js';
 import OpenAI from 'openai';
@@ -17,12 +14,7 @@ import { AdapterError } from './types.ts';
 export const TERRA = 'gpt-6.1-terra';
 
 export interface OpenAIResponsesOptions {
-  /** BYOK 키. transport가 'gateway'면 쓰지 않는다(공급사 클라이언트도 만들지 않는다). */
   apiKey?: string;
-  /**
-   * byok(기본): 공급사 직결, 어댑터가 실행 범위 HMAC 태그를 붙인다. gateway: /v1/respond로 보내고 태그는 게이트웨이가 준다
-   * (게이트웨이가 replay 태그를 검증하므로 로컬 태그 확인은 하지 않는다, D04 §7). 응답 파싱·도구 호출 검증은 같다(C-24).
-   */
   transport?: 'byok' | 'gateway';
   egress: Egress;
   model?: string;
@@ -39,7 +31,6 @@ export class OpenAIResponsesAdapter {
   private readonly client: OpenAI | null;
   private readonly egress: Egress;
   private readonly opts: OpenAIResponsesOptions;
-  /** 프로세스 수명 키. 태그는 이 프로세스가 받은 출력임을 증명할 뿐 저장하지 않는다. */
   private readonly tagKey = randomBytes(32);
   private readonly ajv = new Ajv2020({ strict: false });
   private readonly validators = new Map<string, ValidateFunction>();
@@ -48,7 +39,6 @@ export class OpenAIResponsesAdapter {
     this.opts = opts;
     this.egress = opts.egress;
     this.model = opts.model ?? TERRA;
-    // 조직·프로젝트는 환경 변수(OPENAI_ORG_ID·OPENAI_PROJECT_ID)에서 읽지 않는다(N-23). 주소는 egress가 고정한다.
     if (opts.transport !== 'gateway' && !opts.apiKey) throw new Error('OpenAIResponsesAdapter: byok transport needs apiKey');
     this.client = opts.transport === 'gateway' ? null : new OpenAI({ apiKey: opts.apiKey, organization: null, project: null, fetch: opts.egress.providerFetch, maxRetries: 0, timeout: opts.timeoutMs ?? 60_000 });
   }
@@ -113,7 +103,6 @@ export class OpenAIResponsesAdapter {
         return fail('provider:egress');
       }
       if (!isRespondResponse(r)) return fail('gateway:bad_response');
-      // 게이트웨이가 다른 툴셋 정의(접두·도구·출력 스키마)로 불렀으면 결과를 쓰지 않는다(C-24, questionsDigest와 같은 이유).
       if (r.toolsetDigest !== toolsetDigest(t)) return fail('toolset_digest_mismatch');
       data = { status: r.status, output: r.output.map((o) => o.item), usage: r.usage };
       gatewayTags = r.output.map((o) => o.tag);
@@ -131,7 +120,6 @@ export class OpenAIResponsesAdapter {
       data = res.value.data as unknown as typeof data;
     }
     const u = (data.usage ?? {}) as { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number } };
-    // 게이트웨이 경로는 캐시 토큰을 0으로 둔다(D04 §7 적중 여부 오라클 차단, GatewayDecideAdapter와 같다). 게이트웨이가 실수로 넘겨도 쓰지 않는다.
     const d = viaGateway ? undefined : u.input_tokens_details;
     const usage = { inputTokens: u.input_tokens ?? 0, cachedTokens: d?.cached_tokens ?? 0, cacheWriteTokens: d?.cache_write_tokens ?? 0, outputTokens: u.output_tokens ?? 0 };
     const items = data.output ?? [];

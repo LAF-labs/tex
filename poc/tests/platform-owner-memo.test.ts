@@ -1,5 +1,3 @@
-// 폴더 소유자 확인 기억(ADR-041, WIN-REALDEVICE §6.1). 느린 Windows PC에서 PowerShell Get-Acl이 3.4~15초 걸려,
-// 신뢰 소유자로 확인한 폴더는 같은 폴더(볼륨·파일 ID·생성 시각)인 동안 프로세스당 한 번만 읽는다. 시험은 읽기를 주입해 모든 OS에서 돈다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -34,7 +32,6 @@ describe('OwnerMemo(ADR-041)', () => {
       assert.equal(await memo.isTrusted(dir, ME), true);
       assert.equal(reads, 1);
       assert.equal(memo.size, 1);
-      // 관리자·SYSTEM 소유도 신뢰 소유자다(isTrustedOwner)
       const admin = new OwnerMemo(async () => 'S-1-5-32-544');
       assert.equal(await admin.isTrusted(dir, ME), true);
     } finally {
@@ -55,7 +52,6 @@ describe('OwnerMemo(ADR-041)', () => {
       assert.equal(await memo.isTrusted(dir, ME), true);
       assert.equal(await memo.isTrusted(dir, ME), true);
       assert.equal(reads, 3);
-      // 기억한 소유자라도 다른 사용자에게는 신뢰 소유자가 아니다
       assert.equal(await memo.isTrusted(dir, OTHER), false);
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
@@ -99,12 +95,10 @@ describe('OwnerMemo(ADR-041)', () => {
       fail = false;
       assert.equal(await memo.isTrusted(dir, ME), true);
       assert.equal(reads, 2, '실패는 기억하지 않는다');
-      // 읽는 동안 다른 폴더가 됨
       let n = 0;
       const shifting = new OwnerMemo(async () => ME, async () => `id-${n++}`);
       assert.equal(await shifting.isTrusted(dir, ME), true);
       assert.equal(shifting.size, 0);
-      // 식별 없음
       const file = path.join(root, 'f');
       await fs.writeFile(file, 'x');
       assert.equal(await dirIdentity(file), null);
@@ -148,7 +142,6 @@ describe('금고 폴더 확인 미리 하기(ADR-041)', () => {
       const line = log.lines.find((l) => l.includes('vault.dir_check_warm'));
       assert.ok(line);
       assert.match(line, /"ok":false/);
-      // 도구 예외도 삼키고 남긴다
       const throwing = new Vault({ paths, log, keyStore: new MemoryKeyStore(), dirGuard: { ...guard, checkPrivate: async () => { throw new Error('boom'); } } });
       await throwing.warmDirChecks();
       assert.equal(log.lines.filter((l) => l.includes('vault.dir_check_warm')).length, 2);

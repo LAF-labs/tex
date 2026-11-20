@@ -1,5 +1,3 @@
-// 릴레이 WSS 클라이언트(ws-link, services/relay/API.md): 주입한 소켓만 쓰고, wss 강제(로컬 개발만 ws),
-// 경로 규칙(룸·우편함 라이브), 우편함 헤더(기기 토큰 DPoP + X-Mbx-Read/Write), 토큰은 URL에 없고, 프레임 순서를 지킨다.
 import assert from 'node:assert/strict';
 import { describe, it, type TestContext } from 'node:test';
 import { allowDevLanHosts, b64url, encodeHs, relayOrigin, relayUrl, wsRelayClient, KIND, RELAY_CLOSE, RELAY_PING, type WebSocketLike } from '@sax/remote';
@@ -115,7 +113,7 @@ describe('ws-link(services/relay/API.md)', () => {
     assert.deepEqual(authCalls, [{ htm: 'GET', htu: `https://relay.tex.test${path}` }]);
     assert.deepEqual(ws.headers, { Authorization: 'DPoP sxd1.test', DPoP: 'proof', 'X-Mbx-Read': b64url(TOK.read), 'X-Mbx-Write': b64url(TOK.write) });
     assert.ok(!ws.url.includes(b64url(TOK.read)) && !ws.url.includes(b64url(TOK.write)));
-    assert.equal(ws.sent.length, 0); // 첫 메시지(join)는 없다
+    assert.equal(ws.sent.length, 0);
     ws.msg(JSON.stringify({ t: 'peer', online: false }));
     const link = await p;
     let peers = 0;
@@ -127,7 +125,6 @@ describe('ws-link(services/relay/API.md)', () => {
     assert.equal(peers, 1);
     ws.msg(JSON.stringify({ t: 'peer', online: true }));
     assert.equal(peers, 1);
-    // 상대가 나갔다 다시 오면 다시 알린다. 나가면 onPeerGone(없던 상대가 또 없다고 와도 한 번)
     assert.equal(gone, 0);
     ws.msg(JSON.stringify({ t: 'peer', online: false }));
     ws.msg(JSON.stringify({ t: 'peer', online: false }));
@@ -181,7 +178,7 @@ describe('ws-link(services/relay/API.md)', () => {
     const slowBlob = { arrayBuffer: () => new Promise<ArrayBuffer>((r) => setTimeout(() => r(new Uint8Array([1]).buffer), 20)) };
     ws.msg(slowBlob);
     ws.msg(new Uint8Array([2]).buffer);
-    ws.msg(new Uint8Array(65_536)); // 상한 초과
+    ws.msg(new Uint8Array(65_536));
     ws.msg(new Uint8Array([3]));
     await tick(60);
     assert.deepEqual(got, [1, 2, 3]);
@@ -193,14 +190,10 @@ describe('ws-link(services/relay/API.md)', () => {
     assert.ok(closed && link.closed);
   });
 
-  // ping·keepalive는 타이머 횟수를 센다. 실제 시계로 10ms 간격을 45·60ms 재면 Windows(타이머 해상도 약 15.6ms)와 바쁜 러너에서
-  // 횟수가 모자라거나 pong 간격이 늘어 죽은 연결로 끊겼다(n >= 2 실패). 가짜 시계(setInterval·setTimeout·Date)로 정확히 돌린다.
-  // setImmediate는 그대로 두어 입장 처리(마이크로태스크·Promise)를 흘려 보낸다.
   const fakeClock = (t: TestContext) => {
     t.mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'] });
     return {
       flush: () => new Promise<void>((r) => setImmediate(r)),
-      /** ms만큼 1ms씩 시계를 앞으로 보낸다(사이사이 Promise를 흘린다). */
       advance: async (ms: number, each?: () => void) => {
         for (let i = 0; i < ms; i++) {
           t.mock.timers.tick(1);

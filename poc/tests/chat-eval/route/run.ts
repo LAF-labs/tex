@@ -1,14 +1,3 @@
-// 대화 판정 평가 A층 러너(ADR-051 6절, 1단계). 같은 라벨 세트(cases.ts)를 세 대상에 돌려 기준선을 잰다.
-//   draft  = jev + 판정 초안 번들(chat_route_draft.json, 머리말 _common + chat_route_draft.ko.txt). 3단계 chat_route_v1의 출발점.
-//   v1     = jev + 제품 번들 chat_route_v1(ADR-057: 초안 질문 + 받는 방식 reply_mode·반응 reaction). PC 엔진 chat.route·폰이 부르는 것.
-//   intent = jev + 지금 제품 번들 intent_route_v1(개인 프로필 대화가 쓰는 판정). 플레이북을 act(거친 셋)·domain으로 옮겨 본다.
-//   agent  = 지금 PC 사업자 대화 chat_agent(생성 모델 한 번, 도구 8개). 첫 출력(부른 도구·답 종류)을 act·domain으로 옮겨 본다.
-// 와이어는 게이트웨이 정본 함수(systemOneDecideBody·systemOneAnswers·openAIResponsesBody)를 그대로 쓰고, 가림은 제품 규칙(registerChatRecords)이다.
-//   set -a; . ./.env.local; set +a
-//   node --conditions=development tests/chat-eval/route/run.ts --target=v1|draft|intent|agent [--estimate] [--limit=N] [--jobs=6] [--cap=1] [--out=/abs.json]
-//   jev 모델: --jev=typesafe/jev-1.14(기본). agent 모델: EVAL_MODEL(필수), EVAL_PROVIDERS(선택, run.ts와 같음).
-// --estimate는 모델을 부르지 않고 입력 크기로 예상 비용만 적는다. --fake는 늘 같은 답을 내는 가짜 상류로 배선만 본다.
-// 키·응답 원문은 남기지 않는다. 보고서에는 사례 ID·라벨·고른 값·확률·지연·입력 토큰만 들어간다(문장은 가상 장부라 cases.ts에 있다).
 import fs from 'node:fs';
 import path from 'node:path';
 import { reactedLine, registerChatRecords } from '@sax/chat-core';
@@ -21,7 +10,6 @@ import { scoreReply, scoreRoute, type RouteRow } from './score.ts';
 
 const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3);
 const TARGET = (arg('target') ?? 'draft') as 'v1' | 'draft' | 'intent' | 'agent';
-/** 상태 줄을 싣는 판정(초안·제품 번들) */
 const ROUTED = TARGET === 'draft' || TARGET === 'v1';
 const FAKE = process.argv.includes('--fake');
 const ESTIMATE = process.argv.includes('--estimate');
@@ -33,9 +21,7 @@ const JOBS = Number(arg('jobs') ?? 6);
 const LIMIT = Number(arg('limit') ?? Infinity);
 const COST_CAP = Number(arg('cap') ?? 1);
 const OUT = arg('out') ?? path.join(import.meta.dirname, `../../../reports/chat-eval/route-${TARGET}.json`);
-/** 100만 토큰당 달러. jev는 입력만 과금(s7-regression PRICES, 2026-11-16). agent는 run.ts와 같은 한도 단가(DeepSeek 공식 피크). */
 const PRICE = { jev: 0.042, agentIn: 0.3, agentCached: 0.006, agentOut: 1.2 };
-/** 보고서의 원 환산(가정) */
 export const KRW_PER_USD = 1450;
 
 if (!['v1', 'draft', 'intent', 'agent'].includes(TARGET)) throw new Error('--target=v1|draft|intent|agent');
@@ -44,7 +30,6 @@ if (!FAKE && !ESTIMATE && (!KEY || (TARGET === 'agent' && !AGENT_MODEL))) {
   process.exit(2);
 }
 
-// ── 판정 정의 ──
 const catalog = BundleCatalog.load();
 const common = fs.readFileSync(new URL('../../../packages/model/bundles/prefixes/_common.ko.txt', import.meta.url), 'utf8').trim();
 const draftDef = JSON.parse(fs.readFileSync(new URL('./chat_route_draft.json', import.meta.url), 'utf8')) as { questions: Question[] };
@@ -53,7 +38,6 @@ const intent = catalog.get('intent_route_v1')!;
 const v1 = catalog.get('chat_route_v1')!;
 const BUNDLE = TARGET === 'draft' ? { prefix: draftPrefix, questions: draftDef.questions } : TARGET === 'v1' ? { prefix: v1.prefixText, questions: v1.def.questions } : { prefix: intent.prefixText, questions: intent.def.questions };
 
-// ── 입력(가린 문장 + 상태 줄) ──
 const RECS = [
   ...SEED.cps.map((c, i) => ({ recordId: `cp:${i}`, names: [c.name], emails: [] as string[], bizNos: [] as string[] })),
   { recordId: 'pf:0', names: ['바다디자인', '박바다'], emails: [] as string[], bizNos: [] as string[] },
@@ -72,7 +56,6 @@ function cardsLine(c: RouteCase, m: (t: string) => string): string {
   return c.ctx.cards.length ? `화면: ${c.ctx.cards.map((x, i) => `카드 d${i + 1}(세금계산서, 거래처 ${m(x.cp)}, 금액 ${x.amount ? '있음' : '없음'}, 부가세 ${x.vat ? VAT[x.vat] : '미정'}, 품목 ${x.item ? '있음' : '없음'})`).join('; ')}` : '화면: 열린 카드 없음';
 }
 
-/** 판정 초안 입력: ADR-051 2절 ①의 상태 줄(기기·카드·진행 중인 발급·되물은 칸) + 최근 대화 + 이번 문장 */
 export function draftInput(c: RouteCase): string {
   const m = masker(c);
   const p = c.ctx.pending;
@@ -88,20 +71,16 @@ export function draftInput(c: RouteCase): string {
   ].join('\n');
 }
 
-/** 지금 intent.resolve 입력: 가린 문장 하나(상태 없음) */
 export function intentInput(c: RouteCase): string {
   return masker(c)(c.say);
 }
 
-/** 지금 chat_agent 입력: 엔진 compose와 같은 꼴([앞 대화] + [지금] 오늘·화면·사용자). 진행 중인 발급·되물은 칸은 지금 프레임에 없다. */
 export function agentInput(c: RouteCase): string {
   const m = masker(c);
   const now = `[지금]\n${TODAY_LINE}\n${cardsLine(c, m)}\n사용자: ${m(c.say)}`;
   return c.ctx.prev.length ? `[앞 대화]\n${c.ctx.prev.map(([u, a]) => `사용자: ${m(u)}\n앱: ${m(a)}`).join('\n')}\n${now}` : now;
 }
 
-// ── 판정 결과 옮기기 ──
-/** intent_route_v1 플레이북 → (act, domain). none_of_these는 거친 act로만 talk다(일상·도움말·기타를 가르지 않는다). */
 export const PLAYBOOK_MAP: Record<string, [string, string]> = {
   'hometax.invoice.issue': ['task', 'invoice'],
   'hometax.invoice.amend': ['task', 'invoice'],
@@ -123,7 +102,6 @@ export const PLAYBOOK_MAP: Record<string, [string, string]> = {
   'payroll.ledger': ['task', 'none'],
   none_of_these: ['other', 'none'],
 };
-/** chat_agent 첫 출력 → (act, domain, corrects). 도구가 있으면 도구로, 없으면 답 종류로 본다. */
 const TOOL_MAP: Record<string, [string, string, number]> = {
   invoice_draft: ['task', 'invoice', 0],
   draft_edit: ['followup', 'invoice', 1],
@@ -137,10 +115,8 @@ const TOOL_MAP: Record<string, [string, string, number]> = {
 const KIND_MAP: Record<string, [string, string]> = {
   smalltalk: ['smalltalk', 'none'],
   tax_advice: ['tax_advice', 'none'],
-  // 되묻기는 지금 세금계산서 칸만 묻는다
   ask: ['task', 'invoice'],
   did: ['task', 'invoice'],
-  // 할 수 없음·도구 없는 답: 무엇을 원했는지 알 수 없다(거친 act는 talk)
   cannot: ['other', 'none'],
   answer: ['app_help', 'none'],
 };
@@ -154,7 +130,6 @@ function pickOf(a: Decision | undefined): { got: string | null; conf: number | n
 }
 const predOf = (a: Decision | undefined) => (a?.type === 'predicate' && Number.isFinite(Number(a.probability)) ? Number(a.probability) : null);
 
-// ── 호출 ──
 let spentUsd = 0;
 async function post(url: string, body: unknown): Promise<Record<string, unknown>> {
   for (let attempt = 0; ; attempt++) {
@@ -225,9 +200,7 @@ async function agent(c: RouteCase): Promise<RouteRow> {
   return { id: c.id, act: { got: act, conf: null }, domain: { got: domain, conf: null }, corrects, advice, ms, inputTokens: u.input_tokens ?? 0, ...(act ? {} : { error: 'no_output' }) };
 }
 
-// ── 예상 비용(모델을 부르지 않음) ──
 function estimate(cases: readonly RouteCase[]): { calls: number; inputTokens: number; usd: number; krw: number } {
-  // 한국어는 UTF-8 3바이트 글자가 많아 바이트/2를 토큰으로 잡는다(넉넉한 쪽). agent는 머리말이 캐시되지 않는다고 본다.
   const tok = (s: string) => Math.ceil(Buffer.byteLength(s, 'utf8') / 2);
   let inputTokens = 0;
   let usd = 0;

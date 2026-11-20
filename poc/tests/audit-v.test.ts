@@ -1,4 +1,3 @@
-// 감사 D 금고 패키지(V1~V14) 회귀 시험. 가짜 CDP 연결로 결정적인 것은 여기서, 실 Chrome이 필요한 것은 harness로 본다.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
@@ -33,7 +32,6 @@ import { RawEngine, sleep } from './raw-engine.ts';
 type Json = Record<string, unknown>;
 type Handler = (params: Json, sessionId?: string) => Json | Promise<Json>;
 
-// 실 Chrome 화면 확인 식(I-4). 엔진 SIGNAL_INSPECT_EXPR와 글자 하나까지 같다(해시 고정).
 const INSPECT_EXPR = "(() => ({ text: document.body ? document.body.innerText : '', status: ((performance.getEntriesByType('navigation')[0] || {}).responseStatus) || 0 }))()";
 
 class FakeConn extends EventEmitter {
@@ -70,11 +68,9 @@ interface FakePage {
   connected: boolean;
   len: number;
   value: string;
-  /** 있으면 insertText가 이것을 기다린다(입력 도중 상태 재현). */
   gate?: Promise<void>;
 }
 
-/** 실행 page(RUN)를 노출하고 엔진 세션(E-1)까지 붙인 Relay + 가짜 password 칸 하나. */
 async function setup(opts: { now?: () => number } = {}) {
   const conn = new FakeConn();
   const toEngine: Json[] = [];
@@ -127,12 +123,10 @@ const fillReq = (over: Partial<FillRequest> = {}): FillRequest => ({
   ...over,
 });
 const bind = (over: Partial<SecretInputBind> = {}): SecretInputBind => ({ runId: 'r1', kind: 'portal_password', scope: 'business', ...over });
-/** 금고가 secret.needed를 보낸 것처럼(포트 시험은 Chrome 없이 ops를 직접 꽂으므로 요청 기록을 넣어 둔다). */
 const need = (v: Vault, b: Record<string, unknown>, ttlMs = 60_000) =>
   (v as unknown as { needs: Map<string, number> }).needs.set(`${b.runId}|${b.kind}|${b.scope}`, Date.now() + ttlMs);
 const enc = (s: string) => new TextEncoder().encode(s);
 
-/** 크롬 없이 쓰는 금고(포트 시험). paths는 임시 루트. */
 async function bareVault(opts: { keyStore?: MemoryKeyStore } = {}) {
   const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-auditv-'));
   const paths = appPaths(root);
@@ -170,7 +164,6 @@ async function bareVault(opts: { keyStore?: MemoryKeyStore } = {}) {
 
 const noAnswer = <T>(p: Promise<T>, ms = 300) => Promise.race([p.then(() => 'answered', () => 'answered'), sleep(ms).then(() => 'silent')]);
 
-// ───────────────────────── V1 · N-04 ─────────────────────────
 describe('audit-v V1 Crashpad', () => {
   it('audit-v: buildChromeArgs always carries --disable-breakpad', () => {
     for (const extra of [[], ['--headless=new']]) {
@@ -189,7 +182,6 @@ describe('audit-v V1 Crashpad', () => {
       assert.equal(await removeCrashDumps(profile), 2);
       await assert.rejects(fs.lstat(path.join(profile, 'Crashpad')), /ENOENT/);
       assert.equal(await removeCrashDumps(profile), 0, '없으면 0');
-      // 링크 너머(밖 폴더)는 지우지 않는다
       const outside = path.join(base, 'outside');
       await fs.mkdir(outside);
       await fs.writeFile(path.join(outside, 'keep'), 'x');
@@ -202,7 +194,6 @@ describe('audit-v V1 Crashpad', () => {
   });
 });
 
-// ───────────────────────── V2 · N-18 ─────────────────────────
 describe('audit-v V2 비밀 창 개시 조건 재검사', () => {
   it('audit-v: profileBlocker re-reads files each call', async () => {
     const b = await bareVault();
@@ -213,18 +204,16 @@ describe('audit-v V2 비밀 창 개시 조건 재검사', () => {
       await fs.mkdir(path.dirname(prefs), { recursive: true });
       const ok = {
         credentials_enable_service: false, profile: { password_manager_enabled: false }, autofill: { profile_enabled: false, credit_card_enabled: false },
-        // 다운로드·저장 대화 상자 폴더 = staging(D05 §3.3)
         download: { default_directory: b.paths.staging, prompt_for_download: false }, savefile: { default_directory: b.paths.staging },
       };
       await fs.writeFile(prefs, JSON.stringify(ok));
       await fs.writeFile(path.join(b.paths.chromeProfile, 'Local State'), JSON.stringify({ user_experience_metrics: { reporting_enabled: false } }));
-      v.profileProblems = []; // 기동 1.5초 뒤 점검 통과
+      v.profileProblems = [];
       assert.equal(await v.profileBlocker(), null);
       await fs.writeFile(prefs, JSON.stringify({ ...ok, account_info: [{ gaia: 'x' }] }));
       assert.equal(await v.profileBlocker(), 'google_signin_detected', '세션 중 Google 로그인');
       await fs.writeFile(prefs, JSON.stringify({ ...ok, extensions: { settings: { abcdefghijklmnop: { location: 1 } } } }));
       assert.equal(await v.profileBlocker(), 'extension_not_allowed', '세션 중 확장 설치');
-      // 외부 구성요소 설치 중 Chrome이 먼저 쓰는 업데이트 확인 기록만 든 항목은 확장이 아니다(Windows 실기기, WIN-REALDEVICE §5.1)
       const secure = path.join(b.paths.chromeProfile, 'Default', 'Secure Preferences');
       await fs.writeFile(prefs, JSON.stringify(ok));
       await fs.writeFile(secure, JSON.stringify({ extensions: { settings: { nmmhkkegccagdldgiimedpiccmgmieda: { lastpingday: '13438339200344256' } } } }));
@@ -234,7 +223,6 @@ describe('audit-v V2 비밀 창 개시 조건 재검사', () => {
       await fs.writeFile(secure, JSON.stringify({ extensions: { settings: { abcdefghijklmnop: { lastpingday: '1', path: 'x' } } } }));
       assert.equal(await v.profileBlocker(), 'extension_not_allowed', 'location이 없어도 path가 있으면 설치 확장');
       await fs.rm(secure);
-      // 진단 이벤트에는 확장 ID만 남는다. ID 꼴이 아닌 키(경로 등)는 'unknown'으로 바뀐다(팀장 결정 2026-11-06).
       const wallet = 'nmmhkkegccagdldgiimedpiccmgmieda';
       await fs.writeFile(prefs, JSON.stringify({ ...ok, extensions: { settings: { [wallet]: { location: 1, path: '/Users/x/secret-ext', manifest: { name: 'Store' } }, 'C:\\Users\\x\\ext': { location: 4 } } } }));
       assert.equal(await v.profileBlocker(), 'extension_not_allowed', '기본 앱');
@@ -260,7 +248,6 @@ describe('audit-v V2 비밀 창 개시 조건 재검사', () => {
   });
 });
 
-// ───────────────────────── V3 · N-20 ─────────────────────────
 describe('audit-v V3 고정 화면 확인 식', () => {
   const policy = testPolicy();
   const tainted = { active: false, tainted: true };
@@ -270,7 +257,6 @@ describe('audit-v V3 고정 화면 확인 식', () => {
     assert.deepEqual(checkSessionCommand('Runtime.evaluate', { expression: INSPECT_EXPR }, tainted, policy, new Set()), { ok: true });
     assert.deepEqual(checkSessionCommand('Runtime.evaluate', { expression: `  (${INSPECT_EXPR})  ` }, tainted, policy, new Set()), { ok: true }, '바깥 괄호 한 쌍');
     assert.deepEqual(checkSessionCommand('Runtime.callFunctionOn', viaPlaywright(INSPECT_EXPR), tainted, policy, new Set()), { ok: true }, 'Playwright 문자열 인자');
-    // 같은 뜻이어도 글자가 다르면 면제하지 않는다
     assert.equal(checkSessionCommand('Runtime.evaluate', { expression: INSPECT_EXPR.replace('innerText', 'innerText ') }, tainted, policy, new Set()).ok, false);
   });
 
@@ -296,7 +282,6 @@ describe('audit-v V3 고정 화면 확인 식', () => {
       await page.goto(`${fx.origin}/login`);
       await warmForSecretWindow(page);
       const opened = await h.client.rpc('secretWindow.openForHuman', { runId: 'v3', targetId, frame: 'main', element: '#pw' });
-      // Linux CI에서 드물게 secret_window_refused(#108·#112). 거절 사유는 금고 로그에만 있어 실패 메시지에 싣는다(흔들림 추적).
       const refused = async () => (await Promise.all((await fs.readdir(h.paths.logs).catch(() => [])).map((f) => fs.readFile(path.join(h.paths.logs, f), 'utf8').catch(() => '')))).join('\n').split('\n').filter((l) => /secret_window_refused|profile_prefs_mismatch|extension_not_allowed|google_signin_detected/.test(l)).join('\n');
       assert.deepEqual(opened, { ok: true }, (opened as { ok: boolean }).ok ? undefined : `금고 로그:\n${await refused()}`);
       const vt = h.vault.relay!.targets.get(targetId)!;
@@ -306,12 +291,10 @@ describe('audit-v V3 고정 화면 확인 식', () => {
       await h.vault.relay!.send('Runtime.evaluate', { expression: `document.activeElement.blur()` }, vt.vaultSession);
       await closed;
       assert.equal(vt.win?.phase, 'tainted');
-      // 고정 식(문자열)은 통과, 같은 일을 하는 함수 식은 여전히 거부
       const seen = (await page.mainFrame().evaluate(INSPECT_EXPR)) as { text: string; status: number };
       assert.match(seen.text, /로그인/);
       assert.equal(seen.status, 200);
-      await assert.rejects(page.evaluate(() => document.body.innerText)); // Playwright는 중계 거부를 문맥 소멸 오류로 바꿔 알린다
-      // 엔진 쪽(E 패키지) SignalWatch가 같은 식을 쓰는지
+      await assert.rejects(page.evaluate(() => document.body.innerText));
       assert.equal(engine.SIGNAL_INSPECT_EXPR, INSPECT_EXPR);
       const hits: string[] = [];
       const watch = new engine.SignalWatch(page, { dict: [{ id: 'audit.v3', kind: 'busy', text: '로그인', source: 'audit-v' }], portalHost: () => true, onHit: (x) => hits.push(x.id), onDialog: (d) => void d.dismiss(), mono: () => 0 });
@@ -325,10 +308,8 @@ describe('audit-v V3 고정 화면 확인 식', () => {
   });
 });
 
-// ───────────────────────── V4 · N-17 ─────────────────────────
 describe('audit-v V4 누출 트립와이어·자기 스캔', () => {
   it('audit-v: known-value scrub before the engine is not a leak: value never reaches the engine, run is not halted, method is logged', async () => {
-    // 대표 실화면 run-fb6d0e95: ML4Web 가상키보드 칸 값이 엔진 읽기 응답에 섞였다. 금고가 엔진으로 보내기 전에 지웠으면 유출이 아니다(실행을 끊지 않는다).
     const s = await setup();
     const secret = 'TEST-CERT-leakwire01';
     s.relay.openWindow(s.t, 'typist', 'RUN', 7);
@@ -371,14 +352,12 @@ describe('audit-v V4 누출 트립와이어·자기 스캔', () => {
   });
 });
 
-// ───────────────────────── V5 · N-44 ─────────────────────────
 describe('audit-v V5 비밀 입력 포트 결속·TTL·secret.needed', () => {
   it('audit-v: secretInput port without bind is ignored', async () => {
     const b = await bareVault();
     try {
       const bads = [
         undefined, {}, bind({ runId: 'bad id!' }), bind({ scope: 'p1' as never }),
-        // 보안카드는 지원하지 않는다(대표 결정 2026-11-19): 칸 번호가 있든 없든 결속을 받지 않는다
         bind({ kind: 'security_card' as never }), { ...bind({ kind: 'security_card' as never }), row: 12 },
       ];
       for (const bad of bads) {
@@ -435,7 +414,6 @@ describe('audit-v V5 비밀 입력 포트 결속·TTL·secret.needed', () => {
     assert.equal(ops.secrets.size, 0);
     assert.ok(bytes.every((x) => x === 0), '0으로 덮었다');
     assert.deepEqual(s.events, [{ to: ['control'], name: 'secret.expired', data: { runId: 'r1', kind: 'portal_password' } }]);
-    // 쓰기 전에 꺼내면 타이머가 풀린다
     const kept = new OneShotSecrets(50, () => assert.fail('expired after take'));
     kept.provide(bind(), enc('TEST-CERT-ttl00002'));
     assert.ok(kept.take('r1', 'portal_password', 'business'));
@@ -465,17 +443,14 @@ describe('audit-v V5 비밀 입력 포트 결속·TTL·secret.needed', () => {
     assert.deepEqual(await s.ops.fill(fillReq()), { ok: false, reason: 'secret_missing' });
     assert.deepEqual(s.events, [{ to: ['control'], name: 'secret.needed', data: { runId: 'r1', targetId: 'RUN', kind: 'portal_password', scope: 'business' } }]);
     assert.equal(s.t.win, undefined, '창을 열지 않았다');
-    // 다른 실행의 값은 쓰지 않는다
     s.ops.secrets.provide(bind({ runId: 'r9' }), enc('TEST-CERT-otherrun'));
     assert.deepEqual(await s.ops.fill(fillReq()), { ok: false, reason: 'secret_missing' });
   });
 });
 
-// ───────────────────────── V6 · N-47 ─────────────────────────
 describe('audit-v V6 사람 입력 창 정착', () => {
   const human = { runId: 'r1', targetId: 'RUN', frame: 'main', element: '#pw' };
 
-  // 정착 판정은 주입한 시계로 본다(부하에서 타이머가 밀려도 결과가 같다). tick은 250ms 주기 판정을 직접 한 번 부른다.
   const humanTick = (s: Awaited<ReturnType<typeof setup>>) => (s.ops as unknown as { tickHuman(t: unknown): Promise<void> }).tickHuman(s.t);
 
   it('audit-v: human window survives a 1s blur from a keypad click', async () => {
@@ -484,12 +459,12 @@ describe('audit-v V6 사람 입력 창 정착', () => {
     assert.deepEqual(await s.ops.openForHuman(human), { ok: true });
     s.page.value = 'abc';
     s.page.len = 3;
-    s.page.active = false; // 가상키패드 클릭으로 blur
+    s.page.active = false;
     await humanTick(s);
     now += 1000;
     await humanTick(s);
     assert.equal(s.t.win?.phase, 'active', '1초 blur로는 닫히지 않는다');
-    s.page.active = true; // 키패드가 포커스를 돌려줌
+    s.page.active = true;
     now += 300;
     await humanTick(s);
     s.page.active = false;
@@ -497,7 +472,7 @@ describe('audit-v V6 사람 입력 창 정착', () => {
     now += 1000;
     await humanTick(s);
     assert.equal(s.t.win?.phase, 'active', '포커스가 돌아오면 다시 센다');
-    s.page.len = 4; // 키패드로 한 글자 더
+    s.page.len = 4;
     await humanTick(s);
     now += 1000;
     await humanTick(s);
@@ -518,11 +493,10 @@ describe('audit-v V6 사람 입력 창 정착', () => {
     s.page.len = 18;
     s.page.active = false;
     const watch = () => (s.ops as unknown as { human: Map<string, { idleSince?: number }> }).human.get('RUN');
-    // 주기 타이머가 blur를 처음 본 때까지(시계는 멈춰 있다)
     for (let i = 0; i < 200 && watch()?.idleSince === undefined; i++) await sleep(20);
     assert.equal(watch()?.idleSince, now);
     now += 1499;
-    await sleep(600); // 주기 판정이 두 번 이상 돈다
+    await sleep(600);
     assert.equal(s.t.win?.phase, 'active', '정착 전에는 닫지 않는다');
     now += 1;
     for (let i = 0; i < 200 && s.t.win?.phase === 'active'; i++) await sleep(20);
@@ -530,7 +504,6 @@ describe('audit-v V6 사람 입력 창 정착', () => {
   });
 });
 
-// ───────────────────────── V7 · N-43 ─────────────────────────
 describe('audit-v V7 창 상태 머신', () => {
   it('audit-v: requestClose during typist fill returns ok:false and window stays active', async () => {
     const s = await setup();
@@ -554,7 +527,6 @@ describe('audit-v V7 창 상태 머신', () => {
     assert.deepEqual(a, { ok: true });
     assert.deepEqual(b, { ok: false, reason: 'denied' });
     assert.equal(s.page.value, 'TEST-CERT-conc0001', '두 입력이 섞이지 않는다');
-    // 창 개시 중 human 창도 열리지 않는다
     const s2 = await setup();
     const gate = deferred();
     s2.ops.openBlocker = () => gate.promise.then(() => null);
@@ -566,7 +538,6 @@ describe('audit-v V7 창 상태 머신', () => {
   });
 });
 
-// ───────────────────────── V8 · N-77 ─────────────────────────
 describe('audit-v V8 트리거 허용 목록', () => {
   it('audit-v: run.begin rejects an unknown trigger', async () => {
     const b = await bareVault();
@@ -587,13 +558,11 @@ describe('audit-v V8 트리거 허용 목록', () => {
     assert.deepEqual(await s.ops.fill(fillReq({ runId: 'r3' })), { ok: false, reason: 'denied' }, '트리거 없음');
     assert.deepEqual(await s.ops.openForHuman({ runId: 'r2', targetId: 'RUN', frame: 'main', element: '#pw' }), { ok: false, reason: 'denied' });
     s.ops.runTriggers.set('r2', 'remote');
-    // remote 실행은 시작 게이트(SAX-start-v1) 통과 플래그가 있을 때만(ADR-029 결정 2).
     assert.deepEqual(await s.ops.fill(fillReq({ runId: 'r2' })), { ok: false, reason: 'denied' }, 'remote + startGate 없음');
     assert.deepEqual(await s.ops.fill(fillReq({ runId: 'r2', startGate: true })), { ok: true });
   });
 });
 
-// ───────────────────────── V9 · N-12 ─────────────────────────
 describe('audit-v V9 MHTML·리소스·옛 스냅숏', () => {
   it('audit-v: Page.captureSnapshot / Page.getResourceContent / DOMSnapshot.getSnapshot are denied in every state', () => {
     const policy = testPolicy();
@@ -606,7 +575,6 @@ describe('audit-v V9 MHTML·리소스·옛 스냅숏', () => {
   });
 });
 
-// ───────────────────────── V10 · N-51 ─────────────────────────
 describe('audit-v V10 쿠키·인증 헤더', () => {
   it('audit-v: stripAuthHeaders is case-insensitive', () => {
     const h: Json = { 'Set-Cookie': 'a=1', COOKIE: 'b=2', authorization: 'Bearer x', 'Content-Type': 'text/html' };
@@ -626,7 +594,7 @@ describe('audit-v V10 쿠키·인증 헤더', () => {
       const { sessionId } = await eng.attachRunPage();
       await eng.navigate(sessionId, `${fx.origin}/session`);
       await eng.navigate(sessionId, `${fx.origin}/redirect?to=/session`);
-      await eng.navigate(sessionId, `${fx.origin}/login`); // 다음 요청은 Cookie 헤더를 싣는다
+      await eng.navigate(sessionId, `${fx.origin}/login`);
       await sleep(300);
       assert.ok(fx.cookies.some((c) => c.includes('SAXTEST=')), 'Chrome은 쿠키를 받아 다시 보냈다(시험이 헛돌지 않게)');
       const sawResponse = eng.events.some((e) => e.method === 'Network.responseReceived' && String((e.params!.response as Json).url).endsWith('/session'));
@@ -644,7 +612,6 @@ describe('audit-v V10 쿠키·인증 헤더', () => {
   });
 });
 
-// ───────────────────────── V11 · N-78 ─────────────────────────
 describe('audit-v V11 알려진 값 변형 범위', () => {
   it('audit-v: known variants are dropped at endWindow(commit)', async () => {
     const s = await setup();
@@ -662,10 +629,8 @@ describe('audit-v V11 알려진 값 변형 범위', () => {
     const s = await setup();
     s.ops.secrets.provide(bind(), enc('TEST-CERT-order0001'));
     assert.deepEqual(await s.ops.fill(fillReq()), { ok: true });
-    const sid = 'E-1'; // setup의 첫 엔진 세션
-    // 같은 덩어리: 엔진 세션 이벤트(줄에 선다) 다음에 금고 세션의 커밋(바로 처리된다)
+    const sid = 'E-1';
     s.conn.emitEvent('Log.entryAdded', { entry: { source: 'network', level: 'info', text: 'body=TEST-CERT-order0001' } }, sid);
-    // 로그인 POST(커밋 직전): 받은 시점에 오염 상태였으므로 바디를 지우고 requestId를 오염으로 남긴다
     s.conn.emitEvent('Network.requestWillBeSent', { requestId: 'REQ-1', request: { url: 'http://127.0.0.1:1/login', method: 'POST', headers: {}, postData: 'pw=x', hasPostData: true } }, sid);
     s.conn.emitEvent('Page.frameNavigated', { frame: { id: 'RUN', url: 'http://127.0.0.1:1/done' } }, 'V-RUN');
     await s.relay.drained();
@@ -689,7 +654,7 @@ describe('audit-v V11 알려진 값 변형 범위', () => {
       b.vault.relay = s.relay;
       s.relay.openWindow(s.t, 'human', 'RUN', 7);
       s.relay.addKnownSecret('RUN', knownValueVariants('TEST-CERT-runend01'));
-      s.relay.addKnownSecret('GONE', knownValueVariants('TEST-CERT-runend02')); // 사라진 타깃의 남은 변형
+      s.relay.addKnownSecret('GONE', knownValueVariants('TEST-CERT-runend02'));
       await b.control.rpc('run.end', { runId: 'r1' });
       assert.ok(s.relay.knownVariantCount() > 0, '열린 창이 있으면 남긴다');
       s.relay.endWindow(s.t, 'detached');
@@ -705,7 +670,6 @@ describe('audit-v V11 알려진 값 변형 범위', () => {
   });
 });
 
-// ───────────────────────── V12 · N-30 ─────────────────────────
 describe('audit-v V12 DB 키 get/create 분리', () => {
   it('audit-v: missing key with an existing db fails with db.key_missing and writes no key', async () => {
     const b = await bareVault();
@@ -741,7 +705,6 @@ describe('audit-v V12 DB 키 get/create 분리', () => {
       assert.equal(k.length, 32);
       assert.deepEqual([...(await b.keyStore.get('db-key', 32))!], [...k]);
       await assert.rejects(b.vault.getDbKeyOnce(), /denied/, '기동당 1회는 그대로');
-      // 다음 기동: 같은 키
       const again = new Vault({ paths: b.paths, log: b.log, keyStore: b.keyStore });
       assert.deepEqual([...(await again.getDbKeyOnce())], [...k]);
     } finally {
@@ -750,13 +713,10 @@ describe('audit-v V12 DB 키 get/create 분리', () => {
   });
 });
 
-// ───────────────────────── V13 · N-46 ─────────────────────────
 describe('audit-v V13 비밀 종류↔칸 결박', () => {
   it('audit-v: built-in origins never let the typist enter a certificate password (ADR-020 decision 2)', () => {
-    // 대표 지시 2026-11-13(ADR-020 결정 2 갱신): 금고가 기억한 인증서 비밀번호를 홈택스 인증서 창(#dscert, 같은 출처)에만 넣는다.
     assert.deepEqual(SECRET_ORIGINS.cert_password, ['hometax.go.kr']);
     assert.deepEqual(SECRET_ORIGINS.portal_password, ['hometax.go.kr']);
-    // 보안카드는 지원하지 않는다(대표 결정 2026-11-19): 넣을 곳이 없다
     assert.deepEqual(Object.keys(SECRET_ORIGINS).sort(), ['cert_password', 'portal_password']);
   });
 
@@ -773,7 +733,7 @@ describe('audit-v V13 비밀 종류↔칸 결박', () => {
     const s = await setup();
     s.ops.secrets.provide(bind(), enc('TEST-CERT-twice001'));
     assert.deepEqual(await s.ops.fill(fillReq()), { ok: true });
-    s.conn.emitEvent('Page.frameNavigated', { frame: { id: 'RUN', url: 'http://127.0.0.1:1/again' } }, 'V-RUN'); // 창 종료
+    s.conn.emitEvent('Page.frameNavigated', { frame: { id: 'RUN', url: 'http://127.0.0.1:1/again' } }, 'V-RUN');
     s.page.value = '';
     s.page.len = 0;
     s.ops.secrets.provide(bind(), enc('TEST-CERT-twice002'));
@@ -782,7 +742,6 @@ describe('audit-v V13 비밀 종류↔칸 결박', () => {
   });
 });
 
-// ───────────────────────── V14 · N-32 ─────────────────────────
 describe('audit-v V14 금고 런타임 송신 모듈 차단', () => {
   it('audit-v: after net-deny, dynamic import of node:net fails', () => {
     const netDeny = pathToFileURL(path.resolve(import.meta.dirname, '../packages/vault/src/net-deny.ts')).href;

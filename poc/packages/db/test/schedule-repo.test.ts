@@ -1,4 +1,3 @@
-// D07 validity_rules·schedules 저장소와 데몬 스냅숏의 db 몫(데몬 #98 계약, 엔진 #91 data-service가 부른다).
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';

@@ -11,7 +11,6 @@ export interface RawMsg {
   sessionId?: string;
 }
 
-/** Playwright 없이 금고 중계를 직접 쓰는 "엔진"(침해된 엔진·측정용). */
 export class RawEngine {
   private readonly transport;
   private nextId = 1;
@@ -52,7 +51,6 @@ export class RawEngine {
     }
   }
 
-  /** 루트 자동 부착 → 실행 page 세션을 받는다. */
   async attachRunPage(): Promise<{ sessionId: string; targetId: string }> {
     await this.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
     const ev = this.events.find((e) => e.method === 'Target.attachedToTarget' && !e.sessionId);

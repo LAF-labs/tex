@@ -1,6 +1,3 @@
-// 엔진 main 전용 읽기 질의 daemon.snapshot(D10 §3, 팀장 결정 2026-11-06). 응답은 @sax/daemon DaemonSnapshot 주석 예시(#100) 그대로다.
-// 읽기 전용이다: 쓰기·실행·DB 키 노출이 없다. main은 DB 키가 없어서 데몬 입력을 엔진이 모아 준다.
-// @sax/daemon 타입은 가져오지 않는다(daemon → engine → bundle 의존이라 순환이 생긴다). 같은 모양인지는 tests/daemon-snapshot.test.ts가 타입으로 확인한다.
 import { daemonProfileInputs, DocumentRepo, ProfileRepo, type ColumnCipher, type DaemonProfileInputs, type Db, type DocumentRow } from '@sax/db';
 import { missingReport, type MissingReport } from './month.ts';
 
@@ -99,7 +96,6 @@ export function daemonSnapshot<P extends SnapshotPolicyLike, S extends SnapshotS
     };
   });
   return {
-    // 데몬이 쓰는 칸만 고른다(서명·다른 정책 값은 내지 않는다)
     policy: p ? { expiresAt: p.expiresAt, daemon: p.daemon } : null,
     status: s ? { issuedAt: s.issuedAt, expiresAt: s.expiresAt } : null,
     profiles,

@@ -1,4 +1,3 @@
-// scripts/ci-promotion-check.mjs: ADR-035 결정 1.3 (가) 표 → 시험 존재, (라) 폐기 표지 import 금지.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';

@@ -1,9 +1,3 @@
-// 커밋 가드의 CDP 배선(금고 중계, R-C1 ②③).
-// - Fetch.enable은 호스트를 고정한 패턴만 쓴다(`https://<호스트>/*`, requestStage Request). 금고는 `*`·와일드카드 호스트를 거부한다.
-//   manifest.domains의 고정 호스트로 시작하고, `*.` 도메인은 실행 중 본 호스트(문서·요청)를 더해 다시 건다.
-// - Fetch.requestPaused → guard.onRequest → Fetch.continueRequest | Fetch.failRequest(BlockedByClient).
-//   무장된 요청의 본문은 금고가 지워 오므로 엔진은 보지 않는다(⑤).
-// - 아직 고정하지 못한 호스트로 간 요청은 Network.requestWillBeSent로만 보인다(guard.onUnintercepted).
 import { hostAllowed } from '../core/validate.ts';
 import type { CommitGuard } from './guard.ts';
 
@@ -21,7 +15,6 @@ export interface FetchInterceptorInput {
   guard: CommitGuard;
   domains: readonly string[];
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
-  /** 시험 픽스처 전용: 127.0.0.1·localhost는 http도 잡는다(금고 정책도 http를 루프백에만 허용). */
   insecureLoopback?: boolean;
 }
 
@@ -29,7 +22,6 @@ const LOOPBACK = new Set(['127.0.0.1', 'localhost']);
 
 export class FetchInterceptor {
   private readonly i: FetchInterceptorInput;
-  /** Fetch.enable이 끝나 실제로 잡고 있는 호스트(포트 포함, 루프백 http는 `http://` 접두). */
   private pinned = new Set<string>();
   private wanted = new Set<string>();
   private chain: Promise<unknown> = Promise.resolve();
@@ -68,7 +60,6 @@ export class FetchInterceptor {
     this.pinned = new Set();
   }
 
-  /** 이 호스트를 잡는다(manifest.domains 안, https만). 이미 잡았거나 밖이면 그대로. */
   learn(url: string): Promise<void> {
     let u: URL;
     try {
@@ -82,7 +73,6 @@ export class FetchInterceptor {
     return this.enable();
   }
 
-  /** 원하는 호스트 전부로 Fetch.enable을 다시 건다(호출은 한 줄로). 끝난 뒤에만 pinned에 넣는다. */
   private enable(): Promise<void> {
     const hosts = [...this.wanted].sort();
     const run = async () => {
@@ -99,7 +89,6 @@ export class FetchInterceptor {
     return p;
   }
 
-  /** 고정 키: https는 host(포트 포함), 루프백 http는 시험 픽스처에서만 `http://host`. 그 밖은 null(잡지 않음). */
   private key(u: URL): string | null {
     const host = u.host.toLowerCase();
     if (u.protocol === 'https:') return host;

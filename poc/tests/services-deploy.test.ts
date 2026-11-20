@@ -1,5 +1,3 @@
-// 배포 구성(Vercel 함수 + Supabase): 진입점·환경 접두·경로 복원·내부 경로 기본 거부·cron 보호·한 프로세스 조립(서비스 사이 함수 호출)·재작성 규칙·마이그레이션 내보내기·역할 분리.
-// PostgreSQL 역할 분리 시험은 SAX_PG_TEST_URL(빈 DB, 초superuser, 역할은 trust로 비밀번호 없이 접속)일 때만 돈다.
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -64,7 +62,6 @@ describe('함수 진입점 공용(serviceEnv·restorePath·functionEntry·cronEn
     assert.equal(restorePath('/api/registry?__p=/registry/log&path='), '/registry/log');
     assert.equal(restorePath('/api/internal?__p=/internal/v1/devices/dev-1&id=dev-1'), '/internal/v1/devices/dev-1');
     assert.equal(restorePath('/api/sax?__p=/v1/auth/code&path=code'), '/v1/auth/code');
-    // 경로 끝과 다른 값은 원래 요청의 것: 남긴다(라우터가 판단)
     assert.equal(restorePath('/api/registry?__p=/registry/log/head.json&path=evil'), '/registry/log/head.json?path=evil');
     assert.equal(restorePath('/api/registry?__p=/registry/log/head.json&path=head.json&path=x'), '/registry/log/head.json?path=head.json&path=x');
     assert.equal(restorePath('/api/internal?__p=/internal/v1/devices/dev-1&id=dev-2'), '/internal/v1/devices/dev-1?id=dev-2');
@@ -77,7 +74,6 @@ describe('함수 진입점 공용(serviceEnv·restorePath·functionEntry·cronEn
     assert.equal(rewriteLikeVercel(vercel.rewrites, '/api/internal/internal/v1/devices/d1'), '/api/internal?__p=/internal/v1/devices/d1&id=d1');
     assert.equal(rewriteLikeVercel(vercel.rewrites, '/registry/status.json'), null, '버킷 외부 재작성');
     assert.equal(rewriteLikeVercel(vercel.rewrites, '/nope'), null);
-    // 그 결과를 restorePath가 원래 경로·쿼리로 되돌린다
     for (const p of ['/registry/log/head.json', '/registry/log/proof/consistency?from=0&to=3', '/v1/mailboxes/mb/envelopes?since=2', '/api/internal/internal/v1/devices/d1']) {
       const want = p.startsWith('/api/internal/internal') ? p.replace('/api/internal', '') : p;
       assert.equal(restorePath(rewriteLikeVercel(vercel.rewrites, p)!), want, p);
@@ -144,7 +140,6 @@ describe('함수 진입점 공용(serviceEnv·restorePath·functionEntry·cronEn
   });
 });
 
-/** 함수 env(서비스 접두 + 공통). 배포 절차가 미리 마이그레이션한 sqlite 파일을 흉내 낸다(함수는 DDL을 하지 않는다) */
 async function cloudEnv() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sax-cloud-'));
   const file = (svc: string) => path.join(dir, `${svc}.db`);
@@ -265,12 +260,10 @@ describe('한 프로세스 조립(@sax/svc-cloud): 서비스 사이 호출은 HT
     assert.equal(ok.status, 200, ok.text);
     assert.equal(ok.json.state, 'active');
     assert.equal((await req('GET', at, { headers: { authorization: sig } })).status, 401, '재전송');
-    // 1회용 nonce는 DB에 있다: 다른 인스턴스(새 함수)로 같은 서명을 다시 보내도 401
     const fn2 = internalFunction(c.env);
     const s2 = http.createServer((q, r) => void fn2(q, r));
     assert.equal((await client(await listen(s2))('GET', at, { headers: { authorization: sig } })).status, 401, '다른 인스턴스 재전송');
     s2.close();
-    // 공개 경로·허용 목록 밖 내부 경로는 서명이 있어도 404
     for (const [m, q] of [['GET', '/v1/me'], ['POST', '/internal/v1/devices/dev-2/auto-suspend'], ['POST', '/v1/auth/code']]) {
       assert.equal((await req(m!, `/api/internal?__p=${q}`, { headers: { authorization: signInternalCall(c.internalKey, m!, q!) } })).status, 404, `${m} ${q}`);
     }
@@ -309,11 +302,9 @@ interface Rewrite {
   destination: string;
 }
 const vercel = JSON.parse(fs.readFileSync(path.join(DEPLOY, 'vercel', 'vercel.json'), 'utf8')) as { rewrites: Rewrite[]; crons: { path: string }[]; functions: Record<string, unknown> };
-/** 재작성 소스 → 정규식(`:path*`, `:id`만 쓴다) */
 const toRe = (src: string) => new RegExp(`^${src.replace(/[.]/g, '\\.').replace('/:path*', '(?:/(.*))?').replace('/:id', '/([^/]+)')}$`);
 const routeOf = (p: string) => vercel.rewrites.find((r) => toRe(r.source).test(p));
 
-/** 각 서비스 라우터의 실제 경로(app.ts의 r.add, 여러 줄 포함) */
 function routes(svc: string): string[] {
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'services', svc, 'src', 'app.ts'), 'utf8');
   return [...src.matchAll(/r\.add\(\s*'[A-Z]+',\s*'([^']+)'/g)].map((m) => m[1]!.replace(/:[a-z]+/g, 'x'));
@@ -352,7 +343,6 @@ describe('Vercel 함수 묶음(파일 추적이 따라갈 수 있는 모듈만, 
       fs.writeFileSync(path.join(func, '.vc-config.json'), JSON.stringify({ handler: 'poc/svc/h.js', filePathMap: { 'poc/svc/node_modules/x': 'poc/svc/node_modules/x' } }));
       const m = materialize(func, root, path.join(root, 'copy'));
       assert.equal(m.handler, 'poc/svc/h.js');
-      // Windows는 symlink를 만들 때 대상의 `/`를 `\\`로 바꿔 저장한다. 같은 대상인지는 구분자를 맞춰 본다.
       assert.equal(fs.readlinkSync(path.join(m.dir, 'poc/svc/node_modules/x')).split(path.sep).join('/'), '../../node_modules/.pnpm/x@1/node_modules/x');
       assert.equal(fs.readFileSync(path.join(m.dir, 'poc/svc/node_modules/x/index.js'), 'utf8'), 'module.exports = 1;');
     } finally {
@@ -406,20 +396,17 @@ describe('vercel.json 재작성 규칙(tax.laf-co.com 한 origin, 내부 경로 
         const pkg = path.join(pnpm, d, 'node_modules', 'better-sqlite3-multiple-ciphers');
         const natives = (fs.readdirSync(pkg, { recursive: true }) as string[]).filter((x) => x.endsWith('.node'));
         assert.ok(natives.length > 0, d);
-        // 빌드 기준 경로는 저장소 루트 상대(poc/node_modules/.pnpm/...). 플랫폼 구분자는 /로
         const rel = (x: string) => ['poc/node_modules/.pnpm', d, 'node_modules/better-sqlite3-multiple-ciphers', x.split(path.sep).join('/')].join('/');
         for (const x of natives) assert.ok(path.posix.matchesGlob(rel(x), glob!), `${f}: ${rel(x)}`);
         assert.ok(!path.posix.matchesGlob(rel('lib/database.js'), glob!), f);
       }
     }
-    // 계정·게이트웨이 함수는 원래 네이티브가 없으니 제외 규칙을 두지 않는다(점검은 check-vercel-output의 '네이티브 없음')
     for (const f of ['api/sax.js', 'api/internal.js', 'api/cron.js']) assert.equal((vercel.functions[f] as { excludeFiles?: string }).excludeFiles, undefined, f);
   });
 
   it('레지스트리: 공개 정적 GET은 공개 버킷의 같은 경로로, 로그 GET·게시 PUT만 레지스트리 함수로(__p가 원래 경로). 다른 함수와 겹치지 않는다', () => {
     const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'services', 'registry', 'src', 'app.ts'), 'utf8');
     const all = [...src.matchAll(/r\.add\(\s*'([A-Z]+)',\s*'([^']+)'/g)].map((m) => ({ method: m[1]!, path: m[2]!.replace(/:[a-z]+/g, 'x') }))
-      // 상시 서버의 /healthz는 공개 origin에 두지 않는다
       .filter((x) => x.path !== '/healthz');
     assert.ok(all.length >= 12, String(all.length));
     assert.equal(routeOf('/healthz'), undefined);
@@ -427,7 +414,6 @@ describe('vercel.json 재작성 규칙(tax.laf-co.com 한 origin, 내부 경로 
     for (const { method, path: p } of all) {
       const r = routeOf(p);
       assert.ok(r, `${method} ${p}`);
-      // 함수로 가는 GET은 로그와 처음 설치 직접 링크(/download/mac, 서명된 latest.json 옆 dmg로 보냄)뿐이다(registryFunctionPath와 같은 규칙)
       const fn = p.startsWith('/registry/log/') || p.startsWith('/admin/v1/') || p === '/download/mac';
       assert.equal(fn, method === 'PUT' || p.startsWith('/registry/log/') || p === '/download/mac', `${method} ${p}`);
       assert.equal(fn, registryFunctionPath(method, p), `${method} ${p}`);
@@ -441,11 +427,9 @@ describe('vercel.json 재작성 규칙(tax.laf-co.com 한 origin, 내부 경로 
         assert.equal(r!.destination.replace(':path*', m[1] ?? ''), BUCKET + p.slice(1), p);
       }
     }
-    // 버킷 재작성은 공개 접두 네 개뿐이고 공개 객체 URL(https, 버킷 sax-registry)로만 간다
     const ext = vercel.rewrites.filter((r) => r.destination.startsWith('https://') && r.destination.includes('/storage/'));
     assert.deepEqual(ext.map((r) => r.source), ['/registry/:path*', '/policy/:path*', '/packages/:path*', '/releases/:path*']);
     for (const r of ext) assert.equal(r.destination, `${BUCKET}${r.source.slice(1)}`);
-    // 로그 재작성이 버킷 재작성보다 앞이다(첫 일치)
     const i = (s: string) => vercel.rewrites.findIndex((r) => r.source === s);
     assert.ok(i('/registry/log/:path*') < i('/registry/:path*'));
     assert.equal(routeOf('/registry/log')?.destination, '/api/registry?__p=/registry/log/:path*');
@@ -468,15 +452,12 @@ describe('Supabase 마이그레이션 내보내기', () => {
       '20261106000200_sax_gateway.sql': '72d99c5c0e83aadfdde1ba2099975a02f047427dfb2898fc2ed2281aee56b64a',
       '20261106000300_sax_relay.sql': '550bb0ad245e0c00a9ba0b02c8c1efcd20af789eec0e38d2a823df830c1b4bf5',
       '20261106000400_sax_push.sql': '8128117933efbf53bb171b7a97716b41f5f6bf85f0bb33f5486fcd80aad155ea',
-      // 2026110601 단계(레지스트리, #161): 운영에 적용됨
       '20261106010000_sax_roles_registry.sql': 'a15e3cc4b5fa2fdcf9363e928b805e4fce68e15a0ebe14c009edf0c57e7a2003',
       '20261106010100_sax_registry.sql': '212a7c65cb8ecd76603df6e734f6ef9bd4f8ccf840111230a178d1ef8b28c816',
-      // 2026110602 단계(계정 002 비밀번호, #180): 운영에 적용됨(팀장 2026-11-07)
       '20261106020100_sax_account.sql': '2ab16732fbd6d268dc852146cac2ef8f2c95ff53702c2b6f8399d0e04474acfb',
     };
     const out = new Map(exportSupabase().map((m) => [m.name, m.sql]));
     for (const [name, digest] of Object.entries(applied)) assert.equal(createHash('sha256').update(out.get(name) ?? '').digest('hex'), digest, name);
-    // 새 단계는 뒤에 붙는다(이름 순서 = 적용 순서)
     const names = [...out.keys()];
     assert.deepEqual(names, [...names].sort());
     assert.deepEqual(names.slice(7), ['20261106020100_sax_account.sql', '20261107000100_sax_account.sql', '20261113000100_sax_gateway.sql', '20261116000100_sax_account.sql', '20261116010100_sax_account.sql', '20261116010200_sax_gateway.sql', '20261117000100_sax_account.sql', '20261117010100_sax_account.sql', '20261118000100_sax_account.sql', '20261119000100_sax_account.sql', '20261119010100_sax_relay.sql']);
@@ -500,7 +481,6 @@ describe('Supabase 마이그레이션 내보내기', () => {
     };
     const names = SUPABASE_SERVICES.map((x) => x.name);
     const schemasOf = (svc: string) => [svc, limitsSchemaOf(svc)];
-    // 교차 GRANT 0(팀장 결정 2026-11-06 #135 (2)): 역할마다 다른 서비스 스키마·표·시퀀스 권한이 하나도 없고, 다른 역할의 구성원도 아니다
     for (const a of names) {
       const role = roleOf(a);
       const foreign = names.filter((b) => b !== a).flatMap(schemasOf);
@@ -520,17 +500,14 @@ describe('Supabase 마이그레이션 내보내기', () => {
       assert.equal(own!.c, false, `${role} 자기 스키마 DDL 없음`);
       const mem = await admin.all('SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.member OR r.oid = m.roleid WHERE r.rolname = $1', [role]);
       assert.equal(mem.length, 0, `${role} 역할 구성원 없음`);
-      // search_path 고정: 역할 설정에 자기 두 스키마만(public 없음)
       const cfg = await admin.one<{ c: string[] }>('SELECT rolconfig AS c FROM pg_roles WHERE rolname = $1', [role]);
       assert.deepEqual(cfg!.c, [`search_path=${a}, ${limitsSchemaOf(a)}`], role);
     }
     for (const s of SUPABASE_SERVICES) {
       const db = as(s.name);
       assert.equal((await db.one<{ search_path: string }>('SHOW search_path'))!.search_path, `${s.name}, ${limitsSchemaOf(s.name)}`);
-      // 자기 스키마 테이블 = 마이그레이션 컬럼 표의 테이블
       const own = await db.all<{ table_name: string }>("SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_name <> 'schema_migrations'", [s.name]);
       assert.deepEqual(own.map((r) => r.table_name).sort(), Object.keys(schemaColumns(s.migrationsDir)).sort(), s.name);
-      // 한도 표·내부 호출 nonce 표는 search_path로 바로 쓴다(코드 변경 없음)
       const lim = new SqlLimiter(db, Date.now);
       assert.equal((await lim.hit(`deploy-${s.name}`, 5, 60_000)).n, 1);
       await lim.reset(`deploy-${s.name}`, 60_000);
@@ -540,7 +517,6 @@ describe('Supabase 마이그레이션 내보내기', () => {
       assert.equal(await nonces.claim(nonce, Date.now() + 60_000, Date.now()), false);
       await assert.rejects(db.exec('CREATE TABLE nope (x INTEGER)'), /permission denied|no schema has been selected/);
       await assert.rejects(db.exec('CREATE TABLE public.nope (x INTEGER)'), /permission denied/);
-      // 모든 다른 서비스: 본 표·한도 표 모두 읽기 거부(릴레이 ↔ 계정 포함 모든 쌍)
       for (const other of names.filter((n) => n !== s.name)) {
         await assert.rejects(db.all(`SELECT * FROM ${other}.schema_migrations`), /permission denied/, `${s.name} → ${other}`);
         await assert.rejects(db.all(`SELECT * FROM ${limitsSchemaOf(other)}.lim_salts`), /permission denied/, `${s.name} → ${other}_limits`);
@@ -555,7 +531,6 @@ describe('Supabase 마이그레이션 내보내기', () => {
     await accountDb.close();
     const done = await admin.all<{ service: string; version: number }>('SELECT service, version FROM relay.schema_migrations ORDER BY service, version');
     assert.deepEqual(done.map((r) => `${r.service}:${r.version}`), ['limits:1', 'limits:2', 'relay:1']);
-    // 레지스트리 함수 역할(증분 단계 2026110601): 마이그레이션 없이 투명성 로그 append·헤드 재서명이 돈다(함수는 DDL을 하지 않는다)
     const regDb = as('registry');
     const log = await TransparencyLog.open({ db: regDb, signer: { keyId: 'timestamp-test', key: ed25519Private(randomBytes(32)) }, now: Date.now, migrate: false });
     assert.equal((await log.append({ kind: 'status', path: 'registry/status.json', sha256: '0'.repeat(64) })).index, 0);

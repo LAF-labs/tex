@@ -1,14 +1,7 @@
-// 대화 의도(M4-3 ③, D01 §5.1, D04 §3 intent_route_v1): renderer → main → engine `intent.resolve`(L0 규칙 → 마스킹 → 게이트웨이 판정) → 확인 카드.
-// - 엔진은 고른 작업(플레이북 ID)과 세무 질문이 섞였는지만 돌려준다. 인자(거래처·금액·부가세)는 지금처럼 main의 로컬 파서가 뽑고(금액 파서 로컬, D01 §5.1),
-//   확인 카드(초안)는 사용자가 [발급 준비]를 눌러야 실행된다. 대화만으로 실행하지 않는다.
-// - 오프라인 해석은 없다(사용자 결정 2026-11-10): 엔진에 명령이 없거나(unknown_method) 판정을 못 하면(decide.unavailable·시간 초과)
-//   의도를 정규식으로 대신 고르지 않고 "연결 안 됨"(INTENT_UNAVAILABLE_TEXT)과 [다시 시도]를 보인다.
-// - 응답은 신뢰하지 않는다: 모양이 다르면 연결 안 됨과 같다. 로그에는 결과 종류·경로만 남긴다(문장 없음).
 import { CHAT_ADVICE_TEXT } from '@sax/chat-core';
 import type { CertCode } from './cert-docs.ts';
 import type { Parsed } from './shell-model.ts';
 
-/** intent_route_v1 선택지(packages/model/bundles/intent_route_v1.json의 choices, none_of_these 제외). */
 export const INTENT_PLAYBOOKS = [
   'hometax.invoice.issue', 'hometax.invoice.list', 'hometax.invoice.amend', 'hometax.cert.business', 'hometax.cert.taxpayment', 'hometax.summary.view',
   'counterparty.bizstatus.check', 'gov24.resident.copy', 'gov24.localtax.cert', 'gov24.nhis.eligibility', 'gov24.land.register', 'gov24.localtax.itemized',
@@ -16,19 +9,15 @@ export const INTENT_PLAYBOOKS = [
 ] as const;
 type IntentPlaybook = (typeof INTENT_PLAYBOOKS)[number];
 
-/** 엔진 `intent.resolve` 결과(계약 제안, desktop-pending.md 「M4-3 ③」). */
 export type IntentRoute =
   | { outcome: 'route'; playbook: IntentPlaybook; adviceMentioned: boolean; via: 'l0' | 'model' }
   | { outcome: 'refuse_advice'; via: 'model' }
   | { outcome: 'unknown'; via: 'l0' | 'model' };
 
-/** 판정을 못 했을 때(게이트웨이 불가·시간 초과·모양 다름) 대화에 보이는 문장. 렌더러가 [다시 시도]를 붙인다. */
 export const INTENT_UNAVAILABLE_TEXT = '지금은 답을 받을 수 없어요. 인터넷 연결을 확인하고 [다시 시도]를 눌러 주세요.';
 
-/** 온보딩 ②(모델 처리 동의) 전에 대화를 보냈을 때. 문장은 모델로 가지 않는다. */
 export const MODEL_CONSENT_FIRST_TEXT = '대화는 AI 모델로 해석해요. 등록 중인 화면에서 모델 처리에 동의하면 바로 쓸 수 있어요.';
 
-/** 엔진 응답 → IntentRoute. 모양이 다르면 null(연결 안 됨). */
 export function parseRoute(v: unknown): IntentRoute | null {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
   const r = v as Record<string, unknown>;
@@ -43,7 +32,6 @@ export function parseRoute(v: unknown): IntentRoute | null {
   return null;
 }
 
-/** 화면 이름(아직 대화에서 열지 않는 작업의 안내 문구). */
 const SOON: Partial<Record<IntentPlaybook, string>> = {
   'hometax.invoice.list': '세금계산서 조회',
   'hometax.invoice.amend': '수정세금계산서 발급',
@@ -55,15 +43,10 @@ const SOON: Partial<Record<IntentPlaybook, string>> = {
   'payroll.ledger': '급여대장',
 };
 const CERT: readonly IntentPlaybook[] = ['hometax.cert.business', 'hometax.cert.taxpayment', 'gov24.localtax.cert', 'gov24.nhis.eligibility', 'gov24.land.register', 'gov24.localtax.itemized', 'sminfo.sme.cert', 'fourins.paid.cert'];
-/** 옛 의도 id(intent_route_v1) → 이 앱이 떼는 민원증명(cert-docs 표). 나머지 CERT는 떼지 않는 증명서다. */
 const CERT_CODE: Partial<Record<IntentPlaybook, CertCode>> = { 'hometax.cert.business': 'H-03', 'hometax.cert.taxpayment': 'H-04' };
 
 type Routed = { parsed: Parsed; note: string | null } | { say: string; note: null };
 
-/**
- * 엔진이 고른 작업을 화면 해석(Parsed)으로 옮긴다. 인자는 로컬 파서(local) 그대로, 의도만 엔진 것으로 바꾼다.
- * 세무 질문이 섞였으면(adviceMentioned) 작업은 그대로 하고 고정 문구를 같이 보인다(D04 §3).
- */
 export function routed(r: IntentRoute, local: Parsed): Routed {
   if (r.outcome === 'refuse_advice') return { say: CHAT_ADVICE_TEXT, note: null };
   if (r.outcome === 'unknown') return { parsed: { ...local, intent: 'other' }, note: null };
@@ -77,11 +60,9 @@ export function routed(r: IntentRoute, local: Parsed): Routed {
 }
 
 export interface IntentResolver {
-  /** null이면 판정 못 함(엔진에 명령 없음·판정 불가·시간 초과·모양 다름). fallback은 그 이유 코드(로그용). */
   resolve(text: string): Promise<{ route: IntentRoute | null; fallback: string | null }>;
 }
 
-/** 엔진 rpc 위의 해석기. 상한 시간 안에 답이 없으면 판정 못 함(timeout). */
 export function engineIntentResolver(rpc: (m: string, p: Record<string, unknown>) => Promise<unknown>, timeoutMs = 4_000): IntentResolver {
   return {
     async resolve(text) {

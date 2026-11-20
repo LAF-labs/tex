@@ -1,5 +1,3 @@
-// H-01 실화면 패키지(hometax.invoice.issue 2.2.0) 건조 실행: 가짜 홈택스(tests/hometax-fake.ts)에 로그인부터 메일 확인까지. 실제 홈택스에 접속하지 않는다.
-// 하네스: tests/h01-real-dryrun.ts(제품 원본 패키지에서 origin·host·domains·portal·서명만 바꾼다).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { EndpointClassifier, endpointUnion, knownUnion } from '@sax/engine';
@@ -20,15 +18,11 @@ describe('H-01 실화면 패키지: 가짜 홈택스 건조 실행', () => {
     assert.equal(o.end?.mailConfirmed, true);
     assert.match(o.end?.approvalNo ?? '', /^\d{8}-\d{8}-\d{8}$/);
     assert.equal(o.end?.approvalNo, o.fx.state.invoices[0]?.etan, '승인번호는 목록 etan과 같다');
-    // 2.3.x 로그인: 엔진이 공동인증서 창을 열고(s4~s4d) 비밀번호 차례(s4g)에 금고가 없으면 사람 차례로 넘긴다.
-    // 사람이 로그인하고 [이어서]를 누르면 처음(s0)부터 다시 보고, 로그인돼 있으니 s2에서 s10으로 간다.
     assert.deepEqual(o.steps.slice(0, 5), ['s0', 's2', 's3', 's4', 's4a']);
     const relogin = o.steps.indexOf('s0', 1);
     assert.ok(relogin > 0 && o.steps.slice(0, relogin).some((x) => x.startsWith('s4g')), o.steps.join(' '));
     assert.deepEqual(o.steps.slice(relogin, relogin + 3), ['s0', 's2', 's10']);
-    // 금고가 없으면 사람이 홈택스 서명 창에 직접 넣는다(서명 차례). 완료 창이 보이면 차례가 닫히고 verify로 간다.
     assert.ok(o.journal.includes('dialog.alert_accepted') && (o.journal.includes('signflow.done_seen') || o.journal.includes('sign.turn_closed')), show(o));
-    // 실화면 요청 순서(log.md "요청 순서"): 미리보기·확인 창까지 C 계열 0건, 인증유형 클릭 때 C04, 서명 뒤 C05 → C08 → 완료 창.
     const ix = (a: string) => o.actions.indexOf(a);
     assert.deepEqual(commits(o), ['ATEETBAA002C04', 'ATEETBAA002C05', 'ATEETBAA002C08'], '커밋 요청 각 1번');
     assert.ok(ix('perm:UTEETZZA08') < ix('ATEETBAA002C04') && ix('ATEETBAA002C08') < ix('perm:UTEETZZA87'), o.actions.join(' '));
@@ -49,8 +43,6 @@ describe('H-01 실화면 패키지: 가짜 홈택스 건조 실행', () => {
   });
 
   it('미리보기 값 불일치(창의 등록번호가 입력과 다름): 게이트 전에 되읽기(s19b)에서 사람 차례, 게이트·커밋 요청 없음', async () => {
-    // 2.3.x는 미리보기 표시 칸도 되읽기(readbackOf)에 넣어 입력 칸과 표시 칸이 다르면 s19b가 step.readback_mismatch로 사람에게 넘긴다
-    // (s19f assert.input_mismatch까지 가지 않는다). 사람이 답하지 않으면 차례 상한에서 끝난다.
     const o = await realDryRun({ loggedIn: true, knobs: { tamperPreview: true }, handoffCapMs: 3000 });
     assert.deepEqual([o.end?.status, o.end?.code, o.end?.stoppedAt?.stepId, o.gate], ['handoff', 'run.handoff_timeout', 's19b', false], show(o));
     assert.ok(o.steps.includes('s19b!step.readback_mismatch'), show(o));
@@ -60,7 +52,6 @@ describe('H-01 실화면 패키지: 가짜 홈택스 건조 실행', () => {
   it('인증서 창에서 [취소]: C04가 나갔으므로 in_doubt(verify.unknown). 창이 닫히거나 [다 했어요] 뒤 verify로 간다', async () => {
     const o = await realDryRun({ loggedIn: true, verifyMaxMs: 5000, human: certThen('cancel'), answerTurns: true });
     assert.deepEqual([o.end?.status, o.end?.code], ['in_doubt', 'verify.unknown'], show(o));
-    // 금고가 없으면 서명은 사람 차례다: 엔진이 창이 닫힌 것을 보거나(window_closed) 사람이 [다 했어요]를 누르면 verify로 간다. 버튼은 다시 누르지 않는다
     assert.ok((o.journal.includes('signflow.window_closed') || o.journal.includes('run.resume_requested')) && o.journal.includes('ledger.in_doubt'), show(o));
     assert.deepEqual(commits(o), ['ATEETBAA002C04']);
   });

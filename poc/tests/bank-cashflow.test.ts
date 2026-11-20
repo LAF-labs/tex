@@ -1,5 +1,3 @@
-// 현금흐름 분석(11 §3, ADR-045): 순수 함수(갈래·지표·알림)와 엔진 조회(db.query.bank.cashflow·cashflowSeries, bank.categorize).
-// 모든 값은 가짜다(합성 사업자번호, 가짜 계좌번호·이름).
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';

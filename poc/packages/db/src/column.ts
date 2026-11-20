@@ -1,7 +1,3 @@
-// DB 키 암호화 컬럼(D07 §2 `*_enc`, ADR-031 주민번호). DB 파일 자체가 sqlcipher로 암호화되어 있지만,
-// 주민번호처럼 화면·내보내기에서도 가려야 하는 값은 컬럼 단위로 한 번 더 감싼다. 질의 결과·로그·덤프에 평문이 섞이지 않게 하려는 것이다.
-// - 키: DB 키에서 HKDF로 파생(원장 HMAC 키와 같은 방식, 다른 info). 엔진이 DB 키를 지우기 전에 한 번 파생한다.
-// - 형식: 0x01 ‖ iv(12) ‖ 암호문 ‖ tag(16), AES-256-GCM. AAD = "<table>.<column>:<rowId>" 라 행끼리 맞바꾸면 열리지 않는다.
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto';
 
 const VERSION = 0x01;
@@ -49,7 +45,6 @@ export class ColumnCipher {
     }
   }
 
-  /** 키를 지운다(엔진 종료 시). */
   dispose(): void {
     this.key.fill(0);
   }

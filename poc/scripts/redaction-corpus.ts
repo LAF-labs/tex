@@ -1,5 +1,3 @@
-// D06 §7 마스킹 코퍼스 측정표를 출력한다(reports/M1-5.md에 붙인다).
-// node --conditions=development scripts/redaction-corpus.ts [건수] [시드...]
 import { markdown, measure } from '../tests/fixtures/redaction-measure.ts';
 
 const n = Number(process.argv[2] ?? 10_000);

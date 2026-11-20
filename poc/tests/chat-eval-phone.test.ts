@@ -1,6 +1,3 @@
-// 폰 대화 실모델 평가 도구(tests/chat-eval/phone.ts)의 배선 시험. 가짜 상류(--fake)로 돈다: 키도 네트워크도 쓰지 않는다.
-// 보는 것: 폰 대화 코어 → PhoneGateway → 평가 도구의 게이트웨이 자리 → (가짜) 상류로 한 턴이 돌고, 화면 기준 채점과 보고서가 나온다.
-// 실제 모델 결과는 여기서 보지 않는다(맥북에서 한두 사례씩 돌린다).
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';

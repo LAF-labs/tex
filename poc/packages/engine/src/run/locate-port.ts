@@ -1,8 +1,3 @@
-// AI 위치 찾기 모델 포트(core/locate.ts의 LocateModel): 게이트웨이 /v1/respond 툴셋 selector_repair(D04 §4) 한 번(도구 왕복 포함 최대 3턴).
-// - 모델에는 마스킹된 글만 간다(D04 C-10, ③): 스텝 의도(역할·이름 규칙·필드 키)와 같은 역할 요소 목록(번호·접근성 이름·DOM id)을 Redactor로 가린다.
-//   입력값은 목록에 없다(core/locate.ts). 모델이 낸 선택자 안의 토큰은 같은 Redactor 지도로 되돌린다.
-// - 도구(get_a11y_subtree·find_candidates·propose_selectors)는 읽기 전용이다. 같은 목록으로만 답한다. 화면을 바꾸지 않는다.
-// - 출력이 repaired가 아니거나 risk_flags에 비가역 대상·주입 의심이 있으면 받지 않는다(null). 받은 후보는 엔진이 다시 검사한다.
 import type { RedactedReplayItem, RedactedText, RespondRequest, RespondResult, RunToken, ToolsetDef } from '@sax/model';
 import { DECISION_CHOICE_MAX_CHARS, DECISION_MAX_CHOICES, DECISION_PICK, DECISION_STATE_MAX_CHARS, selectorRepair } from '@sax/model';
 import type { Redactor } from '@sax/redaction';
@@ -14,11 +9,6 @@ export interface LocateResponder {
 
 const SCOPE = 'frame';
 
-/**
- * 게이트웨이가 쓰는 selector_repair 정의와 같게(services/gateway/src/service.ts gatewayToolsets): scopeId는 열거가 아니라 형식 제한이다.
- * 어댑터는 응답 toolsetDigest를 이 정의의 해시와 대조하므로(C-24) 열거 정의로 부르면 늘 toolset_digest_mismatch다.
- * 도구 답은 scopeId와 상관없이 같은 목록으로만 한다(toolAnswer).
- */
 function locateToolset(): ToolsetDef {
   const t = selectorRepair([SCOPE]);
   for (const tool of t.tools) {
@@ -34,20 +24,14 @@ interface GatewayLocateInput {
   redactor: Pick<Redactor, 'apply' | 'map'>;
   runToken: () => Promise<RunToken>;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
-  /** 실행당 예산 다 씀 표시. 게이트웨이가 run_budget_exceeded를 주면 참이 되고, 그 뒤로는 부르지 않는다. */
   budget?: RunAiBudget;
 }
 
 /** 실행당 예산 다 씀 표시(실행마다, 위치 찾기 하나·판정과 에이전트 하나). */
 export interface RunAiBudget {
   spent: boolean;
-  /**
-   * 계정의 오늘 AI 한도(체험 50원·구독 300원, KST 새벽 4시 초기화, PR #384 gateway.daily_limit)·월 한도·구독 없음. 위치 찾기·판정·에이전트·화면 보기가
-   * 한 표시를 같이 본다: 한 번 막히면 이 실행의 유료 칸은 모두 부르지 않고 바로 사람에게 간다(헛된 429와 대기를 줄인다).
-   */
   day?: { spent: boolean };
 }
-/** 응답 사유가 실행 예산 소진인가(게이트웨이 429 gateway.run_budget_exceeded, 어댑터 사유 'gateway:run_budget_exceeded'). */
 const budgetSpent = (reason: string | undefined): boolean => !!reason && /run_budget_exceeded|budget_exceeded/.test(reason);
 /** 응답 사유가 계정 한도(오늘·이번 달·구독)인가. */
 export const accountLimited = (reason: string | undefined): boolean => !!reason && /daily_limit|quota_exceeded|subscription_required/.test(reason);
@@ -74,7 +58,6 @@ export class GatewayLocateModel implements LocateModel {
     return this.i.redactor.apply(text, { frame: 'none' }).redacted;
   }
 
-  /** 마스킹한 글 안의 토큰을 원래 글로(모델이 낸 선택자). 모르는 토큰이 남으면 null. */
   private unmask(v: string): string | null {
     const out = v.replace(/\[[A-Z]+_\d+\]/g, (t) => this.i.redactor.map.valueOf(t) ?? t);
     return /\[[A-Z]+_\d+\]/.test(out) ? null : out;
@@ -138,7 +121,6 @@ export class GatewayLocateModel implements LocateModel {
     return null;
   }
 
-  /** 읽기 전용 도구 답(같은 목록에서만). */
   private toolAnswer(name: string, args: unknown, req: LocateRequest, listingMasked: RedactedText): RedactedText {
     const a = (args ?? {}) as { nameContains?: string; role?: string };
     if (name === 'find_candidates') {
@@ -204,7 +186,6 @@ export class DecisionFirstLocateModel implements LocateModel {
     };
     const built = decisionPickInput(req);
     if (typeof built === 'string') return skip(built);
-    // 글 전체(JSON)를 한 번에 가린다. 가린 뒤에도 JSON이어야 보낸다(토큰은 따옴표를 만들지 않는다).
     let text: RedactedText;
     try {
       text = this.i.redactor.apply(built.json, { frame: 'none' }).redacted;
@@ -241,10 +222,6 @@ export class DecisionFirstLocateModel implements LocateModel {
   }
 }
 
-/**
- * decision_pick 메시지 글(가린 상태·선택지 JSON)과 선택지가 가리키는 요소. 목록이 비거나 선택지 상한을 넘으면 사유 글.
- * 측정 도구(tests/ladder-live/pick-eval.ts)도 같은 것을 쓴다.
- */
 /** 칸 고르기 글 모양. ids: 'short'는 id 공통 머리를 state에 한 번만, 'full'은 id 그대로. none: '없음' 선택지를 둘지. 측정용으로 열어 둔다. */
 export interface DecisionPickShape { ids: 'short' | 'full'; none: boolean }
 /**

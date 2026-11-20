@@ -1,5 +1,3 @@
-// 계좌 자동조회 인증서 비밀번호 창: 입력 즉시 바이트로 바꾸고 칸을 비운다(D05 §8 A-30). 값은 금고 포트로만 보낸다.
-// scope는 main이 페이지에 실은 값(금고 결속값과 같음)만. [이 PC에 기억]은 사장님이 고른 때만 true.
 const ds = document.body.dataset;
 let port = null;
 window.addEventListener('message', (ev) => {

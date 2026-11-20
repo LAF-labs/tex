@@ -1,4 +1,3 @@
-// 고정 창 메모리 카운터. 키는 이미 HMAC된 값만 넣는다(평문 IP·이메일 금지). 인스턴스 단위 한도다.
 export class RateLimiter {
   private readonly windows = new Map<string, { start: number; n: number }>();
   private readonly now: () => number;
@@ -7,7 +6,6 @@ export class RateLimiter {
     this.now = now;
   }
 
-  /** 허용되면 카운트를 올리고 true. 넘으면 올리지 않고 false. */
   hit(key: string, limit: number, windowMs: number): boolean {
     const now = this.now();
     if (now >= this.sweepAt) this.sweep(now);
@@ -22,7 +20,6 @@ export class RateLimiter {
     return true;
   }
 
-  /** 남은 창 시간(초, 올림). Retry-After용. */
   retryAfter(key: string, windowMs: number): number {
     const w = this.windows.get(`${windowMs}|${key}`);
     return w ? Math.max(1, Math.ceil((w.start + windowMs - this.now()) / 1000)) : 1;

@@ -1,6 +1,3 @@
-// 내 사업장(D-03) 사업자 프로필 고치기(profile-edit.ts, 사용자 요구 2026-11-10 "내 사업장 정보를 수정할 수도 있어야 한다"):
-// 칸 검사(온보딩 O-02와 같다)·번호 상태조회와 [맞습니다]·실행 중 거부·실제 DB upsert에서 인증·포털 아이디 유지·고친 기록(칸 이름만)·
-// 온보딩 상태 맞추기(syncBiz)·발급 인증 바꾸기(reopen auth)·배선.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -25,14 +22,12 @@ const tmp = () => {
   return d;
 };
 
-// 가상 값(체크섬이 맞는 번호)
 const NO_A = '1234567891';
 const NO_B = '2208162517';
 const ACTIVE: BizCheck = { status: 'active', label: '계속사업자', taxType: '일반과세자', source: '국세청 조회' };
 const UNKNOWN: BizCheck = { status: 'unknown', label: '조회하지 못했어요', taxType: null, source: '국세청 조회' };
 const CLOSED: BizCheck = { status: 'closed', label: '폐업자', taxType: null, source: '국세청 조회' };
 
-/** 실제 DB(@sax/db ProfileRepo) 위의 편집기. */
 function setup(o: { check?: BizCheck | (() => Promise<BizCheck>); seed?: boolean } = {}) {
   const db = openDatabase(path.join(tmp(), 'db.sqlite'), new Uint8Array(randomBytes(32)));
   dbs.push(db);
@@ -68,7 +63,6 @@ describe('칸 검사(온보딩 O-02와 같다)', () => {
     assert.throws(() => cleanBizEdit({ name: '', bizNo: NO_A }, base), /name_required/);
     assert.throws(() => cleanBizEdit({ name: 'A', bizNo: '1234567890' }, base), /bad_biz_no/);
     assert.throws(() => cleanBizEdit({ name: 'A', bizNo: NO_A, email: 'not-mail' }, base), /bad_email/);
-    // 보내지 않은 칸은 그대로, 문자열이 아닌 값은 버린다
     const b2 = { ...base, name: 'B', bizNo: NO_A, address: '주소' };
     assert.equal(cleanBizEdit({ rep: 3 as unknown as string }, b2).address, '주소');
     assert.deepEqual(changedKeys(b2, { ...b2, rep: '김', email: 'x@y.example' }), ['rep', 'email']);
@@ -147,13 +141,11 @@ describe('ProfileEditor: 실제 DB upsert', () => {
     const r = await t.editor.save({ bizNo: NO_B });
     assert.deepEqual(r, { ok: false, confirm: UNKNOWN });
     assert.equal(t.cur().bizNo, NO_A, '아직 저장하지 않는다');
-    // 조회하지 않은 번호에 [맞습니다]를 붙여도 다시 조회한다
     const other = '1010111113';
     assert.deepEqual(await t.editor.save({ bizNo: other }, true), { ok: false, confirm: UNKNOWN });
     assert.deepEqual(t.checks, [NO_B, other]);
     assert.deepEqual(await t.editor.save({ bizNo: other }, true), { ok: true, changed: ['bizNo'] });
     assert.equal(t.cur().bizNo, other);
-    // 한 번 쓴 확인은 다시 쓰지 않는다
     assert.deepEqual(await t.editor.save({ bizNo: NO_B }, true), { ok: false, confirm: UNKNOWN });
   });
   it('조회가 던지면 조회 못 함과 같다, 휴·폐업은 막는다', async () => {
@@ -170,7 +162,6 @@ describe('ProfileEditor: 실제 DB upsert', () => {
     assert.equal(r.ok, true);
     assert.deepEqual(t.checks, [NO_B]);
     assert.equal(t.cur().displayName, '새상사');
-    // 기본 발급 인증은 공동인증서(#365): 새로 만든 프로필도 빈 값이 아니라 cert로 둔다
     assert.equal(t.cur().signMethod, 'cert');
   });
 });
@@ -249,7 +240,6 @@ describe('온보딩 상태 맞추기(syncBiz)와 발급 인증 바꾸기(reopen 
     assert.equal(flow.state.auth, 'simple');
     assert.deepEqual(flow.missing(), []);
     assert.equal(ports.profiles.length, saves, '프로필을 다시 저장하지 않는다');
-    // 사업자는 빠진 것이 아니면 여전히 nothing_to_reopen(내 사업장 [수정]으로 고친다)
     await assert.rejects(flow.reopen('biz'), /nothing_to_reopen/);
   });
   it('redoPrev 모양이 틀린 저장 상태는 받지 않는다', async () => {
@@ -271,7 +261,6 @@ describe('배선(main·IPC·렌더러)', () => {
     assert.match(src, /log\.event\('main\.profile_edit', \{ fields: changed\.join\('\.'\) \|\| 'none' \}\);/);
     assert.match(src, /checkBizNo: \(n\) => onbExternal\.checkBizNo\(n\),/);
     assert.match(src, /if \(onb\?\.done\) await onb\.syncBiz\(biz\);/);
-    // 엔진 계약은 그대로(profile.upsert), 새 엔진 명령 없음
     assert.match(src, /upsert: async \(row\) => \(await host\.rpc\('profile\.upsert', row\)\) as DbProfile,/);
     assert.equal(USER_ACTION_METHODS['profile.edit'], 3_000);
     assert.equal(USER_ACTION_METHODS['profile.readCert'], 3_000);
@@ -286,7 +275,6 @@ describe('배선(main·IPC·렌더러)', () => {
   });
   it('렌더러: 상한·번호 안내가 main과 같다, 값은 입력 칸 value로만, [발급 인증 바꾸기]는 onboarding.reopen auth', async () => {
     const biz = read('apps/desktop/static/shell/shell-biz.js');
-    // 칸 상한·번호 검사는 공통 칸(fields.js) 한 곳이다. 렌더러는 main보다 길게 받지 않고(번호는 000-00-00000 12자), 검증 숫자 식은 DB와 같다.
     assert.match(biz, /from '\.\/fields\.js'/);
     const fields = (await import('../apps/desktop/static/shell/fields.js')) as unknown as { LIMITS: Record<string, number>; bizNoOk: (d: string) => boolean };
     for (const [k, n] of Object.entries(BIZ_FIELD_MAX)) assert.ok(fields.LIMITS[k]! <= n, `${k}: ${fields.LIMITS[k]} <= ${n}`);

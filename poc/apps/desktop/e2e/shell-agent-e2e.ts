@@ -1,7 +1,4 @@
-// 대화 에이전트 e2e(결정안 agent-chat-design-2026-11-12 §14, PR-B): 입력창 → main AgentChat → chat.step 대역 → 화면(문장·표·카드·되묻기 칩·진행 단계).
-// chat.step 자리는 각본 대역이다(엔진 마스킹·모델은 tests/chat-agent.test.ts가 실제 Egress와 게이트웨이 대역으로 본다). 대역은 받은 것(프레임·도구 결과)을 적는다.
-// 실행: electron apps/desktop/e2e-dist/shell-agent-e2e.js. 시연 fixture(가짜 홈택스)와 씨앗 이력(지난 발급) 위에서 돈다. [홈택스에서 준비]는 누르지 않는다.
-import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
+import './os-guard.js';
 import { rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
@@ -33,13 +30,12 @@ async function until(what: string, fn: () => Promise<boolean>, ms = 8_000): Prom
   return false;
 }
 
-// chat.step 대역: 턴마다 단계 함수를 차례로 쓴다. 받은 매개변수를 적는다(도구 결과에 숫자·이름이 없는지 본다).
 type Step = (p: StepParams) => StepResult | Error;
 let plan: Step[] = [];
 const sent: StepParams[] = [];
 const step = async (p: StepParams): Promise<StepResult> => {
   sent.push(structuredClone(p));
-  await sleep(250); // 진행 단계 줄이 보일 만큼
+  await sleep(250);
   const f = plan.shift();
   if (!f) throw new Error('chat.unavailable');
   const r = f(p);
@@ -74,16 +70,13 @@ async function flow() {
   check('시연 거래처가 있다', !!cp, cp);
   if (!cp) return;
   check('입력창 자리표시에 증명서 약속이 없다', !(await js<string>(`document.querySelector('#composer').placeholder`)).includes('증명서'));
-  // 진행 단계 줄의 글자 변화를 적는다
   await js(`(() => { window.__phases = []; new MutationObserver(() => { const e = document.querySelector('[data-agent-progress]'); if (e && window.__phases.at(-1) !== e.dataset.agentProgress) window.__phases.push(e.dataset.agentProgress); }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-agent-progress'] }); })()`);
 
-  // 0) 카드가 없는 첫 화면: 빠른 실행 칩이 있고([주민등록등본 떼 줘] 포함), 되묻는 동안에는 숨는다(M1. 카드가 있으면 cardWork가 먼저 숨겨서 따로 본다)
   const quick0 = await js<string[]>(`[...document.querySelectorAll('#quick [data-prompt]')].map((b) => b.dataset.prompt)`);
   check('첫 화면: 빠른 실행 칩이 있고 등본 칩도 있다', quick0.length > 0 && quick0.includes('주민등록등본 떼 줘'), quick0);
   await turn('세금계산서 끊어줘', () => reply({ kind: 'ask', text: '어느 거래처에 보낼까요?', ask: 'counterparty' }));
   check('카드 없이 되묻는 동안 빠른 실행 칩이 숨는다(M1)', (await cards()).length === 0 && (await js<number>(`document.querySelector('#quick').children.length`)) === 0, await js<number>(`document.querySelector('#quick').children.length`));
 
-  // 1) 지난달 매출: 표 제목에 건수·합계, 문장 슬롯은 같은 집계, 조사는 받침에 맞춘다
   let ref = '';
   await turn(
     '지난달 매출 얼마야',
@@ -96,11 +89,9 @@ async function flow() {
   let a = await lastAgent();
   check('매출: 문장 슬롯을 채우고 "원이에요"로 조사를 맞춘다', !!a && /^지난달 매출은 \d+건, 공급가 합계 [\d,]+원이에요\.$/.test(a.text), a?.text);
   check('매출: 슬롯이 가리키는 표가 같이 보이고 제목에 건수·공급가·합계', !!a && a.tables.length === 1 && a.tables[0]!.kind === 'sales' && /발급 \d+건 · 공급가 [\d,]+원 · 합계 [\d,]+원/.test(a.tables[0]!.title), a?.tables);
-  // SAX_E2E_SHOT=<경로.png>면 매출 표 화면을 남긴다(눈으로 보는 확인용)
   if (process.env.SAX_E2E_SHOT) writeFileSync(process.env.SAX_E2E_SHOT, (await S!.win.webContents.capturePage()).toPNG());
   check('진행 단계: 생각 중 → 장부 보는 중', JSON.stringify(await js('window.__phases')).includes('"thinking","reading"'), await js('window.__phases'));
 
-  // 2) 카드 만들기: 거래처 토큰은 main이 이름으로, 카드는 초안(발급 준비는 시작되지 않는다)
   const c0 = (await cards()).length;
   await js('window.__phases = []');
   await turn(
@@ -115,7 +106,6 @@ async function flow() {
   check('진행 단계: 카드 만드는 중', JSON.stringify(await js('window.__phases')).includes('drafting'), await js('window.__phases'));
   const runId = after.at(-1)!.id;
 
-  // 3) 부가세 별도로: 프레임의 카드 ref로 고친다
   let frameSeen: unknown = null;
   await turn(
     '아 부가세 별도로',
@@ -129,7 +119,6 @@ async function flow() {
   check('고치기: 프레임에 카드 ref와 열거 값만', JSON.stringify(frameSeen).includes('"amount":true') && !JSON.stringify(frameSeen).includes(cp.name) && !/1100000|1,100,000/.test(JSON.stringify(frameSeen)), frameSeen);
   check('고치기: 카드가 부가세 별도(추정 아님)', edited.text.includes('부가세 별도') && !edited.text.includes('계산했어요'), edited.text);
 
-  // 4) 되묻기: 칩은 누르면 바로 보낸다. 되묻는 동안 빠른 실행 칩은 숨긴다. [거래처 추가]가 있다
   await turn('세금계산서 하나 더', () => reply({ kind: 'ask', text: '어느 거래처에 보낼까요?', ask: 'counterparty' }));
   a = await lastAgent();
   check('되묻기: 장부 거래처 칩 + [거래처 추가]', !!a && a.chips.includes(cp.name) && a.chips.includes('거래처 추가'), a?.chips);
@@ -140,7 +129,6 @@ async function flow() {
   check('칩을 누르면 그 이름을 바로 보낸다', (await until('chip send', async () => (await agentReplies()) > r0)) && (await js<string>(`[...document.querySelectorAll('.sx-me')].pop().textContent`)) === cp.name);
   check('보낸 뒤 앞 되묻기 칩은 꺼진다', (await js<boolean[]>(`[...document.querySelectorAll('[data-agent-chip]')].map((c) => c.disabled)`)).every(Boolean));
 
-  // 5) 아까 그거 취소해: 초안을 버린다(발급 전만). 카드는 "취소함", 프레임에서 빠진다
   await turn(
     '아까 그거 취소해',
     (p) => tools({ tool: 'draft_discard', draft: frameCards(p).at(-1)!.ref }),
@@ -150,7 +138,6 @@ async function flow() {
   await turn('카드 남은 거 있어?', (p) => (frameSeen = frameCards(p), reply({ text: '열린 카드가 없어요.' })));
   check('취소: 다음 턴 프레임에 그 카드가 없다', Array.isArray(frameSeen) && (frameSeen as unknown[]).length === 0, frameSeen);
 
-  // 6) 연결 안 됨: 중립 문구와 [다시 시도]. 새 문장을 보내면 앞 [다시 시도]는 꺼진다
   await turn('지난주 발급 보여줘', () => new Error('chat.unavailable'));
   check('연결 안 됨 → [다시 시도]', (await js<number>(`document.querySelectorAll('[data-act="intent-retry"]:not([disabled])').length`)) === 1);
   const failText = await js<string>(`[...document.querySelectorAll('[data-intent-unavailable] p')].pop().textContent`);
@@ -158,7 +145,6 @@ async function flow() {
   await turn('고마워', () => reply({ kind: 'answer', text: '천만에요.' }));
   check('새 문장 뒤 앞 [다시 시도]는 꺼진다', (await js<number>(`document.querySelectorAll('[data-act="intent-retry"]:not([disabled])').length`)) === 0);
 
-  // 6b) 받을 돈(#284): 계좌가 없으면 not_set_up, 계좌를 더하면 받을 돈 조회가 답한다("계좌 연결이 아직"이 아니다)
   const recv: string[] = [];
   const recvTurn = (text: string) =>
     turn(
@@ -174,19 +160,16 @@ async function flow() {
   await recvTurn('받을 돈 다시 봐줘');
   check('받을 돈: 계좌 전 not_set_up, 계좌 뒤에는 조회 결과(ok·empty)', recv[0] === 'not_set_up' && (recv[1] === 'ok' || recv[1] === 'empty'), recv);
 
-  // 6c) 등본·초본은 사업자 대화에서도 정부24 직접 발급 안내로 간다(대화 에이전트로 보내지 않는다, #300 판정 ①)
   const n24 = sent.length;
   await send('주민등록등본 떼 줘');
   check('등본 요청 → 정부24 안내 패널, chat.step 부르지 않음', (await until('g24 panel', async () => (await js<number>(`document.querySelectorAll('[data-g24-panel]').length`)) > 0)) && sent.length === n24, sent.length - n24);
 
-  // 7) 장부에 없는 거래처(U8-1): 엔진이 준 이름으로 안내 문장과 [거래처 추가]. 누르면 그 이름이 채워진 추가 폼이 열린다
   await turn('라온상사에 세금계산서 끊어줘', () => reply({ kind: 'ask', text: '어느 거래처에 보낼까요?', ask: 'counterparty', unknownName: '라온상사' }));
   const unk = await js<{ text: string; adds: number } | null>(`(() => { const b = [...document.querySelectorAll('[data-agent-reply]')].pop(); const u = b.querySelector('[data-unknown-name]'); return u ? { text: u.textContent, adds: b.querySelectorAll('[data-act="ask-cp-add"]').length } : null; })()`);
   check('장부에 없는 이름: 안내 문장(조사 맞춤)과 [거래처 추가] 하나', unk?.text === '라온상사는 거래처 목록에 없어요.' && unk.adds === 1, unk);
   await js(`[...document.querySelectorAll('[data-agent-reply]')].pop().querySelector('[data-act="ask-cp-add"]').click()`);
   check('[거래처 추가] → 그 이름이 채워진 추가 폼', await until('cp form', async () => (await js<string>(`document.querySelector('[data-panel-cp-edit="new"] [name="name"]')?.value ?? ''`)) === '라온상사'));
 
-  // 경계: 도구 결과에는 숫자·거래처 이름이 없다(C-10). 어떤 카드도 초안·취소함 밖으로 가지 않았다(발급 준비는 카드 버튼으로만)
   const conts = sent.filter((p) => 'continue' in p).map((p) => JSON.stringify(p).replace(/"(?:ref|callId)":"[^"]*"/g, ''));
   check('도구 결과에 숫자·거래처 이름이 없다', conts.length > 0 && conts.every((j) => !/\d/.test(j) && !j.includes(cp.name)), conts);
   check('대화로는 어떤 카드도 준비·발급되지 않았다', (await cards()).every((c) => c.status === 'draft' || c.status === 'discarded'), await cards());

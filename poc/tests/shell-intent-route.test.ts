@@ -1,4 +1,3 @@
-// 대화 의도(M4-3 ③, intent-route.ts): 엔진 intent.resolve 응답 검사·작업 → 화면 해석·오프라인 대체(명령 없음·시간 초과·모양 다름).
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
@@ -25,7 +24,7 @@ describe('intent.resolve 응답 → IntentRoute', () => {
       { outcome: 'route', playbook: 'run.start', adviceMentioned: false, via: 'model' },
       { outcome: 'route', playbook: 'hometax.invoice.issue', via: 'model' },
       { outcome: 'route', playbook: 'none_of_these', adviceMentioned: false, via: 'model' },
-      { outcome: 'refuse_advice', via: 'l0' }, // 세무 질문 판정은 모델 필수(L0 표 mode none)
+      { outcome: 'refuse_advice', via: 'l0' },
       { outcome: 'route', playbook: 'hometax.invoice.issue', adviceMentioned: false, via: 'gateway' },
       { outcome: 'issue', via: 'model' },
     ])
@@ -102,7 +101,6 @@ describe('오프라인 해석 없음·로그인 먼저(사용자 결정 2026-11-
     const product = send.slice(send.indexOf('const r = await intent.resolve(text);'));
     assert.ok(product.length > 0);
     assert.match(product, /if \(!r\.route\) return \{ kind: 'unavailable', text: INTENT_UNAVAILABLE_TEXT, retry: true, via: 'model', note: null, sent: sentFromGateway\(gwIssuedSince\(mark\)\) \};/);
-    // 판정이 없을 때 interpret(정규식 의도)로 가는 줄이 없다
     const before = product.slice(0, product.indexOf('const to = routed('));
     assert.doesNotMatch(before, /interpret\(/);
     assert.doesNotMatch(src, /advice-words|offlineAdviceMentioned/);

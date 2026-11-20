@@ -1,6 +1,3 @@
-// ADR-039 fixture 출처 허가(팀장 결정 2026-11-07): 액추에이터·goto 핸들러의 출처 판정은 제품의 마지막 방어선이다.
-// 허용 목록을 넓히지 않고, fixture 패키지 실행일 때만 loader.fixtureOriginGrant 허가를 따로 주입한다. 관문은 로더 거부(결정 2 ②)와 같고
-// (FIXTURE_LOAD_ALLOWED, development 조건 소스에서만 참), 제품 dist는 발급도 인정도 하지 않는다. 가짜 포트, 실제 포털 접속 없음.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {

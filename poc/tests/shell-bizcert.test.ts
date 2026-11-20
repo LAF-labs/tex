@@ -1,5 +1,3 @@
-// 사업자등록증 읽기(bizcert-read.ts, M4-3, 08 §4 O-02, ADR-014): 고른 파일 → 샌드박스 글자 → 엔진 bizcert.parse → 온보딩 후보.
-// 샌드박스는 가짜(글자만 돌려준다), 해석은 엔진과 같은 parseBizCert. 실제 샌드박스 경로는 ocr-e2e가 본다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -69,7 +67,6 @@ describe('readBizCert', () => {
     assert.equal(got?.rep, '최마바');
     assert.deepEqual(r.calls, ['pick', 'pdf:text', 'parse', 'pdf:ocr', 'parse']);
     assert.equal(r.logs[0]![1].via, 'ocr');
-    // 글자 층이 비면 엔진을 부르지 않고 바로 OCR
     const e = ports({ pdf: ['  ', CERT_TEXT] });
     await readBizCert(e.p);
     assert.deepEqual(e.calls, ['pick', 'pdf:text', 'pdf:ocr', 'parse']);

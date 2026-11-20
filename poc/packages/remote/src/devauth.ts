@@ -1,8 +1,3 @@
-// 기기 범위 토큰·DPoP(SAX-dpop-v1) 클라이언트 쪽. 형식 정본은 services/shared/CONTRACT.md §2·§3, services/account/API.md "기기 범위 토큰".
-//   DPoP: <b64u(JCS(proof))>.<b64u(Ed25519_Vx(SAX-dpop-v1 ‖ JCS(proof)))>
-//   proof = {htm, htu, iat(초), jti(16~64자 b64u), ath = b64u(sha256(토큰))}
-//   POST /v1/device-tokens에서는 아직 토큰이 없으므로 ath = b64u(sha256(JCS(SignedCert))).
-// 이 패키지는 소켓을 열지 않는다. HTTP는 호출자가 넘긴다(PC는 @sax/net egress, 폰은 앱의 fetch).
 
 import { isDevPlainHost } from './devhosts.ts';
 import { b64url, utf8 } from './bytes.ts';
@@ -84,7 +79,6 @@ const errCode = (b: unknown): string => {
   return typeof e === 'string' && /^[a-z_]+\.[a-z_]+$/.test(e) ? e : 'unknown';
 };
 
-/** 계정 서비스 origin(예: https://account.tex.laf-co.com). 경로는 붙이지 않는다. */
 const joinUrl = (origin: string, path: string) => `${origin.replace(/\/+$/, '')}${path}`;
 
 /** POST /v1/device-tokens: AIK 인증서 + 그 인증서 Vx의 DPoP(ath = sha256(JCS(SignedCert))) → 15분 토큰. */

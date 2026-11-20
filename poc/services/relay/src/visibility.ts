@@ -1,5 +1,3 @@
-// 저장 컬럼 ↔ D09 §1.1 "릴레이" 행. 시험이 마이그레이션의 실제 컬럼과 이 표가 같은지 본다.
-// Noise·HPKE 평문, 키, 의도 봉투의 pair_id·seq·exp, 계정·기기와 우편함의 연결, IP는 어떤 테이블에도 없다.
 export const RELAY_VISIBILITY: Record<string, Record<string, string>> = {
   mailboxes: {
     mbx_key: '우편함 ID(SHA-256 해시만)',

@@ -1,13 +1,4 @@
 #!/usr/bin/env node
-// 예행 전용 로컬 패키지 넣기(부장 2026-11-13): 레포의 패키지 원본을 앱 데이터의 rehearsal-packages/<id>/로 복사한다.
-// 앱은 도구 > 홈택스 예행(발급 안 함) 실행에서만 이 폴더를 본다(엔진 RunService). 게시 서명은 필요 없고, 엔진 로더 검사와
-// "서명 설치본보다 약하지 않음" 검사를 지나야 쓴다. 판정 결과는 engine.log run.rehearsal_report의 package(local:<판>:<다이제스트>)로 확인한다.
-//
-//   node scripts/rehearsal-package.mjs                 # packages/engine/playbooks/hometax.invoice.issue → 기본 앱 데이터
-//   node scripts/rehearsal-package.mjs --from <폴더>   # 다른 원본 폴더(manifest.json·playbook.json·selectors.json·strings.ko.json)
-//   node scripts/rehearsal-package.mjs --app <폴더>    # 다른 앱 데이터 폴더(격리 프로필 등)
-//   node scripts/rehearsal-package.mjs --remove        # 로컬 패키지를 지운다(예행이 다시 레지스트리 판을 쓴다)
-//   node scripts/rehearsal-package.mjs --id hometax.cert.biz_registration   # 다른 패키지(민원증명 4종·hometax.cert.issued_list)
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

@@ -1,4 +1,3 @@
-// 개발 빌드 앱 판(run-version.ts): 패키지된 앱은 환경 변수를 무시한다
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { runVersion } from '../apps/desktop/src/run-version.ts';

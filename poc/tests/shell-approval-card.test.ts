@@ -1,7 +1,3 @@
-// ADR-021 결정 7: main 승인 카드 하나(값 전체·비가역 한 줄·[중지]·[승인하고 발급], 기본 포커스 [중지]).
-// 음성 시험 둘: ① main이 관찰한 [승인하고 발급] 클릭 없이는 승인 근거가 없어 발급(submit)이 일어나지 않는다.
-// ② 렌더러는 카드를 흉내 내거나 겹쳐 승인을 만들 수 없다. Electron을 import하는 모듈은 불러오지 않는다(판정 모듈 + 소스 확인).
-// 실제 창에서의 확인(가짜 버튼·메인 창 입력·카드 키·발급 POST 0회)은 apps/desktop/e2e/shell-e2e.ts.
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -39,7 +35,6 @@ const H = cardHeight(CARD_ROWS['H-01']);
 const T = cardTargets(W, H);
 const mid = (r: { x: number; y: number; width: number; height: number }) => ({ x: Math.floor(r.x + r.width / 2), y: Math.floor(r.y + r.height / 2) });
 
-/** 막 뜬 카드 판정기(기다림·머무름 없음, ADR-021 개정 2026-11-09). 이 상태에서 down→up 하나면 승인된다. */
 function armedGate(): BarGate {
   const g = new BarGate();
   g.setTargets(T);
@@ -59,13 +54,13 @@ describe('음성 ①: main이 관찰한 [승인하고 발급] 클릭 없이는 �
   it('[승인하고 발급] 영역 밖(값 줄·비가역 줄·[중지]·두 버튼 사이·카드 밖) down→up은 무장됨이어도 승인이 아니다', () => {
     const gapX = T.stop.x + T.stop.width + Math.floor((T.approve.x - T.stop.x - T.stop.width) / 2);
     const points = [
-      { x: 40, y: 20 }, // 합계 줄
-      { x: 300, y: 100 }, // 품목 줄
-      { x: 300, y: T.approve.y - 30 }, // 비가역 한 줄
+      { x: 40, y: 20 },
+      { x: 300, y: 100 },
+      { x: 300, y: T.approve.y - 30 },
       mid(T.stop),
       { x: gapX, y: mid(T.approve).y },
       { x: T.approve.x - 1, y: mid(T.approve).y },
-      { x: T.approve.x + T.approve.width, y: mid(T.approve).y }, // 오른쪽 경계는 밖
+      { x: T.approve.x + T.approve.width, y: mid(T.approve).y },
       { x: mid(T.approve).x, y: T.approve.y + T.approve.height },
       { x: -1, y: 10 },
       { x: W + 5, y: H - 10 },
@@ -75,13 +70,11 @@ describe('음성 ①: main이 관찰한 [승인하고 발급] 클릭 없이는 �
       g.mouse({ type: 'mouseDown', ...p, button: 'left' });
       assert.equal(g.mouse({ type: 'mouseUp', ...p, button: 'left' }), null, JSON.stringify(p));
     }
-    // 안에서 누르고 밖에서 떼거나, 밖에서 누르고 안에서 떼면 승인이 아니다.
     const g = armedGate();
     g.mouse({ type: 'mouseDown', ...mid(T.stop), button: 'left' });
     assert.equal(g.mouse({ type: 'mouseUp', ...mid(T.approve), button: 'left' }), null);
     assert.equal(g.mouse({ type: 'mouseDown', ...mid(T.approve), button: 'left' }), null, '눌림');
     assert.equal(g.mouse({ type: 'mouseUp', ...mid(T.stop), button: 'left' }), null);
-    // 대조: 같은 판정기에서 영역 안 down→up은 승인이다(위 거부가 판정기 고장이 아님).
     g.mouse({ type: 'mouseDown', ...mid(T.approve), button: 'left' });
     assert.deepEqual(g.mouse({ type: 'mouseUp', ...mid(T.approve), button: 'left' }), { kind: 'approve' });
   });
@@ -94,8 +87,6 @@ describe('음성 ①: main이 관찰한 [승인하고 발급] 클릭 없이는 �
     const onGate = between(app, "runs.on('gate',", 'const showAttest =');
     const stopped = between(onGate, "o.reason === 'stopped'", "o.reason === 'load_failed'");
     assert.ok(stopped.includes('runs.stop(runId)') && !stopped.includes('answerGate'));
-    // 게이트 답(host.answerGate)은 sendApproval 안 한 곳뿐이고, 바 결과에서는 승인 판정 갈래만 sendApproval을 부른다
-    // (묶음 뒤 건의 click+batch 근거는 h01-guards가 본다)
     const send = between(onGate, 'const sendApproval = async', '    };');
     assert.ok(send.includes('host.answerGate(approval)'));
     const onBar = between(onGate, 'void bar.open(', "o.reason === 'stopped'");
@@ -106,11 +97,9 @@ describe('음성 ①: main이 관찰한 [승인하고 발급] 클릭 없이는 �
     const bar = read('apps/desktop/src/approval-bar.ts');
     assert.equal(count(bar, 'issueLocalApproval('), 1);
     assert.ok(between(bar, '  private approve(): void {', '  /** 창 크기와').includes('issueLocalApproval(this.key, req.gate'));
-    // approve()를 부르는 곳은 둘: 마우스 판정 결과 approve, 그리고 꺼진 키보드 경로(KEYBOARD_APPROVAL=false라 gate.key가 늘 null).
     assert.equal(count(bar, 'this.approve()'), 2);
     assert.ok(between(bar, '  private onMouse(', '  private paintBackground(').includes("if (r.kind === 'approve') return this.approve();"));
     assert.match(bar, /this\.gate\.key\(\{[^}]*\}\)\?\.kind === 'approve'\) this\.approve\(\);/);
-    // 무장 거부 중에는 [중지]만 받고 승인 판정에 넣지 않는다.
     const onMouse = between(bar, '  private onMouse(', '  private paintBackground(');
     assert.ok(onMouse.indexOf('if (this.gate.stop(ev)) return this.stopByUser') < onMouse.indexOf('if (this.refusal) return this.gate.track(ev)'));
     assert.ok(onMouse.indexOf('if (this.refusal) return this.gate.track(ev)') > 0 && onMouse.indexOf('if (this.refusal) return this.gate.track(ev)') < onMouse.indexOf('this.gate.mouse(ev)'));
@@ -120,7 +109,6 @@ describe('음성 ①: main이 관찰한 [승인하고 발급] 클릭 없이는 �
 describe('음성 ②: 렌더러는 승인 카드를 흉내 내거나 겹쳐 승인을 만들 수 없다', () => {
   it('렌더러 IPC 표에는 승인·게이트·카드 명령이 없다', () => {
     const names = [...Object.keys(SHELL_METHODS), ...Object.keys(USER_ACTION_METHODS)];
-    // 이름만 겹치는 명령: secret.answer는 대화 비밀 입력 카드의 답(값은 금고 1회용 포트로만)이다. 승인·게이트와 무관하다
     const NOT_GATE = new Set(['secret.answer']);
     for (const m of names) if (!NOT_GATE.has(m)) assert.doesNotMatch(m, /approv|gate|^bar\.|card\.|answer|attest\.(?!open|close)/i, m);
   });
@@ -149,7 +137,6 @@ describe('음성 ②: 렌더러는 승인 카드를 흉내 내거나 겹쳐 승�
     assert.ok(!/ipcMain|webContents\.on\('ipc-message/.test(bar), '카드 쪽에 렌더러 메시지 수신이 없다');
     const layout = read('apps/desktop/src/shell-layout.ts');
     assert.match(layout, /export function barBounds\(contentWidth: number, contentHeight: number, wide = false, height: number = SHELL\.barHeight, panel: number = SHELL\.panel\)/);
-    // 앱 안 브라우저 패널 폭(panel)은 승인 대기 중 창 폭과 상수만으로 정한다: 렌더러가 고른 폭(끌기)·크게는 카드 자리에 닿지 않는다
     for (const w of [900, 1280, 1440, 1920]) {
       const fixed = browserPanelWidth(w, null, false, true);
       assert.equal(browserPanelWidth(w, 5000, true, true), fixed, `${w}`);
@@ -174,11 +161,9 @@ describe('음성 ②: 렌더러는 승인 카드를 흉내 내거나 겹쳐 승�
 
   it('렌더러의 대화 카드는 승인 대기 중 "작성 완료" 한 줄(서류·거래처·합계): 되읽은 값 전체·승인 버튼을 그리지 않는다', () => {
     const views = read('apps/desktop/static/shell/shell-views.js');
-    // 주석은 빼고 본다(화면에 나가는 코드만).
     const waiting = between(views, "} else if (st === 'waiting') {", "} else if (st === 'done') {").replace(/^\s*\/\/.*$/gm, '');
     assert.ok(waiting.includes('card.replaceChildren()') && waiting.includes('작성 완료') && waiting.includes('`세금계산서 · ${run.counterparty.name} · ${won(run.total)}`'));
     for (const bad of ['run.supply', 'run.tax', 'run.counterparty.bizNo', 'run.email', 'run.item', 'run.writeDate', 'run.warnings', 'amount(', 'kv(', '승인하고 발급', '승인 카드', '승인 바', 'act.approve']) assert.ok(!waiting.includes(bad), bad);
-    // 렌더러는 main이 알린 높이만큼 자리를 비울 뿐이고, 범위 밖 값은 기본 높이로 둔다.
     const js = read('apps/desktop/static/shell/shell.js');
     const set = between(js, 'function setBarHeight(px) {', '\n}');
     assert.ok(set.includes('Number.isInteger(px) && px > 0 && px <= 600') && set.includes("'--l-bar-h'"));

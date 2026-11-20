@@ -1,6 +1,3 @@
-// Noise 프레임워크(rev 34) 핸드셰이크: 25519 / ChaChaPoly / BLAKE2b. D08 §2·§4·§5.
-// 페어링 Noise_XXpsk0(개시자 폰), 상시 세션 Noise_IK(개시자 폰). 정적키 DH는 NoiseStatic(데스크톱은 금고)로 한다.
-// 시험 벡터(cacophony·snow)로 XX·XXpsk3·XXpsk0+psk1·IK를 확인한다(tests/remote-noise.test.ts).
 
 import { concat, equal, utf8, wipe } from './bytes.ts';
 import { blake2b512, chachaOpen, chachaSeal, hmacBlake2b, noiseNonce, x25519Dh, x25519Keygen, x25519Public } from './crypto.ts';
@@ -55,7 +52,6 @@ export class CipherState {
     this.#n++;
     return pt;
   }
-  /** 키 사본(전송 계층으로 넘길 때만). */
   key(): Uint8Array {
     if (!this.#k) throw new Error('noise: no key');
     return this.#k.slice();
@@ -68,17 +64,13 @@ export class CipherState {
 
 export interface HandshakeOptions {
   pattern: Pattern;
-  /** psk 수정자 위치. 페어링은 [0]. */
   psks?: readonly number[];
   initiator: boolean;
   prologue: Uint8Array;
   s: NoiseStatic;
-  /** 사전 공유 상대 정적키(IK 개시자). */
   rs?: Uint8Array;
-  /** psk 토큰마다 차례로 쓴다. 32B. */
   psk?: readonly Uint8Array[];
   ctx: NoiseCtx;
-  /** 시험 벡터 전용: 임시 비밀키 고정. 제품 코드에서 넘기지 않는다. */
   testEphemeral?: Uint8Array;
 }
 
@@ -124,7 +116,6 @@ export class Handshake {
     this.#h = name.length <= HASHLEN ? concat(name, new Uint8Array(HASHLEN - name.length)) : blake2b512(name);
     this.#ck = this.#h.slice();
     this.#mixHash(o.prologue);
-    // 사전 메시지: IK는 응답자 정적키를 양쪽이 미리 안다.
     for (const t of p.pre.init) if (t === 's') this.#mixHash(this.initiator ? this.#s.publicKey : this.#need(this.#rs));
     for (const t of p.pre.resp) if (t === 's') this.#mixHash(this.initiator ? this.#need(this.#rs) : this.#s.publicKey);
   }
@@ -163,7 +154,6 @@ export class Handshake {
     const e = () => this.#need(this.#e).secretKey;
     const re = () => this.#need(this.#re);
     const rs = () => this.#need(this.#rs);
-    // es: 개시자의 e × 응답자의 s, se: 개시자의 s × 응답자의 e.
     switch (token) {
       case 'ee':
         return x25519Dh(e(), re());
@@ -182,12 +172,10 @@ export class Handshake {
   get complete(): boolean {
     return this.#done;
   }
-  /** 핸드셰이크 해시 h(완료 뒤). SAS·채널 바인딩에만 쓴다(D08 §4.2 5단계·7단계). */
   get handshakeHash(): Uint8Array {
     if (!this.#done) throw new Error('noise: handshake not complete');
     return this.#h.slice();
   }
-  /** 상대 정적키(받은 뒤). */
   get remoteStatic(): Uint8Array | null {
     return this.#rs ? this.#rs.slice() : null;
   }
@@ -247,7 +235,6 @@ export class Handshake {
     if (this.#idx === this.#msgs.length) this.#done = true;
   }
 
-  /** 전송 키 [개시자→응답자, 응답자→개시자]. 내 송신·수신 순서로 돌려준다. 임시키는 지운다. */
   split(): { send: Uint8Array; recv: Uint8Array } {
     if (!this.#done) throw new Error('noise: handshake not complete');
     const [k1, k2] = hkdf(this.#ck, new Uint8Array(), 2);

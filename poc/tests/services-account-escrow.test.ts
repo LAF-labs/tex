@@ -1,4 +1,3 @@
-// 계정 열쇠 보관(ADR-050)의 서버 쪽 암호: 금고(packages/vault)와 같은 HPKE 스위트인지, 다른 계정·다른 키·다른 새 PC의 봉인문을 받지 않는지 본다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { describe, it } from 'node:test';
@@ -48,17 +47,14 @@ describe('계정 열쇠 보관(services/account/src/escrow.ts)', () => {
     const sealed = hpkeSealBase(pub, info, remoteStoreAad(a.aikPub), a.rk);
     assert.equal(e.holds(sealed.enc, sealed.ct, a.aikPub), true);
     assert.equal(e.holds(sealed.enc, sealed.ct, other.aikPub), false, '다른 계정의 줄에 끼워 넣지 못한다');
-    // 다른 계정의 열쇠를 이 계정의 aad로 봉인해도(aad는 맞지만 AIK가 다르다) 받지 않는다
     const wrong = hpkeSealBase(pub, info, remoteStoreAad(a.aikPub), other.rk);
     assert.equal(e.holds(wrong.enc, wrong.ct, a.aikPub), false);
-    // 보관 키가 바뀌면 열리지 않는다
     assert.equal(new KeyEscrow(new Uint8Array(randomBytes(32))).holds(sealed.enc, sealed.ct, a.aikPub), false);
 
     const link = x25519FromSeed(new Uint8Array(randomBytes(32)));
     const id = '0b0e3f0a-6d1c-4c0e-9a51-1f1f6f0f3a11';
     const out = e.reseal(sealed.enc, sealed.ct, a.aikPub, id, link.pub)!;
     assert.deepEqual(hpkeOpenBase(link.priv, link.pub, new Uint8Array(out.enc), info, remoteClaimAad(a.aikPub, id, link.pub), new Uint8Array(out.ct)), a.rk);
-    // 다른 기기 ID·다른 넘겨받기 키로는 열리지 않는다
     assert.throws(() => hpkeOpenBase(link.priv, link.pub, new Uint8Array(out.enc), info, remoteClaimAad(a.aikPub, '1b0e3f0a-6d1c-4c0e-9a51-1f1f6f0f3a11', link.pub), new Uint8Array(out.ct)), /open_failed/);
     const eve = x25519FromSeed(new Uint8Array(randomBytes(32)));
     assert.throws(() => hpkeOpenBase(eve.priv, eve.pub, new Uint8Array(out.enc), info, remoteClaimAad(a.aikPub, id, link.pub), new Uint8Array(out.ct)), /open_failed/);

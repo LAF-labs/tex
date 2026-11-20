@@ -1,6 +1,3 @@
-// H-01 게시 도구(services/registry/src/publish, PUBLISH-H01.md, 팀장 지시 2026-11-09): 로컬 레지스트리(가짜 S3 + 함수 라우터 + 메모리 로그)로 끝까지.
-// 서명은 시험 키(tests/fixtures/registry 공개 시드)로, 사용자가 칠 ceremony sign 명령을 도구가 출력한 그대로 돌린다.
-// 게시 뒤 엔진(RegistrySync·loadPackage)이 받는지, 운영자 토큰이 출력·파일에 남지 않는지, dry-run은 PUT을 보내지 않는지 본다.
 import assert from 'node:assert/strict';
 import { createPrivateKey, sign as edSign } from 'node:crypto';
 import fs from 'node:fs';
@@ -25,21 +22,16 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const TRUST_PATH = path.join(ROOT, 'tests/fixtures/registry/trust.json');
 const TRUST = JSON.parse(fs.readFileSync(TRUST_PATH, 'utf8')) as TrustRoot;
 const SOURCES = ['packages/engine/playbooks/hometax.invoice.lookup', 'packages/engine/playbooks/hometax.invoice.email_status', 'packages/engine/playbooks/hometax.invoice.issue'].map((p) => path.join(ROOT, p));
-/** 원본 판(재게시마다 올라간다, scripts/h01-republish.mjs). 게시 경로 이름은 이 판을 따른다 */
 const srcVersion = (dir: string) => (JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')) as { version: string }).version;
 const V = { lookup: srcVersion(SOURCES[0]!), mail: srcVersion(SOURCES[1]!), issue: srcVersion(SOURCES[2]!) };
-/** 정책 초안(팀장 결정 2026-11-09: 홈택스 auto, 요청률 상한은 ADR-025 PoC 값) */
 const POLICY_PATH = path.join(ROOT, 'services/registry/policy/2026.11.json');
-/** 다음 정책(대표 결정 2026-11-12 "우리가 설정한 상한은 웬만해선 닿지 않게"): 사용량 상한만 바꾼다 */
 const POLICY_NEXT_PATH = path.join(ROOT, 'services/registry/policy/2026.11.1.json');
 const TS_SEED = Buffer.alloc(32, SAMPLE_SEEDS.timestamp['timestamp-1']).toString('hex');
 const ADMIN = 'admin-token-for-publish-test-0123456789';
 const PKCS8 = Buffer.from('302e020100300506032b657004220420', 'hex');
 
-/** 시험 시드 전부(서명 의식 키체인 대역). 타임스탬프 키는 넣지 않는다(서버 온라인 키) */
 const signer = () => new MemorySigner(new Map(Object.entries(SAMPLE_SEEDS).filter(([r]) => r !== 'timestamp').flatMap(([, ids]) => Object.entries(ids).map(([id, s]) => [id, Buffer.alloc(32, s)] as const))));
 
-/** 가짜 S3(경로 방식) + 공개 URL(없으면 Supabase처럼 400 NoSuchKey). put·get 횟수를 센다 */
 function fakeS3() {
   const objects = new Map<string, { body: Buffer; type: string; cache: string }>();
   const counts = { put: 0, get: 0 };
@@ -65,7 +57,6 @@ function fakeS3() {
   return { server, objects, counts };
 }
 
-/** 운영 모양: 공개 GET은 버킷(함수 밖), /registry/log/*·/admin/v1/*는 레지스트리 함수 라우터 */
 async function localProd() {
   const s3 = fakeS3();
   await new Promise<void>((r) => s3.server.listen(0, '127.0.0.1', r));
@@ -118,7 +109,6 @@ function ceremonyDeps(lines: string[]): CliDeps {
   };
 }
 
-/** 도구가 출력한 사용자 서명 명령을 그대로 돌린다(ceremony sign, 시험 키) */
 async function runPrinted(lines: string[]): Promise<number> {
   const prefix = 'node --conditions=development services/registry/src/ceremony/cli.ts ';
   const cmds = lines.map((l) => l.trim()).filter((l) => l.startsWith(prefix));
@@ -126,7 +116,6 @@ async function runPrinted(lines: string[]): Promise<number> {
   return cmds.length;
 }
 
-/** 셸이 하는 만큼만 낱말로 나눈다: 공백 구분, '…'(POSIX, '\\'' 이어 붙이기)·"…"(Windows) 인용을 벗긴다 */
 function shellWords(c: string, platform: NodeJS.Platform = process.platform): string[] {
   const out: string[] = [];
   let cur = '';
@@ -155,7 +144,6 @@ function shellWords(c: string, platform: NodeJS.Platform = process.platform): st
   return out;
 }
 
-/** 루트 2개로 서명한 폐기 목록(서명 의식 산출물 모양: 신선도 필드는 있지만 낡았다, timestamp 없음) */
 function rootSignedRevoked(): Record<string, unknown> {
   const doc: Record<string, unknown> = { revoked: [{ keyId: 'package-0', role: 'package', revokedAt: '2026-11-06T07:52:13Z' }], monotonic: 1, keyEpoch: 1, issuedAt: '2026-11-06T07:52:13Z', expiresAt: '2026-11-07T07:52:13Z', signatures: [] };
   const bytes = signingBytes('revoked_keys', doc);
@@ -189,7 +177,6 @@ describe('H-01 게시 도구: 로컬 레지스트리(가짜 S3)로 끝까지', (
     assert.equal(prod.s3.objects.size, 0);
     assert.equal((await prod.built.log.head()).treeSize, 0);
     assert.ok(lines.some((l) => l.startsWith('리허설: 임시 키 서명 14번, 게시 8건')), lines.join('\n'));
-    // 리허설 핀은 실제 핀과 keyId·keyEpoch가 같고 공개키는 다르다
     const eph = JSON.parse(read(path.join(dir, 'dry/rehearsal/trust.json'))) as TrustRoot;
     assert.deepEqual(Object.fromEntries(Object.entries(eph.keys).map(([r, k]) => [r, Object.keys(k)])), Object.fromEntries(Object.entries(TRUST.keys).map(([r, k]) => [r, Object.keys(k)])));
     assert.notEqual(eph.keys.package['package-1'], TRUST.keys.package['package-1']);
@@ -201,13 +188,11 @@ describe('H-01 게시 도구: 로컬 레지스트리(가짜 S3)로 끝까지', (
     const revokedFile = path.join(dir, 'revoked.signed.json');
     const p: string[] = [];
     assert.equal(await publish(['prepare', '--registry', prod.origin, '--trust', TRUST_PATH, '--work', work, '--revoked', revokedFile, '--policy', POLICY_PATH, '--ceiling', 'hometax=auto', ...SOURCES], cliDeps(p)), 0);
-    // dry-run이 보인 manifest 확인 코드 = 실제 준비의 확인 코드(서명 입력은 서명과 무관하다)
     const codes = (ls: string[]) => ls.filter((l) => /@\d+\.\d+\.\d+\(.*확인 코드/.test(l)).map((l) => l.trim());
     assert.deepEqual(codes(p), codes(out));
     assert.equal(codes(p).length, 3);
     assert.ok(p.some((l) => l.includes('revoked_keys monotonic 1: 루트 2개 서명이 이미 있다')));
     assert.ok(p.some((l) => /^ {2}policy monotonic 1 확인 코드 /.test(l)), p.join('\n'));
-    // 순서: 패키지(package 키) → 정책(policy 키) → status(policy 키)
     const kinds = p.filter((l) => l.includes(' sign --kind ')).map((l) => /--kind (\S+)/.exec(l)![1]);
     assert.deepEqual(kinds, ['manifest', 'manifest', 'manifest', 'manifest', 'manifest', 'manifest', 'policy', 'policy', 'status', 'status']);
     assert.equal(await runPrinted(p), 10, 'manifest 3개 × package 2 + 정책 × policy 2 + status × policy 2');
@@ -224,12 +209,10 @@ describe('H-01 게시 도구: 로컬 레지스트리(가짜 S3)로 끝까지', (
     assert.deepEqual(record.published.map((x) => x.logIndex), [0, 1, 2, 3, 4, 5, 6, 7]);
     assert.deepEqual(record.logHead, { ...record.logHead, before: 0, after: 8 });
 
-    // 버킷: 패키지는 불변 캐시, 서버가 붙인 타임스탬프(첫 게시 도장)
     assert.equal(prod.s3.objects.get(`packages/hometax.invoice.issue@${V.issue}.sxp`)?.cache, 'public, max-age=31536000, immutable');
     const status = JSON.parse(prod.s3.objects.get('registry/status.json')!.body.toString()) as { timestamp: { keyId: string }; portalModeCeiling: unknown };
     assert.equal(status.timestamp.keyId, 'timestamp-1');
     assert.deepEqual(status.portalModeCeiling, { hometax: 'auto' });
-    // 폐기 목록·정책·status·인덱스(ADR-043) 넷 다 서버가 신선도를 붙였다. 사용자가 서명한 인덱스 초안에는 기간이 없다
     assert.equal(prod.events.filter((l) => l.includes('registry.stamped_on_publish')).length, 4);
     const draft = JSON.parse(read(path.join(work, 'index.json'))) as Record<string, unknown>;
     assert.deepEqual(['issuedAt', 'expiresAt', 'timestamp'].filter((k) => k in draft), []);
@@ -237,7 +220,6 @@ describe('H-01 게시 도구: 로컬 레지스트리(가짜 S3)로 끝까지', (
     assert.equal(ix.timestamp.keyId, 'timestamp-1');
     assert.equal(Date.parse(ix.expiresAt) - Date.parse(ix.issuedAt), RESIGN_TTL.index);
 
-    // 토큰은 출력·작업 폴더·서버 로그 어디에도 없다
     for (const l of [...p, ...a, ...u, ...prod.events]) assert.ok(!l.includes(ADMIN));
     for (const f of walk(work)) assert.ok(!fs.readFileSync(f).includes(ADMIN), f);
   });
@@ -256,7 +238,6 @@ describe('H-01 게시 도구: 로컬 레지스트리(가짜 S3)로 끝까지', (
     const r = await sync.sync();
     assert.deepEqual({ revoked: r.revoked, status: r.status, index: r.index, fresh: r.revokedFresh }, { revoked: 'accepted', status: 'accepted', index: 'accepted', fresh: true });
     assert.deepEqual(sync.status().portalModeCeiling, { hometax: 'auto' });
-    // 정책(D03 §7.1): 엔진이 받고, 홈택스 auto, 요청률은 ADR-025 PoC 값
     const pol = JSON.parse(Buffer.from(await (await fetch(`${prod.origin}/policy/current.json`)).arrayBuffer()).toString()) as Policy;
     const ap = acceptPolicy(pol, { roots: trustRootsFromPin(pin), revoked: new Set(['package-0']), current: null, hold: false, now: Date.now() });
     assert.ok(ap.ok, ap.ok ? '' : ap.code);
@@ -283,7 +264,6 @@ describe('H-01 게시 도구: 로컬 레지스트리(가짜 S3)로 끝까지', (
     assert.equal(p.filter((l) => l.includes('이미 게시됨(서명 없음)')).length, 3);
     assert.ok(p.some((l) => l.includes('정책 2026.11 monotonic 1: 레지스트리에 같은 내용이 있다')), p.join('\n'));
     assert.equal(await runPrinted(p), 0);
-    // 준비한 뒤 cron이 인덱스 신선도를 다시 서명해도(바이트만 바뀜) 내용이 같으니 이어 간다(ADR-043)
     const before = prod.s3.objects.get('registry/stable/index.json')!.body;
     const later = Date.now() + 30 * 3_600_000;
     const rr = await resignAll({ store: prod.built.store, trust: prod.built.trust, log: prod.built.log, signer: logSigningKey(TS_SEED, prod.built.trust), now: () => later });
@@ -297,7 +277,6 @@ describe('H-01 게시 도구: 로컬 레지스트리(가짜 S3)로 끝까지', (
     const rec = JSON.parse(read(path.join(dir, 'again/record.json'))) as { published: Array<{ path: string }> };
     assert.deepEqual(rec.published.map((x) => x.path), ['registry/stable/index.json']);
 
-    // 같은 버전에 다른 playbook 바이트 → 버전을 올리라고 거부
     const changed = path.join(dir, 'h01-changed');
     fs.cpSync(SOURCES[2]!, changed, { recursive: true });
     fs.appendFileSync(path.join(changed, 'playbook.json'), '\n');
@@ -361,7 +340,6 @@ describe('H-01 게시 도구: 거부(서명 전·서명 뒤·게시 직전)', ()
   it('게시 직전: 틀린 토큰은 아무것도 올리지 않고, 준비 뒤 인덱스가 바뀌면 멈춘다', async () => {
     const work = path.join(dir, 's');
     const lines: string[] = [];
-    // 인덱스 서명(앞 시험의 assemble 출력이 없으니 다시 출력을 만들지 않고 서명 명령을 직접 짓는다)
     const confirm = (JSON.parse(read(path.join(work, 'assembled.json'))) as { indexConfirm: string }).indexConfirm;
     for (const k of ['package-1', 'package-2']) lines.push(`node --conditions=development services/registry/src/ceremony/cli.ts sign --kind index --key-id ${k} --confirm ${confirm} --trust ${TRUST_PATH} --out ${path.join(work, `sig/index.${k}.json`)} ${path.join(work, 'index.json')}`);
     await runPrinted(lines);
@@ -369,7 +347,6 @@ describe('H-01 게시 도구: 거부(서명 전·서명 뒤·게시 직전)', ()
     assert.equal(prod.s3.counts.put, 0);
     assert.equal((await prod.built.log.head()).treeSize, 0);
 
-    // 다른 운영자가 그사이 인덱스를 올렸다(빈 인덱스, 같은 시험 키) → 이 계획은 낡았다
     const other: string[] = [];
     assert.equal(await publish(['prepare', '--registry', prod.origin, '--trust', TRUST_PATH, '--work', path.join(dir, 'o'), SOURCES[0]!], cliDeps(other)), 0);
     await runPrinted(other);
@@ -387,11 +364,9 @@ describe('H-01 게시 도구: 거부(서명 전·서명 뒤·게시 직전)', ()
     assert.deepEqual(draft.portalMode, { hometax: 'auto', gov24: 'postprocess', wetax: 'postprocess', sminfo: 'postprocess', insure4: 'postprocess' });
     const L = draft.limits.hometax!;
     for (const k of ['monotonic', 'keyEpoch', 'issuedAt', 'expiresAt', 'timestamp', 'signatures']) assert.ok(!(k in draft), k);
-    // 스키마 위반(홈택스 동시 실행 2)
     const bad = path.join(dir, 'policy-bad.json');
     fs.writeFileSync(bad, JSON.stringify({ ...draft, limits: { ...draft.limits, hometax: { ...L, concurrent: 2 } } }));
     await assert.rejects(publish(['prepare', '--registry', prod.origin, '--trust', TRUST_PATH, '--work', path.join(dir, 'pbad'), '--policy', bad], cliDeps([])), /publish\.policy_invalid/);
-    // 정책만 게시(서명 2번) → 같은 버전에 다른 내용은 version을 올리라고 거부
     const p: string[] = [];
     assert.equal(await publish(['prepare', '--registry', prod.origin, '--trust', TRUST_PATH, '--work', path.join(dir, 'pol'), '--policy', POLICY_PATH], cliDeps(p)), 0);
     assert.equal(await runPrinted(p), 2);
@@ -444,7 +419,6 @@ describe('게시 관문 첫 게시 도장(CEREMONY.md §5·§6 "타임스탬프�
       const stored = JSON.parse((await client.get('/registry/status.json'))!.toString()) as { issuedAt: string; expiresAt: string; timestamp: { keyId: string } };
       assert.equal(Date.parse(stored.expiresAt) - Date.parse(stored.issuedAt), 48 * 3600_000);
       assert.equal(stored.timestamp.keyId, 'timestamp-1');
-      // 정책 키가 아닌 서명(패키지 키)은 도장을 찍어도 관문이 거부한다(도장은 신선도뿐, 내용 서명 권한이 아니다)
       const pkgSigned = status({ monotonic: 2 });
       const bytes = signingBytes('status', pkgSigned);
       pkgSigned.signatures = (['package-1', 'package-2'] as const).map((id) => ({ keyId: id, alg: 'ed25519', sig: edSign(null, bytes, createPrivateKey({ key: Buffer.concat([PKCS8, Buffer.alloc(32, SAMPLE_SEEDS.package[id])]), format: 'der', type: 'pkcs8' })).toString('base64url') }));
@@ -454,7 +428,6 @@ describe('게시 관문 첫 게시 도장(CEREMONY.md §5·§6 "타임스탬프�
       await new Promise<void>((r) => server.close(() => r()));
       await built.close();
     }
-    // 도장 키 없는 라우터(stamper 없음): timestamp가 없으면 스키마부터 거부
     const plain = registryRouter({ store: new MemoryStore(), trust: TRUST, adminToken: ADMIN, now: Date.now });
     const s2 = http.createServer((req, res) => void import('../services/shared/src/index.ts').then(({ requestListener }) => requestListener(plain, { logger: new Logger('t', () => undefined) })(req, res)));
     await new Promise<void>((r) => s2.listen(0, '127.0.0.1', r));
@@ -494,7 +467,6 @@ describe('H-01 게시 도구: push 중간 실패 뒤 같은 폴더로 다시', (
       assert.equal(await publish(['push', '--trust', TRUST_PATH, '--work', work], cliDeps([])), 0);
       const rec = JSON.parse(read(path.join(work, 'record.json'))) as { published: Array<{ path: string; logIndex: number }> };
       assert.equal(rec.published.length, 6);
-      // 첫 시도: 폐기 목록 0, status 1, 패키지 2·3·4. 다시: 폐기 목록·status 재도장 5·6, 패키지는 앞선 항목, 인덱스 7
       assert.deepEqual(rec.published.map((x) => x.logIndex), [5, 6, 2, 3, 4, 7]);
     } finally {
       await prod.close();
@@ -503,7 +475,6 @@ describe('H-01 게시 도구: push 중간 실패 뒤 같은 폴더로 다시', (
   });
 });
 
-/** Vercel CDN 대역: 조회 주기 파일(head·status·폐기 목록·정책·인덱스, max-age=60)을 가상 시계로 60초 캐시한다(404도). frozenHead면 head는 끝까지 처음 것 */
 function cdnRegistry(origin: string, clock: { t: number }, o: { frozenHead?: boolean } = {}): RegistryClient {
   const c = httpRegistry(origin);
   const cache = new Map<string, { at: number; body: Buffer | null }>();
@@ -550,7 +521,6 @@ describe('H-01 게시 도구: 공개 GET이 CDN 캐시일 때(운영 2026-11-09 
       const clock = { t: 0 };
       const sleeps: number[] = [];
       const deps = viaCdn(clock, sleeps);
-      // push가 시작할 때 읽은 head(treeSize 0)·404가 캐시에 남는다
       assert.equal(await publish(['push', '--trust', TRUST_PATH, '--work', work], deps), 0);
       const rec = JSON.parse(read(path.join(work, 'record.json'))) as Rec;
       assert.equal(rec.published.length, 8);
@@ -586,7 +556,6 @@ describe('H-01 게시 도구: 공개 GET이 CDN 캐시일 때(운영 2026-11-09 
       assert.ok(v.some((l) => l.startsWith('되읽기·로그 확인: 8건, 로그 크기 0 → 8')), v.join('\n'));
       await assert.rejects(publish(['verify', '--trust', TRUST_PATH, '--work', work], cliDeps([])), /publish\.work_exists/);
 
-      // push-started.json이 없는 폴더(이 수정 전 push, 운영 h01-1): 일관성 증명만 건너뛰고 항목·포함 증명은 본다
       fs.rmSync(path.join(work, 'record.json'));
       fs.rmSync(path.join(work, 'push-started.json'));
       const v2: string[] = [];
@@ -600,7 +569,6 @@ describe('H-01 게시 도구: 공개 GET이 CDN 캐시일 때(운영 2026-11-09 
   });
 });
 
-/** 두 JSON의 값이 다른 잎 경로(정렬) */
 const leafDiff = (a: unknown, b: unknown, at = ''): string[] => {
   const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
   if (obj(a) && obj(b)) return [...new Set([...Object.keys(a), ...Object.keys(b)])].sort().flatMap((k) => leafDiff(a[k], b[k], at ? `${at}.${k}` : k));
@@ -619,7 +587,6 @@ describe('정책 2026.11.1: 사용량 상한만 풀고 정책만 게시(대표 �
     fs.rmSync(dir, { recursive: true, force: true });
   });
   const draftOf = (p: string) => JSON.parse(read(p)) as Policy;
-  /** 받은 정책으로 엔진이 쓰는 홈택스 실효 값(앱 내장 ∧ 받은 정책, RateGuard와 같은 합침) */
   const effective = (p: Policy) => {
     const { policy, clamped } = clampPolicy(p);
     assert.deepEqual(clamped, []);

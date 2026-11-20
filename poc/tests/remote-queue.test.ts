@@ -1,5 +1,3 @@
-// 라이브 세션이 없을 때 릴레이 HTTPS 큐로 사진·현금매출 보내기(intent-envelope v1.5 kind xfer, 팀장 결정 2026-11-05).
-// HPKE(RFC 9180 벡터) · 우편함 번들 · 폰 보관함 → 큐 → PC 수신 큐 · 재생·변조·만료 · 큐 한도.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
@@ -74,16 +72,12 @@ describe('우편함 번들(SAX-qbundle-v1)', () => {
   });
 });
 
-// ---- 시험용 릴레이 큐(services/relay 한도: 160 봉투 / 6 MiB / ct 65,536자, ack = seq까지 삭제) ----
-// GET은 #204처럼 쪽을 나눈다: 봉투 바이트 pageBytes까지(봉투 하나는 언제나), 남으면 more, 선택 ?after=<seq>.
 class FakeRelay {
   envs: { seq: number; env: OuterEnv; size: number }[] = [];
   seq = 0;
   pageBytes = 3 * 1024 * 1024;
-  /** 이 횟수를 넘는 GET /envelopes는 500(중간 실패 시험) */
   failGetAfter = Infinity;
   gets = 0;
-  /** 우편함 초당 한도(services/relay 20건, 고정 창). tick()이 창을 넘긴다 */
   ratePerWindow = Infinity;
   windowPosts = 0;
   windows = 0;
@@ -183,7 +177,6 @@ async function world() {
   const tok = { read: new Uint8Array(32).fill(1), write: new Uint8Array(32).fill(2) };
   const deviceAuth = async () => ({ Authorization: 'DPoP t', DPoP: 'proof' });
   const q = relayQueue({ http: relay.http, origin: 'https://tax.laf-co.com', mbxId: new Uint8Array(16).fill(7), tok, deviceAuth });
-  // PC: 번들을 슬롯에 둔다
   await q.putBundle(await makeQBundle(vd, { Qx: qd.publicKey, seq: 1, ...qbundleWindow(NOW) }));
   const bundle = verifyQBundle((await q.getBundle())!, vd.publicKey, { now: NOW })!;
   assert.ok(bundle);
@@ -224,10 +217,8 @@ describe('큐 전송(라이브 없음)', () => {
     const r = await t.send();
     assert.deepEqual(r.queued.sort(), [offer.msgId, cash.msgId].sort());
     assert.equal(t.relay.envs.length, 1 + 3 + 1, 'offer + 청크 3 + 현금');
-    // 릴레이에는 바깥 객체만: 평문 필드가 보이지 않는다
     for (const { env } of t.relay.envs) assert.deepEqual(Object.keys(env).sort(), ['ct', 'enc', 'kind', 'v']);
     assert.ok(!JSON.stringify(t.relay.envs).includes(t.pairId));
-    // 헤더: 쓰기는 X-Mbx-Write, 읽기는 X-Mbx-Read, 모두 DPoP, 공개 origin
     assert.ok(t.relay.seen.every((s) => s.url.startsWith('https://tax.laf-co.com/v1/mailboxes/')));
     assert.ok(t.relay.seen.filter((s) => s.url.endsWith('/envelopes') && s.method === 'POST').every((s) => s.headers['X-Mbx-Write'] && !s.headers['X-Mbx-Read']));
 
@@ -236,7 +227,6 @@ describe('큐 전송(라이브 없음)', () => {
     assert.equal(t.sink.receipts.get(offer.msgId), toHex(sha256Hash(jpeg)));
     assert.equal(t.sink.cash.get(cash.msgId)?.amount, 52000);
     assert.equal(t.relay.envs.length, 0);
-    // 폰은 큐에 넣은 기록을 남겨 두고(라이브 ack가 없으므로) TTL 안에서는 다시 넣지 않는다
     assert.equal(t.outbox.items.get(offer.msgId)?.queuedAt, NOW);
     const again = await t.send(NOW + 1000);
     assert.deepEqual(again.queued, []);
@@ -287,7 +277,6 @@ describe('큐 전송(라이브 없음)', () => {
     await t.send();
     await t.drain();
     const later = NOW + QUEUE.ttlMs;
-    // 번들이 7일짜리라 시험 시각 안에서 유효하다
     const r = await t.send(later);
     assert.deepEqual(r.queued, [cash.msgId]);
     assert.equal(t.outbox.items.get(cash.msgId)?.firstQueuedAt, NOW);
@@ -295,9 +284,7 @@ describe('큐 전송(라이브 없음)', () => {
     assert.equal(d.handled, 1);
     assert.equal(t.sink.cash.size, 1);
     const r3 = await t.send(NOW + QUEUE.keepMs).catch((e: Error) => e);
-    // 번들 만료(7일) 뒤에는 봉인하지 않는다
     assert.ok(r3 instanceof Error);
-    // 보관 기한이 지난 항목은 지운다(새 번들로)
     const fresh = verifyQBundle(await makeQBundle(t.vd, { Qx: t.qd.publicKey, seq: 2, ...qbundleWindow(NOW + QUEUE.keepMs) }), t.vd.publicKey, { now: NOW + QUEUE.keepMs })!;
     const { queueOutbox } = await import('@sax/remote');
     const r4 = await queueOutbox(t.outbox, { queue: t.q, pairId: t.pairId, vm: t.vm, bundle: fresh, mbxEpoch: t.mbxEpoch, nextSeq: () => 999, now: NOW + QUEUE.keepMs });
@@ -355,7 +342,6 @@ describe('PC 검사(조용히 버린다)', () => {
     assert.equal(await openXfer({ ...e, ct: b64(ct) }, t.openOpts), null);
     assert.equal(await openXfer({ ...e, extra: 1 }, t.openOpts), null);
     assert.equal(await openXfer(null, t.openOpts), null);
-    // 다른 Q_D로 봉인
     assert.equal(await openXfer(await sealXfer(t.xfer(), t.vm, x25519Keygen().publicKey, t.mbxEpoch), t.openOpts), null);
   });
 
@@ -364,12 +350,10 @@ describe('PC 검사(조용히 버린다)', () => {
     const iat = Math.floor(NOW / 1000);
     await assert.rejects(sealXfer(t.xfer({ exp: iat + 86401 }), t.vm, t.bundle.Qx, t.mbxEpoch));
     await assert.rejects(sealXfer(t.xfer({ body: { msgId: 'x' } as unknown as CashEntryBody }), t.vm, t.bundle.Qx, t.mbxEpoch));
-    // 서명 용도는 SAX-env-v1
     assert.equal(CTX.env, 'SAX-env-v1');
   });
 });
 
-/** FakeRelay와 같은 규칙으로 쪽마다 봉투 수를 센다(봉투 하나는 언제나). */
 function pageSplit(sizes: number[], pageBytes: number): number[] {
   const out: number[] = [];
   for (let i = 0; i < sizes.length; ) {
@@ -390,7 +374,6 @@ describe('큐 쪽 나누기(#204: 3 MiB·more)', () => {
     await enqueueCash(t.outbox, cash, NOW);
     await t.send();
     assert.equal(t.relay.envs.length, 1 + 6 + 1);
-    // 한 쪽에 사진 조각 둘쯤만 들어가게 줄인다
     t.relay.pageBytes = Math.max(...t.relay.envs.map((e) => e.size)) * 2;
     const split = pageSplit(t.relay.envs.map((e) => e.size), t.relay.pageBytes);
     assert.ok(split.length >= 3, `${split}`);
@@ -403,7 +386,6 @@ describe('큐 쪽 나누기(#204: 3 MiB·more)', () => {
     assert.equal(t.relay.envs.length, 0);
     assert.equal(t.sink.receipts.get(offer.msgId), toHex(sha256Hash(jpeg)));
     assert.equal(t.sink.cash.get(cash.msgId)?.amount, 1000);
-    // ack 뒤 다시 읽으므로 after 쿼리를 쓰지 않는다
     assert.ok(t.relay.seen.filter((x) => x.method === 'GET' && x.url.includes('/envelopes')).every((x) => x.url.endsWith('/envelopes')));
   });
 
@@ -439,7 +421,6 @@ describe('큐 쪽 나누기(#204: 3 MiB·more)', () => {
     assert.equal(t.sink.receipts.get(offer.msgId), toHex(sha256Hash(jpeg)));
   });
 
-  // 서버가 이상할 때: drainQueue에 가짜 쪽을 직접 준다(연 봉투는 없어도 seq·ack 흐름만 본다).
   const base = async () => {
     const t = await world();
     return { hpkeOpen: t.openOpts.hpkeOpen, pairId: t.pairId, phoneVm: t.vm.publicKey, mbxEpoch: t.mbxEpoch, receive: t.receive, seqMax: { get: async () => 0, set: async () => {} } };
@@ -528,7 +509,7 @@ describe('우편함 초당 한도(429 policy.rate_limited)', () => {
   it('기다려도 풀리지 않으면 rateRetries번 뒤 멈추고 남은 항목은 다음으로 미룬다', async () => {
     const t = await world();
     t.relay.ratePerWindow = 2;
-    t.relay.tick = () => void t.relay.windows++; // 창이 넘어가지 않는 서버
+    t.relay.tick = () => void t.relay.windows++;
     const { offer } = await addReceipt(t.outbox, QUEUE.chunk * 4, 8);
     const cash = makeCashEntry('2026-11-05', 1000, NOW);
     await enqueueCash(t.outbox, cash, NOW + 1);

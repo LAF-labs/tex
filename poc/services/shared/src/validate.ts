@@ -1,4 +1,3 @@
-// JSON Schema 검증(ajv, 저장소가 이미 고정한 8.20.0). 스키마 밖 필드는 모두 거부(additionalProperties:false를 스키마가 갖는다).
 import ajv2020 from 'ajv/dist/2020.js';
 import type { ValidateFunction } from 'ajv';
 import { fail, type ErrorCode } from './errors.ts';
@@ -28,7 +27,6 @@ export function validatorFor<T>(schema: Schema & { $id: string }, pointer: strin
   };
 }
 
-// 자주 쓰는 조각
 export const S = {
   b64key32: { type: 'string', pattern: '^[A-Za-z0-9+/]{43}=?$' },
   b64sig: { type: 'string', pattern: '^[A-Za-z0-9+/]{86}(==)?$' },

@@ -1,5 +1,3 @@
-// 바이트 유틸. Node Buffer를 쓰지 않는다(폰 Hermes에서도 돈다).
-
 const enc = new TextEncoder();
 const dec = new TextDecoder('utf-8', { fatal: true });
 
@@ -113,7 +111,6 @@ function decode64(s: string, inv: Int16Array, pad: boolean): Uint8Array {
       out[o++] = (acc >> bits) & 0xff;
     }
   }
-  // 남은 비트가 0이 아니면 정규형이 아니다(같은 바이트에 둘 이상의 표기를 허용하지 않는다).
   if (bits > 0 && (acc & ((1 << bits) - 1)) !== 0) throw new Error('base64 non-canonical');
   return out;
 }

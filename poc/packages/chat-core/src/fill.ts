@@ -1,10 +1,7 @@
-// 값 공간의 작은 규칙: 조사 맞추기, 금액·날짜 표기, 부가세 나누기, 품목 정리.
 import type { Vat } from './tables.ts';
 
-/** 끝소리: 'none' 받침 없음, 'rieul' ㄹ 받침, 'other' 다른 받침, null 판단 못 함(영문 등). */
 type Final = 'none' | 'rieul' | 'other';
 
-/** 숫자는 한국어 읽기로(영 일 이 삼 사 오 육 칠 팔 구) */
 const DIGIT_FINAL: Record<string, Final> = { '0': 'other', '1': 'rieul', '2': 'none', '3': 'other', '4': 'none', '5': 'none', '6': 'other', '7': 'rieul', '8': 'rieul', '9': 'none' };
 
 export function finalOf(value: string): Final | null {
@@ -17,7 +14,6 @@ export function finalOf(value: string): Final | null {
   return jong === 0 ? 'none' : jong === 8 ? 'rieul' : 'other';
 }
 
-/** [받침 있을 때, 받침 없을 때]. 긴 것부터 본다(이에요가 이보다 먼저). */
 const PAIRS: Array<[string, string]> = [
   ['이에요', '예요'],
   ['이었', '였'],
@@ -27,7 +23,6 @@ const PAIRS: Array<[string, string]> = [
   ['을', '를'],
   ['과', '와'],
 ];
-/** 한 글자 조사는 뒤가 한글이 아닐 때만 조사로 본다("가게"의 가를 바꾸지 않게). 였은 어간이라 늘 뒤에 한글이 온다. */
 const HANGUL = /[가-힣]/;
 
 /** value 바로 뒤에 오는 rest의 첫 조사를 value의 끝소리에 맞춰 돌려준다. */
@@ -38,7 +33,6 @@ export function fixJosa(value: string, rest: string): string {
     for (const form of [withF, noF]) {
       if (!rest.startsWith(form)) continue;
       if (form.length === 1 && form !== '였' && HANGUL.test(rest.charAt(1))) continue;
-      // 으로/로는 ㄹ 받침도 로
       const want = withF === '으로' ? (f === 'other' ? withF : noF) : f === 'none' ? noF : withF;
       return want + rest.slice(form.length);
     }

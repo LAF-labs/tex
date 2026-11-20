@@ -1,4 +1,3 @@
-// main ↔ 엔진 메서드 목록(의존성 없음: main이 엔진 코드를 끌어오지 않게 분리).
 /** main(스케줄러·UI)이 쓰는 읽기 전용 질의(D07 §1.3 db.query.*). */
 export const READ_QUERIES = ['db.query.profiles.list', 'db.query.counterparties.list', 'db.query.counterparties.get', 'db.query.documents.list'] as const;
 /** 사용자 동작으로만 오는 명령(렌더러 → main → 엔진). main은 DB를 열지 않는다. */
@@ -25,7 +24,6 @@ export const MAIN_ONLY: readonly (typeof COMMANDS)[number][] = [
   'consent.record', 'consent.latest', 'consent.attach',
   'onboarding.load', 'onboarding.save', 'onboarding.clear',
   'profile.setPortalLoginId', 'profile.setCertName',
-  // 셸 이어 하기(run-resume.ts): 커밋 전 일의 거래처 id·금액·품목. 암호화된 DB settings에 두고 main만 쓴다.
   'resume.save', 'resume.take',
 ];
 /**
@@ -154,14 +152,12 @@ export interface EngineInit {
   t: 'init';
   root?: string;
   portal: EnginePortal;
-  /** 앱 판(app.getVersion(), semver). 레지스트리 항목 minAppVersion 대조에 쓴다. 없으면 minAppVersion이 있는 패키지는 받지도 돌리지도 않는다(fail-closed). */
   appVersion?: string;
 }
 
 /** 엔진 → main 푸시(중계 통로). 실행 단계·종료. 게이트 요청은 여기로 오지 않는다. */
 export interface EngineEvent {
   t: 'ev';
-  /** codef: 계좌 자동조회 진행(phase·실패 코드·새 줄 수만) */
   name: 'run' | 'codef';
   data: Record<string, unknown>;
 }

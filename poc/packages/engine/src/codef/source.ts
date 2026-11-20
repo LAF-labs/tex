@@ -1,6 +1,3 @@
-// CODEF 원천을 돈 맞추기 원천 인터페이스(bank/source.ts TxnSource, bank-mvp 확정 2026-11-12)에 꽂는 어댑터.
-// 엔진 entry에서 `bank.registerSource(codefTxnSource(link))`로 꽂는다. 로그인 정보(인증서·connectedId)는 원천이 금고·CodefLink에서 갖는다.
-// CODEF 응답에 거래 고유 id가 없어 sourceId는 null이다(파일과 같은 내용 줄 열쇠로 중복을 거른다).
 import { SourceError, type SourceFetchResult, type SourceProgress, type SourceRow, type TxnSource } from '../bank/source.ts';
 import { CodefError, type CodefFailure } from './codes.ts';
 import type { CodefTxn } from './client.ts';
@@ -45,7 +42,6 @@ const clean = (s: string): string | null => {
   return t || null;
 };
 
-/** CODEF 거래 → 원천 행. 비고 칸은 resAccountDesc1~4 순서 그대로, 비고1(보낸분/받는분)은 payer로도 */
 function codefSourceRows(txns: CodefTxn[]): SourceRow[] {
   const out: SourceRow[] = [];
   for (const t of txns) {

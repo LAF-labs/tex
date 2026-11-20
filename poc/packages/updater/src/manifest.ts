@@ -1,5 +1,3 @@
-// 릴리스 매니페스트 releases/{channel}/latest.json 모양(services/registry API.md "릴리스 매니페스트", 클라우드 PR #56).
-// 모양 검사만 한다. 서명·시각·버전은 verify.ts. 모르는 필드는 거부한다(서명 대상이 되는 필드를 클라이언트가 모른 채 받지 않는다).
 
 /** 레지스트리 채널(D09 §8.6). 앱 릴리스는 stable·beta만 쓰지만 경로 규칙은 레지스트리와 같다. */
 export const CHANNELS = ['stable', 'beta', 'hotfix'] as const;
@@ -52,14 +50,11 @@ export const fail = (code: UpdateCode): never => {
 export interface Sig {
   keyId: string;
   alg: 'ed25519';
-  /** 64바이트 서명의 base64url(패딩 없음, 86자), SIGNING.md §1 */
   sig: string;
 }
 
 export interface ReleaseFile {
-  /** 파일 이름(피드 기준 주소 {origin}/releases/{channel}/ 아래) 또는 https 절대 주소(Vercel Blob 공개 주소). 서명된 내용이라 주소도 릴리스 키가 정한다 */
   url: string;
-  /** sha512 표준 base64(88자) — electron-updater latest.yml과 같은 표기 */
   sha512: string;
   size: number;
 }
@@ -73,7 +68,6 @@ export type RootChangeKind = (typeof ROOT_CHANGES)[number];
  * 루트 키는 JCS(매니페스트 − signature, rootChange − signatures)에 서명하고, 릴리스 키는 그 뒤 루트 서명까지 포함한 내용에 서명한다.
  */
 export interface RootChange {
-  /** 새 앱이 핀 고정할 keyEpoch. 'keyEpoch' 변경이면 지금보다 커야 하고, 아니면 지금과 같아야 한다 */
   keyEpoch: number;
   changes: RootChangeKind[];
   signatures: Sig[];
@@ -82,16 +76,13 @@ export interface RootChange {
 export interface ReleaseManifest {
   channel: Channel;
   version: string;
-  /** 사람이 서명한 시각(내용) */
   releaseDate: string;
   rolloutPercent: number;
   files: ReleaseFile[];
   signature: Sig;
   rootChange?: RootChange;
-  /** 신선도(내용 서명 밖): 레지스트리가 게시 때 붙이고 재서명 cron이 기간이 절반 아래로 남으면 다시 붙인다(인덱스 ADR-043과 같은 구조) */
   issuedAt: string;
   expiresAt: string;
-  /** 타임스탬프 키 1개가 JCS({contentDigest, issuedAt, expiresAt})에(verify.ts releaseStampContent) */
   timestamp: Sig;
 }
 
@@ -102,13 +93,11 @@ const ROOT_KEYS = new Set(['keyEpoch', 'changes', 'signatures']);
 
 export const SEMVER_RE = /^(\d{1,6})\.(\d{1,6})\.(\d{1,6})$/;
 const NAME_RE = /^[A-Za-z0-9._-]{1,128}$/;
-/** https 절대 주소: 소문자 호스트, 경로 조각은 비예약 문자만(쿼리·조각·인코딩 없음, YAML·셸에 안전) */
 const ABS_URL_RE = /^https:\/\/[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63}){1,8}(\/[A-Za-z0-9._~-]{1,128}){1,8}$/;
 const isFileUrl = (u: unknown): u is string => typeof u === 'string' && ((NAME_RE.test(u) && !u.startsWith('.')) || (u.length <= 512 && ABS_URL_RE.test(u)));
 const SHA512_RE = /^[A-Za-z0-9+/]{86}==$/;
 const SIG_RE = /^[A-Za-z0-9_-]{86}$/;
 const KEYID_RE = /^[A-Za-z0-9._-]{1,64}$/;
-/** ISO 8601 UTC(밀리초 선택). Date.parse가 받는 다른 형식(로컬 시각 등)은 거부한다. */
 const TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/;
 /** 설치본 한 파일 상한(1GiB). 현실 크기는 수백 MB 아래다. */
 export const MAX_FILE_SIZE = 1024 * 1024 * 1024;

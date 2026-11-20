@@ -1,4 +1,3 @@
-// 엔진 쪽 금고 포트의 CDP transport 닫기(PoC-1 §5.2): 금고가 Chrome을 내리면 Playwright에 알리고, 옛 transport가 새 것을 건드리지 않는다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { PortLike } from '@sax/platform';
@@ -16,7 +15,7 @@ describe('VaultClient CDP transport', () => {
     const f = fakePort();
     const client = new VaultClient(f.port);
     const t = client.cdpTransport();
-    f.deliver({ t: 'cdp_closed' }); // Playwright가 아직 onclose를 달지 않았다
+    f.deliver({ t: 'cdp_closed' });
     const closed = new Promise<string | undefined>((r) => (t.onclose = r));
     t.send({ id: 1, method: 'Browser.getVersion' });
     assert.equal(await closed, 'chrome closed');

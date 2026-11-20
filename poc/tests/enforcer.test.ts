@@ -1,5 +1,3 @@
-// M2-4 B 운영 정책 집행기(D03 §5.2·§7·§7.1): 서명 정책 → RatePolicy, 차단 신호 사전, RunEnforcer(ActionPolicy·beforeStep).
-// 카운터·쿨다운은 실제 SQLite(RateGuard), 시간은 가짜 시계. 실제 포털 접속 없음.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fsp from 'node:fs/promises';
@@ -82,8 +80,8 @@ describe('RunEnforcer', () => {
     const { e, guard } = make();
     assert.equal(code(await e.beforeStep()), 'ok');
     assert.equal(clock.t, 1650);
-    guard.clock(); // 마지막 본 시각을 남긴다
-    wallSkew = -60_000; // 벽시계를 1분 되돌림
+    guard.clock();
+    wallSkew = -60_000;
     const t0 = clock.t;
     await e.beforeStep();
     assert.equal(clock.t - t0, Math.round(1650 * 1.5));

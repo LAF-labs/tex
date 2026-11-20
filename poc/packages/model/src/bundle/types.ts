@@ -1,5 +1,3 @@
-// bundle.schema.json(design/schemas, 사본은 packages/model/schemas)의 TS 표현.
-
 export type RiskClass = 'pre_commit' | 'post_commit' | 'safety' | 'routing' | 'general';
 export type OutcomeKind = 'progress' | 'conservative' | 'reserved' | 'unknown';
 export type OnRefusal = 'assume_true' | 'assume_false' | 'unknown';
@@ -45,7 +43,6 @@ export interface BundleDef {
 /** 로드된 번들: 정의 + 조립된 고정 접두 + 와이어 ID. */
 export interface LoadedBundle {
   def: BundleDef;
-  /** `${id}_v${version}` — gateway-request.schema.json의 bundleId 형식 */
   wireId: string;
   digest: string;
   prefixText: string;

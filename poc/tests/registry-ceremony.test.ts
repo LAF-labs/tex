@@ -1,10 +1,3 @@
-// 레지스트리 서명 의식 도구(services/registry/CEREMONY.md, 단독 모드 ADR-037, D09 §8.2, SIGNING.md §1~§4).
-// 실제 키체인·Touch ID 대신 소프트웨어 가짜 키체인 백엔드: 시드는 백엔드 객체 안에만 있고 서명·공개키만 내준다(백업 내보내기만 예외).
-// 확인
-//  - 한 세대 12개 → TRUST_ROOT_JSON·루트 메타데이터 → 루트 2-of-3 → 폐기 목록·status·인덱스·릴리스가 게시 관문(verify*)과 엔진 accept*를 통과
-//  - 모으기는 서로 다른 핀 키 2개 이상, 확인 코드·바뀐 문서·중복·폐기 키·다른 역할 거부
-//  - 감싸기 규약 SAX-ceremony-wrap-v1 시험 벡터(Node = Swift 도우미, macOS에서 도우미를 빌드해 대조)
-//  - 백업 SAX-ceremony-backup-v1(scrypt + ChaCha20-Poly1305): 왕복·틀린 암호·변조·약한 암호·약한 kdf, 들여오기 뒤 같은 키
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createECDH, createHash, createPrivateKey, randomBytes, sign as edSign } from 'node:crypto';
@@ -21,7 +14,6 @@ import { confirmCode, prepare, quorumFor, signingBytes, type DocKind } from '../
 import { MacKeychainBackend, type KeyStoreBackend } from '../services/registry/src/ceremony/device.ts';
 import { BACKUP_ALG, ed25519PubFromSeed, openBackup, sealBackup, unwrapSeed, WRAP_ALG, wrapSeed, type WrappedKey } from '../services/registry/src/ceremony/wrap.ts';
 
-// ───────────── 가짜 키체인(단독 모드 백엔드) ─────────────
 const PKCS8 = Buffer.from('302e020100300506032b657004220420', 'hex');
 const edPriv = (seed: Buffer) => createPrivateKey({ key: Buffer.concat([PKCS8, seed]), format: 'der', type: 'pkcs8' });
 class FakeKeychain implements KeyStoreBackend {
@@ -68,7 +60,6 @@ const FAST_KDF = { N: 1 << 14, r: 8, p: 1 };
 const PASS = '나무 바다 구름 시계 연필 사과 의자 강물';
 const TS = { keyId: '', alg: 'ed25519', sig: '' };
 
-/** 레지스트리 서버의 타임스탬프 키(REGISTRY_LOG_SIGNING_KEY 시드, 서버 Cron이 자동 재서명). 시험에서는 소프트웨어 키. */
 const SERVER_TS_SEED = Buffer.alloc(32, 0x51);
 const serverTimestamp = (kind: DocKind, doc: unknown): SignatureRecord => {
   const p = prepare(kind, doc, 'timestamp');
@@ -119,13 +110,11 @@ describe('단독 모드 의식: 키 → 핀 → 루트 2-of-3 → 운영 문서'
     assert.doesNotThrow(() => verifyStatus(st as never, tr, new Set(), null, NOW));
     const as = acceptStatus(st as unknown as RegistryStatus, { roots, revoked: new Set(), current: null, now: NOW });
     assert.equal(as.ok, true, as.ok ? '' : as.code);
-    // 인덱스(ADR-043): 내용은 패키지 키 2개, 신선도는 타임스탬프 키(운영은 서버가 붙인다)
     let ix: Record<string, unknown> = { channel: 'stable', monotonic: 1, keyEpoch: 1, issuedAt: ISO(0), expiresAt: ISO(48), entries: [], signatures: [], timestamp: TS };
     ix = collectSignatures('index', ix, [await c.sign('index', ix, 'package-1'), await c.sign('index', ix, 'package-3')], c.trust).doc;
     ix = attachTimestamp('index', ix, await c.sign('index', ix, 'timestamp-1', 'timestamp'), c.trust);
     assert.doesNotThrow(() => verifyIndex(ix as never, 'stable', tr, new Set(), null, NOW));
     assert.equal(acceptIndex(ix as never, { roots, revoked: new Set(), current: null, now: NOW }).ok, true);
-    // 릴리스: 사람은 내용(판·파일·주소)에만, 기간·타임스탬프는 게시 관문이 붙인다
     let rel: Record<string, unknown> = { channel: 'stable', version: '1.0.0', releaseDate: ISO(0), rolloutPercent: 100, files: [{ url: 'SovereignAX-Setup-1.0.0.exe', sha512: createHash('sha512').update('x').digest('base64'), size: 1 }], signature: TS };
     rel = collectSignatures('release', rel, [await c.sign('release', rel, 'release-1')], c.trust).doc;
     assert.doesNotThrow(() => verifyRelease(rel as never, 'stable', tr, new Set(), null, NOW, undefined, { content: true }));
@@ -135,7 +124,6 @@ describe('단독 모드 의식: 키 → 핀 → 루트 2-of-3 → 운영 문서'
     em = attachTimestamp('status', er.doc, await c.sign('status', er.doc, 'timestamp-1', 'timestamp'), c.trust);
     const ae = acceptStatus(em as unknown as RegistryStatus, { roots, revoked: new Set(), current: as.ok ? as.accepted : null, now: NOW });
     assert.equal(ae.ok && ae.accepted.emergency, true);
-    // 서명마다 Touch ID 창에 확인 코드가 간다. 타임스탬프는 서버가 하므로 키체인에 닿지 않는다
     assert.ok(c.kc.signs.length >= 10 && c.kc.signs.every((s) => /^[0-9a-f]{4}(-[0-9a-f]{4}){7}$/.test(s.confirm)));
     assert.ok(!c.kc.signs.some((s) => s.keyId === 'timestamp-1'));
   });
@@ -200,7 +188,6 @@ describe('의식: 거부', () => {
 });
 
 describe('감싸기 규약 SAX-ceremony-wrap-v1(부록 A)', () => {
-  // 고정값: W = P-256 비밀 스칼라 0x11×32(Secure Enclave 대신), 임시 키 0x22×32, nonce 0x33×12, 시드 0x07×32, keyId root-1
   const VECTOR = '{"alg":"SAX-ceremony-wrap-v1","ct":"ozs0ERLB39bSVzrHX7TZJP223SkmVcvkz/zD9LFbgdhoBAlwVmPbO0gqvU2Pr8eh","epk":"BNZak5d8qj0bCBhS/1ennkZfFmBXcwS66tUF3TpIWJzzUBheiVNy32Ih6joTdVfkc/3bZ1XwW9UHw8Uz/OnJEoU=","keyId":"root-1","nonce":"MzMzMzMzMzMzMzMz","pub":"6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=","v":1}';
   const W = Buffer.alloc(32, 0x11);
   const wpub = () => {
@@ -240,7 +227,6 @@ describe('감싸기 규약 SAX-ceremony-wrap-v1(부록 A)', () => {
       const bin = path.join(dir, 'sax-keychain');
       execFileSync('swiftc', ['-O', path.resolve(import.meta.dirname, '../services/registry/src/ceremony/macos/sax-keychain.swift'), '-o', bin], { stdio: 'pipe' });
       assert.equal(execFileSync(bin, ['vector']).toString('utf8').trim(), VECTOR);
-      // 잘못된 명령·keyId는 키체인에 닿기 전에 거부
       for (const a of [['bogus'], ['generate', '../x'], ['import', 'policy-x'], ['export']]) {
         let out = '';
         try {
@@ -316,7 +302,6 @@ describe('백업 SAX-ceremony-backup-v1', () => {
       assert.equal(await run('keygen-all', '--holder', '단독 보유자', '--out-dir', p('keys')), 0);
       assert.equal(fs.readdirSync(p('keys')).length, 11, '타임스탬프 키는 만들지 않는다');
       await assert.rejects(run('keygen', '--key-id', 'timestamp-1', '--holder', 'x', '--out', p('ts-x.json')), /서버 비밀값/);
-      // 타임스탬프 공개키는 서버 env 시드에서(시드는 출력·파일에 없다)
       assert.equal(await run('timestamp-pubkey', '--out', p('keys/timestamp-1.json')), 0);
       assert.ok(!lines.join('\n').includes(SERVER_TS_SEED.toString('hex')) && !fs.readFileSync(p('keys/timestamp-1.json'), 'utf8').includes(SERVER_TS_SEED.toString('hex')));
       await assert.rejects(main(['timestamp-pubkey', '--out', p('ts-bad.json')], { ...deps, env: { REGISTRY_LOG_SIGNING_KEY: 'zz' } }), /timestamp_seed_invalid/);
@@ -389,7 +374,6 @@ describe('macOS 키체인 백엔드(도우미 호출 인자)', () => {
   });
 });
 
-// 공개된 keyEpoch 1 의식 산출물(2026-11-06, 단독 모드). 핀 PR의 근거를 저장소 안에서 다시 확인한다.
 describe('keyEpoch 1 공개 산출물(services/registry/ceremony/keyepoch-1)', () => {
   const dir = path.resolve(import.meta.dirname, '../services/registry/ceremony/keyepoch-1');
   const read = <T>(f: string): T => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')) as T;

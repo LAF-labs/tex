@@ -1,5 +1,3 @@
-// 공급사 어댑터(ADR-015: 공급사 종속 코드는 이 파일 한 곳). 게이트웨이 본체는 공급사 중립 요청(DecideSpec·RespondSpec)만 만든다.
-// 여기서 와이어 필드 이름(prompt_cache_key·safety_identifier 등)으로 옮긴다. 키·주소는 환경 변수로만 받는다(ENV.md).
 import type { Question } from '@sax/model';
 
 /** 공급사 중립 판정 요청. 질문·접두는 번들 정의에서 게이트웨이가 넣는다(클라이언트 필드 아님). */
@@ -8,9 +6,7 @@ export interface DecideSpec {
   prefix: string;
   input: string;
   questions: Question[];
-  /** 계정 격리 캐시 키(acct:<HMAC>:b:<bundleId>) */
   cacheKey: string;
-  /** 월 회전 남용 추적 식별자 */
   safetyId: string;
 }
 
@@ -21,21 +17,11 @@ export interface RespondSpec {
   maxOutputTokens: number;
   tools: Array<{ name: string; parameters: Record<string, unknown> }>;
   output: { name: string; schema: Record<string, unknown> };
-  /** 사용자 메시지(input_text만)와 재생 항목(태그 검증을 통과한 이전 출력·function_call_output) */
   input: unknown[];
   cacheKey: string;
   safetyId: string;
-  /**
-   * 공급자 고정을 하지 않는다(OpenRouter provider 필드 없음). 예상 밖 화면 판정·브라우저 에이전트(page_judge·browser_agent)만 쓴다:
-   * 기본 모델이 요청마다 뒤쪽 공급사가 바뀌는 라우터라 고정·ZDR이 걸리면 막힌다(대표 2026-11-13). 대화·선택자 수리 등 다른 툴셋은 그대로 고정한다.
-   */
   unpinned?: true;
-  /** 상류 대기(ms). 없으면 공급사 기본(30초). 판정·에이전트는 함수 상한 안에서 한 번만 길게 기다린다. */
   timeoutMs?: number;
-  /**
-   * 결정 모델 고르기(decision_pick): 생성 대신 OpenRouter decisions로 선택지 하나를 고른다. 지시문은 prefix(게이트웨이 정본),
-   * 상태·선택지는 PC가 보낸 가린 글. 결과는 respond와 같은 꼴(message 한 개, output_text = {choice, confidence, p}).
-   */
   decision?: { state: string; choices: Record<string, string> };
 }
 
@@ -92,7 +78,6 @@ export function decisionsBody(s: RespondSpec): Record<string, unknown> {
 export interface ProviderUsage {
   inputTokens: number;
   outputTokens: number;
-  /** 계량에만 쓰고 클라이언트에 넘기지 않는다(적중 여부 오라클 차단, D04 §7) */
   cachedTokens: number;
 }
 
@@ -211,7 +196,7 @@ export class OpenAICompatProvider implements ModelProvider {
   }
 
   async respond(s: RespondSpec): Promise<RespondResult> {
-    if (s.decision) throw new ProviderError('fatal'); // 결정 모델 고르기는 OpenRouter decisions만
+    if (s.decision) throw new ProviderError('fatal');
     const d = await this.post('/v1/responses', openAIResponsesBody(s), s.timeoutMs);
     return { model: String(d.model ?? s.model), status: String(d.status ?? ''), output: Array.isArray(d.output) ? (d.output as Array<Record<string, unknown>>) : [], usage: usageOf(d.usage) };
   }
@@ -246,7 +231,6 @@ export class SplitProvider implements ModelProvider {
 export interface OpenRouterRouting {
   zdr: true;
   dataCollection: 'deny';
-  /** 고정 공급자 슬러그(1개 이상) */
   only: string[];
 }
 
@@ -300,10 +284,6 @@ export class OpenRouterProvider implements ModelProvider {
     this.o = { baseUrl, apiKey: o.apiKey, timeoutMs: o.timeoutMs ?? 30_000, fetchFn: o.fetchFn ?? fetch, onEvent: o.onEvent ?? (() => undefined), agentPrivacy: o.agentPrivacy ?? 'off' };
   }
 
-  /**
-   * L1 판정: OpenRouter decisions(/alpha/decisions, 기본 typesafe/jev-1.14). 확률만 내고 생성하지 않는다(호출당 약 0.15원, 0.4초).
-   * 보관 조건은 판정·에이전트와 같은 OPENROUTER_AGENT_PRIVACY(가린 화면 글만 간다). 공급자 고정 목록(Responses용)은 쓰지 않는다.
-   */
   async decide(s: DecideSpec): Promise<DecideResult> {
     if (!routingOk(this.routing)) {
       this.o.onEvent('upstream_routing_refused');
@@ -355,9 +335,7 @@ export class OpenRouterProvider implements ModelProvider {
     } catch {
       throw new ProviderError('retryable');
     }
-    // 적용 사실만 남긴다(설정이 실린 요청을 보냈다). 값·본문·공급자 이름은 로그에 없다
     this.o.onEvent(s.unpinned ? (agentField ? `upstream_unpinned_${this.o.agentPrivacy}` : 'upstream_unpinned') : 'upstream_zdr_pinned');
-    // 고정 공급자를 쓸 수 없으면 OpenRouter가 404를 준다. 대체 공급자로 넘어가지 않으므로 재시도하지 않는다
     if (res.status === 429 || res.status >= 500) throw new ProviderError('retryable');
     if (res.status !== 200) throw new ProviderError('fatal');
     let d: Record<string, unknown>;
@@ -366,7 +344,6 @@ export class OpenRouterProvider implements ModelProvider {
     } catch {
       throw new ProviderError('fatal');
     }
-    // 응답이 공급자를 밝히면 고정 목록 안인지 확인한다(아니면 결과를 쓰지 않는다)
     if (!s.unpinned && typeof d.provider === 'string' && !this.routing.only.some((x) => x.toLowerCase() === String(d.provider).toLowerCase())) {
       this.o.onEvent('upstream_provider_mismatch');
       throw new ProviderError('fatal');
@@ -422,7 +399,6 @@ export class GenerationSplitProvider implements ModelProvider {
   }
 }
 
-/** Anthropic 구조화 출력·strict 도구가 받지 않는 제약(숫자·길이·배열 개수·패턴). 빼고 보낸다: PC·폰이 받은 출력과 도구 인자를 원래 스키마로 다시 검사한다. */
 const ANTHROPIC_DROP = new Set(['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minLength', 'maxLength', 'maxItems', 'uniqueItems', 'pattern', 'minProperties', 'maxProperties']);
 export function anthropicSchema(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(anthropicSchema);
@@ -431,7 +407,6 @@ export function anthropicSchema(v: unknown): unknown {
   for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
     if (ANTHROPIC_DROP.has(k)) continue;
     if (k === 'minItems' && typeof x === 'number' && x > 1) continue;
-    // properties·$defs 아래 키는 필드 이름이라 그대로 두고 값만 고친다
     out[k] = k === 'properties' || k === '$defs' || k === 'definitions' ? Object.fromEntries(Object.entries((x ?? {}) as Record<string, unknown>).map(([n, d]) => [n, anthropicSchema(d)])) : anthropicSchema(x);
   }
   return out;
@@ -459,11 +434,10 @@ export function anthropicMessages(input: unknown[]): AnthropicMessage[] | null {
     const it = raw as Record<string, unknown>;
     if (it.type === 'reasoning') {
       if (Array.isArray(it.anthropic_content)) {
-        // 앞 턴의 assistant가 끝났다는 표시가 없어도 새 사본은 새 assistant 메시지로 시작한다
         msgs.push({ role: 'assistant', content: (it.anthropic_content as AnthropicBlock[]).map((b) => ({ ...b })) });
         carried = true;
       }
-      continue; // 다른 공급사의 reasoning(암호문)은 읽지 못하므로 버린다
+      continue;
     }
     if (it.type === 'function_call') {
       if (carried) continue;
@@ -513,12 +487,9 @@ export function anthropicMessagesBody(s: RespondSpec, messages: AnthropicMessage
     max_tokens: s.maxOutputTokens,
     system: [{ type: 'text', text: s.prefix, cache_control: { type: 'ephemeral' } }],
     messages,
-    // 도구는 strict로 보내지 않는다: 엄격 스키마 전체의 합집합형(null 허용) 인자 상한을 대화 툴셋이 넘어 400이 났다(2026-11-19 운영).
-    // 도구 인자는 PC와 폰이 원래 스키마로 다시 검사한다. 출력 형식(output_config.format)은 그대로 엄격하다.
     ...(s.tools.length ? { tools: s.tools.map((x) => ({ name: x.name, input_schema: anthropicSchema(x.parameters) })), tool_choice: { type: 'auto' } } : {}),
     output_config: { effort: s.effort, format: { type: 'json_schema', schema: anthropicSchema(s.output.schema) } },
     metadata: { user_id: s.safetyId },
-    // 안전 분류기가 거절하면 같은 호출 안에서 다른 모델로 다시 돌린다(서버 쪽 대체). Haiku에는 서버 쪽 대체가 없다
     ...(anthropicFallbacks(s.model) ? { fallbacks: 'default' } : {}),
   };
 }
@@ -572,7 +543,7 @@ export class AnthropicProvider implements ModelProvider {
   }
 
   decide(): Promise<DecideResult> {
-    return Promise.reject(new ProviderError('fatal')); // Anthropic에는 확률 판정이 없다
+    return Promise.reject(new ProviderError('fatal'));
   }
 
   async respond(s: RespondSpec): Promise<RespondResult> {
@@ -593,14 +564,12 @@ export class AnthropicProvider implements ModelProvider {
     }
     this.o.onEvent('upstream_anthropic');
     if (res.status !== 200) {
-      // 원인을 보려고 상태 코드와 오류 종류(error.type)만 이벤트 이름으로 남긴다. 오류 글과 본문은 남기지 않는다
       const err = await res
         .json()
         .then((e: { error?: { type?: unknown; message?: unknown } }) => e?.error ?? {})
         .catch(() => ({}) as { type?: unknown; message?: unknown });
       const kind = typeof err.type === 'string' && /^[a-z_]{1,40}$/.test(err.type) ? err.type : 'unknown';
       this.o.onEvent(`upstream_anthropic_${res.status}_${kind}`);
-      // 4xx는 어느 필드가 틀렸는지 보려고 오류 글 앞부분을 영숫자와 . : / - 만 남겨 이벤트 이름으로 남긴다(다른 글자는 _로, 한글 등 사용자 글이 섞여도 남지 않는다)
       if (res.status >= 400 && res.status < 500 && typeof err.message === 'string') this.o.onEvent(`anthropic_err:${anthropicErrToken(err.message)}`);
       throw new ProviderError(res.status === 429 || res.status >= 500 ? 'retryable' : 'fatal');
     }
@@ -633,10 +602,8 @@ export class MockProvider implements ModelProvider {
   readonly name = 'mock';
   readonly decides: Array<Record<string, unknown>> = [];
   readonly responds: Array<Record<string, unknown>> = [];
-  /** 다음 호출들이 던질 오류(앞에서부터 하나씩) */
   failures: Array<'retryable' | 'fatal'> = [];
   respondOutput: Array<Record<string, unknown>> = [{ type: 'message', content: [{ type: 'output_text', text: '{}' }] }];
-  /** decision_pick 답(없으면 첫 선택지) */
   decisionChoice: string | null = null;
 
   private maybeFail(): void {

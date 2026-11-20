@@ -1,5 +1,3 @@
-// 다중 인스턴스 한도(팀장 결정 2026-11-05 (가), D09 §4·D08 §8): DB 고정 창 카운터와 KST 당일 솔트 행.
-// SQLite로 돌리고, SAX_PG_TEST_URL이 있으면 같은 시험을 PostgreSQL에도 돌린다(기본은 건너뜀).
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -40,10 +38,8 @@ function limiterCases(name: string, make: (clock: Clock) => Promise<{ limiter: L
       assert.equal(over.ok, false);
       assert.equal(over.n, 4);
       assert.equal(over.retryAfterSec, 45);
-      // 넘은 뒤에도 한도 + 1에서 멈춘다(계속 두드려도 카운터가 커지지 않음)
       assert.equal((await limiter.hit('k', 3, 60_000)).n, 4);
       assert.deepEqual(await limiter.count('k', 60_000), { n: 4, retryAfterSec: 45 });
-      // 창이 지나면 1부터
       c.advance(45_000);
       assert.deepEqual(await limiter.count('k', 60_000), { n: 0, retryAfterSec: 0 });
       assert.deepEqual(await limiter.hit('k', 3, 60_000), { ok: true, n: 1, retryAfterSec: 60 });
@@ -106,13 +102,13 @@ function sqlCases(name: string, open: () => Sql, skip: boolean) {
     });
 
     it('KST 자정 솔트 행 생성 경합: 날짜가 바뀐 첫 순간 여러 인스턴스가 동시에 읽어도 새 날 행은 하나, 모두 같은 솔트, 지난 날 행은 지워진다', async () => {
-      const c = new Clock(Date.UTC(2026, 10, 10, 14, 59, 59, 999)); // KST 11-10 23:59:59.999
+      const c = new Clock(Date.UTC(2026, 10, 10, 14, 59, 59, 999));
       const first = await fresh(open);
       const dbs = [first, open(), open(), open()];
       await first.run("DELETE FROM lim_salts WHERE label = 'mid'");
       const salts = Array.from({ length: 12 }, (_, i) => new SqlKeySalt(dbs[i % dbs.length]!, 'mid', c.now));
       const before = await salts[0]!.hash('198.51.100.1');
-      c.advance(1); // KST 11-11 00:00:00.000
+      c.advance(1);
       const after = await Promise.all(salts.map((s) => s.hash('198.51.100.1')));
       assert.equal(new Set(after).size, 1);
       assert.notEqual(after[0], before);
@@ -122,26 +118,24 @@ function sqlCases(name: string, open: () => Sql, skip: boolean) {
     });
 
     it('자정 시계 어긋남: 시계가 늦은 인스턴스가 자정 직후 기동해도 새 날 행을 지우지 않고, 그가 다시 만든 지난 날 행은 sweep이 지운다', async () => {
-      const ahead = new Clock(Date.UTC(2026, 10, 10, 15, 0, 0, 5)); // KST 11-11 00:00:00.005
-      const behind = new Clock(Date.UTC(2026, 10, 10, 14, 59, 59, 995)); // KST 11-10 23:59:59.995
+      const ahead = new Clock(Date.UTC(2026, 10, 10, 15, 0, 0, 5));
+      const behind = new Clock(Date.UTC(2026, 10, 10, 14, 59, 59, 995));
       const a = await fresh(open);
       const b = open();
       await a.run("DELETE FROM lim_salts WHERE label = 'skew'");
       const today = await new SqlKeySalt(a, 'skew', ahead.now).hash('x');
       const days = async () => (await a.all<{ day: string }>("SELECT day FROM lim_salts WHERE label = 'skew' ORDER BY day")).map((r) => r.day);
-      await new SqlKeySalt(b, 'skew', behind.now).hash('x'); // 늦은 인스턴스의 첫 읽기: 지난 날 행을 다시 만들지만 새 날 행은 지우지 않는다
+      await new SqlKeySalt(b, 'skew', behind.now).hash('x');
       assert.deepEqual(await days(), ['2026-11-10', '2026-11-11']);
-      // 1분 sweep이 지난 날 행을 지운다
       await new SqlLimiter(a, ahead.now).sweep();
       assert.deepEqual(await days(), ['2026-11-11']);
-      // 새 날 행은 그대로라 새로 기동한 인스턴스도 같은 키를 본다
       assert.equal(await new SqlKeySalt(b, 'skew', ahead.now).hash('x'), today);
       await a.run("DELETE FROM lim_salts WHERE label = 'skew'");
       await Promise.all([a.close(), b.close()]);
     });
 
     it('당일 솔트는 인스턴스끼리 같고, 날짜(KST)가 바뀌면 새 솔트로 바뀌며 지난 날 행은 지워진다', async () => {
-      const c = new Clock(Date.UTC(2026, 10, 10, 14, 0, 0)); // KST 11-10 23:00
+      const c = new Clock(Date.UTC(2026, 10, 10, 14, 0, 0));
       const a = await fresh(open);
       const b = open();
       await a.run("DELETE FROM lim_salts WHERE label = 'ip'");
@@ -151,11 +145,10 @@ function sqlCases(name: string, open: () => Sql, skip: boolean) {
       assert.equal(h1, h2);
       assert.match(h1, /^[0-9a-f]{32}$/);
       assert.notEqual(await sa.hash('203.0.113.8'), h1);
-      // 용도가 다르면 같은 값도 다른 키
       assert.notEqual(await new SqlKeySalt(a, 'email', c.now).hash('203.0.113.7'), h1);
       assert.deepEqual((await a.all<{ day: string }>("SELECT day FROM lim_salts WHERE label = 'ip'")).map((r) => r.day), ['2026-11-10']);
 
-      c.advance(2 * 3600_000); // KST 11-11 01:00
+      c.advance(2 * 3600_000);
       const next = await sb.hash('203.0.113.7');
       assert.notEqual(next, h1);
       assert.equal(await sa.hash('203.0.113.7'), next);
@@ -213,7 +206,7 @@ describe('한도 테이블 가시성(D09 §1.1)', () => {
   });
 
   it('계정·기기 ID 키는 서버 비밀 HMAC: 같은 비밀이면 인스턴스끼리 같고, 비밀·용도·KST 날짜가 다르면 다르며, DB에 솔트 행이 없다', async () => {
-    const c = new Clock(Date.UTC(2026, 10, 10, 14, 0, 0)); // KST 11-10 23:00
+    const c = new Clock(Date.UTC(2026, 10, 10, 14, 0, 0));
     const key = Buffer.alloc(32, 9);
     const db = await fresh(() => openSqlite());
     const a = sqlLimits(db, c.now, key).idSalt('dev');
@@ -224,7 +217,7 @@ describe('한도 테이블 가시성(D09 §1.1)', () => {
     assert.notEqual(await new SecretKeySalt(Buffer.alloc(32, 8), 'dev', c.now).hash('dev_123'), h);
     assert.notEqual(await sqlLimits(db, c.now, key).idSalt('acct').hash('dev_123'), h);
     assert.deepEqual(await db.all('SELECT label FROM lim_salts'), []);
-    c.advance(2 * 3600_000); // KST 11-11
+    c.advance(2 * 3600_000);
     assert.notEqual(await a.hash('dev_123'), h);
     assert.throws(() => new SecretKeySalt(Buffer.alloc(16), 'dev', c.now), /limit_id_key/);
     await db.close();

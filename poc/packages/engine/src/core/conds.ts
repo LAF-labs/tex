@@ -1,6 +1,3 @@
-// 조건식 평가(D02 §4.1). 결정적이고 스크립트가 없다. 평가할 수 없으면 거짓이 아니라 오류(fail-closed)다.
-// readbackEquals·sumEquals는 readback이 고정한 값($readback.*)만 쓰고 화면을 다시 읽지 않는다(D02 §8 s19c~s19f, M2-3).
-// fieldsFilled는 입력 칸의 DOM 값이 비었는지만 본다(B-34, 값·길이는 남기지 않는다).
 import { normalizeName } from './constants.ts';
 import { domValue, inputEntryKey, normalizeFor } from './readback.ts';
 import type { PageReader } from './page.ts';
@@ -14,7 +11,6 @@ export interface CondEnv {
   dict: SelectorDict;
   strings: Strings;
   scope: RunScope;
-  /** 전제·사후조건 전용 판정. 없으면 그 조건은 평가할 수 없다. */
   pre?: { inputVerified?(name: string): boolean; profileHas?(key: string): boolean; artifact?(name: string): boolean };
 }
 
@@ -67,7 +63,6 @@ export async function evalCond(c: Cond, env: CondEnv): Promise<CondResult> {
     if (!re) return { ok: false, code: 'step.cond_unsupported' };
     const r = await resolveTarget(env.page, env.dict, target);
     if (!r.ok) return r.code === 'step.selector_miss' && !r.ambiguous ? F : { ok: false, code: r.code };
-    // 입력 역할(textbox 등, 조회가 채우는 읽기 전용 칸 포함)은 DOM value, 아니면 보이는 텍스트(readback과 같은 규칙). innerText는 input에서 늘 빈 문자열이다.
     return bool(re.test(normalizeName(await domValue(env.page, env.dict.entries[target]!, r.t.el))));
   }
   if ('varEquals' in c) {
@@ -81,8 +76,6 @@ export async function evalCond(c: Cond, env: CondEnv): Promise<CondResult> {
   if ('profileHas' in c) return env.pre?.profileHas ? bool(env.pre.profileHas(c.profileHas)) : { ok: false, code: 'step.cond_unsupported' };
   if ('artifact' in c) return env.pre?.artifact ? bool(env.pre.artifact(c.artifact)) : { ok: false, code: 'step.cond_unsupported' };
   if ('readbackEquals' in c) {
-    // 되읽은 값 ↔ $inputs·$profile(B-05, s19c·s19e·s19f). 어느 쪽이든 없으면 평가할 수 없다(fail-closed).
-    // ifAbsent 'empty': 선택 입력이 비었으면 되읽은 칸도 비어야 한다(값 없이 보내지 않게, V-03m).
     const { fieldKey, ref, ifAbsent } = c.readbackEquals;
     const got = env.scope.readback.get(fieldKey);
     const want = readRef(env.scope, ref);
@@ -97,7 +90,6 @@ export async function evalCond(c: Cond, env: CondEnv): Promise<CondResult> {
     return got === undefined ? { ok: false, code: 'step.ref_unresolved' } : bool(got === '');
   }
   if ('sumEquals' in c) {
-    // readback 산술(s19d): Σ parts = total. 정수가 아닌 값은 맞는다고 볼 수 없다(not으로 뒤집히지 않게 오류).
     const { parts, total } = c.sumEquals;
     const vals = [...parts, total].map((f) => env.scope.readback.get(f));
     if (vals.some((v) => v === undefined)) return { ok: false, code: 'step.ref_unresolved' };

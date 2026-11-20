@@ -1,8 +1,3 @@
-// 현금흐름 분석(11 §3, ADR-045). 순수 함수다: DB에서 읽은 행을 받아 지표를 낸다. 같은 입력이면 늘 같은 결과다.
-// - 모델·네트워크를 쓰지 않는다. 갈래는 정해진 사전과 사람이 정한 것으로만 나눈다(§3.3).
-// - 모르는 것은 0으로 세지 않는다: 거래내역이 그달을 덮지 못한 계좌가 있으면 complete=false와 빠진 계좌를 낸다(§3.4).
-// - 예측은 하지 않는다. "앞으로"는 기한이 정해진 낼 돈·받을 돈만 더한다(ADR-045 결정 3).
-// - 손익을 만들지 않는다. 발생 기준과 현금 기준을 나란히 낼 뿐이다(ADR-045 결정 4).
 import { normalizePayerName } from '@sax/db';
 import { addDays } from './match.ts';
 
@@ -12,7 +7,6 @@ type InCategory = 'receivable' | 'own_transfer' | 'card_sales' | 'interest' | 'o
 export const HUMAN_CATEGORIES = ['own_transfer', 'tax', 'card_payment', 'payroll', 'card_sales', 'interest', 'other', 'unrelated'] as const;
 export type HumanCategory = (typeof HUMAN_CATEGORIES)[number];
 
-// 공개된 기관·회사 이름만 둔다(11 §3.3). 고객 자료에서 옮기지 않는다. 실제 통장 표시로 고친다(§6 단계 E).
 const CARD_COMPANIES = ['삼성카드', '신한카드', '현대카드', '국민카드', 'KB카드', '롯데카드', '하나카드', '우리카드', '비씨카드', 'BC카드', '농협카드', 'NH카드', '씨티카드', '카카오뱅크카드', '토스카드'];
 const TAX_WORDS = ['국세', '지방세', '국민연금', '건강보험', '고용보험', '산재보험', '근로복지공단', '국민건강보험', '위택스', '세무서', '부가세', '종합소득세', '원천세'];
 const INTEREST_WORDS = ['이자', '결산이자', '예금이자'];
@@ -25,11 +19,8 @@ export interface CfAccount {
   id: string;
   last4: string;
   bank: string;
-  /** 넣은 거래내역이 덮는 구간들(회차마다 하나: 회차 구간, 없으면 그 회차 줄의 처음·끝 날) */
   ranges: Array<{ from: string; to: string }>;
-  /** 거래내역 기준일(덮은 가장 늦은 날). 없으면 null */
   coverTo: string | null;
-  /** 가장 최근 줄의 잔액(잔액 칸이 없으면 null)과 그 날 */
   balance: number | null;
   balanceDay: string | null;
 }
@@ -40,15 +31,10 @@ export interface CfTxn {
   day: string;
   direction: 'in' | 'out';
   amount: number;
-  /** 통장 표시(입금자·받는 분 + 적요). 갈래 사전과 사람 규칙에만 쓰고 결과에는 내지 않는다 */
   label: string;
-  /** 입금자·받는 분 이름만(적요 없이). 급여 후보는 이것으로 직원 이름과 맞춘다. 없으면 label */
   payer?: string | null;
-  /** 상대 계좌가 내 다른 계좌 */
   counterOwn: boolean;
-  /** 받을 돈·낼 돈에 붙은 금액(쪽은 방향이 정한다) */
   settled: number;
-  /** 사람이 정한 갈래(이 줄, bank.ignoreTxn·bank.categorize) */
   human: string | null;
 }
 
@@ -60,34 +46,23 @@ export interface CfInvoice {
   writtenOn: string;
   total: number;
   remaining: number;
-  /** 받기로/내기로 한 날(약속일 우선). 없으면 null */
   dueOn: string | null;
-  /** open = 남음(못 받음·일부), unknown = 거래내역이 없거나 오래돼 확인 못 함, waiting, settled, excluded */
   state: 'open' | 'unknown' | 'waiting' | 'settled' | 'excluded';
-  /** 다 받은(낸) 건: 마지막으로 붙은 날 */
   settledOn: string | null;
 }
 
 export interface CfInput {
   today: string;
-  /** 분석할 달 YYYY-MM */
   month: string;
   accounts: CfAccount[];
   txns: CfTxn[];
   invoices: CfInvoice[];
-  /** 현금매출(날짜별 합계). 입력하지 않은 달은 없음 */
   cashSales: Array<{ day: string; amount: number }>;
-  /** 사업용 카드 사용(취소 제외 전) */
   cardTxns: Array<{ day: string; amount: number; merchantBizNo: string | null; canceled: boolean }>;
-  /** 종이·파일 영수증(금액을 아는 것만) */
   receipts: Array<{ day: string; amount: number; merchantBizNo: string | null }>;
-  /** 확정한 급여(달마다 총액·실지급) */
   payroll: Array<{ month: string; gross: number; net: number }>;
-  /** 급여대장 직원 이름(다듬은 것)과 그달 실지급액 */
   payees: Array<{ nameNorm: string; month: string; net: number }>;
-  /** 사람이 기억시킨 갈래 규칙(다듬은 통장 표시 → 갈래) */
   rules: Array<{ direction: 'in' | 'out'; labelNorm: string; category: HumanCategory }>;
-  /** 카드 내역을 가져온 구간들(card_fetches). 그달을 다 덮지 못하면 카드 칸은 null(모름) */
   cardRanges: Array<{ from: string; to: string }>;
 }
 
@@ -100,25 +75,19 @@ export interface CashFlowMonth {
   month: string;
   from: string;
   to: string;
-  /** 모든 계좌의 거래내역이 이 구간을 덮는다. false면 cash 숫자는 일부만이다 */
   complete: boolean;
-  /** 덮지 못한 계좌(끝 4자리·은행) */
   missing: Array<{ accountId: string; last4: string; bank: string; coverTo: string | null }>;
   hasAccounts: boolean;
   cash: { in: Money; out: Money; net: number; excluded: number };
   accrual: {
     salesInvoices: number;
-    /** 현금매출을 그달에 하나도 넣지 않았으면 null(입력 안 함) */
     cashSales: number | null;
     purchaseInvoices: number;
     card: number | null;
-    /** 카드 내역과 짝이 되지 않은 영수증만(두 번 세지 않는다) */
     receipts: number;
     payroll: number | null;
   };
-  /** 그달 작성한 매출 중 받은 비율. 거래내역이 작성월 말 + 60일까지 없으면 null */
   collectionRate: number | null;
-  /** 어느 건에도 붙지 않았고 갈래가 "기타"인 줄 */
   unknown: { inTotal: number; outTotal: number; inCount: number; outCount: number; topIds: string[] };
 }
 
@@ -186,7 +155,6 @@ export function categorize(t: CfTxn, ownPair: boolean, rules: Map<string, HumanC
   return 'other';
 }
 
-/** 같은 날·같은 금액으로 내 두 계좌 사이를 오간 입출금 짝(상대 계좌 칸이 없어도 알아본다) */
 function ownPairs(txns: CfTxn[]): Set<string> {
   const out = new Set<string>();
   const byKey = new Map<string, CfTxn[]>();
@@ -216,7 +184,6 @@ export function rangesCover(ranges: Array<{ from: string; to: string }>, from: s
   return reach >= to;
 }
 
-/** 계좌가 [from, to]를 덮는가. to가 오늘이면 기준일이 7일 안이면 덮는다고 본다(09 §8.3 STALE_DAYS와 같다) */
 const covers = (a: CfAccount, from: string, to: string, today: string) => {
   const need = to >= today ? addDays(today, -7) : to;
   return rangesCover(a.ranges, from, need < from ? from : need) || (need < from && a.ranges.some((r) => r.from <= from && r.to >= need));
@@ -232,7 +199,6 @@ export function analyzeCashFlow(input: CfInput): CashFlowResult {
   const accounts = input.accounts;
   const missing = accounts.filter((a) => !covers(a, from, to, today)).map((a) => ({ accountId: a.id, last4: a.last4, bank: a.bank, coverTo: a.coverTo }));
 
-  // 현금 기준
   const cin: Money = { total: 0, by: {} };
   const cout: Money = { total: 0, by: {} };
   let excluded = 0;
@@ -268,7 +234,6 @@ export function analyzeCashFlow(input: CfInput): CashFlowResult {
   }
   unknown.topIds = unknownRows.sort((a, b) => b.amount - a.amount || (a.day < b.day ? -1 : 1)).slice(0, 5).map((t) => t.id);
 
-  // 발생 기준
   const inMonth = (d: string) => d >= from && d <= monthEnd;
   const live = input.invoices.filter((v) => v.state !== 'excluded');
   const salesInvoices = live.filter((v) => v.kind === 'sale' && inMonth(v.writtenOn)).reduce((s, v) => s + v.total, 0);
@@ -277,7 +242,6 @@ export function analyzeCashFlow(input: CfInput): CashFlowResult {
   const cards = input.cardTxns.filter((c) => inMonth(c.day));
   const cardTotal = cards.reduce((s, c) => s + (c.canceled ? -c.amount : c.amount), 0);
   const cardKnown = rangesCover(input.cardRanges, from, monthEnd < today ? monthEnd : today);
-  // 카드로 낸 영수증은 카드 내역과 짝지어 한 번만 센다(가맹점 사업자번호·금액·날짜 ±1일)
   const usedCard = new Set<number>();
   let receipts = 0;
   for (const r of input.receipts.filter((x) => inMonth(x.day))) {
@@ -287,7 +251,6 @@ export function analyzeCashFlow(input: CfInput): CashFlowResult {
   }
   const pay = input.payroll.filter((p) => p.month === input.month);
 
-  // 회수율: 그달 작성한 매출 중 받은 비율. 작성월 말 + 60일까지 거래내역이 없으면 모른다
   const needTo = addDays(monthEnd, 60) < today ? addDays(monthEnd, 60) : today;
   const recvCovered = accounts.length > 0 && accounts.every((a) => covers(a, from, needTo, today));
   const issued = live.filter((v) => v.kind === 'sale' && inMonth(v.writtenOn));
@@ -304,7 +267,6 @@ export function analyzeCashFlow(input: CfInput): CashFlowResult {
     collectionRate, unknown,
   };
 
-  // 지금 모습(달과 무관)
   const balAccounts = accounts.map((a) => ({ accountId: a.id, last4: a.last4, bank: a.bank, balance: a.balance, day: a.balanceDay }));
   const balKnown = balAccounts.filter((a) => a.balance !== null);
   const balance = { total: balKnown.length ? balKnown.reduce((s, a) => s + a.balance!, 0) : null, partial: balKnown.length < balAccounts.length, accounts: balAccounts };
@@ -319,7 +281,6 @@ export function analyzeCashFlow(input: CfInput): CashFlowResult {
       else if (v.dueOn < today) next30.payOverdue += v.remaining;
       else if (v.dueOn <= in30) next30.payOut += v.remaining;
     } else if (open(v)) {
-      // 기한 지난 받을 돈은 들어온다고 장담할 수 없어 넣지 않는다(§3.4)
       if (!v.dueOn) next30.noDueRecv++;
       else if (v.dueOn >= today && v.dueOn <= in30) next30.payIn += v.remaining;
     }
@@ -377,7 +338,6 @@ export function analyzeCashFlow(input: CfInput): CashFlowResult {
     collectDays: { overall: weighted(doneSales), byCounterparty }, payDays: weighted(donePurch), concentration,
   };
 
-  // 알림(§3.5). 모르는 상태로 겁주지 않는다: 오늘을 덮지 못한 계좌가 있으면 잔액 부족을 내지 않는다
   const alerts: CashFlowAlert[] = [];
   const fresh = accounts.length > 0 && accounts.every((a) => !!a.coverTo && a.coverTo >= addDays(today, -7));
   if (fresh && balance.total !== null && !balance.partial) {

@@ -1,9 +1,3 @@
-// 레지스트리 투명성 로그(D09 §8.3, ADR-028, 팀장 결정 2026-11-06): RFC 9162 머클 트리(엔진 packages/engine registry.ts와 같은 해시 규칙).
-// - 게시 PUT은 산출물을 공개하기 전에 항목을 하나 append한다. 항목 = JCS({v:1, kind, path, sha256, loggedAt}), 잎 해시 = SHA-256(0x00 ‖ 항목 바이트).
-// - 트리 헤드 = {treeSize, rootHash(hex), timestamp(UTC ms)}. 서명 = Ed25519(utf8("SAX-tree-head-v1") ‖ JCS(헤드)), 키는 타임스탬프 역할 온라인 키(D09 §8.2).
-//   서버가 갖는 서명 키는 이것 하나다(패키지·정책·루트·긴급·릴리스 개인 키는 여전히 CI 밖 서명 의식에만 있다).
-// - 저장: SQL(운영 PostgreSQL, 개발·시험 node:sqlite). append는 메타 행 잠금(FOR UPDATE) 트랜잭션 안에서 하나씩 하므로
-//   여러 인스턴스가 동시에 게시해도 순번(treeSize)이 겹치거나 빠지지 않는다(순번은 PRIMARY KEY라 겹치면 트랜잭션이 실패한다).
 import { createHash, sign as edSign, verify as edVerify, type KeyObject } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { ed25519Private, ed25519Public, ed25519RawPublic, fromB64, jcs, key32, migrate, type Sql } from '@sax/svc-shared';
@@ -17,9 +11,7 @@ export type LogKind = 'package' | 'index' | 'policy' | 'status' | 'revoked_keys'
 export interface LogEntry {
   v: 1;
   kind: LogKind;
-  /** 공개 경로(origin 없이, 앞 슬래시 없음). 예 `packages/hometax.invoice.issue@2.1.0.sxp` */
   path: string;
-  /** 공개한 바이트의 SHA-256(hex) */
   sha256: string;
   loggedAt: number;
 }
@@ -37,7 +29,6 @@ export interface SignedTreeHead extends TreeHead {
 const sha = (...parts: Uint8Array[]) => createHash('sha256').update(Buffer.concat(parts)).digest();
 export const leafHashOf = (data: Uint8Array): Buffer => sha(Buffer.from([0]), data);
 const node = (l: Uint8Array, r: Uint8Array): Buffer => sha(Buffer.from([1]), l, r);
-/** 2^k < n ≤ 2^(k+1)인 2^k(n > 1) */
 const split = (n: number) => {
   let k = 1;
   while (k * 2 < n) k *= 2;
@@ -162,7 +153,6 @@ export class TransparencyLog {
     return rows.map((r) => Buffer.from(r.leaf_hash, 'hex'));
   }
 
-  /** 항목을 하나 더하고 새 서명 헤드를 저장한다. 공개(store.put)보다 먼저 부른다. */
   async append(e: Omit<LogEntry, 'v' | 'loggedAt'>): Promise<{ index: number; head: SignedTreeHead }> {
     return this.db.tx(async (q) => {
       const meta = await q.one<{ tree_size: number }>(`SELECT tree_size FROM log_meta WHERE id = 1${q.forUpdate}`);
@@ -177,10 +167,6 @@ export class TransparencyLog {
     });
   }
 
-  /**
-   * 헤드 신선도 재서명(정리 cron): 저장된 헤드의 timestamp가 maxAgeMs보다 오래되면 같은 treeSize·rootHash에 새 timestamp로 다시 서명한다.
-   * 항목은 바꾸지 않는다(트리 내용 그대로). 메타 행 잠금 안에서 하므로 append와 섞이지 않는다. 반환 true = 새로 서명했다.
-   */
   async refreshHead(maxAgeMs: number): Promise<boolean> {
     return this.db.tx(async (q) => {
       const m = await q.one<{ tree_size: number; head: string | null }>(`SELECT tree_size, head FROM log_meta WHERE id = 1${q.forUpdate}`);
@@ -193,7 +179,6 @@ export class TransparencyLog {
     });
   }
 
-  /** 현재 서명 헤드. 빈 로그는 처음 부를 때 크기 0 헤드에 서명해 둔다. */
   async head(): Promise<SignedTreeHead> {
     const m = await this.db.one<{ tree_size: number; head: string | null }>('SELECT tree_size, head FROM log_meta WHERE id = 1');
     if (m?.head) return JSON.parse(m.head) as SignedTreeHead;
@@ -211,7 +196,6 @@ export class TransparencyLog {
     return r ? { index: Number(r.idx), entry: JSON.parse(r.entry) as LogEntry, leafHash: r.leaf_hash } : null;
   }
 
-  /** 포함 증명: 잎 해시가 크기 size 트리 안에 있으면 {leafIndex, treeSize, path}. 없거나 size가 현재보다 크면 null. */
   async inclusion(leafHex: string, size: number): Promise<{ leafIndex: number; treeSize: number; path: string[] } | null> {
     const cur = (await this.head()).treeSize;
     if (size < 1 || size > cur) return null;
@@ -221,7 +205,6 @@ export class TransparencyLog {
     return { leafIndex: Number(hit.idx), treeSize: size, path: inclusionPath(Number(hit.idx), leaves).map((b) => b.toString('hex')) };
   }
 
-  /** 일관성 증명: 1 ≤ from ≤ to ≤ 현재 크기. 범위 밖이면 null. */
   async consistency(from: number, to: number): Promise<{ from: number; to: number; proof: string[] } | null> {
     const cur = (await this.head()).treeSize;
     if (from < 1 || from > to || to > cur) return null;

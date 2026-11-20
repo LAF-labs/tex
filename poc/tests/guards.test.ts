@@ -1,4 +1,3 @@
-// 정적 경계: engine의 송신 직접 import 금지(D01 §3), --remote-debugging-port 금지(D05 §3), Chrome 인자 허용 목록, 승인 바 판정(ADR-021).
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -43,7 +42,6 @@ describe('정적·구성 경계', () => {
     assert.ok(ids.includes('no-restricted-imports'), 'electron net');
     assert.ok(ids.includes('no-restricted-globals'), 'fetch');
     assert.equal(ids.filter((i) => i === 'no-restricted-syntax').length, 2, '계산된 import·송신 모듈 import');
-    // 리터럴 이름의 지연 로드(키체인 모듈)는 통과한다.
     const [ok] = await eslint.lintText(`export const k = () => import('@napi-rs/keyring');\n`, { filePath: path.join(root, 'packages/vault/src/_probe.ts') });
     assert.deepEqual(ok!.messages, []);
   });
@@ -59,7 +57,6 @@ describe('정적·구성 경계', () => {
     assert.ok(ids.includes('no-restricted-syntax'), "createRequire(...)('node:net')");
     const [ok] = await eslint.lintText(`import { createRequire } from 'node:module';\nexport const Ajv = createRequire(import.meta.url)('ajv');\n`, { filePath: path.join(root, 'packages/engine/src/_probe.ts') });
     assert.deepEqual(ok!.messages, []);
-    // 데스크톱 main도 송신 규칙 범위다(e2e·가짜 페이지 서버는 명시 면제).
     const [d] = await eslint.lintText(`import http from 'node:http';\nexport const h = http;\n`, { filePath: path.join(root, 'apps/desktop/src/_probe.ts') });
     assert.ok(d!.messages.some((m) => m.ruleId === 'no-restricted-imports'));
     const [fx] = await eslint.lintText(`import http from 'node:http';\nexport const h = http;\n`, { filePath: path.join(root, 'apps/desktop/src/h01-fixture.ts') });
@@ -67,13 +64,10 @@ describe('정적·구성 경계', () => {
   });
 
   it('Chrome 인자: 허용 목록(고정 인자) + 금지 인자 거부, 환경 변수 화이트리스트', () => {
-    // 고정 인자 3개 뒤에는 금고가 더하는 --disable-breakpad(V1)·--disable-default-apps(기본 앱 차단)·가려진 창 늦추기 끄기 3개(#309)만 붙는다.
     const args = buildChromeArgs('/p');
     assert.deepEqual(args.slice(0, 3), ['--remote-debugging-pipe', '--user-data-dir=/p', '--no-first-run']);
     const slow = ['--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling'];
-    // 실행 창은 앱 모드(탭줄·주소창 없음, 시작 문서 고정) + 기본 브라우저 확인 안내 끔(대표 지시 2026-11-13).
     assert.deepEqual(args.slice(3), ['--disable-breakpad', '--disable-default-apps', ...slow, `--app=${CHROME_APP_START_URL}`, '--no-default-browser-check']);
-    // 창 없는 Chrome(앱 기본): new headless + 데스크톱 폭 창 크기. 시험 인자가 정한 플래그는 겹쳐 넣지 않는다.
     assert.deepEqual(buildChromeArgs('/p', [], true).slice(10), ['--headless=new', '--window-size=1400,1000']);
     assert.deepEqual(buildChromeArgs('/p', ['--headless=new'], true).slice(10), ['--window-size=1400,1000', '--headless=new']);
     for (const bad of ['--remote-debugging-port=0', '--remote-allow-origins=*', '--no-sandbox', '--disable-extensions']) assert.throws(() => buildChromeArgs('/p', [bad]));
@@ -84,12 +78,10 @@ describe('정적·구성 경계', () => {
 
   it('승인 카드 판정: 뜬 직후 클릭도 승인(기다림·머무름 없음), [승인하고 발급] 영역 안 down→up만, 창 수준 사건은 누르던 클릭 취소, 커서 위장, 키보드 없음', () => {
     const g = new BarGate();
-    // [승인하고 발급] 영역은 (200,20)~(400,70). 그 밖은 카드 안이라도 "바깥"이다.
     g.setTargets({ approve: { x: 200, y: 20, width: 200, height: 50 }, stop: { x: 20, y: 20, width: 88, height: 50 } });
     const at = { x: 300, y: 45 };
     const down = (p = at) => g.mouse({ type: 'mouseDown', ...p, button: 'left' });
     const up = (p = at) => g.mouse({ type: 'mouseUp', ...p, button: 'left' });
-    // 카드가 뜬 직후(움직임 없이) 클릭도 승인이다(ADR-021 개정 2026-11-09: 무장 지연 600ms·머무름 150ms 철회).
     g.reset();
     assert.equal(g.armed(), true);
     assert.equal(down(), null);
@@ -101,7 +93,6 @@ describe('정적·구성 경계', () => {
     assert.equal(up(), null, '바 밖에서 누른 것은 승인이 아니다');
     assert.equal(g.mouse({ type: 'mouseDown', ...at, button: 'right' }), null);
     assert.equal(g.mouse({ type: 'mouseUp', ...at, button: 'right' }), null, '오른쪽 버튼은 승인이 아니다');
-    // 누른 채 나가면(나감·바 밖 움직임) 그 클릭은 취소된다.
     down();
     g.mouse({ type: 'mouseLeave', x: -1, y: -1 });
     assert.equal(up(), null);
@@ -111,13 +102,11 @@ describe('정적·구성 경계', () => {
     down();
     g.mouse({ type: 'mouseMove', x: 310, y: 50 });
     assert.deepEqual(up(), { kind: 'approve' }, '바 안 움직임은 취소가 아니다');
-    // 창 수준 사건(이동·크기·활성화 등)은 누르던 클릭만 취소한다. 다음 클릭은 기다리지 않고 된다.
     down();
     g.reset();
     assert.equal(up(), null);
     down();
     assert.deepEqual(up(), { kind: 'approve' });
-    // 커서 위장 중에는 무장하지 않고 이유를 알린다. 누르던 클릭도 취소된다. 풀리면 바로 된다.
     down();
     g.setCursorBlocked(true);
     assert.equal(up(), null);
@@ -127,7 +116,6 @@ describe('정적·구성 경계', () => {
     g.setCursorBlocked(false);
     down();
     assert.deepEqual(up(), { kind: 'approve' });
-    // 키보드 승인 없음(Alt+Y 경로는 꺼 둠).
     assert.equal(KEYBOARD_APPROVAL, false);
     assert.equal(g.key({ type: 'keyDown', key: 'y', alt: true }), null);
     assert.equal(g.key({ type: 'keyDown', key: 'Enter' }), null);
@@ -144,7 +132,6 @@ describe('정적·구성 경계', () => {
     assert.equal(g.stop({ type: 'mouseDown', ...st, button: 'left' }), false);
     assert.equal(g.stop({ type: 'mouseUp', ...st, button: 'left' }), true);
     assert.equal(g.mouse({ type: 'mouseDown', ...st, button: 'left' }), null, '[중지] 자리 down은 승인 판정에 들어가지 않는다');
-    // [중지]에서 눌러 [승인하고 발급]에서 떼면 둘 다 아니다. 거꾸로도 마찬가지.
     g.stop({ type: 'mouseDown', ...st, button: 'left' });
     assert.equal(g.mouse({ type: 'mouseDown', ...st, button: 'left' }), null);
     assert.equal(g.stop({ type: 'mouseUp', ...ap, button: 'left' }), false);
@@ -153,7 +140,6 @@ describe('정적·구성 경계', () => {
     assert.equal(g.mouse({ type: 'mouseDown', ...ap, button: 'left' }), null, '눌림');
     assert.equal(g.stop({ type: 'mouseUp', ...st, button: 'left' }), false, '[승인하고 발급]에서 시작한 클릭은 중지도 아니다');
     assert.equal(g.mouse({ type: 'mouseUp', ...st, button: 'left' }), null);
-    // 오른쪽 버튼·움직임은 [중지]가 아니다. 커서 위장 중에도 [중지]는 된다(안전한 실패).
     assert.equal(g.stop({ type: 'mouseDown', ...st, button: 'right' }), false);
     assert.equal(g.stop({ type: 'mouseUp', ...st, button: 'right' }), false);
     g.setCursorBlocked(true);
@@ -174,7 +160,6 @@ describe('정적·구성 경계', () => {
       assert.equal(t.approve.x + t.approve.width, w - CARD.padX, '[동작]은 남은 폭 전부');
       assert.ok(!inBox(t.approve, t.stop.x + t.stop.width / 2, t.stop.y + t.stop.height / 2) && !inBox(t.stop, t.approve.x + 1, t.approve.y + 1), '영역이 겹치지 않는다');
     }
-    // CSS의 버튼 자리 = 판정 영역(왼쪽·오른쪽·아래 여백과 [중지] 폭).
     const css = barCssFor();
     assert.ok(css.includes(`.st{left:${CARD.padX}px;width:${CARD.stop}px}`) && css.includes(`.ap{left:${CARD.padX + CARD.stop + CARD.apart}px;right:${CARD.padX}px}`) && css.includes(`.btn{position:absolute;bottom:${CARD.padY}px;height:${CARD.btn}px;`));
   });
@@ -208,7 +193,6 @@ describe('정적·구성 경계', () => {
     assert.deepEqual(summarize(base({}, [{ fieldKey: 'counterpartName', value: 'B상사' }])), { reason: 'duplicate' });
     assert.equal(overflowLine(lines, 600), null);
     assert.equal(overflowLine(lines, 420), '안내', '비가역 한 줄도 폭 어림에 든다');
-    // 10억 이상·긴 이메일 도메인·처음 보내는 주소도 띠(창 폭)로 넓히면 들어간다. "창을 넓혀 주세요"는 띠로도 넘칠 때만.
     const long = summarize(base({ counterpartEmail: 'a@회사이름이긴곳.한국', '$first.email': 'true', totalAmount: '1100000000', supplyAmount: '1000000000', taxAmount: '100000000' }), '2026-11-03') as SummaryLine[];
     assert.equal(overflowLine(long, barBounds(1280, 820).width), '받는 이메일');
     assert.equal(overflowLine(long, barBounds(1280, 820, true).width), null);
@@ -229,8 +213,6 @@ describe('정적·구성 경계', () => {
     assert.match(buildCardHtml(lines, 'unarmed', '잠시 뒤 다시 눌러 주세요'), /<span>승인하고 발급<\/span><small>잠시 뒤 다시 눌러 주세요<\/small>/, '문구는 동작 글자 아래 작은 줄');
     const refused = buildCardHtml(lines, 'refused', '값 대조가 맞지 않아 승인할 수 없어요');
     assert.ok(refused.includes('<div class="btn st" role="button">중지</div>') && refused.includes('<div class="btn ap rf" role="button" aria-disabled="true">값 대조가 맞지 않아 승인할 수 없어요</div>') && !refused.includes('승인하고 발급'), '무장 거부: 동작 자리에 사유(무채색), [중지]는 그대로');
-    // 중복 경고($dup.*)는 합계 줄 표시와 동작 글자로 카드에 보인다(ADR-021). 이 클릭이 D02 §7 명시 확인이다.
-    // 원장 상태별로 다르게(ADR-027 결정 3): 발급 확정은 "이미 발급됨"·주의 색·"한 번 더 발급".
     const dup = base({ '$dup.businessKey': 'committed' });
     assert.equal((summarize(dup) as SummaryLine[])[0]!.flag, '이미 발급됨(승인번호 있음)');
     assert.equal(actionText(dup), ACTION_TEXT_DUP_COMMITTED);
@@ -238,7 +220,6 @@ describe('정적·구성 경계', () => {
     assert.equal(actionText(base()), ACTION_TEXT);
     const prior = base({ '$dup.businessKey': 'not_committed', '$dup.priorNotCommitted': 'true' });
     assert.equal((summarize(prior) as SummaryLine[])[0]!.flag, '이전 시도는 발급되지 않았어요');
-    // 발급된(또는 모르는) 같은 건이 있으면 "직전 시도 미발급"보다 먼저 보인다(그 경고가 발급된 건을 가리면 중복 발급).
     for (const [states, flag] of [['committed,not_committed', '이미 발급됨(승인번호 있음)'], ['in_doubt,not_committed', '발급 여부 확인 안 됨'], ['dispatched,not_committed', '발급 여부 확인 안 됨']]) {
       assert.equal((summarize(base({ '$dup.businessKey': states!, '$dup.priorNotCommitted': 'true' })) as SummaryLine[])[0]!.flag, flag, states);
     }
@@ -286,7 +267,7 @@ describe('정적·구성 경계', () => {
       .readdirSync(dir, { recursive: true, encoding: 'utf8' })
       .filter((f) => /\.(css|html|js)$/.test(f))
       .map((f) => path.join(dir, f));
-    files.push(path.join(root, '../sovereign-ax/design-system/components/bundle.css')); // 셸 렌더러가 받는 디자인 시스템 CSS
+    files.push(path.join(root, '../sovereign-ax/design-system/components/bundle.css'));
     for (const f of files) {
       const t = fs.readFileSync(f, 'utf8');
       assert.doesNotMatch(t, /cursor\s*:\s*[^;}"']*(url\(|image-set\(|none)/i, f);

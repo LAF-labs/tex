@@ -1,7 +1,3 @@
-// S6e 화면 확인(수동 실행, Windows): 금고와 같은 방식(Preferences·Local State 기록, 허용 인자 3개, 헤드풀)으로 Chrome을 띄워
-// 로그인·주소·카드 폼을 CDP 입력 이벤트로 채워 제출하고, 저장 제안·자동완성 팝업이 뜨는지 본다.
-// 대조군은 아무것도 기록하지 않은 새 프로필이다. 저장 제안은 브라우저 UI라 CDP 스크린샷에 안 잡혀 창을 OS로 캡처한다(s6e-capture.ps1).
-// 실행: node --conditions=development tests/s6e-screen.ts <출력 폴더>
 import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import http from 'node:http';
@@ -18,7 +14,6 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const outDir = path.resolve(process.argv[2] ?? 's6e-out');
 await fs.mkdir(outDir, { recursive: true });
 
-// 폼 값은 이 시험용 합성 값이다(실제 계정·주소·카드 아님). 카드 번호는 카드사 공개 시험 번호.
 const page = (t: string, body: string) => `<!doctype html><html><head><meta charset="utf-8"><title>${t}</title></head><body style="font:16px sans-serif;padding:24px">${body}</body></html>`;
 const input = (id: string, ac: string, type = 'text') => `<p><label>${id} <input id="${id}" name="${id}" type="${type}" autocomplete="${ac}"></label></p>`;
 const PAGES: Record<string, string> = {
@@ -55,8 +50,6 @@ async function capture(pid: number, name: string): Promise<Win[]> {
   return JSON.parse(stdout.trim() || '[]') as Win[];
 }
 
-// Chrome 종료 뒤 프로필 DB의 행 수. 저장 제안을 누르지 않으므로 주소·카드·로그인은 둘 다 0이어야 하고,
-// 단일 칸 자동완성 기록(autofill 표)은 자동완성이 켜진 프로필에서만 제출 때 저절로 쌓인다.
 function countRows(file: string, tables: string[]): Record<string, number | null> {
   const out: Record<string, number | null> = {};
   let db: DatabaseSync | null = null;
@@ -101,7 +94,6 @@ async function runProfile(kind: 'vault' | 'control') {
     result.version = ((await conn.send('Browser.getVersion')) as { product?: string }).product;
     const steps: Record<string, unknown> = {};
     for (const step of STEPS) {
-      // 단계마다 새 탭에서 한다. 저장 제안 말풍선은 탭에 붙어 있어 탭을 닫아야 다음 단계 캡처에 섞이지 않는다.
       const { targetId } = (await conn.send('Target.createTarget', { url: 'about:blank' })) as { targetId: string };
       const { sessionId } = (await conn.send('Target.attachToTarget', { targetId, flatten: true })) as { sessionId: string };
       const s = (m: string, p: Record<string, unknown> = {}) => conn.send(m, p, sessionId);
@@ -120,7 +112,6 @@ async function runProfile(kind: 'vault' | 'control') {
         const [x, y] = await evalValue<[number, number]>(`(b => [b.x + b.width / 2, b.y + b.height / 2])(document.getElementById(${JSON.stringify(id)}).getBoundingClientRect())`);
         for (const type of ['mousePressed', 'mouseReleased']) await s('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 });
       };
-      // 막 그려진 페이지에서는 첫 클릭이 가끔 빠진다(실측). 초점이 실제로 옮겨졌는지 보고 다시 누른다.
       const focus = async (id: string) => {
         for (let i = 0; i < 10; i++) {
           await click(id);
@@ -148,7 +139,6 @@ async function runProfile(kind: 'vault' | 'control') {
       }
       await sleep(2500);
       const afterSubmit = await capture(chrome.proc.pid!, `${kind}-${step.name}-submit`);
-      // 같은 폼을 다시 열고 첫 칸을 눌러 자동완성 목록이 뜨는지 본다.
       await goto(origin + step.path);
       await focus(step.fill[0]![0]);
       await sleep(1500);

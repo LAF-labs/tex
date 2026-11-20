@@ -1,6 +1,3 @@
-// 서명 의식: 공개키 기록 → 핀(TRUST_ROOT_JSON)·루트 메타데이터, 보유자 서명 → signatures[] 모으기.
-// 모으는 쪽은 서버·엔진과 같은 규칙으로 센다(services/registry countSignatures): 그 역할의 핀 키, 서로 다른 keyId, alg ed25519.
-// 의식 도구는 더 엄격하다: 같은 키 두 번·폐기 키·다른 역할 키·검증 실패 서명은 세지 않는 것이 아니라 거부한다(잘못 모은 것을 바로 알린다).
 /** 앱 핀(엔진 TrustPin·@sax/updater TrustRoot·tests/fixtures/registry/trust.json과 같은 모양). */
 export interface TrustPin {
   keyEpoch: number;
@@ -14,13 +11,9 @@ import { edVerifyRaw, type SigningBackend } from './device.ts';
 export interface KeyRecord {
   keyId: string;
   role: Role;
-  /** 표준 base64 32바이트 */
   publicKey: string;
-  /** 보유자 역할 이름(실명 아님, 예 "단독 보유자", "보유자 A(운영)", "릴리스 보유자") */
   holder: string;
-  /** 키가 사는 곳: macos-se(키체인 + Secure Enclave 감싸기, 단독 모드), yubikey-piv(승격 뒤), server-env(레지스트리 서버 비밀값, 타임스탬프 키) */
   backend: 'macos-se' | 'yubikey-piv' | 'server-env';
-  /** yubikey-piv만: 슬롯·일련번호·증명(attestation) 확인 여부 */
   slot?: string | null;
   serial?: number | null;
   attested?: boolean;
@@ -38,8 +31,6 @@ export interface RootMetadata {
   keyEpoch: number;
   createdAt: string;
   keys: TrustPin['keys'];
-  /** keyId → 보유자 역할 표(D09 §8.2 "루트 메타데이터에 키 ID → 보유자 역할 표를 공개한다") */
-  /** 보유 형태(solo면 모든 키를 한 사람이 한 맥에 갖는다. 2-of-3은 키 분리일 뿐 사람 분리가 아니다) */
   mode: TrustMode;
   holders: Array<{ keyId: string; role: Role; holder: string; backend: KeyRecord['backend'] }>;
   signatures: Sig[];
@@ -65,7 +56,6 @@ export function buildTrust(records: readonly KeyRecord[], keyEpoch: number, crea
     if (ids.has(r.keyId)) throw new CeremonyError('ceremony.trust_invalid', `keyId 중복 ${r.keyId}`);
     if (pubs.has(r.publicKey)) throw new CeremonyError('ceremony.trust_invalid', `같은 공개키 두 번 ${r.keyId}`);
     if (!['macos-se', 'yubikey-piv', 'server-env'].includes(r.backend)) throw new CeremonyError('ceremony.trust_invalid', `backend ${r.keyId}`);
-    // 타임스탬프 키는 서버 온라인 키다(ADR-037 결정 (3), D09 §8.2). 다른 역할 키는 서버에 두지 않는다.
     if ((r.role === 'timestamp') !== (r.backend === 'server-env')) throw new CeremonyError('ceremony.trust_invalid', `${r.keyId}: 타임스탬프 키만 서버 비밀값`);
     if (r.backend === 'yubikey-piv' && !r.attested) throw new CeremonyError('ceremony.trust_invalid', `장치 증명 없음 ${r.keyId}`);
     if (typeof r.holder !== 'string' || !r.holder.trim()) throw new CeremonyError('ceremony.trust_invalid', `보유자 없음 ${r.keyId}`);
@@ -92,8 +82,6 @@ export function buildTrust(records: readonly KeyRecord[], keyEpoch: number, crea
   return { trust, metadata: { kind: 'sax.trust-root/v1', keyEpoch, createdAt, mode, keys: sorted, holders, signatures: [] } };
 }
 
-// ---- 보유자 서명 ----
-
 /** 보유자 한 명의 서명 결과 파일. collect가 읽는다. sha256은 서명 입력의 다이제스트(엉뚱한 문서 서명을 모을 때 바로 걸린다). */
 export interface SignatureRecord extends Sig {
   kind: DocKind;
@@ -117,8 +105,6 @@ export async function signWithBackend(backend: SigningBackend, o: { kind: DocKin
   if (!edVerifyRaw(pub, o.bytes, sig)) throw new CeremonyError('ceremony.signature_invalid');
   return { keyId: o.keyId, alg: 'ed25519', sig: sig.toString('base64url'), kind: o.kind, part: o.part, sha256: sha };
 }
-
-// ---- 모으기 ----
 
 const keyEpochOf = (kind: DocKind, doc: Record<string, unknown>) => (kind === 'release' ? undefined : kind === 'root_change' ? undefined : doc.keyEpoch);
 
@@ -150,7 +136,6 @@ export function collectSignatures(kind: DocKind, doc: Record<string, unknown>, r
   if (role === 'emergency' && records.length !== 1) throw new CeremonyError('ceremony.role_not_allowed', '긴급 키는 단독');
   if (seen.size < need) throw new CeremonyError('ceremony.quorum_short', `${seen.size}/${need}`);
   const sigs: Sig[] = [...records].sort((a, b) => a.keyId.localeCompare(b.keyId)).map((r) => ({ keyId: r.keyId, alg: 'ed25519', sig: r.sig }));
-  // 서버·엔진과 같은 셈으로 다시 확인(같은 핀·같은 바이트)
   if (countSignatures(bytes, sigs, role, trust as unknown as TrustRoot, revoked).valid.length < need) throw new CeremonyError('ceremony.quorum_short', 'server-rule');
   const out = structuredClone(doc);
   if (kind === 'release') out.signature = sigs[0];

@@ -1,7 +1,4 @@
-// 시연 씨앗 e2e(pnpm demo의 견본 데이터): 거래처 9곳·지난 발급 14건(상태 섞임), 문서함 견본 증명서 5장이 실제 가져오기 길로 들어감
-// (정상·임박·만료·추정·확인 필요), 목업 서류·지난 발급본 견본 PDF 열기, 거래처 추가·수정, 화면의 추가 폼.
-// 실행: electron apps/desktop/e2e-dist/demo-seed-e2e.js. PDF 열기는 OS 뷰어를 띄우지 않게 바꿔 끼운다. fixture 모드라 앱 폴더·키체인을 쓰지 않는다.
-import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
+import './os-guard.js';
 import { readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { app, shell as desktop } from 'electron';
@@ -24,7 +21,6 @@ const check = (name: string, ok: boolean, detail?: unknown) => {
 };
 let S: Shell | undefined;
 const js = <T = unknown>(code: string): Promise<T> => S!.win.webContents.executeJavaScript(code) as Promise<T>;
-/** 렌더러 호출(셸 페이지의 sax.call). 실패는 오류 코드 문자열로. */
 const call = <T = unknown>(method: string, params: Record<string, unknown> = {}) =>
   js<T | string>(`window.sax.call(${JSON.stringify(method)}, ${JSON.stringify(params)}).catch((e) => 'ERR:' + String(e.message).replace(/^.*Error: /, ''))`);
 const gesture = () => S!.win.webContents.sendInputEvent({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 });
@@ -61,7 +57,6 @@ async function main(): Promise<void> {
   check('제목줄에 견본 데이터 표시', (await js<string>(`document.querySelector('.mock-badge')?.textContent ?? ''`)).includes('견본'));
 
   const listDocs = async () => (await call<ShellDoc[]>('docs.list')) as ShellDoc[];
-  // 씨앗 끝: 보관함 증명서 5장 + 견본 PDF(지난 발급본 13장, 목업 서류 2장)
   await until('seed fill', async () => S!.store.files.size >= 15 && (await listDocs()).filter((d) => d.vault).length >= 5, 90_000);
   const docs = await listDocs();
   const vault = docs.filter((d) => d.vault);
@@ -115,20 +110,17 @@ async function main(): Promise<void> {
   const settings = await js<{ tabs: string[]; cards: number; inputs: number; text: string }>(`({ tabs: [...document.querySelectorAll('[data-set-tab]')].map((b) => b.textContent), cards: document.querySelectorAll('[data-auth-card]').length, inputs: document.querySelectorAll('section[data-view=settings] input').length, text: document.querySelector('section[data-view=settings]').innerText })`);
   check('설정: 항목은 발급 인증·기기 연결, 발급 인증은 프로필 인증 한 줄(기본으로·삭제·인증 추가·확인 체크 없음)', settings.tabs.join() === '발급 인증,기기 연결' && settings.cards === 1 && settings.inputs === 0 && settings.text.includes('사업자 간편인증') && !/기본으로|삭제|인증 추가|카카오뱅크/.test(settings.text), settings);
 
-  // 화면: 거래처 화면의 [거래처 추가] → 폼 → [추가]
   await js(`document.querySelector('#rail [data-view="cps"], #rail button[aria-label="거래처"]')?.click()`);
   await until('cps view', async () => js<boolean>(`!!document.querySelector('[data-act=cp-add]')`), 5_000);
   await js(`document.querySelector('[data-act=cp-add]').click()`);
   await until('form', async () => js<boolean>(`!!document.querySelector('.cp-form')`), 5_000);
   await js(`(() => { const f = document.querySelector('.cp-form'); f.name.value = '견본화면상사'; f.bizNo.value = ${JSON.stringify(syntheticBizNo(778))}; f.email.value = 'ui@gyeonbon-test.example'; f.item.value = '화면 품목'; f.requestSubmit(); })()`);
   check('화면에서 거래처 추가 → 상세 패널·목록', await until('cp added', async () => js<boolean>(`document.querySelector('[data-panel-cp] .sx-card-title')?.textContent === '견본화면상사' && [...document.querySelectorAll('[data-cp-row]')].length === 11`), 5_000));
-  // 저장 품목 칸 = 엔진 저장 품목의 첫 품목(#144). 다시 읽어도(목록 새로 고침) 같은 값, 비우면 없어진다.
   const uiCp = ((await call<Array<{ id: string; name: string; item: string }>>('counterparties.list', {})) as Array<{ id: string; name: string; item: string }>).find((c) => c.name === '견본화면상사');
   const panelItem = await js<boolean>(`document.querySelector('[data-panel-cp]')?.textContent.includes('화면 품목')`);
   const cleared = (await call<{ counterparties: Array<{ id: string; item: string }> }>('counterparty.save', { id: uiCp?.id, name: '견본화면상사', email: 'ui@gyeonbon-test.example', item: '' })) as { counterparties: Array<{ id: string; item: string }> };
   check('저장 품목: 폼 칸 → 엔진 저장 품목 첫 이름(목록·상세 패널), 비우면 없음', uiCp?.item === '화면 품목' && panelItem && cleared.counterparties.find((c) => c.id === uiCp?.id)?.item === '', { uiCp, panelItem });
 
-  // [등록증으로 채우기](M4-3 O-05): 실제 입력 없이 부르면 gesture_required, 누르면 시연 등록증 후보가 칸에 들어간다(주소는 오지 않는다)
   await sleep(3_100);
   check('등록증 읽기는 실제 입력 뒤에만', (await call('counterparty.readCert', {})) === 'ERR:gesture_required');
   await js(`document.querySelector('[data-act=cp-add]').click()`);
@@ -143,7 +135,6 @@ async function main(): Promise<void> {
   const row = ((await S!.host.rpc('db.query.counterparties.list')) as Array<{ bizNo: string; source: string; address: string | null }>).find((c) => c.bizNo === '3148601237');
   check('등록증으로 넣은 거래처는 source ocr·주소(main이 든 값)', row?.source === 'ocr' && row.address === '서울특별시 견본구 시험로 34', row);
 
-  // 내 사업장(D-03) 고치기: 온보딩 기록이 없는 기존 프로필(!onb)도 고친다. [파일에서 읽기]는 온보딩 O-02와 같은 등록증 읽기(시연 등록증).
   const biz = async () => ((await S!.host.rpc('db.query.profiles.list')) as Array<{ kind: string; displayName: string; bizNo: string; repName: string | null; bizType: string | null; bizItem: string | null; address: string | null; signMethod: string | null }>).find((x) => x.kind === 'business')!;
   const before = await biz();
   await js(`(document.querySelector('#rail [data-view="settings"]')?.click(), setTimeout(() => document.querySelector('[data-set-tab="biz"]')?.click(), 50))`);

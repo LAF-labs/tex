@@ -1,4 +1,3 @@
-// 이번 달 판(08 M-02, ADR-033, D14 M6-16): 기한 계산·정렬, 카드 → 갈 곳, 판에 승인 경로 없음. Electron 없이 돈다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -97,7 +96,6 @@ describe('받아야 할 증빙 · 세무사에게 줄 것', () => {
     assert.equal(card.detail, '마지막 최신화 38일 전');
     assert.deepEqual(card.target, { to: 'view', view: 'card' });
     assert.equal(buildBoard(base({ cardFetchedOn: null })).cards[0]!.items[0]!.detail, '아직 가져온 적 없어요');
-    // 카드 기능이 없는 빌드(제품 첫 설치본)는 [최신화] 칸을 두지 않는다
     assert.ok(!buildBoard(base({ cardFetchedOn: null, cardEnabled: false })).cards.some((c) => c.items.some((i) => i.id === 'card')));
     assert.ok(!ids(buildBoard(base({ cardFetchedOn: '2026-11-01' }))).includes('card'));
   });
@@ -175,7 +173,6 @@ describe('정렬과 경계', () => {
     );
     const all = b.cards.flatMap((c) => c.items);
     for (const i of all) assert.ok(['run', 'doc', 'compose', 'view'].includes(i.target.to), i.id);
-    // 상태 이름("승인 대기")은 보여도 된다. 승인 동작 문구는 없다.
     const text = JSON.stringify(b);
     for (const bad of ['승인하고', '승인하기', '발급하기', '발급기한', '까지', '세액 산정', '절세', '신고 대리', '가산세', '납부할 세액']) assert.ok(!text.includes(bad), bad);
   });
@@ -239,16 +236,13 @@ describe('M4-2 3부: InDoubt·핸드오프 화면(08 §11, D03 HandedOff)', () =
     const body = branch(src, "} else if (st === 'turn' && run.handoff) {", "} else if (st === 'turn') {");
     const acts = [...new Set([...body.matchAll(/act\.([a-zA-Z]+)\(/g)].map((m) => m[1]))].sort();
     assert.deepEqual(acts, ['manualDone', 'resume', 'retryCert', 'simpleDone', 'stop']);
-    // 공동인증서 로그인 실패 차례(login.simple_auth)만 [인증서로 다시 시도](멈추고 같은 값으로 인증서 로그인부터, 발급 없음)
     assert.match(body, /btn\('인증서로 다시 시도', \(\) => act\.retryCert\(run\.id\)/);
-    // 폰이 시작한 간편인증 요청 뒤(login.simple_sent)만 [승인했어요](엔진이 [인증 완료]를 누르고 재개)
     assert.match(body, /run\.handoff\.code === 'login\.simple_sent' \? btn\('승인했어요', \(\) => act\.simpleDone\(run\.id\)/);
     assert.match(body, /showBrowserBtn\(run, act\)/, '사람 차례 카드에는 [홈택스 창 보기]'); 
     assert.match(body, /: kind === 'login' \? btn\(run\.handoff\.code === 'login\.simple_auth' \? '간편인증 마치고 이어서' : '이어서'/);
     assert.match(body, /kind === 'other' \? btn\('직접 발급함'/);
     assert.match(body, /btn\('중지', \(\) => act\.stop\(run\.id\)/);
     assert.ok(!/act\.(prepare|again|reissue)|sx-btn-approve/.test(body), '사람 차례 카드는 다시 발급하지 않는다');
-    // 사람 차례 동안 패널에도 [중지]가 있다(서명 차례 포함: 엔진이 발급목록 확인 뒤 끝낸다)
     assert.match(src, /st === 'turn' && \(!!run\.handoff \|\|/);
     const shell = fs.readFileSync(path.resolve(import.meta.dirname, '../apps/desktop/static/shell/shell.js'), 'utf8');
     const band = branch(shell, 'function renderHandoff() {', '\n}\n');

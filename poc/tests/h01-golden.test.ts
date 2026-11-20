@@ -1,7 +1,3 @@
-// RunService IR 전환 골든 대조(엔진 M2-3 PR-C, ADR-039 결과). 같은 가짜 H-01 페이지에서 H01Runner(기본)와 IR 조율기(engine 'ir',
-// fixture 패키지 s10~s35)를 같은 시나리오로 돌리고, 바깥 모양을 비교한다: 스텝 순서·종료 상태와 코드·원장·저널 코드·게이트 카드·제출 횟수.
-// 기준은 차이 0이다. 두 실행기의 구조가 달라 생기는 차이는 KNOWN에 이유와 함께 적은 것만 뺀다(그 밖의 차이는 IR 쪽에서 고친다).
-// 실제 포털 접속 없음: 금고는 프로세스 안(시험 정책 127.0.0.1)·헤드리스 Chrome, 모델 없음(decide는 고정 판정기), PDF는 가짜 포트.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -24,24 +20,10 @@ const C = { bizNo: '4182577343', name: 'C테크', email: 'billing@ctech.example'
 
 type Engine = 'h01' | 'ir';
 
-/**
- * 두 실행기의 구조 차이(기준에서 빼는 것). 이 밖의 차이는 실패다.
- * - IR_ONLY_STEPS: H01 TS 플레이북에 없는 골든 스텝. s19 decide(form_ready, 모델 판정)·s19f(readback = 입력 대조)·s32 save_pdf·s32b(메일 분기).
- *   H01은 s19f를 따로 두지 않고 s19a~s19e로, s32b는 s33 skipUnless로 한다.
- * - H01_ONLY_STEPS: s36·s37(H01 종료 스텝). IR은 verify on.not_committed·unknown이 s11(재게이트)·handoff다.
- */
 const IR_ONLY_STEPS = new Set(['s19', 's19f', 's32', 's32b']);
 const H01_ONLY_STEPS = new Set(['s36', 's37']);
-/**
- * 저널 코드 중 IR만 내는 것(값 없는 진행 기록). 비교에서 뺀다.
- * - run.state: 조율기 상태 전이(D03 §2 상태 기계). H01은 상태 기계가 없다.
- * - decide.result·verify.result: IR만 있는 s19 판정·verify 결과 행(H01은 결과를 원장 행으로만 남긴다).
- * - artifact.saved: IR만 있는 s32 save_pdf.
- * - gate.tokens_discarded: 조율기가 토큰을 버린 기록(H01 토큰은 RunService 메모리에만 있고 저널이 없다).
- */
 const JOURNAL_IGNORE: Record<Engine, ReadonlySet<string>> = {
   h01: new Set([]),
-  // gate.presence: 승인 근거의 presence(click·click+batch)를 남기는 저널. IR 길에만 있다
   ir: new Set(['run.state', 'decide.result', 'verify.result', 'artifact.saved', 'gate.tokens_discarded', 'gate.presence']),
 };
 
@@ -54,9 +36,7 @@ interface Obs {
   journal: string[];
   phases: string[];
   posts: number;
-  /** 게이트 카드(fieldKey=value). 시험마다 바뀌는 값(runId·nonce·해시)은 뺀다. */
   gate: string[] | null;
-  /** 게이트 포트로 나간 gate.closed 사유. */
   closed: string[];
   steps: string[];
 }
@@ -67,13 +47,11 @@ class Side {
   readonly gateMsgs: GatePortMessage[] = [];
   readonly traces = new Map<string, string[]>();
   runs!: RunService;
-  /** 같은 DB·같은 실행기로 의존성 일부만 바꾼 RunService(gateWaitMs 등). */
   svc!: (over?: Partial<RunServiceDeps>) => RunService;
   db!: Db;
   dir!: string;
   data!: DataService;
   cp: Record<'A' | 'C', string> = { A: '', C: '' };
-  /** IR 쪽 irSource 호출 수(실행 시작마다 하나). */
   sourced = 0;
   constructor(engine: Engine) {
     this.engine = engine;
@@ -117,7 +95,6 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
       db: s.db, data: s.data, ledgerKey, portal: fixturePortal(fx.origin), log,
       page: async () => (page && !page.isClosed() ? page : (page = (await connectRunBrowser(h.client)).page)),
       postGate: (m) => s.gateMsgs.push(m),
-      // IR 쪽은 제품과 같은 실행 시작 공급(irSource)으로 받는다(PR-D2). 시작마다 부른다.
       ...(ir ? { engine: 'ir' as const, irSource: () => (s.sourced++, { ok: true as const, ir }) } : { engine: 'h01' as const }),
       trace: (runId, e) => {
         if (e.name !== 'step.started') return;
@@ -148,14 +125,12 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
     const ir: IrPackage = {
       pkg, lookupDefs: h01FixtureLookupDefs(fx.origin), fixtureGrant: fixtureOriginGrant(pkg), pdf,
       verifyTiming: { minElapsedMs: p.verify.minElapsedMs, lookups: p.verify.lookups, maxMs: p.verify.maxMs },
-      // 모델 없음: form_ready는 늘 "보이는 오류 없음"(H01에는 이 판정이 없다).
       judge: { decide: async () => ({ outcome: 'no_visible_error', confidence: 1, raw: {}, usage: { input_tokens: 0, output_tokens: 0 }, refusals: [], rule: 3, provider: 'openai', model: 'fixture', l0Only: true, injectionHit: false, shadow: [] }) as never },
     };
     await setup(sides.h01, undefined);
     await setup(sides.ir, ir);
   });
 
-  /** 끝나지 않은 실행(시험 실패 뒤 승인 대기 등). 정리 단계에서 멈춘다. */
   const live = new Map<string, { s: Side; runs: RunService }>();
 
   after(async () => {
@@ -174,14 +149,10 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
     }
   });
 
-  /** 한 실행기로 시나리오를 돌리고 관찰한다. drive는 게이트 요청을 받아 승인·중지 등을 한다. */
   interface Opts {
     extra?: Record<string, unknown>;
-    /** 게이트 요청을 기다리지 않는다(게이트 전에 끝나는 시나리오). */
     noGate?: boolean;
-    /** 시나리오 전용 의존성(같은 DB). */
     deps?: Partial<RunServiceDeps>;
-    /** 시험 손잡이: 실행마다 켜고 끈다(한쪽이 실패해도 다른 쪽에 새지 않게). */
     knob?: { set: () => void; reset: () => void };
   }
 
@@ -199,7 +170,6 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
       await drive(req, runId, runs);
       end = await endOf(s, runId);
     } catch (e) {
-      // 진단: 값 없는 궤적·이벤트·저널 코드만.
       console.error(s.engine, runId, JSON.stringify({ steps: s.traces.get(runId), events: s.events.filter((x) => x.runId === runId), journal: runs.inspect(runId).journal }));
       try {
         runs.stop(runId);
@@ -268,7 +238,6 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
       fx.knobs.mutate = { field: 'splAmt', value: '7000001' };
     }, { knob: { set: () => {}, reset: () => (fx.knobs.mutate = null) } });
     assert.deepEqual([o.h01.status, o.h01.code, o.h01.posts, o.h01.ledger], ['failed', 'pre_dispatch_mismatch', 0, 'not_committed']);
-    // IR: 다시 채운 뒤 바뀐 화면 값이 입력과 달라 s19f에서 멈춘다(두 번째 게이트를 열지 않는다).
     assert.deepEqual([o.ir.status, o.ir.code, o.ir.posts, o.ir.ledger], ['failed', 'assert.input_mismatch', 0, 'not_committed']);
     assert.ok(o.ir.journal.includes('checkpoint.reentry'));
     assert.deepEqual(o.ir.gate, o.h01.gate);
@@ -284,7 +253,6 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
 
   it('기준선 조회 중 [중지]: 게이트를 열지 않는다', async () => {
     const o = await both('C', 110_000, async ({ s, runId, runs }) => {
-      // 게이트 스텝(s20)에 들어가 기준선 조회(1.5초 지연)를 하는 동안 멈춘다.
       await next(() => (s.traces.get(runId)?.includes('s20') ? true : undefined));
       assert.deepEqual(runs.stop(runId), { stopped: true });
     }, { noGate: true, knob: { set: () => (fx.knobs.lookupDelayMs = 1500), reset: () => (fx.knobs.lookupDelayMs = 0) } });
@@ -314,9 +282,6 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
   });
 
   it('늦은 반영(최소 경과 뒤)은 committed', async () => {
-    // 반영(1.5초)은 verify 하한(600ms) 뒤다. 반영 뒤 조회가 verify 상한 안에 한 번은 시작돼야 committed인데, fixture 기본 상한 3초에서는
-    // 반영 뒤 남는 1.5초 안에 조회 한 번이 끝나야 해서, 조회 한 번이 1.5초를 넘는 느린 Windows 러너에서는 한쪽만 in_doubt로 끝났다(IR ≠ H01).
-    // 이 경우는 "늦게 반영돼도 찾는다"를 보는 것이라 상한을 넉넉히 둔다. 반영되면 바로 끝나므로 시험 시간은 늘지 않는다.
     const portal = fixturePortal(fx.origin);
     const o = await both('C', 150_000, approve, {
       deps: { portal: { ...portal, verify: { ...portal.verify, maxMs: 20_000 } } },
@@ -340,7 +305,6 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
     const o = await both('C', 900_000, async (x) => {
       await approve(x);
       if (x.s.engine === 'ir') {
-        // 재게이트: 같은 실행에 두 번째 게이트 요청. 직전 시도 경고가 붙는다. 여기서 [중지]한다.
         const again = await gateFor(x.s, x.runId, 1);
         assert.ok(again.fields.some((f) => f.fieldKey === '$dup.priorNotCommitted' && f.value === 'true'));
         fx.knobs.failIssue = false;
@@ -349,11 +313,9 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
     }, { knob: { set: () => (fx.knobs.failIssue = true), reset: () => (fx.knobs.failIssue = false) } });
     assert.deepEqual([o.h01.status, o.h01.code, o.h01.ledger, o.h01.posts], ['failed', 'verify.not_committed', 'not_committed', 1]);
     assert.deepEqual([o.ir.status, o.ir.ledger, o.ir.posts], ['stopped', 'not_committed', 1]);
-    // 원장 행·제출 횟수·첫 게이트 카드와 s30까지의 궤적은 같다.
     assert.deepEqual(o.ir.gate, o.h01.gate);
     assert.deepEqual(o.ir.steps.slice(0, o.h01.steps.length), o.h01.steps);
   });
-  // ---- PR-D: 세 경우의 IR 동작(설계, 팀장 결정 2026-11-09). 위 대조 시험은 두 실행기를 함께 고정하고, 아래는 IR 쪽만 끝까지 본다. ----
   const ledgerIs = (s: Side, runId: string, state: string) => next(() => (s.runs.inspect(runId).ledger === state ? true : undefined));
 
   it('[IR ①] 발급 안 됨 → s11로 돌아가 두 번째 게이트: 카드에 $dup.priorNotCommitted, 첫 승인으로는 못 넘고 새 승인으로만 발급한다', async () => {
@@ -383,7 +345,7 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
       assert.deepEqual(runs.answer(approval(req!)), { ok: true });
       fx.knobs.mutate = { field: 'splAmt', value: '7000001' };
       await ledgerIs(s, runId, 'not_committed');
-      fx.knobs.mutate = null; // 화면이 더 바뀌지 않으면 다시 채운 값(입력과 같음)으로 두 번째 게이트가 열린다
+      fx.knobs.mutate = null;
       const again = await gateFor(s, runId, 1);
       assert.notEqual(again.reqId, req!.reqId);
       assert.ok(again.fields.some((f) => f.fieldKey === 'supplyAmount' && f.value === '720000'), '카드는 다시 읽은 값');
@@ -393,7 +355,6 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
     assert.ok(o.journal.includes('checkpoint.reentry'));
   });
 
-  // ---- 발급 잠금(ADR-048 결정 7): 계정에 PC가 2대 이상일 때. 잠금 포트는 대역이고(main issue-lock-host가 진짜), 여기서는 엔진이 언제 묻고 무엇을 하지 않는지를 본다. ----
   type LockAns = { ok: true } | { ok: false; code: string };
   const fakeLock = (plan: { acquire?: LockAns[]; renew?: LockAns[] } = {}) => {
     const calls: string[] = [];

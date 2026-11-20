@@ -1,6 +1,3 @@
-// 사업자등록증 합성 견본(가상 값만): 국세청 양식(개인·법인)을 본뜬 HTML → 깨끗한 PNG·스캔 JPEG·폰 촬영 JPEG·못 읽게 흐린 그림.
-// 그림을 docparse 샌드박스(static/docparse/docparse.mjs ocrImageJob)와 같은 순서로 읽는다: 긴 변 ocrMaxSide로 줄임 → 전처리 → tesseract kor(블록 줄).
-// 실제 사업자등록증 그림은 쓰지 않는다(거래처 서류). 시험 입력 생성용 렌더러는 금고 경로가 아니다.
 import { createRequire } from 'node:module';
 import type { Browser } from 'playwright-core';
 import type { Worker } from 'tesseract.js';
@@ -15,7 +12,6 @@ export interface CertSample {
   bizNo: string;
   name: string;
   rep: string;
-  /** 대표자 칸 뒤에 붙는 것(공동대표 "외 1명") */
   repSuffix?: string;
   birth?: string;
   open: string;
@@ -27,7 +23,6 @@ export interface CertSample {
 }
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-/** 라벨은 실제 양식처럼 고정 폭 칸에 양끝 맞춤(글자 사이가 크게 벌어진다) */
 const lab = (s: string, w = 190) => `<span class="lab" style="width:${w}px">${esc(s)}</span><span class="colon">:</span>`;
 
 export function certHtml(c: CertSample): string {
@@ -79,11 +74,6 @@ ${rows.join('\n')}
 
 export type Variant = 'clean' | 'scan' | 'photo' | 'photo-mild' | 'small' | 'unreadable';
 
-/**
- * 견본 그림을 찍는다. clean: 그대로. scan: 1도 기울고 약간 흐림. photo: 원근·2도 기울기·흐림·어두운 종이·책상 바탕.
- * photo-mild: 위는 밝고 아래로 갈수록 그늘진 실내 촬영(2026-11-10 설치본의 "상호·번호만 읽히고 4칸 빔"을 재현한 견본).
- * small: 메신저로 받은 1000px 안팎 저화질 JPEG. unreadable: 작게 줄이고 크게 흐림(글자를 읽을 수 없게).
- */
 export async function renderCert(browser: Browser, html: string, v: Variant, format: 'png' | 'jpeg'): Promise<Buffer> {
   const dsf = v === 'photo' || v === 'photo-mild' ? 3 : v === 'unreadable' ? 0.6 : v === 'small' ? 1 : 2;
   const page = await browser.newPage({ viewport: { width: 1000, height: 1100 }, deviceScaleFactor: dsf });
@@ -103,7 +93,6 @@ export async function renderCert(browser: Browser, html: string, v: Variant, for
         shade.style.cssText = 'position:absolute;inset:0;pointer-events:none;background:linear-gradient(115deg,rgba(255,255,255,0.12),rgba(0,0,0,0.22) 70%,rgba(0,0,0,0.3))';
         p.appendChild(shade);
       } else if (variant === 'photo-mild') {
-        // 실내 촬영: 위쪽은 밝고 아래로 갈수록 그늘(종이 밝기 약 200 → 150)
         document.body.style.background = '#8a7a66';
         document.body.style.padding = '30px';
         p.style.transform = 'perspective(1800px) rotateX(3deg) rotate(1.5deg)';
@@ -127,7 +116,6 @@ export async function renderCert(browser: Browser, html: string, v: Variant, for
   }
 }
 
-/** 샌드박스 ocrImageJob과 같은 순서: 머리로 크기 → 디코드 → ocrScale 배율(흰 바탕) → 증명서 전처리 → PNG → tesseract 블록 줄 → 줄을 이어 text */
 export async function sandboxLikeOcr(browser: Browser, worker: Worker, bytes: Buffer, mode: 'document' | 'photo'): Promise<{ text: string; confidence: number }> {
   const info = imageInfo(new Uint8Array(bytes));
   const page = await browser.newPage();

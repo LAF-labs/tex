@@ -1,4 +1,3 @@
-// 발급 사다리의 홈택스 칸 둘(D03 §4.2): 자동(H-01 실행)과 직접(사장님이 홈택스에서 발급하고 알려 준다).
 import { LedgerError, Ledger, RunJournal, RunRepo, type Db } from '@sax/db';
 import { RunEnd } from '../run-end.ts';
 import { ulid, type RunEvent, type RunService } from '../runs.ts';
@@ -50,7 +49,6 @@ export function hometaxManualRung(runs: RunService, db: Db): Rung {
   };
 }
 
-/** 직접 발급 행(manual.issue, observed_manual). 같은 키에 이미 발급됨·미종결 행이 있으면 그 행이 판정하므로 쓰지 않는다. */
 function manualRecorder(runs: RunService, db: Db): (req: IssueRequest, code: string) => AttemptEnd {
   const repo = new RunRepo(db);
   const ledger = new Ledger(db);

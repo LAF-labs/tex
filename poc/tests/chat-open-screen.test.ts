@@ -1,4 +1,3 @@
-// 대화로 앱 화면 열기(open_screen)와 이름만 말하는 답(대표 지적 2026-11-19 "에이전틱하지 않잖아", "어떤 말을 던져도 자연스럽게").
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';

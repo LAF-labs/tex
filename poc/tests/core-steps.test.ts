@@ -1,4 +1,3 @@
-// M2-1 스텝 핸들러와 실행기(D02 §4·§4.1·§4.2·§4.3·§5, D03 §5.1·§5.2 R-A1). 가짜 페이지·Actuator로 결정적으로 돌린다. 실제 포털 접속 없음.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
@@ -6,8 +5,6 @@ import {
   type InterpHooks, type PlaybookIR, type SelectorDict, type SelectorEntry, type Step, type StepEnv,
 } from '@sax/engine/core';
 import { FakeAct, FakeClock, FakePage, type FEl } from './core-page-fakes.ts';
-
-// ---- 사전 ----
 
 const entry = (o: Partial<SelectorEntry> & Pick<SelectorEntry, 'role' | 'namePattern' | 'landmark' | 'candidates'>): SelectorEntry => ({ frame: 'main', commits: false, lastVerified: '2026-11-01', ...o });
 const DICT: SelectorDict = {
@@ -44,7 +41,6 @@ const els = (): FEl[] => [
   { id: 'result', role: 'status', name: '결과', parent: 'form', text: '처리 결과:  3건', a11y: '3건 처리' },
   { id: 'dupA', role: 'button', name: '중복', parent: 'form' },
   { id: 'dupB', role: 'button', name: '중복', parent: 'form', css: ['#dup2'] },
-  // 같은 이름이지만 다른 랜드마크(양식 밖)
   { id: 'dlg', role: 'dialog', name: '안내', parent: 'root' },
   { id: 'nm2', role: 'textbox', name: '상호', parent: 'dlg' },
 ];
@@ -114,7 +110,6 @@ describe('goto·click·press(D02 §4, V-06·V-03g 실행 시 방어)', () => {
     const { env, act, clock } = setup({ els: els().filter((x) => x.id !== 'lookup') });
     assert.deepEqual(await run1({ id: 's2', type: 'click', target: 'f.lookup', timeoutMs: 300 }, env), { t: 'fail', code: 'step.selector_miss' });
     assert.ok(clock.t >= 300);
-    // css 후보로 찾았지만 실제 역할이 다르다
     const w = setup({ els: els().map((x) => (x.id === 'nm' ? { ...x, role: 'link' } : x)) });
     assert.deepEqual(await run1({ id: 's2', type: 'click', target: 'f.name' }, w.env), { t: 'fail', code: 'step.identity_mismatch' });
     assert.equal(w.clock.t, 0);
@@ -222,12 +217,10 @@ describe('wait·assert·extract·branch·end(D02 §4·§4.1)', () => {
     assert.deepEqual(await run1({ id: 's8', type: 'assert', cond: { all: [{ exists: 'f.name' }, { inputPresent: 'name' }, { not: { exists: 'other.missing' } }] } }, env), { t: 'next' });
     assert.deepEqual(await run1({ id: 's8', type: 'assert', cond: { any: [{ inputPresent: 'nope' }, { varSet: 'x' }] } }, env), { t: 'fail', code: 'step.assert_failed' });
     assert.deepEqual(await run1({ id: 's8', type: 'assert', cond: { textMatches: { target: 'f.result', patternRef: 'pat.ok' } } }, env), { t: 'next' }, '공백 접기 뒤 비교');
-    // 입력 역할(조회가 채우는 읽기 전용 칸, H-01 s14 공급받는자 상호)은 DOM value를 본다. innerText는 input에서 늘 빈 문자열이다.
     const nm = setup({ els: els().map((x) => (x.id === 'nm' ? { ...x, value: '처리 결과: 3건', text: '' } : x)) });
     assert.deepEqual(await run1({ id: 's14', type: 'assert', cond: { textMatches: { target: 'f.name', patternRef: 'pat.ok' } } }, nm.env), { t: 'next' }, '입력 칸은 value');
     assert.deepEqual(await run1({ id: 's14', type: 'assert', cond: { textMatches: { target: 'f.name', patternRef: 'pat.ok' } } }, env), { t: 'fail', code: 'step.assert_failed' }, '빈 입력 칸은 거짓');
     assert.deepEqual(await run1({ id: 's8', type: 'assert', cond: { exists: 'f.dup' } }, env), { t: 'fail', code: 'step.selector_miss' }, '모호하면 없음이 아니라 오류');
-    // readback 조건(sumEquals·readbackEquals·fieldsFilled)은 tests/core-readback.test.ts(M2-3).
     assert.deepEqual(await run1({ id: 's8', type: 'assert', cond: { profileHas: 'bizNo' } }, env), { t: 'fail', code: 'step.cond_unsupported' });
   });
   it('전제조건 판정(inputVerified·profileHas·artifact)은 넘겨 준 함수로', async () => {
@@ -254,8 +247,6 @@ describe('wait·assert·extract·branch·end(D02 §4·§4.1)', () => {
     assert.deepEqual(await run1({ id: 's12', type: 'end', status: 'completed_with_issues' }, env), { t: 'end', status: 'completed_with_issues' });
   });
 });
-
-// ---- 실행기 ----
 
 const POL = { retries: { stepMax: 2, backoff: 'equal_jitter' as const, baseMs: 1000, capMs: 8000 }, retryFloorMs: 800, random: () => 0.5 };
 function ir(steps: Step[], o: Partial<PlaybookIR> = {}): PlaybookIR {
@@ -354,7 +345,6 @@ describe('실행기: 간선 의미론(D02 §4.3)·실패 정책(D02 §5)', () =>
       { id: 's9', type: 'checkpoint', name: 'top', expect: { exists: 'p.root' } },
     ], { handlers: { ...BASIC_HANDLERS, checkpoint: async () => ({ t: 'jump', to: 's1' }) }, maxSteps: 40 });
     const r = await x.it.run();
-    // 매번 본문 2번 → 소진 → checkpoint → 다시 2번 … 상한에 걸려 멈춘다. 들어갈 때마다 횟수가 0이라 각 진입마다 정확히 2번 돈다.
     assert.equal(r.t, 'abort');
     const runs = x.events.filter(([n, d]) => n === 'step.started' && d.stepId === 's1a').length;
     const entries = x.events.filter(([n, d]) => n === 'step.started' && d.stepId === 's9').length;

@@ -1,8 +1,3 @@
-// readback(M2-3, D02 §2.1 B-06·§4 readback·§8 s19b~s19f): 게이트 앞에서 화면 값을 되읽어 고정한다.
-// - 세 값 일치: 입력 요소의 DOM value, 접근성 트리의 값, (있으면) readbackOf 표시 요소의 텍스트를 같은 규칙으로 정규화해
-//   모두 같아야 한다. 하나라도 다르면 step.readback_mismatch이고 그 값은 $readback에 남기지 않는다.
-// - 고정한 값($readback.*)은 readbackEquals(입력·프로필 대조)·sumEquals(산술)·게이트 카드가 그대로 쓴다. 화면을 다시 읽지 않는다.
-// - 비밀 칸은 읽지 않는다(V-20 런타임 가드, step.secret_field). 값은 저널·로그에 남기지 않는다(⑦).
 import { normalizeName } from './constants.ts';
 import type { ElementRef, PageReader } from './page.ts';
 import { resolveTarget } from './resolve.ts';
@@ -11,10 +6,6 @@ import { isSecretEntry, type SelectorDict, type SelectorEntry } from './types.ts
 const NUMERIC_KEYS = new Set(['supplyAmount', 'taxAmount', 'totalAmount', 'itemCount']);
 const BIZNO_KEYS = new Set(['supplierBizNo', 'counterpartBizNo']);
 const DATE_KEY = /Date$/;
-/**
- * DOM value를 읽는 역할(드라이버 value: select는 고른 선택지의 이름, radiogroup은 고른 라디오의 이름). 그 밖의 역할(표시 요소·라디오 하나 등)은 보이는 텍스트를 읽는다.
- * radiogroup(민원증명 발급유형·주민번호 공개 여부, 홈택스 라디오 묶음)의 보이는 텍스트는 선택지 전부라 값이 아니다.
- */
 const INPUT_ROLES = new Set(['textbox', 'spinbutton', 'combobox', 'searchbox', 'radiogroup']);
 
 type Normalizable = Pick<SelectorEntry, 'fieldKey' | 'inputType'>;
@@ -59,14 +50,12 @@ export function displayEntryKeys(dict: SelectorDict, fieldKey: string): string[]
 
 /** 요소의 화면 값: 입력 역할이면 DOM value, 아니면 보이는 텍스트. */
 export async function domValue(page: PageReader, entry: SelectorEntry, el: ElementRef): Promise<string> {
-  // 역할 없는 라디오 묶음(홈택스 민원증명 발급유형: div 안 라디오, inputType radio)도 고른 라디오 이름을 읽는다(2026-11-14 실화면 run-3f242cd5)
   return INPUT_ROLES.has(entry.role) || entry.inputType === 'radio' ? page.value(el) : page.text(el);
 }
 
 /** detail: 진단용 글자 모양만(값 없음, ⑦). 숫자 9·영문 a·한글 k·그 밖 _ 로 바꾸고 12자까지. 예: dom:9999_a11y:empty */
 export type FieldRead = { ok: true; value: string } | { ok: false; code: string; detail?: string };
 
-/** 진단 로그용 글자 모양(값 없음): 엔진 로그 안전 문자(SAFE_VALUE)만 쓴다. */
 const shape = (v: string): string => (v === '' ? 'empty' : [...v.slice(0, 12)].map((c) => (/\d/.test(c) ? '9' : /[A-Za-z]/.test(c) ? 'a' : /[\uAC00-\uD7A3]/.test(c) ? 'k' : '_')).join('') + (v.length > 12 ? `.${v.length}` : ''));
 
 /** fieldKey 하나를 세 값 일치로 되읽는다. 정규화한 값을 돌려준다. */
@@ -78,7 +67,6 @@ export async function readField(page: PageReader, dict: SelectorDict, fieldKey: 
   const r = await resolveTarget(page, dict, k);
   if (!r.ok) return { ok: false, code: r.code };
   if (entry.countOf) {
-    // 개수 칸(IR rev v1.3.5, 미리보기 품목 행 수): 하위에서 countOf에 맞고 글이 빈칸이 아닌 요소 수. 접근성 값 대조는 없다(수는 화면 글이 아니다).
     let n = 0;
     for (const el of await page.query({ kind: 'css', value: entry.countOf }, entry.frame, r.t.el)) if (normalizeName(await page.text(el)) !== '') n++;
     return { ok: true, value: String(n) };

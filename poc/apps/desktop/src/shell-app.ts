@@ -1,6 +1,3 @@
-// PoC-9 데모 UI 셸의 main(PoC-6부터 엔진·금고를 띄운다). 승인 바는 main 소유 WebContentsView다(ADR-021).
-// 렌더러는 바 자리를 비우기만 하고 바를 그리거나 숨기지 못한다. 승인 근거는 바 → main → 게이트 포트(엔진)로만 간다.
-// 기본은 fixture 모드(가짜 H-01 페이지, 시험 정책 금고, 임시 앱 폴더). 홈택스 실제 화면은 PoC-3 셀렉터가 들어온 뒤.
 import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -81,18 +78,13 @@ import type { DemoSeed, startDemoSeed } from './demo-seed.ts';
 
 const STATIC = path.join(import.meta.dirname, '../static');
 const SHELL_SCHEME = 'sax-shell';
-/** 제품에서 사업장·개인 프로필을 아직 등록하지 않았을 때의 자리(견본 이름을 쓰지 않는다). */
 const NO_BUSINESS: Profile = { kind: 'business', name: '내 사업장', email: '', auth: '' };
 
-/** 제품에는 아직 개인 프로필 저장이 없다. 자리 표시만(내 사업장은 이 카드를 그리지 않는다). */
 const NO_PERSONAL: Profile = { kind: 'personal', name: '개인', email: '', auth: '', placeholder: true };
 const SHELL_URL = `${SHELL_SCHEME}://shell/shell.html`;
 
 export function registerShellSchemes(): void {
-  // 한 번만 부를 수 있다(ready 전). 문서함 PDF 가져오기가 docparse 샌드박스를 쓰므로 그 스킴도 여기서 등록한다.
-  // 공용 하드닝(디버그 스위치·샌드박스·새 창·이동·webview 거부)도 ready 전에 여기서 건다(ADR-025 결정 8).
   hardenApp(app, [`${SHELL_SCHEME}:`, `${APPROVAL_SCHEME}:`, `${DOCPARSE_SCHEME}:`]);
-  // 앱 안 브라우저 자동화는 앱 창이 가려지거나 화면이 잠겨도 멈추지 않아야 한다(예행은 사람이 자리를 비운 채 돈다).
   keepDrawingWhenHidden(app);
   protocol.registerSchemesAsPrivileged([
     { scheme: SHELL_SCHEME, privileges: { standard: true, secure: true } },
@@ -101,7 +93,6 @@ export function registerShellSchemes(): void {
   ]);
 }
 
-/** 문서함 오류 중 렌더러에 그대로 보낼 코드. 나머지(fs 오류 등, 경로가 들어 있을 수 있다)는 main 로그에만 남기고 'failed'로 보낸다. */
 const DOC_CODES = new Set([
   'bad_request', 'busy', 'profile_required', 'not_pdf', 'input_size', 'read_failed', 'invalid_pdf', 'timeout', 'memory_limit', 'session_failed', 'renderer_gone',
   'pick_expired', 'password_too_long', 'schema', 'issued_in_future', 'expires_before_issued', 'expires_after_legal_max', 'invalid_issued_on', 'invalid_expires_on',
@@ -110,11 +101,10 @@ const DOC_CODES = new Set([
   'gesture_required', 'throttled', 'pick_password_tries',
 ]);
 
-/** 문서함 오류를 렌더러에 보낼 오류로: 알려진 코드만, 나머지는 로그(앞 코드만)와 'failed' */
 function docsError(e: unknown): Error {
   const code = (e as { code?: unknown }).code ?? (e as Error).message;
   if (typeof code === 'string' && DOC_CODES.has(code)) return new Error(code);
-  console.error('docs failed', typeof code === 'string' ? code.split(':')[0] : (e as Error).name); // fs 오류 메시지에는 경로가 있어 앞 코드만
+  console.error('docs failed', typeof code === 'string' ? code.split(':')[0] : (e as Error).name);
   return new Error('failed');
 }
 
@@ -140,13 +130,11 @@ const FILES: Record<string, string> = {
   '/shell-bank-auto.js': 'text/javascript',
 };
 
-/** 지금 열린 계좌 자동조회 인증서 비밀번호 창의 페이지(bank-auto.ts). 없으면 null(404). */
 let codefPage: () => string | null = () => null;
 
 function serve(): void {
   protocol.handle(SHELL_SCHEME, async (req) => {
     const p = new URL(req.url).pathname;
-    // 모든 응답에 CSP 헤더(D11 §4): 셸은 APP_CSP, main이 만든 비밀 창 페이지는 더 좁은 SECRET_CSP.
     if (p === '/tokens.css') return new Response(tokensCss(), { headers: appHeaders('text/css') });
     if (p === '/codef-secret.html') {
       const html = codefPage();
@@ -157,120 +145,69 @@ function serve(): void {
     if (!type) return new Response('', { status: 404 });
     return new Response(await fs.readFile(path.join(STATIC, 'shell', p.slice(1))), { headers: appHeaders(type) });
   });
-  // 렌더러는 네트워크가 없다(D01 §2.1). 자기 스킴 밖 요청을 취소한다.
   session.defaultSession.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !d.url.startsWith(`${SHELL_SCHEME}://`) && !d.url.startsWith('devtools://') }));
   hardenSession(session.defaultSession);
 }
 
 export interface ShellOptions {
-  /** 서류 데몬(OS 알림). 제품 기본 켬, fixture는 늘 끔. 시험이 false로 끈다. */
   daemon?: boolean;
   width?: number;
   height?: number;
   show?: boolean;
-  /** 앱 금고(utilityProcess·OS 키체인)와 앱 폴더로 띄운다. 없으면 fixture 모드(dev가 있어야 한다). */
   engine?: { root?: string; portal: EnginePortal };
-  /** fixture 모드에서 실행 Chrome을 화면에 띄운다(시연). */
   headful?: boolean;
-  /** 문서함 보관함 공급자(shell-docs.ts). 없으면 이 셸의 엔진(host.rpc)을 쓴다. e2e가 감싸서 넘긴다. */
   docs?: DocsProvider;
-  /** e2e: [홈택스에서 준비] 분당 상한(기본 3, 사람 속도). 렌더러가 바꿀 수 없다(진입점이 정한다). */
   preparePerMin?: number;
-  /** e2e: Chrome 사전 점검을 바꿔 끼운다. 기본은 금고와 같은 후보 경로(@sax/vault findInstalledChrome)에 Chrome이 있는가. */
   chromeReady?: () => boolean;
-  /**
-   * 옛 길: 실행 브라우저로 설치 Chrome을 띄운다(앱 뒤에 두고 패널에 중계). 기본은 앱 안 브라우저(embedded-browser.ts, 대표 지시 2026-11-13
-   * "크롬 탭이 아예 열리지 않게"). 앱 안 브라우저가 고객 PC에서 막히면 되돌릴 수 있게 한 판 동안 남긴다.
-   */
   externalChrome?: boolean;
-  /** 구독 결제 창 열기(시험이 바꾼다). 기본은 기본 브라우저(external-links.ts openBillingCheckout) */
   billingOpen?: (url: string, accountOrigin: string) => Promise<void>;
-  /** e2e·첫 실행 따라가기: 보안 프로그램 점검·설치 링크 열기·켜기를 바꿔 끼운다. 기본은 이 PC의 MagicLine4NX(security-programs.ts)와 기본 브라우저. */
   security?: { status(): SecurityStatus; install?(key: string): Promise<void>; start?(): boolean };
-  /** 시연 전용 채팅 해석(SAX_DEMO_MODEL=openrouter, fixture 모드만). 없거나 실패하면 정규식 해석. */
   demoModel?: DemoModel | null;
-  /** 시연 씨앗(견본 거래처·발급 이력·문서함 PDF, demo-seed.ts). fixture 모드만. e2e는 끈다. */
   demoSeed?: boolean;
-  /**
-   * 개발 전용 연결: 가짜 홈택스(fixture 모드)·시연 씨앗·시연 모델 병합. 제품 진입점(shell.ts)은 넘기지 않으므로 제품 dist가
-   * 이 코드에 닿지 않는다(ADR-035 W-7, package-win 포함 목록). 시연 진입점(demo-shell.ts)과 e2e만 demo-dev.ts의 DEMO_DEV를 넘긴다.
-   */
   dev?: ShellDev;
-  /** 설치본 자기 점검 warn 배지 문구(harden.ts BUILD_WARN_TEXT에서 고른 것). 제품 진입점만 넘긴다. */
   buildBadges?: string[];
-  /** 온보딩(08 §4)부터 시작한다(시연·e2e). 엔진 모드에서는 DB에 사업자 프로필이 없으면 저절로 시작한다. */
   onboarding?: boolean;
-  /**
-   * 앱 업데이트(update-host.ts, M4-9). 설치본(app.isPackaged)·엔진 모드에서만 돈다. 제품 진입점이 원천을 갖출 때 넘긴다:
-   * 레지스트리 origin(egress 목적지), latest.json·폐기 목록·핀 키·투명성 확인 포트, 실계정 시험 빌드 여부와 설정.
-   */
   update?: UpdateWiring;
-  /**
-   * 계정·기기 연결(A-01 로그인, S-03 폰 연결, remote-ports.ts). 제품 진입점은 remote-wiring.ts productRemote(cloudPorts + vaultDesktopKeys)를 넘긴다.
-   * 없으면 화면은 "이 빌드에서는 아직 연결할 수 없어요"로 끝난다. e2e는 가짜 포트를 넘긴다.
-   */
   remote?: RemoteWiring;
-  /** 받을 돈 파일 고르기(09). 기본은 메인 창 파일 대화상자. e2e가 가짜 파일로 바꿔 끼운다. */
   bankPick?: (kind: PickKind) => Promise<Uint8Array | null>;
-  /** 대화 의도 해석기(M4-3 ③). 기본은 엔진 `intent.resolve`(intent-route.ts). e2e가 바꿔 끼운다. */
   intent?: IntentResolver;
-  /** 대화 짧은 응대(chat-reply.ts). 기본은 엔진 `chat.respond`. e2e가 바꿔 끼운다. */
   chat?: ChatResponder;
-  /**
-   * 대화 에이전트의 모델 경계(엔진 `chat.step`, agent-chat.ts). 제품 사업자 대화는 늘 이 길이다.
-   * 시연(fixture)은 이것을 넘긴 e2e만 이 길로 간다(넘기지 않으면 옛 해석 길).
-   */
   agent?: {
     step(p: StepParams): Promise<StepResult>;
-    /** 판정(chat.route, ADR-057). 없으면 판정 없이 돈다. */
     route?(p: Record<string, unknown>): Promise<unknown>;
-    /** 확인용: 대화 에이전트가 읽는 원장 발급 이력(db.query.runs.history) 자리. 없으면 엔진에 묻는다. */
     history?(p: Record<string, unknown>): Promise<unknown>;
   };
 }
 
-/** 말풍선 반응(ADR-057)을 켰는가. 반응 알약 화면(static/shell/shell.js reactTo)과 같은 커밋에서 켠다. */
 const CHAT_REACTIONS_ON = true;
 
-/** ShellOptions.remote. */
 export interface RemoteWiring {
   cloud: CloudPorts | null;
   keys: VaultKeysFactory | null;
-  /** 계정 기기 목록에 보일 이름. 사람 이름이 들어가지 않게 기본은 운영체제 이름. */
   deviceName?: string;
-  /** 룸 클라이언트를 바꿔 끼운다(e2e·개발 스택의 메모리 릴레이). 없으면 cloud.openSocket 위 WSS(wsRelayClient). */
   relayClient?: RelayClient;
-  /** false면 폰 연결을 닫는다([폰 연결]을 숨기고 pair.open은 pair_unavailable). 없으면 연다(시험·e2e·개발 스택). */
   pairing?: boolean;
 }
 
-/** ShellOptions.update. updater가 없으면(시험) electron-updater를 불러온다. */
 export interface UpdateWiring {
   channel: Channel;
   origin: string;
-  /** 레지스트리 GET(latest.json·투명성 로그, update-sources.ts). 폐기 목록은 엔진이 받아 둔 것을 쓴다. */
   egress: Pick<Egress, 'getRegistry' | 'getRegistryBytes'>;
-  /** 핀 키. 없으면 엔진 핀(db.query.registry.pins). 실계정 시험 빌드의 로컬 피드만 넘긴다(shell.ts). */
   trust?: TrustRoot;
-  /** 실계정 시험 빌드의 로컬 피드(http://127.0.0.1)만 true(update-electron feedUrl). */
   loopback?: boolean;
-  /** false면 설치 뒤 다시 열지 않는다. 로컬 피드 시험만(update-electron electronInstaller). */
   relaunch?: boolean;
   testBuild: boolean;
   setting?: { requireTransparency?: unknown } | null;
   updater?: AppUpdaterLike;
 }
 
-/** 개발 전용 연결(ShellOptions.dev). 여기에는 타입만 있고, 구현은 demo-dev.ts가 묶는다. */
 export interface ShellDev {
   startFixture(opts: { headful?: boolean }): Promise<FixtureMode>;
   startDemoSeed: typeof startDemoSeed;
   mergeParsed: typeof mergeParsed;
-  /** 견본 데이터(시연·e2e만, shell-mock.ts·onboarding-mock.ts). 제품은 이 값을 갖지 않는다(ADR-035 W-7). */
   sample: ShellSample;
 }
 
-/** 시연 견본: 견본 서류 저장소·사업장·대화·빠른 실행·꾸러미·카드·정부24 후보·온보딩 바깥 일·거래처 등록증. */
 interface ShellSample {
   store(): DocStore;
   profiles: Record<Profile['kind'], Profile>;
@@ -289,31 +226,22 @@ export interface Shell {
   runs: ShellRuns;
   store: DocStore;
   host: EngineHost;
-  /** fixture 모드면 가짜 페이지·임시 앱 폴더. */
   fixture: FixtureMode | null;
   ready: Promise<void>;
-  /** 렌더러가 부를 수 있는 메서드 전부(e2e가 승인 경로가 없는지 훑는다). */
   methods: string[];
-  /** 지금 대화에 떠 있는 비밀 입력 카드(금고 secret.needed로만 뜬다). 값은 없다. */
   secretAsk(): { reqId: string; kind: string; runId: string } | null;
   close(): Promise<void>;
 }
 
 
-/** DB 프로필 칸 → 내 사업장 화면 칸 이름(shell-biz.js FIELDS). */
 const SHELL_BIZ_KEY: Record<PortalProfileKey, NonNullable<Profile['fromHometax']>[number]> = { displayName: 'name', repName: 'rep', bizType: 'bizType', bizItem: 'bizItem', address: 'address', email: 'email' };
 
-/**
- * 발급 인증이 비어 있으면(고르지 않음) NO_AUTH로 보여 다시 고르게 한다. 보안카드였던 프로필은 엔진 기동 때 비운다(대표 결정 2026-11-19 지원 안 함,
- * resetRetiredAuth). 새로 저장하는 프로필은 고르지 않아도 공동인증서다(DB upsert 기본값, 대표 지시 2026-11-14).
- */
 function profileView(p: DbProfile): Profile {
   const unnamed = p.kind === 'business' && nameMissing(p);
   const fromHometax = p.fromPortal.map((k) => SHELL_BIZ_KEY[k]);
   return { kind: p.kind, name: unnamed ? NO_BUSINESS.name : p.displayName, ...(unnamed ? { nameMissing: true } : {}), ...(fromHometax.length ? { fromHometax } : {}), bizNo: p.bizNo ?? undefined, rep: p.repName ?? undefined, bizType: p.bizType ?? undefined, bizItem: p.bizItem ?? undefined, address: p.address ?? undefined, email: p.email ?? '', auth: p.signMethod ? SIGN_LABEL[p.signMethod] : NO_AUTH };
 }
 
-/** DB 거래처 → 셸 화면 모델. 품목은 저장 품목(counterparty.getItems)의 첫 이름, 없으면 fixture 시연 값(itemHints). */
 function counterpartyView(c: DbCounterparty, items: Record<string, string>, saved?: string): Counterparty {
   return {
     id: c.id,
@@ -329,37 +257,28 @@ function counterpartyView(c: DbCounterparty, items: Record<string, string>, save
 }
 
 export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
-  // CDP로 넣은 마우스 이벤트도 before-mouse-event를 일으키므로 디버그 스위치가 있으면 끝낸다(ADR-021·ADR-025 결정 8, 값싼 차단).
   assertNoDebugSwitches(app);
   serve();
   const key = new Uint8Array(randomBytes(32));
-  // 제품(엔진 모드)은 견본 서류를 보이지 않는다. 문서함은 엔진 보관함(PoC-8)만이다. 견본 저장소는 시연 연결로만 온다.
   const store: DocStore = opts.engine ? emptyDocStore() : opts.dev!.sample.store();
-  // 제품 진입점은 엔진 모드만 있다. fixture 모드는 개발 연결(dev)이 있을 때만 띄운다.
   if (!opts.engine && !opts.dev) throw new Error('shell.no_portal');
   const fixture = opts.engine ? null : await opts.dev!.startFixture({ headful: opts.headful });
   const made: { host?: EngineHost } = {};
   try {
     return wireShell(opts, fixture, key, store, made);
   } catch (e) {
-    // 창·바를 만들다 실패하면 엔진을 먼저 끝내고(DB가 열린 채 지우지 않게) 가짜 페이지 서버·main 안 금고·임시 앱 폴더를 지운다.
     await made.host?.shutdown().catch(() => {});
     await fixture?.close().catch(() => {});
     throw e;
   }
 }
 
-/** [홈택스에서 준비]가 지난 실행 재확인(run.reverify)을 기다리는 동안 카드에 띄우는 한 줄. */
-/** 새 PC 연결 중 쓰던 PC의 답을 보는 간격(ADR-048 결정 3). 서버 한도는 계정당 1,200회/시 */
 const LINK_POLL_MS = 4_000;
 const REVERIFY_WAIT_NOTE = '지난 발급을 홈택스 목록에서 확인하고 있어요. 끝나면 바로 시작해요.';
-/** 진행 중인 건이 있을 때 새 초안(queueIfBusy). 정정은 앞 준비를 바꾸고, 다른 건은 앞 건 뒤에 바로 이어 간다. */
 
 function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Array, store: DocStore, made: { host?: EngineHost }): Shell {
-  // 공급사 직결(D04 예외)은 fixture 시연에만. 실제 홈택스 모드에서는 넘겨받아도 쓰지 않는다.
   const demo = fixture ? (opts.demoModel ?? null) : null;
   const dev = fixture ? opts.dev! : null;
-  /** 견본 데이터는 fixture(시연·e2e)에서만 있다. 제품은 null. */
   const sample = dev?.sample ?? null;
   const root = fixture?.root ?? opts.engine?.root;
   const log = new FileEventLog(appPaths(root ?? defaultAppRoot()).logs, 'main');
@@ -367,7 +286,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const host = new EngineHost({ vault: fixture ? fixture.vault : 'process', root, portal: fixture?.portal ?? opts.engine!.portal, log, appVersion: runVersion(app.isPackaged, process.env, () => app.getVersion()), embeddedBrowser: embedded });
   made.host = host;
   let business: Profile | null = null;
-  /** 사업자 프로필 DB id(대화 에이전트 세션 기준). 없으면 대화가 등록부터 안내한다. */
   let businessId: string | null = null;
   let cps: Counterparty[] = [];
   const refresh = async () => {
@@ -375,15 +293,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const b = ps.find((p) => p.kind === 'business');
     business = b ? profileView(b) : null;
     businessId = b?.id ?? null;
-    // 최근 발급일: 원장(DB)에 없으면 문서함 세금계산서(지난 발급 견본 포함)에서
     const lastDoc = (name: string) => store.docs.filter((d) => d.kind === '세금계산서' && d.name === `세금계산서 · ${name}`).reduce<string | null>((m, d) => (d.issuedOn && (!m || d.issuedOn > m) ? d.issuedOn : m), null);
     const rows = (await host.rpc('db.query.counterparties.list')) as DbCounterparty[];
-    // 저장 품목의 첫 이름(못 읽으면 없음). 거래처 목록 모양은 #141 그대로라 품목은 따로 읽는다(#144).
     const firsts = await Promise.all(rows.map((c) => host.rpc('counterparty.getItems', { id: c.id }).then((r) => (Array.isArray(r) ? (r[0] as { name?: string } | undefined)?.name : undefined), () => undefined)));
     cps = rows.map((c, i) => counterpartyView(c, fixture?.itemHints ?? {}, firsts[i])).map((c) => ({ ...c, lastIssuedOn: c.lastIssuedOn ?? lastDoc(c.name) }));
     runs.syncAuth();
   };
-  // 받을 돈(09 D-09): 파일은 main이 고르고 샌드박스로 읽어 다듬은 줄만 엔진에 보낸다(bank-host.ts).
   const bank = new BankHost({
     rpc: (m, p) => host.rpc(m, p ?? {}),
     profileId: async () => ((await host.rpc('db.query.profiles.list')) as DbProfile[]).find((p) => p.kind === 'business')?.id ?? null,
@@ -398,24 +313,16 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     log: (n, d) => log.event(n, d),
   });
   let seed: DemoSeed | null = null;
-  // 제품은 견본 사업장(가나다컴퍼니)을 보이지 않는다. 등록 전이면 빈 자리 이름만(온보딩이 채운다).
   const profiles = () =>
     sample ? { business: business ?? sample.profiles.business, personal: sample.profiles.personal } : { business: business ?? NO_BUSINESS, personal: NO_PERSONAL };
-  // Chrome이 있어야 홈택스 작업을 한다. 판의 할 일·첫 발급 요청(U6)과 [홈택스에서 준비](#288)가 같은 점검을 쓴다.
-  // 앱 안 브라우저면 설치 Chrome이 필요 없다(설치 안내 단계도 없다).
   const chromeReady = opts.chromeReady ?? (() => embedded || findInstalledChrome() !== null);
   const securityNow = opts.security ? () => opts.security!.status() : () => securityStatus();
-  /** 공동인증서로 발급하는 사업자인데 MagicLine4NX가 없거나 꺼져 있다(홈택스가 설치 안내로 멈출 자리, B4). */
   const securityMissing = () => profile === 'business' && profiles().business.auth === SIGN_LABEL.cert && securityBlocks(securityNow());
-  // prepare: 점검 끝 자동 재시작도 [홈택스에서 준비]와 같은 상한·레지스트리 재조회를 거친다(prepareNow는 아래에서 정의, 부를 때 읽는다)
   const runs = new ShellRuns(host, { counterparties: () => cps, auth: () => profiles().business.auth, chromeReady, log: (n, d) => log.event(n, d), prepare: (id: string): Promise<unknown> => prepareNow(id) });
   let profile: Profile['kind'] = 'business';
-  // 파일 대화상자는 메인 창을 부모로 띄운다(win은 아래에서 만든다).
   const docs = opts.docs ?? engineDocsProvider((m, p) => host.rpc(m, p), (params, engine) => importPdf(params, engine, win));
-  /** 문서함 = 보관함 서류 + 실행이 만든 서류(세금계산서·정부24 목업) */
   const listDocs = async () => {
     try {
-      // 실행이 보관한 발급 PDF가 있으면 같은 실행의 메모리 줄(d-<runId>, 거래처 이름)을 그 PDF 줄로 바꾼다([열기]가 보관함 파일을 연다).
       const vault = await docs.list();
       const mem = new Map(store.docs.map((d) => [d.id, d]));
       const named = vault.map((d) => (d.runId && mem.has(`d-${d.runId}`) ? { ...d, name: mem.get(`d-${d.runId}`)!.name } : d));
@@ -425,20 +332,18 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       throw docsError(e);
     }
   };
-  /** 문서함 처리기: 오류는 docsError로 바꿔 던진다(원래 오류는 cause로 붙이지 않는다. ipcMain이 cause까지 출력하고 fs 오류에는 경로가 있다) */
   const docsCall =
     (fn: (p: Record<string, unknown>) => unknown) =>
     async (p: Record<string, unknown>): Promise<unknown> => {
       try {
         const r = await fn(p);
-        pushBoard(); // 가져오기·확인으로 만료일·확인 필요가 바뀐다
+        pushBoard();
         return r;
       } catch (e) {
         throw docsError(e);
       }
     };
   let importing = false;
-  /** 열 파일: 목업 서류의 견본 PDF(시연 씨앗) 아니면 보관함 서류. */
   const docFile = async (id: string) => store.files.get(id) ?? (await docs.filePath(id));
 
   const win = new BrowserWindow({
@@ -447,10 +352,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     useContentSize: true,
     minHeight: 560,
     show: opts.show ?? true,
-    // 설치본은 앱 이름만. 가짜 홈택스(fixture)일 때만 시연 표시를 남긴다.
     title: fixture ? '소버린 AX (PoC 데모 · 가짜 홈택스 페이지)' : '소버린 AX',
-    // macOS: OS 제목줄(28px)과 앱 제목줄(44px)이 겹쳐 위쪽 72px가 크롬이었다. 앱 제목줄 하나로 합치고 창 단추는 그 왼쪽에 둔다(v2.0).
-    // 콘텐츠 좌표 기준이라 승인 카드 자리(barBounds)·앱 안 브라우저 자리 계산은 그대로다.
     ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 15 } } : {}),
     webPreferences: {
       sandbox: true,
@@ -459,21 +361,15 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       webviewTag: false,
       disableDialogs: true,
       spellcheck: false,
-      // 제품 빌드에서는 개발자 도구를 열 수 없다(D11 §4 렌더러 행). 개발 실행(pnpm demo)에서만 연다.
       devTools: !app.isPackaged,
       preload: path.join(STATIC, 'preload-shell.cjs'),
     },
   });
-  // 창 제목은 main이 정한다(페이지 <title>이 덮지 않게): 설치본 "소버린 AX", fixture만 시연 표시.
   win.on('page-title-updated', (e) => e.preventDefault());
   const wc = win.webContents;
-  // 새 창·이동 거부, 렌더러의 window.moveTo·resizeTo 무시, 배율 1 고정.
   hardenWindow(win);
-  // 사용자 동작 결속(ADR-027 결정 8): main이 메인 창에서 직접 본 실제 입력(mouseUp, 수식키 없는 Enter·Space) 시각.
   const gesture = new GestureClock();
-  // 코드 칸 입력(이메일 6자리 확인만): 실제 입력 + 메인 창의 아무 키 입력(숫자·붙여 넣기). 이것도 main이 직접 본 입력이다.
   const typing = new GestureClock();
-  /** 패널 브라우저 조작: main이 메인 창에서 본 아무 마우스·키 입력(이동·휠 포함) 시각. browser.input은 이것이 1초 안에 있을 때만 넘긴다. */
   const panelInput = new GestureClock();
   wc.on('before-mouse-event', (_e, m) => {
     panelInput.note(performance.now());
@@ -489,19 +385,13 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   });
   const prepareRate = new RateWindow(opts.preparePerMin ?? 3, 60_000);
   const openRate = new RateWindow(5, 60_000);
-  /** 실제 입력이 ms 안에 없으면 gesture_required. */
   const needGesture = (ms: number) => {
     if (!gesture.within(performance.now(), ms)) throw new Error('gesture_required');
   };
-  /** 코드 칸이 6자리가 차서 바로 확인할 때: 클릭·Enter·Space 또는 키 입력이 ms 안에 있어야 한다. */
   const needTyping = (ms: number) => {
     if (!typing.within(performance.now(), ms)) throw new Error('gesture_required');
   };
 
-  /**
-   * 앱 안 브라우저 패널 폭(실행 중일 때, main 상태). 사람이 경계를 끌어 고른 폭(browserWant)과 [브라우저] 크게(browserShown)로 정하고,
-   * 승인 대기 중에는 승인 카드가 대화 열 안에 들어가게 줄인다. 승인 카드 자리(barBounds)도 이 값을 쓴다(렌더러가 보고한 값이 아니다, ADR-021).
-   */
   let browserAvailable = false;
   let browserShown = false;
   let browserWant: number | null = null;
@@ -509,7 +399,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (!embedded || !browserAvailable || win.isDestroyed()) return SHELL.panel;
     return browserPanelWidth(win.getContentSize()[0]!, browserWant, browserShown, bar.active);
   };
-  // 폰 발급 명령과 폰 승인(아래 원격 배선에서 만든다. 게이트 처리기가 먼저 정의돼 여기 둔다)
   let phoneIssue: PhoneIssue | null = null;
   let phoneGate: PhoneGate | null = null;
   const REMOTE_APPROVED_NOTE = '폰에서 승인했어요. 2초 안에 [중지]하면 발급하지 않아요';
@@ -517,7 +406,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const send = (ev: ShellEvent) => {
     if (!win.isDestroyed()) wc.send(IPC.event, ev);
   };
-  /** 실행 화면 주소(패널 주소창·탭 이름). 금고 중계 프레임이 아니라 보기의 실제 주소다. */
   let pageNow: { url: string; title: string } | null = null;
   const eb = embedded
     ? new EmbeddedBrowser({
@@ -527,7 +415,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         onPage: (p) => {
           if (pageNow?.url === p?.url && pageNow?.title === p?.title) return;
           pageNow = p;
-          // 주소창에는 호스트·경로만(검색어·조각은 싣지 않는다, 금고 pageAddress와 같다)
           const addr = p?.url ? pageAddress(p.url) : '';
           if (mirrorRun && addr) send({ type: 'screen', runId: mirrorRun, url: addr, title: p!.title.slice(0, 120) });
         },
@@ -535,12 +422,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     : null;
   host.on('browser', (m: unknown) => eb?.feed(m));
   win.once('closed', () => eb?.closeAll('window'));
-  // 진단: macOS는 창이 다른 Space로 가거나 완전히 가려지면 hide, 돌아오면 show를 낸다(Electron 가림 알림). 예행 로그에서 실패 시각과 맞춰 본다.
   if (eb) {
     win.on('hide', () => log.event('main.window_hide', { visible: win.isVisible(), minimized: win.isMinimized() }));
     win.on('show', () => log.event('main.window_show', { visible: win.isVisible(), minimized: win.isMinimized() }));
   }
-  // 다른 앱에서 돌아온 클릭이 버튼 위였는지 렌더러가 보게 커서 자리만 알린다(F-11). 클릭을 만들거나 실제 입력으로 세지 않는다.
   win.on('focus', () => {
     if (win.isDestroyed()) return;
     const p = screen.getCursorScreenPoint();
@@ -549,14 +434,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const y = p.y - c.y;
     if (x >= 0 && y >= 0 && x < c.width && y < c.height) send({ type: 'activated', x, y });
   });
-  /** 지난 발급(시연 씨앗 이력 + 문서함 세금계산서). 원장 발급 이력 질의가 나오면 그쪽으로 바꾼다. */
   const issuedInvoices = (): IssuedInvoice[] => {
     const total = new Map((seed?.past ?? []).flatMap((p) => (p.documentId ? [[p.documentId, p.total]] : [])));
     return store.docs.filter((d) => d.kind === '세금계산서' && d.issuedOn).map((d) => ({ who: d.name.replace(/^세금계산서 · /, ''), date: d.issuedOn!, total: total.get(d.id) ?? null }));
   };
-  /** 이번 달 판(M-02, ADR-033). 꾸러미·카드는 아직 견본뿐이라 시연(sample)에서만 칸을 둔다. */
-  // 문서함을 읽지 못하면 판을 만들지 않는다(보관함 서류가 빠진 판으로 온전한 판을 덮지 않게). 지난 판이 그대로 남고,
-  // boardDay를 비워 두어 날짜 타이머가 1분 뒤 다시 계산한다.
   let boardDay = '';
   const boardNow = async (): Promise<Board> => {
     const today = kstToday(Date.now());
@@ -570,21 +451,15 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       today,
       reminderDay: sample?.settings.reminderDay ?? REMINDER_DAY_DEFAULT,
       issued: issuedInvoices(),
-      // 판의 실행 칸은 "발급할 세금계산서"다. 민원증명 실행은 넣지 않는다(결과는 문서함 증명서로 간다).
       runs: runs.list().flatMap((r) => (r.cert ? [] : [{ id: r.id, status: r.status, who: r.counterparty.name, inDoubt: r.inDoubt === true }])),
       docs: docsNow.map((d) => ({ id: d.id, name: d.name, expiresOn: d.expiresOn, needsUser: !!d.vault?.needsUser })),
-      // 세무사 꾸러미(D-05)·사업용 카드(D-04)는 아직 목업 어댑터다. 제품은 칸을 두지 않는다.
       bundle: sample ? sample.bundle(today) : null,
       cardFetchedOn: sample?.settings.cardFetchedOn ?? null,
       cardEnabled: !!sample,
-      // 건너뛴 거래처 등록은 거래처가 생기면 할 일이 아니다(발급 실행·거래처 화면 어느 쪽으로 넣었든)
       setup: [...onboardingTodos(onb?.state ?? null).filter((t) => t.id !== 'counterparties' || !cps.length), ...(profile === 'business' && !chromeReady() ? [{ id: 'chrome', label: SETUP_LABEL.chrome, view: 'chrome' as const }] : []), ...(securityMissing() ? [{ id: 'security', label: SETUP_LABEL.security, view: 'security' as const }] : [])],
-      // 받을 돈 카드(대표 결정 ⑤, ADR-033 카드 4종 → 6종 개정 전 제안). 판 뒤에 붙인다.
       money,
     });
   };
-  // 실행·서류가 바뀌면 판을 다시 계산해 보낸다(한 틱에 여러 번 바뀌어도 한 번).
-  // 계산이 겹치면 가장 나중에 시작한 것만 보낸다(먼저 시작한 계산이 늦게 끝나 새 판을 옛 판으로 덮지 않게).
   let boardQueued = false;
   let boardGen = 0;
   const pushBoard = () => {
@@ -599,27 +474,23 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       );
     });
   };
-  /** 첫 화면의 판. 그 전에 시작한 계산이 늦게 끝나도 보내지 않게 세대를 올린다. */
   const bootBoard = () => {
     boardGen++;
     return boardNow();
   };
-  // 날짜가 바뀌면(KST 자정) 다시 계산한다. 이번 달·지난달·만료 30일 창이 날짜에 달려 있다.
   const boardDayTimer = setInterval(() => {
     if (kstToday(Date.now()) !== boardDay) pushBoard();
   }, 60_000);
   boardDayTimer.unref();
-  // 렌더러에는 바 자리를 비울지와 띠 여부만 알린다(배치용). 바 내용·좌표는 보내지 않는다.
   bar.on('shown', (e: { band: boolean; height: number }) => {
     send({ type: 'bar', active: true, band: e.band, height: e.height });
-    if (embedded && browserAvailable) sendBrowserState(); // 승인 카드가 대화 열 안에 들어가게 줄인 패널 폭
+    if (embedded && browserAvailable) sendBrowserState();
   });
   bar.on('layout', (e: { band: boolean; height: number }) => send({ type: 'bar-layout', band: e.band, height: e.height }));
   bar.on('hidden', (reason: string) => {
     send({ type: 'bar', active: false, reason });
     if (embedded && browserAvailable) sendBrowserState();
   });
-  // 홈택스 화면에서 알게 된 값(거래처 확인·공급자 칸)은 승인 카드가 뜰 때와 실행이 끝날 때 장부에 있다. 그때 다시 읽는다.
   const settled = new Map<string, string>();
   runs.on('update', (run) => {
     send({ type: 'run', run });
@@ -638,17 +509,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     void refresh().catch(() => {});
   });
   runs.on('gate-closed', (runId: string, reqId: string, reason: string) => {
-    // 엔진이 닫은 게이트(승인은 여기로 오지 않는다): 대기 만료만 expired, 나머지(중지·신호·실행 끝)는 stopped
     phoneGate?.close(runId, reqId, reason === 'expired' ? 'expired' : 'stopped');
     bar.close(reason, reqId);
   });
 
-  // 금고가 부르는 비밀 입력 창(ADR-025 결정 10). 열린 창은 하나, 활성 실행의 요청만, 라벨은 main 내장 표.
   const secrets = new SecretWindowCoordinator((runId) => runs.isActive(runId));
-  /**
-   * 실행 Chrome은 어떤 경우에도 앱 앞에 오지 않는다(대표 지시 2026-11-14). 앱(비밀번호 창이 열려 있으면 그 창)을 앞으로 둔다.
-   * Chrome이 스스로 앞으로 오는 때(기동·팝업 창·페이지의 창 포커스)는 금고 알림과 아래 앱 비활성 감시로 바로 되돌린다.
-   */
   let runChromePid = 0;
   const appToFront = () => {
     if (win.isDestroyed()) return;
@@ -656,8 +521,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     win.moveTop();
     win.focus();
   };
-  // 맥: 실행 Chrome이 떠 있는 동안 맨 앞 앱을 0.4초마다 본다. 금고가 띄운 그 Chrome 프로세스가 맨 앞이면(스스로 창을 올림) 앱을 다시 앞으로.
-  // 사람이 다른 앱(자기 Chrome 포함)을 쓰는 것은 건드리지 않는다(프로세스 id로만 가린다).
   let frontWatch: NodeJS.Timeout | null = null;
   let frontBusy = false;
   const frontPid = (cb: (pid: number) => void) =>
@@ -688,22 +551,16 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       });
     }, 400);
   };
-  // 메인 창이 닫히는 중이면 비밀 창을 새로 열지 않는다(들고 있던 다음 요청 포함).
   let mainClosing = false;
   win.once('close', () => {
     mainClosing = true;
   });
-  /**
-   * 비밀 입력은 대화 안 카드로 받는다(대표 지시 2026-11-14 "앱 내 채팅으로", 따로 뜨는 금고 창 없음).
-   * 금고 secret.needed → 렌더러에 가려진 입력 카드(secretAsk open) → 사람이 넣으면 secret.answer로 main → 금고 1회용 입력 포트(secret.provide)로만.
-   * 값은 main에서 바이트로 바꿔 넘기고 바로 0으로 덮는다. 로그·대화 기록·모델·렌더러 상태에 남기지 않는다(대화에는 "●●●● 입력함"만).
-   */
   let secretAsk: { reqId: string; bind: OneShotInputBind } | null = null;
   const closeSecret = () => {
     if (!secretAsk) return;
     send({ type: 'secretAsk', reqId: secretAsk.reqId, state: 'closed' });
     secretAsk = null;
-    secrets.closed(); // main이 닫았다(실행 끝·종료): 든 요청은 버린다
+    secrets.closed();
   };
   const openSecret = (data: unknown): void => {
     if (mainClosing || win.isDestroyed()) return log.event('main.secret_needed_ignored');
@@ -714,14 +571,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const label = SECRET_LABELS[r.kind];
     const note = r.kind === 'cert_password' ? '처음 한 번만 넣으면 이 Mac 금고에 두고 다음부터 묻지 않아요.' : '이번 실행에서 한 번만 쓰고 저장하지 않아요.';
     send({ type: 'secretAsk', reqId: secretAsk.reqId, state: 'open', runId: r.runId, kind: r.kind, label, note });
-    // 앱이 앞에 있어야 카드가 보인다(Chrome은 올리지 않는다)
     if (win.isMinimized()) win.restore();
     if (!win.isVisible()) win.show();
     app.focus({ steal: true });
     win.focus();
     log.event('main.secret_ask_shown', { kind: r.kind });
   };
-  /** 금고 1회용 입력 포트로 한 번 보낸다(값은 이 함수 밖으로 나가지 않는다). */
   const vaultSecretSend = (bind: Parameters<typeof host.secretInputPort>[0], method: 'secret.provide' | 'secret.store', params: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> =>
     new Promise((resolve) => {
       let port: ReturnType<typeof host.secretInputPort> | null = null;
@@ -747,7 +602,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         done({ ok: false, error: (e as Error).message.slice(0, 40) });
       }
     });
-  /** 설정에서 인증서 비밀번호를 금고에 저장한다(값은 이 함수 밖으로 나가지 않는다). */
   const saveCertMemory = async (value: unknown): Promise<{ remembered: boolean }> => {
     if (typeof value !== 'string' || !value) throw new Error('bad_value');
     const bytes = new TextEncoder().encode(value);
@@ -757,7 +611,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (!r.ok) throw new Error('vault_refused');
     return { remembered: true };
   };
-  /** 대화 카드의 답(secret.answer). 넣었으면 금고로, 취소면 카드만 닫는다(금고 칸은 실행 TTL까지 기다린다). */
   const answerSecret = async (p: { reqId?: unknown; value?: unknown; cancel?: unknown }): Promise<{ ok: true }> => {
     const ask = secretAsk;
     if (!ask || p.reqId !== ask.reqId) throw new Error('not_requested');
@@ -781,10 +634,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (next) openSecret(next);
     return { ok: true };
   };
-  // 계좌 자동조회 인증서 비밀번호 창(금고 codef.seal이 부른다). 하나만. 값 없이 닫히면 금고에 알려 기다림을 끝낸다.
   let codefWin: { win: BrowserWindow; req: CodefNeeded } | null = null;
   codefPage = () => {
-    // 기다리는 요청이 없을 때 창이 이 페이지를 부르면 빈 창이 된다: 남긴다
     if (!codefWin) log.event('main.secret_window_blank', { step: 'no_request' });
     return codefWin ? codefPageHtml(codefWin.req, { profileName: profiles()[codefWin.req.scope].name, certLabel: bankAuto.chosenLabel(), bankName: bankAuto.chosenBank() }) : null;
   };
@@ -800,7 +651,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       codefWin = { win: w, req };
       w.on('closed', () => {
         if (codefWin?.win === w) codefWin = null;
-        // 값을 넘겼으면 금고는 이미 요청을 끝냈다(같은 reqId 취소는 할 일이 없다)
         void host.control('codef.windowClosed', { reqId: req.reqId }).catch(() => {});
       });
     } catch (e) {
@@ -811,7 +661,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   host.on('codef', (data: unknown) => send({ type: 'bankAuto', event: data }));
   host.on('vault-event', (name: string, data: unknown) => {
-    // 진행 화면(B3): 금고가 중계한 실행 탭 화면을 지금 실행 패널로만 보낸다(보기 전용, 저장하지 않는다).
     if (name === 'screen.frame' || name === 'screen.paused') {
       if (!mirrorRun) return;
       const d = (data ?? {}) as { data?: unknown; w?: unknown; h?: unknown; url?: unknown; paused?: unknown };
@@ -819,16 +668,13 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       if (typeof d.data !== 'string' || d.data.length > 2_000_000) return;
       return send({ type: 'screen', runId: mirrorRun, frame: `data:image/jpeg;base64,${d.data}`, w: Number(d.w) || 0, h: Number(d.h) || 0, url: typeof d.url === 'string' ? d.url.slice(0, 200) : '' });
     }
-    // 앱 안 브라우저: 금고가 비밀 칸에 넣는 동안 보기의 사람 입력을 막고 패널에 "비밀번호 입력 중"
     if (name === 'browser.blocked') {
       const on = (data as { blocked?: unknown } | null)?.blocked === true;
       eb?.setBlocked(on);
       if (mirrorRun) send({ type: 'screen', runId: mirrorRun, paused: on });
       return;
     }
-    // 실행 Chrome이 사람 손으로 닫혔다(탭 전부·프로세스): 패널은 "연결 끊김", 제출 전 실행은 멈추고 [다시 시작]
     if (name === 'browser.launched') {
-      // Chrome이 막 떴거나 포털 팝업 창이 떠 macOS가 Chrome을 앞으로 올렸다: 앱을 바로 다시 앞으로(창이 늦게 그려지니 2초 동안 몇 번 더).
       const pid = Number((data as { pid?: unknown } | null)?.pid);
       if (Number.isSafeInteger(pid) && pid > 0) runChromePid = pid;
       watchChromeFront(true);
@@ -853,38 +699,27 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const n = vaultNotice(name, data);
     if (n) runs.notice(n.runId, n.text, n.retry);
   });
-  // 실행이 끝나면 그 실행의 비밀 창도 닫는다.
   runs.on('update', (run: { id: string }) => {
     if (secrets.open?.runId === run.id && !runs.isActive(run.id)) closeSecret();
   });
-  // 엔진이 끝나면 열린 게이트도 끝이다(근거를 받을 곳이 없다). 실행 카드는 ShellRuns가 끝낸다.
   host.on('exit', (who: string) => {
     if (who === 'engine') bar.close('engine_exit');
   });
-  // 게이트 요청(엔진 → 게이트 포트 → main). main이 fields로 해시를 다시 계산해 맞을 때만 바를 무장한다(approval-bar).
-  // 승인 근거는 바가 관찰한 클릭으로 main이 발급하고, 게이트 포트로만 엔진에 보낸다. 렌더러에는 이 경로가 없다.
   runs.on('gate', (runId: string, req) => {
-    // 예행은 엔진이 게이트 요청을 보내지 않는다. 그래도 오면 바를 띄우지 않고 멈춘다(토큰 없음).
     if (runs.get(runId)?.rehearsal) {
       log.event('main.rehearsal_gate_refused', { runId });
       return void runs.stop(runId).catch(() => {});
     }
-    // 보내기 전에 표시한다. 보낸 뒤 엔진이 끝나면 발급됐는지 모르는 쪽(in_doubt)으로 다룬다.
     const sendApproval = async (approval: LocalApproval, note?: string) => {
-      // 이 게이트는 여기서 답했다. 뒤에 오는 폰의 답은 받지 않는다(ADR-052 결정 5).
       phoneGate?.close(runId, req.reqId, 'pc');
       runs.approved(runId, note);
-      // 이 건이 "다시 시작할 일"에서 빠진 것이 DB에 닿은 뒤 보낸다(보낸 뒤 꺼지면 다시 시작하지 않고 안내만).
       await saveResume().catch(() => {});
       const r = await host.answerGate(approval);
       if (!r.ok) log.event('main.gate_answer_not_ok', { code: r.code ?? '', verdict: r.verdict });
       await runs.onAnswer(runId, r);
     };
-    // 여러 건 묶음의 뒤 건: 처음 승인 카드의 클릭(main 관찰)을 이 게이트에 쓴다. 되읽기 값이 그때 카드 값과 같을 때만(batchAutoApprove).
     if (runs.batchAutoApprove(runId, req)) return void sendApproval(issueLocalApproval(key, req, 'click+batch'), BATCH_AUTO_NOTE);
     const gr = runs.get(runId);
-    // 폰이 맡긴 발급이면 그 폰에도 승인을 청한다(ADR-052). PC 승인 바는 아래에서 그대로 뜨고, 먼저 답한 쪽이 이긴다.
-    // 폰 서명은 PhoneGate가 검증하고 기록한 뒤 여기로 온다. 바를 먼저 내려 PC 클릭이 겹치지 않게 한다.
     void phoneGate
       ?.offer(runId, req, {
         approve: async () => {
@@ -899,29 +734,21 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         },
       })
       .catch((e: Error) => log.event('main.phone_gate_offer_failed', { error: e.message.slice(0, 80) }));
-    // 묶음은 바를 띄울 때 찍는다(2~N건 줄과 그때 초안 값). 클릭 때 초안이 달라졌으면 묶음 승인으로 받지 않는다(batchApproved).
     const offer = runs.batchOffer(runId);
-    // 알림 글은 바가 그릴 글과 같게: 중복 경고 카드는 묶음 글자가 아니다(approval-bar open과 같은 조건)
     const manyShown = !!offer && actionText(req) === ACTION_TEXT;
     if (gr) runNotify('gate', runId, '승인이 필요해요', manyShown ? `세금계산서 ${offer.count}건 · ${gr.counterparty.name} 외 ${offer.count - 1}건` : `세금계산서 · ${gr.counterparty.name} ${wonText(gr.total)}`);
-    // 비가역 줄은 이 실행의 발급 인증(시작 때 고정, 엔진이 고르는 인증유형과 같다)으로 말한다.
     void bar.open(req, gr?.auth, offer, runs.get(runId)?.cert?.name).then(async (o) => {
       if (o.decision === 'approve') {
         if (!verifyLocalApproval(key, o.approval)) return runs.abortGate(runId, 'answer.rejected');
-        // 바가 묶음 글자로 그린 카드의 클릭일 때만 묶음 승인이다(중복 경고 카드 등은 이 건만).
         if (offer && o.batch === offer.count && !runs.batchApproved(runId, offer)) send({ type: 'say', text: BATCH_CHANGED_NOTE });
         await sendApproval(o.approval);
       } else if (o.reason === 'stopped') {
-        // 카드의 [중지](main이 관찰한 클릭·키). 렌더러 [중지]와 같은 경로로 실행을 멈춘다(안전한 실패).
         await runs.stop(runId).catch((e: Error) => log.event('main.card_stop_failed', { error: e.message.slice(0, 80) }));
       } else if (o.reason === 'load_failed') await runs.abortGate(runId, 'bar.load_failed');
       else if (o.reason === 'busy') log.event('main.gate_while_open');
     });
   });
 
-  // InDoubt 증언(ADR-021 결정 5). 엔진의 증언 요청은 ShellRuns가 무장만 해 둔다(summaryHash 일치). 바는 사용자가 그 카드를
-  // 열었다고 렌더러가 알려 온 동안에만 띄우고, 게이트가 오면 게이트가 자리를 가져간다(approval-bar). 증언 근거는 바가 관찰한
-  // 클릭으로 main이 발급하고, 게이트 포트(answerAttest)로만 엔진에 보낸다. 렌더러에는 이 경로가 없다.
   let incidentOpen: string | null = null;
   const showAttest = (runId: string) => {
     const req = runs.attestFor(runId);
@@ -929,7 +756,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     void bar.openAttest(req).then(async (o) => {
       if (o.decision !== 'attest') {
         if (o.reason === 'load_failed') log.event('main.attest_bar_load_failed');
-        // 증언 카드의 [닫기]: 카드를 다시 열 때(incident.open)까지 띄우지 않는다.
         if (o.reason === 'dismissed' && incidentOpen === runId) incidentOpen = null;
         return;
       }
@@ -940,7 +766,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       runs.onAttestAnswer(runId, r);
     });
   };
-  /** 렌더러의 카드 열림·닫힘(incident.open/close 처리기는 이것만 부른다). */
   const incidents = {
     open(id: string): { ready: boolean } {
       if (!runs.get(id)?.inDoubt) throw new Error('not_in_doubt');
@@ -957,7 +782,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   runs.on('attest-ready', (runId: string) => showAttest(runId));
   runs.on('attest-withdrawn', (_runId: string, attestReqId: string, reason: string) => bar.closeAttest(`withdrawn.${reason}`, { attestReqId }));
-  // 게이트가 끝나 바 자리가 비면, 열린 카드의 증언 요청이 남아 있을 때 다시 띄운다(엔진이 새로 요청하면 그것으로).
   bar.on('hidden', (_reason: string, kind: string) => {
     if (kind === 'gate' && incidentOpen) setTimeout(() => incidentOpen && showAttest(incidentOpen), 0);
   });
@@ -966,7 +790,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (v !== '주민등록표 등본' && v !== '주민등록표 초본') throw new Error('bad_doc');
     return v;
   };
-  // 서류 데몬(daemon-host.ts). 알림 객체는 눌리거나 닫힐 때까지 잡아 둔다(가비지 수집되면 click이 오지 않는다).
   let daemon: DaemonHost | null = null;
   const liveNotices = new Set<Notification>();
   const showOsNotification: ShowNotification = (t, onClick) => {
@@ -980,8 +803,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     n.on('close', () => liveNotices.delete(n));
     n.show();
   };
-  // 실행 알림(macOS): 승인이 필요할 때(승인 카드가 뜰 때), 사람 차례일 때, 끝났을 때. 앱 창이 앞에 보이면 띄우지 않는다.
-  // 누르면 앱을 앞으로 올리고 그 작업 카드로 간다. 여러 건 묶음은 끝 알림을 마지막 건이 끝날 때 한 번만 낸다.
   const runNotify = (kind: 'gate' | 'turn' | 'end', runId: string, title: string, body: string) => {
     if (win.isDestroyed() || (win.isFocused() && win.isVisible() && !win.isMinimized())) return;
     try {
@@ -997,7 +818,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       log.event('main.run_notify_failed', { error: (e as Error).message.slice(0, 60) });
     }
   };
-  // 이어 하기(run-resume.ts): 커밋 전 일을 바뀔 때마다 엔진 암호화 DB에 남긴다. 다음 기동에 렌더러가 뜬 뒤 같은 값으로 다시 시작한다.
   const resumeStore = new RunResumeStore({ save: (value) => host.rpc('resume.save', { value }), take: () => host.rpc('resume.take', {}) });
   const resumeWork = () =>
     pendingWork(
@@ -1005,25 +825,21 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       (r) => runs.batchWaiting(r),
       (id) => cps.find((c) => c.id === id)?.email,
     );
-  /** 지금 일을 DB에 닿게 한다(승인 근거를 보내기 전에 기다린다: 그 건이 다시 시작할 일로 남지 않게). */
   const saveResume = () => resumeStore.save(resumeWork(), Date.now());
   runs.on('update', () => void saveResume());
   let restored = false;
   const restoreRuns = async () => {
     if (restored) return;
     restored = true;
-    // 앞 프로세스가 남긴 것만 다시 세운다. 이 프로세스의 실행(렌더러가 뜨자마자 시작한 것)이 쓴 줄은 그 실행이 아직 있다.
     const work = await resumeStore.take(Date.now());
     const items = work.items.filter((it) => !runs.get(it.from));
     const approved = work.approved.filter((a) => !runs.get(a.from));
     void saveResume();
-    // 승인을 보낸 뒤 꺼진 건: 다시 하지 않고 안내만(발급됐는지는 발급목록·run.reverify로 확인한다)
     for (const a of approved) send({ type: 'say', text: `앞에서 승인한 ${a.name} ${wonText(a.total)} 건은 앱이 꺼져 발급됐는지 확인하지 못했어요. 홈택스 발급목록을 확인해 주세요. 다시 발급하지 마세요.` });
     if (approved.length) log.event('main.resume_approved_notice', { count: approved.length });
     if (!items.length) return;
     const first = runs.restore(items);
     pushBoard();
-    // 시작은 약관·온보딩을 마쳤고 로그인돼 있을 때만. 아니면 초안만 세워 둔다([홈택스에서 준비]).
     if (!first || (onb && !onb.done)) return;
     try {
       await needLogin();
@@ -1052,11 +868,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     runNotify('end', r.id, r.status === 'attention' ? '확인이 필요해요' : '멈췄어요', `${what} · ${r.stoppedNote ?? ''}`);
   });
   let updater: UpdateHost | null = null;
-  // 레지스트리 동기화(D09 §8.1 인덱스 15분, D03 §7.1 정책 재조회): 제품만. 엔진이 운영 레지스트리(tax.laf-co.com, Egress 고정 origin·핀 키)에서
-  // 인덱스·정책·H-01 패키지를 받아 둔다. 받지 못하면 엔진이 실행 시작을 package.not_loaded·policy.*로 거부한다(fail-closed).
-  // 기동은 기다리지 않는다(네트워크가 없어도 홈까지 간다). 실행 직전에는 15분 넘었으면 최대 10초 기다린다. 기록은 결과 코드뿐이다.
   const REGISTRY_EVERY_MS = 15 * 60_000;
-  /** 홈택스 안내 창(24분)보다 넉넉히 앞. 홈택스 [연장하기] 한 번과 같은 요청이다. */
   const HOMETAX_KEEPALIVE_MS = 10 * 60_000;
   let registryAt = 0;
   let registryInflight: Promise<void> | null = null;
@@ -1082,9 +894,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   const registryTimer = setInterval(() => void registrySync('timer'), REGISTRY_EVERY_MS);
   registryTimer.unref();
-  // 홈택스 로그인 유지: 앱이 켜져 있는 동안 홈택스 자동 로그아웃(24분 안내·30분 로그아웃)보다 먼저 [연장하기]와 같은 일을 한다.
-  // 엔진이 화면을 움직이는 동안(준비·발급 중), 승인을 보낸 뒤(거부 우선 창), 게이트 뒤 사람 차례(서명)는 건드리지 않는다.
-  // 승인 대기·게이트 앞 사람 차례(로그인 등)는 한다.
   const keepHometax = async (why: string) => {
     if (!eb || runs.list().some((r) => r.status === 'preparing' || r.status === 'issuing' || r.approvedPending === true || r.handoff?.afterGate === true)) return;
     const result = await eb.keepSession().catch(() => 'error');
@@ -1098,18 +907,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     daemon?.requestReload();
     void updater?.check();
   };
-  // 온보딩(08 §4, M4-2). 저장(동의 기록·이어 하기·프로필·포털 아이디)은 엔진 main 전용 명령으로 DB에(onboarding-store.ts, 엔진 #91·db #53).
-  // 바깥 일: 등록증 읽기(bizcert-read.ts, M4-3)·NPKI(npki-certs.ts, #93)는 제품 어댑터다. 진위확인(#65)·금고 등록 창(T-06)은 아직 없어 정직한 실패로 둔다.
-  // 처리자 표는 앱 내장 판(CONSENT_CONFIG). 시연·e2e(fixture)는 견본 바깥 일(ShellDev.sample.onboarding)을 쓴다.
   let onb: OnboardingFlow | null = null;
-  /** 이번 기동에 온보딩 대화를 보일지. 지난 기동에 끝낸 온보딩은 불러와 두되(동의·할 일) 대화로 다시 그리지 않는다. */
   let onbShow = true;
   const onbStore = new EngineOnboardingStore((m, p) => host.rpc(m, p));
-  /** M4-2 목업 때의 이어 하기 파일. DB에 행이 없으면 한 번 옮기고 지운다. */
   const legacyOnbFile = path.join(appPaths(root ?? defaultAppRoot()).userData, 'onboarding-state.json');
-  // 공동인증서 목록: 제품은 금고 npki.list(이 PC의 NPKI 폴더 열거) → docparse 샌드박스 certInfo → 표시 행(npki-certs.ts).
-  // 시연·e2e(fixture)는 이 PC를 훑지 않고 목업 목록을 쓴다.
-  // 사업자등록증 읽기(M4-3): 사용자가 고른 PDF·그림 → docparse 샌드박스 → 엔진 bizcert.parse(텍스트만) → 후보. 온보딩 O-02와 거래처 O-05가 같은 길을 쓴다.
   const bizCertPorts: BizCertReadPorts = {
     pick: () => pickFileBytes([{ name: '사업자등록증(PDF·사진)', extensions: ['pdf', 'png', 'jpg', 'jpeg'] }], win),
     pdfText: async (b, o) => (await parsePdfInSandbox(b, { ocrPages: 1, forceOcr: o.forceOcr })).text,
@@ -1117,27 +918,21 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     parse: (text) => host.rpc('bizcert.parse', { text }),
     log: (n, d) => log.event(n, d),
   };
-  /** 인증서 id → CN(main 안에서만, 렌더러·로그로 보내지 않는다). */
   const certNames = new Map<string, string>();
   const onbExternal: OnboardingExternal = fixture
     ? sample!.onboarding()
     : {
-        // O-02 등록증(M4-3): 사용자가 고른 PDF·그림 → docparse 샌드박스 → 엔진 bizcert.parse(텍스트만) → 확인 화면 후보
         recognizeBizCert: () => readBizCert(bizCertPorts),
-        // 진위확인은 클라우드 프록시(M4-6)가 아직 없다. 견본 결과(계속사업자) 대신 "조회하지 못함"으로 둔다(온보딩은 그대로 이어 간다).
         checkBizNo: async () => ({ status: 'unknown', label: '조회하지 못했어요', taxType: null, source: '국세청 조회' }),
         consentConfig: async () => structuredClone(CONSENT_CONFIG),
         findCerts: () => listNpkiCerts((m, p) => host.control(m, p), (der) => certInfoInSandbox(der), { today: kstToday(Date.now()), log: (n, d) => log.event(n, d), names: certNames }),
-        // 고른 인증서의 CN. 이번 기동에 목록을 본 적이 없으면(이어 하기) 한 번 다시 연다
         certName: async (id) => {
           if (!certNames.has(id)) await onbExternal.findCerts();
           return certNames.get(id) || null;
         },
       };
   const onbPorts = onboardingPorts(onbExternal, onbStore, refresh);
-  // 계좌 자동조회 인증서 목록은 온보딩 O-03과 같은 길(금고 npki.list → 샌드박스 certInfo, 시연은 목업)
   const bankAuto = bankAutoHandlers({ engine: (m, p) => host.rpc(m, p), certs: () => onbExternal.findCerts(), preferredCertId: () => onb?.state.certId ?? null, log: (n, d) => log.event(n, d) });
-  // 거래처 장부(M4-3 O-05). [등록증으로 채우기]는 같은 등록증 읽기(fixture는 시연 거래처 등록증). 골랐지만 못 읽은 것과 고르지 않은 것을 나눈다.
   const cpBook = new CounterpartyBook(
     (m, p) => host.rpc(m, p),
     fixture
@@ -1152,7 +947,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
           return (await readBizCert({ ...bizCertPorts, pick })) ?? (picked ? 'unreadable' : null);
         },
   );
-  // 내 사업장(D-03) 고치기(profile-edit.ts): 엔진 profile.upsert 그대로. 번호가 바뀌면 온보딩과 같은 상태조회 포트, 고친 칸 이름만 기록.
   const editLog = new ProfileEditLog(appPaths(root ?? defaultAppRoot()).userData);
   const editor = new ProfileEditor({
     list: async () => (await host.rpc('db.query.profiles.list')) as DbProfile[],
@@ -1163,14 +957,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         if (onb?.done) await onb.syncBiz(biz);
       } finally {
         if (changed.length) editLog.add({ at: new Date().toISOString(), kind: 'business', fields: changed });
-        // 로그 값은 ID 모양만 받는다(쉼표 없음): 칸 이름을 점으로 잇는다
         log.event('main.profile_edit', { fields: changed.join('.') || 'none' });
         await refresh();
         pushBoard();
       }
     },
   });
-  /** [파일에서 읽기]: 온보딩 O-02와 같은 등록증 읽기(#265 개선 포함). 고르지 않음(null)과 골랐지만 못 읽음을 나눈다. */
   const readOwnCert = async (): Promise<BizFields | 'unreadable' | null> => {
     if (fixture) return onbExternal.recognizeBizCert();
     let picked = false;
@@ -1182,10 +974,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     return (await readBizCert({ ...bizCertPorts, pick })) ?? (picked ? 'unreadable' : null);
   };
   let readingCert = false;
-  /**
-   * 이번 품목을 거래처 저장 품목으로 남긴다(08 §144): 저장 품목이 없는 거래처에만, [홈택스에서 준비]로 실행을 시작할 때 한 번.
-   * 저장 품목이 있으면 건드리지 않는다(바꾸기는 거래처 화면). 카드 꼬리에 한 줄 알린다. 실패해도 실행은 그대로 간다.
-   */
   const keepItem = async (runId: string) => {
     const r = runs.get(runId);
     if (!r || r.rehearsal || r.itemGuessed || !r.item) return;
@@ -1200,34 +988,23 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       log.event('main.item_kept', { result: (e as Error).message === 'bad_item_name' ? 'bad_item_name' : 'failed' });
     }
   };
-  // 대화 의도(M4-3 ③, 개인 프로필·시연): 엔진 intent.resolve(L0 → 마스킹 → 게이트웨이). 판정을 못 하면 의도를 대신 고르지 않는다(오프라인 해석 없음, 사용자 결정 2026-11-10).
   const intent: IntentResolver = opts.intent ?? engineIntentResolver((m, p) => host.rpc(m, p));
-  // 대화 짧은 응대(엔진 chat.respond, #261): 의도가 unknown이고 되묻던 것에 답하는 문장이 아닐 때만. e2e가 바꿔 끼운다.
   const chatReply: ChatResponder = opts.chat ?? engineChatResponder((m, p) => host.rpc(m, p));
-  // 대화 에이전트(결정안 agent-chat-design-2026-11-12, PR-B): 루프·값 공간은 AgentChat, 모델 경계는 엔진 chat.step.
-  // 이 턴에 만든 초안은 끝나고 해석 출처·송신처를 적는다(활동 기록). 진행 단계는 렌더러에 이벤트로만 알린다.
   let agentCreated: RunView[] = [];
   const agent = new AgentChat(
     agentPorts({
       rpc: (m, p) => (m === 'chat.step' && opts.agent ? opts.agent.step(p as unknown as StepParams) : m === 'chat.route' && opts.agent?.route ? opts.agent.route(p) : m === 'db.query.runs.history' && opts.agent?.history ? opts.agent.history(p) : host.rpc(m, p)),
-      // 판정(ADR-057)은 반응 알약 화면이 들어오는 PR에서 켠다(그 전에는 렌더러가 반응 답을 그리지 못한다). 켤 때: 제품 엔진과, 판정을 넘긴 e2e 가짜만.
       route: CHAT_REACTIONS_ON && (!opts.agent || !!opts.agent.route),
-      // 반응은 답보다 먼저 사용자 말풍선에 붙는다(일을 맡긴 말의 접수 표시). 이모지 이름만 간다.
       onReaction: (reaction) => send({ type: 'chat-reaction', reaction }),
       profileId: () => businessId,
       runs,
-      // 사업자 등록·발급 인증, 그리고 Chrome(U6, #301). 빠졌으면 초안 카드를 만들지 않고 할 일을 보인다(옛 길 setupGate와 같은 규칙).
       setupMissing: () => setupMissing(profiles().business).length > 0 || !chromeReady(),
       onCreated: (run) => agentCreated.push(run),
-      // 받을 돈(#284): 계좌가 하나도 없으면 null(not_set_up). 계좌·거래내역이 있으면 못 받은 건을 준다.
       receivables: () => bank.receivables(),
-      // 낼 돈·돈 흐름(11 §2·§3): 계좌가 없으면 null(not_set_up)
       payables: () => bank.payables(),
       cashFlow: (month) => bank.cashFlowValues(month),
-      // 시연: 씨앗 이력(승인번호 있는 것)도 지난 발급이다. 제품은 원장만.
       pastIssued: () => (seed?.past ?? []).flatMap((x) => (x.kind === 'issued' && x.approvalNo && x.who && x.day ? [{ counterpartyId: cps.find((c) => c.name === x.who)?.id ?? null, counterparty: x.who, date: x.day, total: x.total, approvalNo: x.approvalNo, documentId: x.documentId, mail: null }] : [])),
       onProgress: (phase: AgentPhase) => send({ type: 'chat-progress', phase }),
-      // 화면 열기(open_screen): 렌더러가 답을 그린 뒤 그 화면으로 간다. 값은 사장님이 그 화면에서 넣는다.
       openScreen: (screen: string) => send({ type: 'open-screen', screen }),
     }),
   );
@@ -1235,18 +1012,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (reply.kind === 'draft') {
       reply.run.interp = via;
       reply.run.sent = sent;
-      pushBoard(); // 초안은 update 이벤트 없이 생긴다
+      pushBoard();
       if (sendByUser) autoPrepare(reply.run.id);
     }
     return { ...reply, via, note, sent };
   };
-  /** 이번 request.send가 실제 사용자 전송(클릭·Enter, 2초 안)인가. 0클릭 준비는 이 전송에 묶는다. */
   let sendByUser = false;
-  /**
-   * [홈택스에서 준비] 0클릭(대표 지시 2026-11-13 "두 번째 발급부터 대화 한 문장과 [승인] 1번"). 준비는 홈택스 칸에 넣고 되읽기만 해서 되돌릴 수 있다.
-   * 초안이 다 찼으면(품목이 있으면, 기본값·저장 품목 포함) 대화 전송에 묶어 바로 시작한다(해석기·대화 에이전트 둘 다). 초안 카드가 먼저 그려지게 답을 보낸 뒤에 시작한다.
-   * 막히면(Chrome 없음·이메일 모양·상한) 초안 카드에 그 이유가 남고 [홈택스에서 준비]로 다시 할 수 있다. 실제 사용자 동작을 묻는 곳은 [승인] 하나다.
-   */
   const autoPrepare = (id: string) => {
     const r = runs.get(id);
     if (!r || r.status !== 'draft' || (!r.cert && !String(r.item ?? '').trim())) return;
@@ -1256,12 +1027,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       prepareNow(id).catch((e: Error) => log.event('main.prepare_auto_failed', { code: e.message.slice(0, 60) }));
     });
   };
-  /**
-   * 실행은 한 번에 하나다(08 §5). 진행 중인 건이 있을 때 새 초안을 시작하려 하면 사장님께 [중지]를 시키지 않는다(대표 지적 2026-11-19).
-   * - 같은 거래처의 승인 전 준비면 정정으로 본다: 앞 준비를 멈추고(아무것도 보내지 않았다) 새 값으로 이어서 준비한다.
-   * - 그 밖에는 앞 건이 끝나면 바로 이어서 준비한다. 기다리는 초안은 하나다(새로 온 것이 앞에 기다리던 것을 대신한다, 그 카드는 [홈택스에서 준비]로 남는다).
-   * 바쁘지 않으면 false(부르는 쪽이 바로 시작한다).
-   */
   let nextUp: string | null = null;
   const queueIfBusy = (id: string): boolean => {
     const active = runs.activeRun();
@@ -1296,7 +1061,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     setImmediate(() => prepareNow(id).catch((e: Error) => log.event('main.prepare_next_failed', { code: e.message.slice(0, 60) })));
   });
   const prepareNow = async (id: string) => {
-    // 상한 이유와 남은 초를 코드에 붙인다(F-07: "잠시 뒤"만 보이던 것). 화면은 이유별 문장 + N초.
     const pause = runs.prepareWaitMs();
     const now = performance.now();
     if (pause > 0 || !prepareRate.take(now)) {
@@ -1304,7 +1068,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       log.event('main.prepare_throttled', { why });
       throw new Error(`throttled.${why}:${Math.max(1, Math.ceil((pause > 0 ? pause : prepareRate.waitMs(now)) / 1000))}`);
     }
-    // 지난 실행 재확인(run.reverify) 중이면 끝날 때까지 기다린다(엔진은 그동안 실행을 시작하지 않는다, 한 호출 상한 60초). 기다리는 동안 카드에 한 줄.
     const waitReverify = async () => {
       while (reverifying) {
         runs.notice(id, REVERIFY_WAIT_NOTE);
@@ -1313,21 +1076,17 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       }
     };
     await waitReverify();
-    // 실행 직전 레지스트리 재조회(D03 §7.1): 15분이 지났으면 최대 10초 기다린다. 실패해도 엔진이 받아 둔 것으로 판정한다.
     await registryFresh();
-    // 레지스트리를 기다리는 동안 실행 끝 타이머가 재확인을 시작했을 수 있다(그러면 run.start가 busy). 한 번 더 기다리고, 그 뒤로는 기다림 없이 바로 시작한다.
     await waitReverify();
     const r = await runs.prepare(id);
     await keepItem(id);
     return r;
   };
-  /** 금고의 계정 열쇠 넘기기(vaultDesktopKeys의 link). 시험 대역 키에는 없다 */
   const linkVaultOf = (k: DesktopKeys): PcLinkVault => {
     const v = (k as Partial<VaultDesktopKeys>).link;
     if (!v) throw Object.assign(new Error('keys'), { code: 'account.keys_unavailable' });
     return v;
   };
-  // 계정 로그인(A-01)·첫 PC 등록(remote-account.ts). 금고 키는 처음 쓸 때 한 번 읽는다(금고가 먼저 떠 있어야 한다).
   let remoteKeys: Promise<DesktopKeys> | null = null;
   const keysOf = (): Promise<DesktopKeys> => {
     const f = opts.remote?.keys;
@@ -1342,14 +1101,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     client: opts.remote?.keys ? (opts.remote.cloud?.account ?? null) : null,
     keys: keysOf,
     identity: new RemoteIdentityFile(appPaths(root ?? defaultAppRoot()).userData),
-    // 받은 코드는 만료(10분)까지 쓴다: 앱을 껐다 켜도 코드 화면으로 돌아온다(대기 정보만, 코드 자체는 없다)
     pending: new PendingCodeFile(appPaths(root ?? defaultAppRoot()).userData),
     platform: process.platform === 'darwin' ? 'macos' : 'windows',
     deviceName: opts.remote?.deviceName ?? (process.platform === 'darwin' ? 'Mac PC' : 'Windows PC'),
-    // 계정 기기 목록의 이름은 모델 이름으로(예: "MacBook Pro", 2026-11-19 대표). 기기 토큰을 받을 때 알린다
     model: deviceModel,
     pairing: opts.remote?.pairing !== false,
-    // 새 PC 연결(ADR-048 결정 3): 금고의 계정 열쇠 넘기기. 넘겨받은 뒤에는 금고 공개키를 다시 읽는다(AIK가 바뀐다)
     linkVault: async () => linkVaultOf(await keysOf()),
     resetKeys: () => {
       remoteKeys = null;
@@ -1357,25 +1113,19 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     onRekey: () => void host.rpc('share.resend').catch(() => undefined),
     log: (n, d) => log.event(n, d),
   });
-  // 새 PC 연결 중(link_* 단계)에는 쓰던 PC의 답을 몇 초마다 본다. 단계가 바뀌면 화면에 알리고, 끝나면 멈춘다
   let linkTimer: ReturnType<typeof setInterval> | null = null;
-  // 로그인돼 있으면 계정 열쇠를 계정 서비스에 맡겨 둔다(ADR-050: 다음 새 PC가 쓰던 PC 없이 이메일 인증만으로 붙는다). 앱을 켤 때마다 한 번
   let keyDeposited = false;
   const depositKey = (v: AccountView): void => {
     if (v.step === 'signed_out') keyDeposited = false;
     if (keyDeposited || v.step !== 'signed_in') return;
     keyDeposited = true;
     void account.depositKey().then((r) => {
-      // 잠깐의 실패는 다음 로그인 화면 갱신 때 다시 해 본다
       if (r !== 'stored' && r !== 'already' && r !== 'request.not_found' && r !== 'skipped') keyDeposited = false;
-      // 다른 PC가 계정 열쇠를 새로 걸었으면 이 PC는 로그인 화면으로 돌아가 있다(account.key_changed)
       if (r === 'account.cert_invalid') send({ type: 'account', account: account.view() });
     });
   };
   const watchLink = <T extends AccountView>(v: T): T => {
     depositKey(v);
-    // 로그인(코드 확인·비밀번호·재설정·새 PC 연결 끝)으로 기기 신원이 생기면 저장된 폰을 지킨다.
-    // 전에는 앱을 켤 때만 start()해서, 같은 실행에서 로그아웃→다시 로그인하면 다시 켤 때까지 폰이 "PC 꺼짐"으로 보였다.
     if (shouldStartPhones({ signedIn: !!account.device(), running: !!phoneLink })) {
       void Promise.resolve(phones()?.start())
         .then(() => syncAwake())
@@ -1399,8 +1149,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   let accountReady: Promise<unknown> | null = null;
   const accountInit = () => (accountReady ??= account.init().then((v) => (depositKey(v), v)));
-  // 엔진 → 게이트웨이 인증(gateway-auth.ts): gateway 범위 기기 토큰으로 만든 헤더만 auth 포트로 간다. 로그인 전이면 account.signed_out.
-  // 내준 헤더의 경로(활동 기록 근거). 번호를 붙여 최근 200개만 둔다.
   let gwSeq = 0;
   let gwLog: Array<[number, string]> = [];
   const gwIssuedSince = (n: number) => gwLog.filter(([i]) => i > n).map(([, p]) => p);
@@ -1413,12 +1161,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     onIssued: (path) => {
       gwLog = [...gwLog.slice(-199), [++gwSeq, path]];
     },
-    // 온보딩 ②에서 모델을 거절했으면 게이트웨이 헤더를 내주지 않는다(입력 문장·화면이 모델로 가지 않게). 끝낸 기존 사용자(!onb)·동의한 사용자는 그대로.
     modelAllowed: () => modelOk(),
   });
   host.setGatewayAuth((m) => gwAuth.handle(m));
-  // 발급 잠금(issue-lock-host.ts, ADR-048 결정 7): 이 PC의 기기 목록에 PC가 2대 이상이면 엔진이 승인 카드를 열기 전에 계정의 발급 잠금을 잡는다.
-  // PC 한 대 계정·계정 연결 없는 실행은 서버를 부르지 않고 통과한다. 계정을 읽지 못하면 엔진은 승인을 열지 않는다.
   const issueLock = new IssueLockHost({
     client: opts.remote?.keys ? (opts.remote.cloud?.account ?? null) : null,
     device: async () => {
@@ -1428,12 +1173,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     log: (n, d) => log.event(n, d),
   });
   host.setIssueLock((m) => issueLock.handle(m));
-  // 엔진이 죽으면 놓으라는 말을 못 했을 수 있다: main이 대신 놓는다(못 놓아도 서버 잠금은 90초 뒤 풀린다)
   host.on('exit', () => void issueLock.release());
-  // 폰 연결(S-03, remote-pairing.ts). 로그인(첫 PC 등록)을 마치고 클라우드 포트·QR 인코더가 있을 때만.
-  // 따로 창을 띄우지 않고 설정 > 기기 연결의 연결 칸(QR)과 메인 창 안 모달(6자리부터, shell-pair.js)에 그린다. 렌더러가 받는 값은 PairView뿐이고 QR은 main이 만든 이미지(data URL)다.
-  // QR·6자리가 화면에 있는 동안은 메인 창을 화면 캡처에서 가린다(setContentProtection, ADR-016). 끝나면 푼다.
-  // 우편함 토큰·채널이 든 결과는 지금은 이 실행의 메모리에만 둔다(수신 배선 PR에서 금고 보관).
   let pairHost: PairingHost | null = null;
   const pairedThisRun: DesktopPairResult[] = [];
   let pairShielded = false;
@@ -1466,9 +1206,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       onView: pairPush,
       onPaired: (r) => {
         pairedThisRun.push(r);
-        // 수신 배선(phone-link.ts): 기록을 보관하고 이 폰의 우편함을 지킨다
         const link = phones();
-        // 받을 준비가 안 됐으면(클라우드 포트·기기 신원 없음) 폰은 연결됐다고 믿는데 PC는 우편함을 지키지 않는다. 조용히 넘어가지 않고 남긴다
         if (!link) log.event('main.phone_link', { step: 'add', result: account.device() ? 'no_cloud' : 'signed_out' });
         void link?.add(r).catch((e: Error) => log.event('main.phone_link', { step: 'add', result: e.message.slice(0, 40) }));
         send({ type: 'account', account: account.view() });
@@ -1476,12 +1214,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     });
     return pairHost;
   };
-  /** 로그아웃·이 PC 나가기: 진행 중인 연결을 그만두고 다음 로그인 때 새 신원으로 다시 만든다. */
   const pairReset = () => {
     pairHost?.cancel();
     pairHost = null;
   };
-  /** 구독 경로 호출(기기 토큰). 로그인 전이면 account_required. 토큰 401이면 버리고 한 번 다시 */
   const billingCall = async <T>(f: (c: AccountClient, auth: DeviceAuth) => Promise<T>): Promise<T> => {
     await accountInit().catch(() => null);
     const cloud = opts.remote?.cloud;
@@ -1495,15 +1231,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return f(cloud.account, device.auth);
     }
   };
-  // 연결된 폰 수신(phone-link.ts, D08 §5·§7): 페어링한 폰마다 우편함을 지켜 사진·현금을 받는다(라이브 WSS + HTTPS 큐).
-  // 로그인(첫 PC 등록)과 클라우드 포트·금고 키가 있을 때만. 우편함 토큰은 safeStorage(키체인·DPAPI)로 봉인해 둔다.
-  // safeStorage를 쓸 수 없는 환경(일부 Linux)은 b64로 두고 표시를 남긴다: 토큰만으로는 기기 토큰(DPoP, 금고 Vd) 없이 우편함에 들어가지 못한다.
   const tokenSeal: TokenSeal = {
     seal: (b) => (safeStorage.isEncryptionAvailable() ? `ss1:${safeStorage.encryptString(Buffer.from(b).toString('base64')).toString('base64')}` : `b64:${Buffer.from(b).toString('base64')}`),
     open: (v) => new Uint8Array(Buffer.from(v.startsWith('ss1:') ? safeStorage.decryptString(Buffer.from(v.slice(4), 'base64')) : v.startsWith('b64:') ? v.slice(4) : '', 'base64')),
   };
   let phoneLink: PhoneLink | null = null;
-  // 폰 발급 명령(v1.8): 초안을 만들고 [홈택스에서 준비]를 바로 시작한다. 승인은 PC 승인 바(폰 승인 중계 전까지 pc_only).
   const phoneIssueOf = (): PhoneIssue => {
     phoneIssue ??= new PhoneIssue({
       approver: (pairId) => phoneGateOf().canApprove(pairId),
@@ -1515,14 +1247,13 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       retryCert: (id) => runs.retryCert(id),
       simpleAuth: (id, op, d) => runs.simpleAuth(id, op, d),
       get: (id) => runs.get(id),
-      onDraft: () => pushBoard(), // 초안은 update 이벤트 없이 생긴다
+      onDraft: () => pushBoard(),
       cmds: new CmdLog(path.join(appPaths(root ?? defaultAppRoot()).userData, 'remote-cmds.json')),
       log: (n, d) => log.event(n, d ?? {}),
       wake: (pairId, kind) => void phoneWaker.wake(pairId, kind),
     });
     return phoneIssue;
   };
-  // 폰 깨우기(ADR-053, phone-wake.ts): 폰 앱이 뒤에 있을 때 내용 없는 알림(종류만). 클라우드 연결이 없으면 부르지 않는다.
   const wakeClient = opts.remote?.keys ? (opts.remote.cloud?.account ?? null) : null;
   const phoneWaker = new PhoneWaker({
     deviceOf: (pairId) => phoneLink?.deviceOf(pairId) ?? null,
@@ -1541,7 +1272,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       : null,
     log: (n, d) => log.event(n, d),
   });
-  // 폰 승인(ADR-052): 폰이 맡긴 발급의 커밋 게이트를 그 폰에 보내고, 답의 서명을 연결 기록의 승인 키로 검증한다.
   const phoneGateOf = (): PhoneGate => {
     phoneGate ??= new PhoneGate({
       px: (pairId) => phoneLink?.px(pairId) ?? null,
@@ -1557,7 +1287,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   runs.on('restart', (x: { from: string; to: string }) => phoneIssue?.relink(x.from, x.to));
   runs.on('update', (run) => {
     phoneIssue?.update(run);
-    // 승인 대기를 벗어난 실행의 게이트는 닫는다(끝·중지·다음 단계)
     if (run.status !== 'waiting') phoneGate?.close(run.id, undefined, run.status === 'issuing' || run.status === 'done' ? 'pc' : 'stopped');
   });
   const phones = (): PhoneLink | null => {
@@ -1588,8 +1317,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
           log: (n, d) => log.event(n, d),
         }),
       deviceListVersion: () => account.device()?.deviceList.listVersion ?? 0,
-      // 계정 공유 기록 열쇠(share.key, ADR-048 결정 5): 이 PC의 기기 목록(AIK 검증)에 지금 있는 폰에만, 세대 0부터 지금 세대까지 준다.
-      // 열쇠는 금고가 RK에서 만든다. main은 보낼 동안만 들고 있다가 지운다(RK는 금고 밖으로 나오지 않는다).
       shareKeys: async (deviceId) => {
         const d = account.device();
         const vault = ((await keysOf()) as Partial<VaultDesktopKeys>).share;
@@ -1629,9 +1356,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     });
     return phoneLink;
   };
-  // 기기 관리(remote-devices.ts, ADR-048 결정 6): 계정의 PC·폰을 보고 끊는다. 끊은 폰의 연결 기록·우편함도 같이 지운다.
   let deviceMgr: DeviceManager | null = null;
-  /** 기기 목록의 폰 줄에 이 PC에서 본 폰 승인 상태를 붙인다(같은 폰과 연결한 기록이 없으면 붙이지 않는다) */
   const withApproval = (devices: DeviceView[]): Array<DeviceView & { approval?: PhoneView['approver'] }> => {
     const phones = phoneLink?.list() ?? [];
     return devices.map((d) => {
@@ -1651,7 +1376,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       log: (n, d) => log.event(n, d),
     }));
   };
-  // 새 PC 승인(remote-pclink.ts, ADR-048 결정 3): 기기 목록을 바꾸는 일이라 기기 관리와 같은 줄에 선다
   let pcLinkHost: PcLinkHost | null = null;
   const pcLinkHostOf = (): PcLinkHost => {
     const client = opts.remote?.cloud?.account;
@@ -1669,15 +1393,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     try {
       if ((await devicesOf().reconcile()) > 0) {
         send({ type: 'account', account: account.view() });
-        // 다른 기기가 끊은 기기가 있었다: 세대가 올랐으니 연결된 폰에 새 열쇠를 준다
         void phoneLink?.pushShareKeys();
       }
     } catch (e) {
       log.event('main.device_sync', { result: typeof (e as { code?: unknown }).code === 'string' ? ((e as { code: string }).code) : 'skipped' });
     }
   };
-  // 계정 공유 기록(share-sync.ts, ADR-048 결정 5): 이 PC의 기기 목록에 기기가 2대 이상이면 다른 기기의 줄을 받고, 장부의 발급 기록·거래처·내 사업자를 봉인해 올린다.
-  // 기기가 하나뿐인 계정·계정 연결 없는 실행은 서버도 금고도 부르지 않는다. 켤 때, 발급이 끝난 뒤, 그리고 10분마다 한다.
   const shareSync = new ShareSync({
     client: opts.remote?.keys ? (opts.remote.cloud?.account ?? null) : null,
     device: async () => {
@@ -1691,7 +1412,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     },
     store: engineShareStore((m, p) => host.rpc(m, p)),
     collect: () => host.rpc('share.collect'),
-    // 세대가 뒤처졌거나 모르는 폰의 줄이 오면 서버와 기기 목록을 맞춘다(다른 PC가 끊은 기기를 폐기 레코드로 옮기는 것까지)
     refreshDeviceList: async () => {
       if ((await devicesOf().reconcile()) > 0) {
         send({ type: 'account', account: account.view() });
@@ -1700,7 +1420,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     },
     log: (n, d) => log.event(n, d),
   });
-  /** 받고 올린다. 다른 PC가 더하거나 고친 거래처가 이 PC 목록에 들어왔으면 목록을 다시 읽는다(대화·발급이 새 값을 쓴다). */
   const syncShare = async (): Promise<void> => {
     const r = await shareSync.sync();
     if (r.parties > 0) {
@@ -1711,7 +1430,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const SHARE_EVERY_MS = 10 * 60_000;
   const shareTimer = setInterval(() => void syncShare().catch(() => undefined), SHARE_EVERY_MS);
   shareTimer.unref?.();
-  // 폰이 연결돼 있으면 집에 둔 PC가 밖의 폰에 바로 응한다(phone-presence.ts): 창을 닫아도 남고, 전원 연결 중에는 잠들지 않는다.
   const stayAwake = new StayAwake(powerSaveBlocker, (on) => log.event('main.phone_stay_awake', { on }));
   const pairedPhones = () => phoneLink?.list().length ?? 0;
   const syncAwake = () => stayAwake.set(shouldStayAwake({ phones: pairedPhones(), onBattery: powerMonitor.isOnBatteryPower() }));
@@ -1721,7 +1439,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     quitting = true;
   };
   app.on('before-quit', onBeforeQuit);
-  // macOS 업데이트 설치는 창을 먼저 닫고 before-quit을 나중에 낸다(Electron 문서). 그때 창 닫기를 막으면 설치가 멈춘다.
   if (process.platform === 'darwin') nativeUpdater.on('before-quit-for-update', onBeforeQuit);
   win.on('close', (e) => {
     const act = closeAction({ phones: pairedPhones(), quitting, platform: process.platform });
@@ -1748,23 +1465,15 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const onPowerSource = () => syncAwake();
   powerMonitor.on('on-ac', onPowerSource);
   powerMonitor.on('on-battery', onPowerSource);
-  // 이미 로그인한 PC면 켤 때 저장된 폰을 지킨다(꺼져 있던 동안의 큐부터 비운다)
   void accountInit()
     .then(() => phones()?.start())
     .then(() => syncAwake())
-    // 꺼져 있던 동안 폰이 스스로 나갔거나 다른 기기가 끊은 것을 목록에 맞춘다(실패해도 다음에 기기 화면·폰 연결을 열 때 다시 한다)
     .then(() => reconcileDevices())
     .then(() => syncShare())
     .catch(() => undefined);
   const onbView = async () => (onb && onbShow ? await onb.view() : null);
-  /** 온보딩이 끝나기 전에는 약관(④) 동의 전 요청을 받지 않는다. 모델 해석은 ②에 동의했을 때만(기존 사용자는 지금처럼). */
   const termsOk = () => !onb || onb.state.consents.terms?.choice === 'agreed';
   const modelOk = () => !onb || onb.modelAllowed();
-  /**
-   * 로그인이 먼저다(사용자 결정 2026-11-10): 제품은 계정에 로그인(첫 PC 등록)해야 약관 다음 온보딩·대화로 간다.
-   * 렌더러는 같은 조건으로 닫을 수 없는 로그인 화면을 띄우고, main은 그 전의 대화·온보딩 답을 account_required로 거절한다.
-   * 시연(fixture)·e2e는 계정 없이 돈다.
-   */
   const loginRequired = !fixture;
   const signedIn = async () => {
     await accountInit().catch(() => null);
@@ -1773,16 +1482,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const needLogin = async () => {
     if (loginRequired && !(await signedIn())) throw new Error('account_required');
   };
-  /**
-   * 세금계산서·증명서는 사업자 프로필(사업자번호)과 발급 인증이 있어야 시작할 수 있다(엔진 run.start가 profile_missing으로 멈춘다).
-   * 빠졌으면 카드를 만들지 않고 무엇이 빠졌는지와 [사업자 등록 마치기]·[발급 인증 고르기]를 보인다(0.1.5 실사용).
-   */
   const setupGate = (parsed: Parsed) => {
     if (profile !== 'business') return null;
     if (!(parsed.intent === 'invoice' || parsed.intent === 'cert' || answersPending(parsed, runs))) return null;
-    // Chrome이 없으면 초안 카드를 만들기 전에 말한다(U6). [홈택스에서 준비]의 점검(#288)은 그 뒤에 지워진 경우를 막는 마지막 자리로 남는다.
-    // 민원증명도 같은 홈택스 로그인(전용 Chrome·공동인증서 프로그램)을 쓴다. 떼지 않는 증명서(cert 없음)는 설치를 시키지 않는다.
-    // 출시판에서 숨긴 서류(cert-docs hidden, H-04)는 떼지 않는 증명서와 같다: 설치 안내 없이 「떼지 못해요」로 답한다
     const needsHometax = parsed.intent !== 'cert' || (!!parsed.cert && !certDocByCode(parsed.cert)?.hidden);
     const needsChrome = needsHometax && !chromeReady();
     const needsSecurity = needsHometax && securityMissing();
@@ -1793,9 +1495,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
 
   const bankAutoH = bankAuto.handlers;
-  /** 활동 기록의 지난 실행: 이 PC 실행 이력(엔진, 최근 50건) + 시연 씨앗. 이력을 읽지 못하면(db_not_ready 등) 지난 실행 없이 연다. */
   const pastNow = async (): Promise<PastRun[]> => [...(await readPastRuns((m, p) => host.rpc(m, p), (n, d) => log.event(n, d))), ...(seed?.past ?? [])];
-  // 세무사 꾸러미(accountant-pack.ts): 한 달 발급 목록·PDF·증명서·받을 돈을 앱 데이터 폴더 아래 폴더와 zip으로. 로컬 파일만 쓴다.
   const pack = new AccountantPack({
     past: async () => [...(await readPastRuns((m, p) => host.rpc(m, p), (n, d) => log.event(n, d), 200)), ...(seed?.past ?? [])],
     docs: () => listDocs(),
@@ -1803,7 +1503,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     receivables: () => bank.receivables(),
     businessName: () => (businessId || sample ? profiles().business.name || null : null),
     businessBizNo: () => (businessId ? profiles().business.bizNo || null : null),
-    // 폰으로 찍은 종이 세금계산서: 작성일 달과 다음 달에 받은 증빙에서 꺼낸다(보통 다음 달 초에 찍는다). 꾸러미가 작성일로 다시 거른다
     paperInvoices: async (month) => {
       if (!businessId) return [];
       const [y, m] = [Number(month.slice(0, 4)), Number(month.slice(5, 7))];
@@ -1825,19 +1524,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (!isPackMonth(m)) throw new Error('bad_request');
     return m;
   };
-  /** 만든 꾸러미 zip. 아직 안 만들었으면 pack_missing(화면이 다시 만든다) */
   const packZip = async (m: unknown) => {
     const f = pack.zipPath(packMonth(m));
     if (!(await fs.stat(f).then((x) => x.isFile(), () => false))) throw new Error('pack_missing');
     return f;
   };
 
-  /**
-   * 발급됐는지 모르는 지난 실행(원장 in_doubt)을 엔진 run.reverify로 발급목록에서 확인한다. 실행이 끝난 뒤(3초) 부른다.
-   * 엔진은 이미 열린 실행 탭으로만 조회하고, 그 탭은 실행이 연다. 그래서 기동 직후가 아니라 이 앱에서 탭이 처음 열린 실행이 끝난 뒤가 첫 확인이다.
-   * 방금 끝난 실행은 빼고 본다(그 실행은 300초 판정을 이미 받았다). 같은 행은 엔진이 하루 한 번만 조회한다.
-   * 실행 중이면 부르지 않고, 확인하는 동안 [홈택스에서 준비]는 카드에 한 줄을 띄우고 끝날 때까지 기다린다(prepareNow). 발급을 찾으면 활동 기록·판·카드·문서함을 다시 그린다.
-   */
   let reverifying: Promise<void> | null = null;
   const reverify = (exclude: string | null) => {
     if (reverifying || runs.anyActive()) return;
@@ -1857,25 +1549,15 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   host.on('run', (e: { type?: string; runId?: string }) => {
     if (e.type === 'end') setTimeout(() => reverify(typeof e.runId === 'string' ? e.runId : null), 3_000);
-    // 발급이 끝났으면 원장 확인(위 3초 뒤) 다음에 계정 공유 기록을 올린다. 승인번호를 아직 못 받았으면 다음 차례에 올라간다
     if (e.type === 'end') setTimeout(() => void syncShare().catch(() => undefined), 15_000).unref?.();
   });
 
-  /** 진행 화면을 받는 실행(하나). */
   let mirrorRun: string | null = null;
 
-  /**
-   * 앱 안 브라우저(대표 지시 2026-11-13 "인앱브라우저에서 조작해야지 그냥 새로 창 띄워서 가린다고?"). 실행 Chrome은 늘 앱 창 뒤에 고정 크기로 둔다
-   * (앞으로 올리지 않는다, 가려져도 중계 프레임이 온다). 사람은 패널의 중계 화면을 직접 누르고 친다(browser.input → 금고 screen.input → CDP Input).
-   * [브라우저] 토글은 패널 크게/작게다(크게: 대화 열을 줄인다). 사람 차례가 되면 크게 하고 입력 포커스를 준다.
-   * 렌더러 처리기는 금고 제어 포트에 직접 닿지 않는다(h01-guards). 이 함수들만 browser.place·screen.input을 부른다.
-   */
-  /** 실행 Chrome 창 크기(고정). 앱 창 뒤 왼쪽 위에 둔다. 페이지 레이아웃이 패널 크기에 따라 바뀌지 않게 한다. */
   const CHROME_BEHIND = { width: 1280, height: 900 };
   function sendBrowserState(focus = false) {
     send({ type: 'browser', shown: browserShown, available: browserAvailable, ...(embedded ? { embedded: true, width: panelNow() } : {}), ...(focus ? { focus: true } : {}) });
   }
-  /** Chrome을 앱 창 뒤 자리로(고정 크기). 앱을 앞으로 둔다. 앱 안 브라우저는 옮길 창이 없다. */
   const placeBehind = async (): Promise<boolean> => {
     if (embedded) {
       browserAvailable = true;
@@ -1892,16 +1574,13 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     log.event('main.chrome_placed', { front: false, width: CHROME_BEHIND.width });
     return true;
   };
-  /** 패널 크게/작게. focus면 렌더러가 중계 화면에 입력 포커스를 준다. */
   const setPanelBig = (big: boolean, focus = false) => {
     if (browserShown === big && !focus) return;
     browserShown = big;
     sendBrowserState(focus);
     if (embedded) bar.layoutChanged();
-    // 앱 안 브라우저: 사람 차례면 그 보기에 키보드 포커스(사람이 바로 친다)
     if (focus) eb?.focus();
   };
-  /** 앱 안 브라우저 패널 경계를 끌었다(렌더러가 고른 폭). main이 범위 안으로 줄여 정하고 다시 알린다. */
   const resizeBrowser = (width: number) => {
     if (!embedded || !browserAvailable) return { width: panelNow() };
     browserWant = Math.round(width);
@@ -1910,10 +1589,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     bar.layoutChanged();
     return { width: panelNow() };
   };
-  /**
-   * 앱 안 브라우저 보기 자리(렌더러 패널의 화면 칸, 창 콘텐츠 DIP). main은 그 칸을 패널 영역(창 오른쪽 panelNow() 폭, 제목줄 아래) 안으로
-   * 잘라서 쓴다: 렌더러가 보기를 대화 열이나 승인 카드 위로 옮기지 못한다(카드는 늘 보기 위에 있다).
-   */
   const placeBrowser = (r: { x: number; y: number; width: number; height: number } | null) => {
     if (!eb) return {};
     if (!r || !browserAvailable || win.isDestroyed()) return eb.setSlot(null), {};
@@ -1929,14 +1604,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   win.on('resize', () => {
     if (embedded && browserAvailable) sendBrowserState();
   });
-  /** 패널 안 브라우저 조작 하나를 금고에 넘긴다(메인 창에서 1초 안에 본 실제 입력이 있을 때만). 앱 안 브라우저는 사람이 보기를 직접 누른다. */
   const panelBrowserInput = async (p: Record<string, unknown>) => {
     if (!mirrorRun || embedded) return { ok: false };
     if (!panelInput.within(performance.now(), 1_000)) throw new Error('gesture_required');
     const r = (await host.control('screen.input', p).catch(() => null)) as { ok?: unknown } | null;
     return { ok: r?.ok === true };
   };
-  /** 기억한 홈택스 인증서 이름(profiles.cert_name): 보기(이름 부분만)·지우기. */
   const businessRow = async () => ((await host.rpc('db.query.profiles.list', {})) as DbProfile[]).find((x) => x.kind === 'business');
   const certNameStatus = async () => {
     const name = (await businessRow())?.certName ?? null;
@@ -1957,7 +1630,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     setPanelBig(show, show);
     return { shown: show };
   };
-  // 앱 창을 옮기거나 크기를 바꾸면 Chrome도 뒤 자리로(드러나지 않게). 연속 이벤트는 잠깐 모아서 한 번.
   let followTimer: NodeJS.Timeout | null = null;
   const follow = () => {
     if (!browserAvailable || !mirrorRun || embedded) return;
@@ -1969,12 +1641,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   win.on('move', follow);
   win.on('resize', follow);
-  /**
-   * 진행 화면(B3, 부장 지시 2026-11-13): 실행 중이면 금고에 실행 탭 화면 중계를 맡긴다(screen.start, 같은 탭이면 그대로).
-   * Chrome이 뜨고 탭이 붙기 전에는 실패하니 실행이 바뀔 때마다, 그리고 1초마다 다시 부른다. 실행이 끝나면 멈춘다.
-   */
   const mirrorTick = setInterval(() => {
-    if (embedded) return; // 앱 안 브라우저: 패널이 그 보기 자체라 중계하지 않는다
+    if (embedded) return;
     const r = mirrorRun ? runs.get(mirrorRun) : undefined;
     if (r && runs.isActive(r.id) && r.status !== 'draft') void host.control('screen.start').catch(() => {});
   }, 1_000);
@@ -1983,7 +1651,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const live = runs.isActive(r.id) && r.status !== 'draft';
     if (live && mirrorRun !== r.id) {
       mirrorRun = r.id;
-      // 실행이 시작되면 렌더러가 패널을 브라우저 폭으로 넓히고 주소 줄을 단다(Chrome이 뜨기 전에 자리가 정해지게).
       browserAvailable = true;
       sendBrowserState();
       if (embedded) bar.layoutChanged();
@@ -2000,29 +1667,24 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       } else void host.control('screen.stop').catch(() => {});
     }
   });
-  /** 실행마다 마지막 자리(뒤·사람 차례). 같은 차례에 두 번 앞으로 올리지 않는다(사람이 [브라우저]로 뒤로 보냈으면 그대로 둔다). */
   const chromeSpot = new Map<string, string>();
   runs.on('update', (r: RunView) => {
     if (!runs.isActive(r.id) || r.status === 'draft') {
       chromeSpot.delete(r.id);
       return;
     }
-    // 사람 차례: 핸드오프(로그인·서명·기타) 또는 승인 뒤 서명 단계(인증서 비밀번호·간편인증). 승인 자체는 앱의 승인 바에서 한다.
     const turn = r.status === 'turn' ? `turn:${r.handoff?.phase ?? ''}` : r.status === 'issuing' && !r.cert && r.steps[5]?.state === 'now' ? 'sign' : null;
     const want = turn ?? 'back';
     if (chromeSpot.get(r.id) === want) return;
-    // 시작 때 한 번만 뒤에 둔다. 사람 차례가 끝났으면 'away'로 바꿔 다음 차례(같은 단계의 다른 핸드오프)에도 패널을 크게 한다
     if (want === 'back' && chromeSpot.has(r.id)) {
       if (chromeSpot.get(r.id) !== 'back') chromeSpot.set(r.id, 'away');
       return;
     }
     chromeSpot.set(r.id, want);
     if (turn) {
-      // 사람 차례: 패널을 크게 하고 중계 화면에 입력 포커스(Chrome은 앞으로 올리지 않는다)
       setPanelBig(true, true);
       return;
     }
-    // 시작: Chrome이 뜨고 실행 탭이 붙을 때까지 잠깐 다시 해 본다(엔진이 run.start 뒤에 금고에 기동을 맡긴다).
     void (async () => {
       for (let i = 0; i < 40 && chromeSpot.get(r.id) === 'back' && runs.isActive(r.id); i++) {
         if (await placeBehind()) return;
@@ -2031,10 +1693,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     })();
   });
 
-  /**
-   * 기억한 인증서 비밀번호(대표 지시 2026-11-13). 금고가 처음 넣은 값을 저장하고 다음부터 넣는다(vault SecretOps.certMemory).
-   * 홈택스가 비밀번호가 틀렸다고 하면 바로 지운다(다시 넣어 인증서가 잠기지 않게). 설정에는 [지우기] 하나만 둔다. 값은 main에 오지 않는다.
-   */
   const CERT_SLOT = { kind: 'cert_password', scope: 'business' } as const;
   const certMemory = {
     has: async () => (await host.control('secret.has', CERT_SLOT).catch(() => false)) === true,
@@ -2047,7 +1705,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if ((e.type === 'handoff' || e.type === 'end') && (e.code === 'sign.password_wrong' || e.code === 'sign.password_retry_limit')) void certMemory.forget(e.code);
   });
   const handlers: ShellHandlers = {
-    // 계좌 자동조회(CODEF 공동인증서, bank-auto.ts). 연결·고르기·[최신화]·[연결 해제]는 실제 입력 뒤에만.
     'bankAuto.status': () => bankAutoH['bankAuto.status'](),
     'bankAuto.certs': () => bankAutoH['bankAuto.certs'](),
     'bankAuto.consent': (p) => {
@@ -2084,19 +1741,15 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       profile,
       counterparties: cps,
       docs: await listDocs(),
-      // 견본 대화·견본 표시는 시연(fixture)만. 제품은 빈 대화에서 시작하고 빠른 실행은 세금계산서만(정부24 안내는 견본 후보라 뺀다).
       timeline: sample ? sample.timeline() : [],
       quick: sample ? sample.quick : QUICK.filter((q) => q.label === '세금계산서 발급' || q.cert || q.soon),
       sample: !!sample,
       platform: process.platform,
       loginRequired,
-      // 설치본 자기 점검의 warn(미서명 빌드 등). 제품 진입점(shell.ts)이 정한다. 렌더러는 글자만 보인다.
       build: opts.buildBadges ?? [],
       past: await pastNow(),
       onboarding: await onbView(),
-      // 거래처 장부: 시연 DB(fixture, 저장 품목까지) / 이 PC 장부(제품, 품목 열은 아직 없다)
       cpBook: fixture ? 'demo' : 'local',
-      // 내 사업장 고친 기록(칸 이름만)과 [발급 인증 바꾸기]를 온보딩 대화로 열 수 있는지(온보딩 기록이 없는 옛 프로필은 못 연다)
       profileEdits: editLog.list(),
       authReopen: !!onb,
     }),
@@ -2105,9 +1758,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       profile = p.kind;
       return { profile };
     },
-    // 제품: 엔진 intent.resolve(M4-3 ③, 4초 상한). 실패(게이트웨이 불가·시간 초과·모양 다름)하면 정규식으로 의도를 고르지 않고
-    // kind 'unavailable'(연결 안 됨 + [다시 시도])을 돌려준다. 되묻던 것(pending)도 그대로 둔다(사용자 결정 2026-11-10 "오프라인 해석은 없다").
-    // 인자(거래처·금액·부가세)는 로컬 파서가 뽑는다(D01 §5.1). 시연(fixture)은 시연 모델(4초 상한) → 실패하면 정규식(e2e가 기댄다).
     'request.send': async (p) => {
       sendByUser = gesture.within(performance.now(), 2_000);
       const vat = p.vat === 'separate' || p.vat === 'included' ? (p.vat as Vat) : null;
@@ -2116,15 +1766,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const text = String(p.text ?? '').slice(0, 2000);
       const t0 = performance.now();
       const local = parseRegex(text, runs.counterparties);
-      // 민원증명(cert-docs 표의 이름)은 이 PC의 규칙으로 바로 고른다(모델·게이트웨이를 거치지 않는다). 대화 에이전트 도구에는 증명서가 없다.
-      // 기본 용도·제출처로 초안을 만들고, 사용자 전송이면 바로 시작한다(finishReply → autoPrepare). 사람이 누르는 것은 승인 카드의 [승인]뿐이다.
-      // 숨긴 서류(H-04)는 카드 전 검사(setupGate) 없이 interpret의 「떼지 못해요」를 바로 돌려준다(Chrome·보안 프로그램 안내를 내지 않는다)
       if (profile === 'business' && local.cert) return (certDocByCode(local.cert)?.hidden ? null : setupGate(local)) ?? finishReply(interpret(text, vat, profile, runs, local), 'offline', null, []);
-      // 세무사 꾸러미 요청(엔진 L0 규칙 bundle.monthly와 같은 꼴)은 모델 없이 꾸러미 카드로 답한다. 그 달 꾸러미를 바로 만든다(로컬 파일만, 보내는 곳 없음).
       const packFor = profile === 'business' ? packAsk(text, kstToday(Date.now())) : null;
       if (packFor) return { kind: 'pack', pack: await pack.make(packFor), via: 'l0', note: null, sent: [] };
       if (demo) {
-        // 시연 모델은 부르면 보낸 것이다(실패·시간 초과여도). 활동 기록은 결과가 아니라 송신으로 적는다.
         const ask = modelOk() && !!text.trim();
         const model = ask ? await demo.parse(text, runs.counterparties.map((c) => c.name)) : null;
         const via = model ? 'model' : 'offline';
@@ -2132,8 +1777,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         const parsed = model && dev ? dev.mergeParsed(model, local, text) : local;
         return setupGate(parsed) ?? finishReply(interpret(text, vat, profile, runs, parsed), via, null, ask ? ['openrouter_demo'] : []);
       }
-      // 사업자 대화는 대화 에이전트로 간다(제품 전부, 시연은 e2e가 agent를 넘겼을 때만). 개인 프로필은 아래 옛 해석 길(정부24 안내).
-      // 등본·초본(정부24 직접 발급 안내)은 사업자도 옛 길로 간다. 첫 화면 칩 [주민등록등본 떼 줘]가 안내를 잃지 않게(#300 판정).
       const g24Ask = local.intent === 'resident_copy' || local.intent === 'resident_abstract';
       if (profile === 'business' && (!fixture || opts.agent) && !g24Ask) {
         if (!text.trim()) return { kind: 'say', text: EMPTY_REQUEST_TEXT, via: 'model', note: null, sent: [] };
@@ -2147,15 +1790,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
           run.sent = sent;
         }
         if (agentCreated.length) pushBoard();
-        // 기본값(부가세 별도)·저장 품목으로 채운 초안도 바로 준비한다(대표 실사용 2026-11-14 "일호유통에 100원"이 [홈택스에서 준비]를 기다렸다).
-        // 준비는 칸에 넣고 되읽기만 해서 되돌릴 수 있고, 승인 카드에서 다시 본다. 품목이 비면(진짜 빠짐) autoPrepare가 건너뛴다.
-        // 한 요청에서 초안이 둘 이상이면 한 카드로 묶고 첫 건만 시작한다. 뒤 건은 앞 건이 끝나면 차례로 시작한다(ShellRuns batchNext).
         const batched = runs.makeBatch(agentCreated.map((x) => x.id));
         if (sendByUser) for (const run of batched ? agentCreated.filter((x) => x.batch?.index === 0) : agentCreated) autoPrepare(run.id);
         log.event('main.agent', r.kind === 'agent' ? { result: 'ok', filtered: r.filtered ?? 'none', show: r.show.length, ask: r.ask?.kind ?? 'none', ms: Math.round(performance.now() - t0) } : r.kind === 'reaction' ? { result: 'reaction', reaction: r.reaction, ms: Math.round(performance.now() - t0) } : { result: r.code, ms: Math.round(performance.now() - t0) });
         if (r.kind === 'unavailable') return { kind: 'unavailable', text: r.text, retry: r.retry, via: 'model', note: null, sent };
         if (r.kind === 'reaction') return { kind: 'reaction', reaction: r.reaction, via: 'model', note: null, sent };
-        // 카드는 지금 실행 값으로 싣는다(렌더러가 그린다). 버린 초안은 목록에 없어 빠지고, 그 카드는 update 이벤트로 "취소함"이 된다.
         type Shown = { type: 'card'; run: RunView } | Extract<(typeof r.show)[number], { type: 'table' }>;
         const show = r.show.flatMap((x): Shown[] => {
           if (x.type !== 'card') return [x];
@@ -2165,20 +1804,14 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         const missing: SetupItem[] = r.setup ? [...setupMissing(profiles().business), ...(chromeReady() ? [] : (['chrome'] as const)), ...(securityMissing() ? (['security'] as const) : [])] : [];
         return { kind: 'agent', text: r.text, show, ask: r.ask, filtered: r.filtered, setup: missing.map((id) => ({ id, label: SETUP_LABEL[id] })), unknown: r.unknown ?? null, via: 'model', note: null, sent };
       }
-      // 시연(fixture)·e2e는 게이트웨이가 없다. 해석기를 바꿔 끼우지 않았으면 로컬 정규식으로 돈다(시연 전용, 제품에는 없는 길).
       if (fixture && !opts.intent) return setupGate(local) ?? finishReply(interpret(text, vat, profile, runs, local), 'offline', null, []);
       if (!text.trim()) return { kind: 'say', text: EMPTY_REQUEST_TEXT, via: 'model', note: null, sent: [] };
-      // 온보딩 ②(모델 처리 동의) 전에는 문장을 모델로 보내지 않는다. "연결 안 됨"이 아니라 동의가 먼저라고 말한다.
       if (!modelOk()) return { kind: 'say', text: MODEL_CONSENT_FIRST_TEXT, via: 'model', note: null, sent: [] };
-      // 이 해석 동안 main이 내준 게이트웨이 헤더가 곧 우리 서버로 간 것이다(헤더 없이는 엔진이 게이트웨이를 부를 수 없다).
-      // 해석은 한 번에 하나라(렌더러 sending) 이 구간의 발급은 이 요청 것이다.
       const mark = gwSeq;
       const r = await intent.resolve(text);
       log.event('main.interpret', { path: r.route ? `engine.${r.route.via}` : `unavailable.${r.fallback ?? 'none'}`, outcome: r.route?.outcome ?? 'unavailable', ms: Math.round(performance.now() - t0) });
       if (!r.route) return { kind: 'unavailable', text: INTENT_UNAVAILABLE_TEXT, retry: true, via: 'model', note: null, sent: sentFromGateway(gwIssuedSince(mark)) };
       const via = 'model';
-      // 모름(unknown)이고 되묻던 것에 답하는 문장도 아니면 모델이 짧게 답한다(chat.respond). 고정 문구(EMPTY_REQUEST_TEXT)는 빈 입력에만.
-      // 답은 텍스트로만 보이고, 제안 작업은 입력창을 채우는 칩일 뿐이다(실행은 사용자가 보내고 확인 카드를 거친다). 실패는 정규식 대체 없이 오류 문장.
       if (r.route.outcome === 'unknown' && !answersPending(local, runs, text)) {
         const c = await chatReply.respond(text);
         const sent = sentFromGateway(gwIssuedSince(mark));
@@ -2197,7 +1830,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       if (gate) return { ...gate, via, note: to.note, sent };
       return finishReply(interpret(text, vat, profile, runs, to.parsed), via, to.note, sent);
     },
-    // [다시 준비]: 발급 전에 멈춘 실행과 같은 값의 새 초안(시작은 그 카드의 [홈택스에서 준비]로만)
     'run.redraft': (p) => {
       const d = runs.redraft(String(p.id));
       pushBoard();
@@ -2212,21 +1844,17 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         email: typeof p.email === 'string' ? p.email : undefined,
         counterpartyId: typeof p.counterpartyId === 'string' ? p.counterpartyId : undefined,
       }),
-    // 실행 시작은 2초 안의 실제 입력이 있어야 하고, 사람 속도(분당 3회)·게이트 없이 끝난 연속 3회에서 멈춘다.
     'run.prepare': async (p) => {
       needGesture(2_000);
       const id = String(p.id);
-      // 진행 중인 건이 있으면 [중지]를 시키지 않고 바꾸거나 이어서 준비한다(queueIfBusy)
       if (queueIfBusy(id)) return runs.get(id);
       return prepareNow(id);
     },
     'run.stop': (p) => runs.stop(String(p.id)),
-    // [인증서로 다시 시도]: 공동인증서 로그인 실패 차례에서만(멈추고 같은 값으로 인증서 로그인부터 다시)
     'run.retryCert': (p) => {
       needGesture(3_000);
       return runs.retryCert(String(p.id));
     },
-    // 폰이 시작한 간편인증을 인증 앱에서 승인했다: [인증 완료]를 누르고 이어서
     'run.simpleDone': (p) => {
       needGesture(3_000);
       return runs.simpleAuth(String(p.id), 'complete');
@@ -2247,17 +1875,13 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       needGesture(3_000);
       return toggleBrowser(p.show === true);
     },
-    // 패널 안 브라우저 조작: 메인 창에서 방금(1초) 본 실제 마우스·키 입력이 있을 때만. 중계 중인 실행 탭에만 들어간다(금고가 비밀 창 동안 거부).
     'browser.input': (p) => panelBrowserInput(p as Record<string, unknown>),
-    // 앱 안 브라우저: 패널 화면 칸 자리(보기를 그 위에 둔다, main이 패널 영역으로 자른다)·경계 끌기 폭. 값·페이지는 건드리지 않는다.
     'browser.slot': (p) => placeBrowser(p.none === true ? null : { x: Number(p.x), y: Number(p.y), width: Number(p.width), height: Number(p.height) }),
     'browser.resize': (p) => resizeBrowser(Number(p.width)),
-    // InDoubt 카드를 열었다(실제 입력 3초 안). 증언 요청이 무장돼 있으면 main이 바를 띄운다. 돌려주는 것은 무장됐는지뿐이다.
     'incident.open': (p) => {
       needGesture(3_000);
       return incidents.open(String(p.id));
     },
-    // 카드를 닫았다. 증언 바를 내린다(증언이 안 될 뿐이라 안전한 실패다).
     'incident.close': (p) => incidents.close(String(p.id)),
     'docs.list': () => listDocs(),
     'issued.list': () => pastNow(),
@@ -2267,7 +1891,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       desktop.showItemInFolder(await packZip(p.month));
       return {};
     },
-    // [보내기]: macOS 공유 시트(메일·메시지·AirDrop)에 zip을 건넨다. 보내는 것은 사용자다. 공유 시트가 없는 OS는 Finder(탐색기)에서 보여 준다.
     'pack.share': async (p) => {
       needGesture(3_000);
       const file = await packZip(p.month);
@@ -2278,8 +1901,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       new ShareMenu({ filePaths: [file] }).popup({ window: win });
       return { via: 'share' };
     },
-    // 파일 고르기 대화상자는 렌더러가 pick을 보내고 3초 안에 실제 입력이 있었을 때만 연다(가져오기 버튼).
-    // 열기 암호를 다시 물을 때는 pickId로 부른다. 가져오기는 한 번에 하나(대화상자가 겹쳐 뜨지 않게).
     'docs.import': docsCall(async (p) => {
       if (p.pick !== true && typeof p.pickId !== 'string') throw new Error('bad_request');
       if (typeof p.pickId !== 'string') needGesture(3_000);
@@ -2300,7 +1921,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const seen = (p.seen ?? {}) as Record<string, unknown>;
       return docs.update(String(p.id), { docType: patch.docType, issuedOn: patch.issuedOn, expiresOn: patch.expiresOn }, { docType: seen.docType, issuedOn: seen.issuedOn, expiresOn: seen.expiresOn });
     }),
-    // 보관함 PDF를 사용자 기본 뷰어로 연다(값을 PDF와 맞춰 보게). 경로는 main 안에서만 쓰고, PDF가 아니면 열지 않는다(실행 파일을 띄우지 않게).
     'docs.open': docsCall(async (p) => {
       needGesture(3_000);
       if (!openRate.take(performance.now())) throw new Error('throttled');
@@ -2309,15 +1929,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       if (await desktop.openPath(file)) throw new Error('open_failed');
       return {};
     }),
-    // 같은 파일을 Finder에서 보여 준다(결과 카드 [폴더 열기]).
     'docs.reveal': docsCall(async (p) => {
       needGesture(3_000);
       if (!openRate.take(performance.now())) throw new Error('throttled');
       desktop.showItemInFolder(await docFile(String(p.id)));
       return {};
     }),
-    // 거래처 추가·수정(엔진 counterparty.create/update) + [저장 품목] 칸 = 첫 저장 품목(counterparty.setItems, #144).
-    // 시연 값(itemHints)은 저장한 뒤로는 쓰지 않는다(DB가 정본).
     'counterparty.save': async (p) => {
       const saved = await cpBook.save(p);
       if (fixture) delete fixture.itemHints[saved.bizNo];
@@ -2328,7 +1945,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       }
       return { id: saved.id, counterparties: cps };
     },
-    // [등록증으로 채우기]: 파일 고르기를 여니 실제 클릭 뒤에만(ADR-027 결정 8). 후보만 돌려준다(주소는 main이 든다).
     'counterparty.readCert': () => {
       needGesture(3_000);
       return cpBook.readCert();
@@ -2341,12 +1957,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       await refresh();
       return profiles();
     },
-    // 정부24 후보 파일은 아직 견본이다(다운로드 폴더를 읽지 않는다). 제품은 후보를 보이지 않는다.
     'g24.candidates': (p) => (sample ? sample.g24Candidates(g24Doc(p.doc), Number(p.startedAt)) : []),
     'g24.save': (p) => store.g24Save(String(p.id), g24Doc(p.doc)),
-    // 비밀이 아닌 값(승인번호·사업자번호·주소)만. 클립보드 기록 제외 형식은 Phase 1(D17 §1.2).
-    // 온보딩 답 하나. 동의·확정은 화면마다 실제 클릭이라 3초 안의 실제 입력이 있어야 한다(ADR-027 결정 8).
-    // 계정 로그인(A-01). 단계·이메일·코드 만료 시각·오류 코드만 돌려준다(세션·토큰은 main에만).
     'account.view': async () => {
       await accountInit();
       return account.view();
@@ -2357,7 +1969,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return account.sendCode(String(p.email), p.signup === true);
     },
     'account.verify': async (p) => {
-      // 6자리가 차면 렌더러가 바로 부른다: 숫자 키·붙여 넣기도 main이 본 입력으로 친다(클릭은 3초 전일 수 있다). 메뉴 붙여 넣기는 [확인] 클릭으로.
       needTyping(3_000);
       await accountInit();
       return watchLink(await account.verify(String(p.code)));
@@ -2382,7 +1993,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return account.startReset(String(p.email));
     },
     'account.finishReset': async (p) => {
-      // [바꾸기]·Enter가 보통이지만, 코드·새 비밀번호를 치는 키 입력도 main이 본 입력으로 친다(account.verify와 같다)
       needTyping(3_000);
       await accountInit();
       return watchLink(await account.finishReset(String(p.code), p.password));
@@ -2391,7 +2001,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       await accountInit();
       return account.back();
     },
-    // 설정 > 계정 [로그아웃]: 실제 입력 뒤에만, 발급 실행 중이면 거부. 폰 연결 창을 닫고 신원·받아 둔 코드를 지운 뒤 로그인 화면으로(렌더러 게이트).
     'account.signOut': async () => {
       needGesture(3_000);
       await accountInit();
@@ -2404,7 +2013,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       pushBoard();
       return v;
     },
-    // 설정 > 구독: 기기 토큰으로 상태·결제 창·해지·청약철회. 토큰이 만료(401)면 한 번 새로 받아 다시 한다
     'billing.view': async () => billingCall((c, a) => c.billing(a)),
     'billing.subscribe': async () => {
       needGesture(3_000);
@@ -2425,7 +2033,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       log.event('main.billing_refunded');
       return { ...(await billingCall<BillingView>((c, a) => c.billing(a))), refundedKrw: r.amountKrw };
     },
-    // 탈퇴(F-06): 이 PC의 기기 토큰으로 서버에 묻는다. 로그인 전이면 account_signed_out
     'account.deletion': async () => {
       await accountInit();
       const d = account.device();
@@ -2450,18 +2057,14 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       log.event('main.account_delete_cancel', { result: 'ok' });
       return { deleteAfter: null };
     },
-    // [폰 연결](S-03): 설정 > 기기 연결의 연결 칸에서 QR을 띄운다(따로 창 없음). 동작은 다섯(열기·보기·6자리·다시 하기·취소)이고,
-    // 열기·6자리·다시 하기는 main이 메인 창에서 직접 본 실제 입력 뒤에만(ADR-027 결정 8). 화면 값은 PairView(pair 이벤트)뿐이다.
     'pair.open': async () => {
       needGesture(3_000);
       await accountInit();
-      // 폰이 스스로 나간 자리가 목록에 남아 있으면 새 폰을 올릴 때 서버가 거부한다. 열기 전에 맞춘다
       await reconcileDevices();
       return pairing().start();
     },
     'pair.view': async () => pairHost?.view() ?? { step: 'idle', qr: null, expiresAt: null, phoneName: null, triesLeft: null, error: null },
     'pair.submit': async (p) => {
-      // 6칸이 다 차면 렌더러가 바로 부른다(account.verify와 같다): 숫자 키·붙여 넣기도 main이 본 입력으로 친다.
       needTyping(3_000);
       return pairing().submitSas(String(p.code).slice(0, 6));
     },
@@ -2473,14 +2076,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       h.cancel();
       return h.start();
     },
-    // [취소]·[닫기]: 진행 중이면 그만두고(우편함 정리), 연결을 마친 칸이면 화면만 쉬는 자리로
     'pair.cancel': async () => pairHost?.dismiss() ?? { step: 'idle', qr: null, expiresAt: null, phoneName: null, triesLeft: null, error: null },
-    // 설정 > 기기 연결(ADR-048 결정 6). 목록은 읽기만(보기 전에 서버와 목록을 맞춘다), 끊기·나가기는 실제 입력 뒤에만.
     'devices.list': async () => {
       await accountInit();
       return { devices: withApproval(await devicesOf().list()) };
     },
-    // 폰 승인 끄기·다시 허용(ADR-052). 연결은 그대로 두고 승인 키만 지우거나 다시 받는다. 실제 입력 뒤에만
     'devices.px': async (p) => {
       needGesture(3_000);
       await accountInit();
@@ -2496,11 +2096,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const devices = await devicesOf().unlink(String(p.deviceId));
       send({ type: 'account', account: account.view() });
       syncAwake();
-      // 기기를 끊어 세대가 올랐다: 남은 폰 가운데 지금 연결된 폰에 새 열쇠를 준다(꺼져 있는 폰은 다음 세션에서 받는다)
       void phoneLink?.pushShareKeys();
       return { devices };
     },
-    // 이 PC가 계정에서 나간다: 서버가 바로 폐기한 뒤 로그아웃과 같은 정리를 한다. 발급 실행 중이면 거부, 마지막 PC면 account.last_desktop
     'devices.leave': async () => {
       needGesture(3_000);
       await accountInit();
@@ -2516,7 +2114,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       pushBoard();
       return v;
     },
-    // 새 PC 연결(ADR-048 결정 3). 새 PC 쪽: "쓰던 PC에 '연결됐어요'가 떴어요"를 누른 뒤에만 금고가 계정 열쇠를 받는다
     'account.linkAccept': async () => {
       needGesture(3_000);
       await accountInit();
@@ -2529,7 +2126,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       await accountInit();
       return watchLink(await account.linkCancel());
     },
-    // 쓰던 PC 쪽: 신청 보기, [연결], 새 PC 화면의 6자리 넣기, [거절]. 6자리가 맞으면 목록을 올리고 금고가 계정 열쇠를 봉인해 보낸다
     'pclink.list': async () => {
       await accountInit();
       return { requests: await pcLinkHostOf().list() };
@@ -2540,7 +2136,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return { requests: await pcLinkHostOf().begin(String(p.deviceId)) };
     },
     'pclink.confirm': async (p) => {
-      // 계정 열쇠를 넘기는 승인이다: 숫자 키 입력만으로는 받지 않고 [확인] 클릭·Enter를 본 뒤에만 한다
       needGesture(3_000);
       await accountInit();
       const r = await pcLinkHostOf().confirm(String(p.deviceId), String(p.code));
@@ -2557,11 +2152,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       if (!onb) throw new Error('onboarding_done');
       if (p.step !== 'terms') await needLogin();
       const r = await onb.answer({ step: p.step, choice: p.choice, fields: p.fields, certId: p.certId, tasks: p.tasks } as Parameters<OnboardingFlow['answer']>[0]);
-      if (onb.done) pushBoard(); // 건너뛴 항목이 판의 할 일로
+      if (onb.done) pushBoard();
       return { onboarding: await onbView(), fill: r.fill ?? null, profiles: profiles() };
     },
     'certMemory.status': async () => ({ remembered: await certMemory.has() }),
-    // 기억한 홈택스 인증서 이름(profiles.cert_name, CN). 렌더러에는 이름 부분만(뒤의 식별 번호 없이) 보인다
     'certName.status': () => certNameStatus(),
     'certName.clear': async () => {
       needGesture(3_000);
@@ -2572,17 +2166,14 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       await certMemory.forget('user');
       return { remembered: await certMemory.has() };
     },
-    // 설정 > 발급 인증의 [인증서 비밀번호 저장]: 가려진 칸의 값을 금고로만(저장 결속 secret.store). 처음 로그인에서 틀리면 금고가 지운다.
     'certMemory.save': async (p) => {
       needGesture(3_000);
       return saveCertMemory((p as { value?: unknown }).value);
     },
-    // 대화 비밀 입력 카드의 답(대표 지시 2026-11-14). 값은 금고 1회용 포트로만.
     'secret.answer': (p) => {
       needGesture(3_000);
       return answerSecret(p as { reqId?: unknown; value?: unknown; cancel?: unknown });
     },
-    // 보안 프로그램(MagicLine4NX) 점검·설치 링크·켜기(B4). 설치는 홈택스 공식 설치 파일을 기본 브라우저로 연다(사람이 설치를 마친다).
     'security.check': async () => {
       const st = securityNow();
       pushBoard();
@@ -2604,7 +2195,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'security.start': async () => {
       needGesture(3_000);
       const ok = opts.security?.start ? opts.security.start() : startSecurityProgram();
-      // 켜는 데 잠시 걸린다
       for (let i = 0; i < 20 && ok && securityBlocks(securityNow()); i++) await new Promise((r) => setTimeout(r, 250));
       const st = securityNow();
       pushBoard();
@@ -2618,14 +2208,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'onboarding.reopen': async (p) => {
       needGesture(3_000);
       await needLogin();
-      // 온보딩 기록이 없는 기존 사용자(!onb)는 다시 열 대화가 없다: 렌더러가 내 사업장으로 간다
       if (!onb) throw new Error('onboarding_unavailable');
       await onb.reopen(p.item as 'biz' | 'auth');
       onbShow = true;
       pushBoard();
       return { onboarding: await onbView(), profiles: profiles() };
     },
-    // 내 사업장 [저장]: 실제 입력 뒤에만, 실행 중이면 거부(profile-edit.ts). 번호를 조회하지 못하면 confirm을 돌려주고 [맞습니다]면 confirmUnverified로 다시 온다.
     'profile.edit': async (p) => {
       needGesture(3_000);
       await needLogin();
@@ -2633,7 +2221,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const r = await editor.save((p.fields ?? {}) as Record<string, unknown>, p.confirmUnverified === true);
       return { ...r, profiles: profiles(), edits: editLog.list() };
     },
-    // 내 사업장 [파일에서 읽기]: 파일 고르기를 여니 실제 클릭 뒤에만. 칸 후보만 돌려준다(저장은 [저장]으로, 같은 검사를 거친다).
     ...bankShellHandlers(bank, () => pushBoard()),
     'bank.pickStatement': () => {
       needGesture(3_000);
@@ -2670,9 +2257,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
 
   ipcMain.handle('sax', async (e, req: { method?: unknown; params?: unknown }) => {
-    // 메인 창의 셸 페이지에서 온 호출만 받는다. 승인 바(javascript:false)는 IPC가 없다.
     if (e.sender !== wc || e.senderFrame?.url !== SHELL_URL) throw new Error('forbidden');
-    // 최상위 프레임만, 표(ipc.ts SHELL_METHODS)에 있는 메서드·필드만(D11 §4 IPC 행).
     return dispatchShell(e.senderFrame, SHELL_URL, handlers, req);
   });
 
@@ -2711,8 +2296,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         },
         log: (n, d) => log.event(n, d),
       });
-      // 첫 확인은 기동 레지스트리 동기화 뒤에: 엔진이 폐기 목록을 받기 전이면 registry.revocation_stale로 보류되고 다음 확인은 15분 뒤다
-      // (새 설치 격리 프로필 실측 2026-11-13, 동기화가 2초 늦었다). 기동 동기화가 돌고 있으면 그 약속을 같이 기다린다.
       void registrySync('update').finally(() => void h.check());
       return h;
     } catch (e) {
@@ -2720,8 +2303,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return null;
     }
   };
-  // 금고 잠금은 사람 세션을 따른다(ADR-026 결정 3). utilityProcess에는 powerMonitor가 없어 main이 유휴 시간·잠금 이벤트를 넘긴다.
-  // 넘기지 않으면 금고가 idle_unknown으로 닫혀 기억한 인증서 비밀번호를 저장도 사용도 못 한다(2026-11-13 발견, #308 기억이 제품에서 동작하지 않던 원인).
   const reportIdle = () => void host.control('session.idle', { idleSec: powerMonitor.getSystemIdleTime() }).catch(() => {});
   const idleTimer = setInterval(reportIdle, SESSION_IDLE_REPORT_MS);
   idleTimer.unref();
@@ -2730,10 +2311,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const fn = () => {
       void host.control('session.event', { kind }).catch(() => {});
       if (kind === 'unlock-screen' || kind === 'resume') reportIdle();
-      // 잠자기 뒤 연결은 열려 보여도 죽어 있다: 바로 다시 붙고 쌓인 큐를 비운다
       if (kind === 'resume') phoneLink?.wake('resume');
       else if (kind === 'unlock-screen') phoneLink?.wake('unlock');
-      // 깨어남: 승인 전 단계에서 바로 멈추는 실행은 같은 값으로 다시 시작하고(ShellRuns wakeAfter), 홈택스 로그인을 바로 연장한다.
       if (kind === 'resume') {
         runs.woke();
         if (fixture || opts.daemon === false) void keepHometax('resume');
@@ -2747,29 +2326,23 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       await host.ready;
       reportIdle();
     } catch (e) {
-      // 금고 키 유실·환경 변수 변조 등은 사실 문장으로 알리고 열지 않는다(복구 화면은 Phase 1).
       const text = fatalText((e as Error).message);
       if (text) dialog.showErrorBox('소버린 AX', text);
       throw e;
     }
     if (fixture) await fixture.seed(host);
-    // 제품: 기동 때 한 번(기다리지 않는다)
     void registrySync('boot');
     if (fixture && dev && opts.demoSeed) seed = await dev.startDemoSeed(host, store, fixture.root, fixture.itemHints);
     await refresh();
-    // 온보딩: 시연·e2e는 opts.onboarding. 엔진 모드는 이어 하기 저장이 있으면 그 자리부터(끝났으면 대화 없이 동의·할 일만),
-    // 저장이 없고 사업자 프로필도 없으면 처음부터. 사업자를 건너뛰고 끝낸 사용자도 다음 기동에 약관부터 다시 묻지 않는다.
     if (opts.onboarding) onb = new OnboardingFlow(onbPorts);
     else if (!fixture) {
       const saved = (await onbStore.load()) ?? (await onbStore.importLegacyFile(legacyOnbFile));
       if (saved) {
-        // 모델 거절이 저장된 프로필은 ②를 다시 묻는다(reaskModel). 그때는 끝낸 온보딩이라도 대화로 다시 그린다.
         onb = new OnboardingFlow(onbPorts, saved);
         onbShow = !onb.done;
       } else if (!business) onb = new OnboardingFlow(onbPorts);
     }
     await win.loadURL(SHELL_URL);
-    // 서류 데몬(D10 notify, M4-8): 제품만. 시연·e2e(fixture)는 이 PC에 OS 알림을 띄우지 않는다.
     if (!fixture && opts.daemon !== false) {
       daemon = startDaemonHost({
         rpc: (m, p) => host.rpc(m, p),
@@ -2786,9 +2359,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       });
       powerMonitor.on('resume', onResume);
     }
-    // 앱 업데이트(M4-9): 설치본만. 실행 중·커밋 구간(승인 바·발급 중·제출 여부 모름)에는 설치를 미룬다(D11 §4). 데몬은 notify만이라 실행이 없다.
     if (!fixture && app.isPackaged && opts.update) updater = await startAppUpdater(opts.update);
-    // 견본 PDF·보관함 가져오기는 창을 띄운 뒤 뒤에서(몇 초). 끝나면 렌더러가 문서함을 다시 읽는다.
     void seed
       ?.fill()
       .then(async () => {
@@ -2798,11 +2369,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       })
       .catch((e) => log.event('main.seed_failed', { error: (e as Error).message.slice(0, 120) }));
   })();
-  /**
-   * 도구 > 홈택스 예행(발급 안 함): 고정 초안(REHEARSAL)으로 실행을 시작하고 엔진이 첫 게이트에서 스스로 멈춘다(B1 실화면 예행).
-   * 메인 프로세스 메뉴라 렌더러 제스처 규칙(USER_ACTION_METHODS)을 거치지 않는다. 준비 상한(prepareNow)은 그대로 받는다.
-   * 장부에 일호유통이 없으면 그 번호로 추가한다.
-   */
   const rehearse = async () => {
     try {
       if (runs.anyActive()) throw new Error('busy');
@@ -2821,7 +2387,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       log.event('main.rehearsal_failed', { error: (e as Error).message.slice(0, 60) });
     }
   };
-  /** 도구 > 예행 중지: 진행 중인 예행 실행만 [중지]와 같은 길로 멈춘다(창이 다른 Space에 있어도 메뉴로 부를 수 있다). 예행이 아닌 실행은 건드리지 않는다. */
   const stopRehearsals = () => {
     for (const r of runs.list()) {
       if (!r.rehearsal || !runs.isActive(r.id)) continue;
@@ -2829,10 +2394,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       void runs.stop(r.id).catch((e: Error) => log.event('main.rehearsal_stop_failed', { error: e.message.slice(0, 60) }));
     }
   };
-  /**
-   * 도구 > 민원증명 예행(발급 안 함): 기본 용도·제출처로 민원증명 초안을 만들어 예행으로 시작한다(run.startCert {rehearsal: true}).
-   * 엔진이 승인 카드 자리(s20)에서 스스로 멈추고 발급(s21)은 없다. 세금계산서 예행과 같이 실행 카드·[중지]·준비 상한을 그대로 쓴다.
-   */
   const certRehearse = async (doc: CertDocDef) => {
     try {
       if (runs.anyActive()) throw new Error('busy');
@@ -2844,7 +2405,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       log.event('main.rehearsal_failed', { error: (e as Error).message.slice(0, 60) });
     }
   };
-  // 확대·축소 메뉴를 두지 않는다(렌더러 배율은 1, 바 자리는 DIP 고정). 접근성 배율은 Phase 1.
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       { role: 'appMenu' },
@@ -2882,7 +2442,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     powerMonitor.removeListener('on-battery', onPowerSource);
     watchChromeFront(false);
     closeSecret();
-    // 엔진이 실제로 끝난 뒤에 임시 앱 폴더를 지운다(DB·WAL이 열린 채 지우지 않게).
     await host.shutdown().catch(() => {});
     await fixture?.close().catch(() => {});
   };

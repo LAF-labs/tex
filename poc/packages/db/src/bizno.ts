@@ -1,4 +1,3 @@
-// 사업자등록번호(10자리) 정규화·검증. 가중치 1,3,7,1,3,7,1,3,5 + 9번째 자리 ×5의 십의 자리.
 export function normalizeBizNo(input: string): string {
   return input.replace(/\D/g, '');
 }

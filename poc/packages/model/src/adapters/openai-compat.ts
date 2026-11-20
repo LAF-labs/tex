@@ -1,8 +1,3 @@
-// OpenAI 호환 Chat Completions 판정 어댑터(측정 전용, ADR-035 W-5·yulmu 2026-11-05 결정). base URL·모델 ID는 설정이고
-// 송신은 @sax/net/demo의 DemoEgress.toCompatModel()만 한다(제품 송신 경로는 게이트웨이·BYOK Decisions뿐, D04 §1).
-// Decisions API와 다른 점: 질문을 고정 접두 뒤 system 텍스트로 풀어 쓰고, 답은 json_schema(strict) 구조화 출력으로 받는다.
-// 확률은 모델이 스스로 적은 값이라 Decisions의 확률과 같지 않다(임계값 프로필을 따로 잡아야 한다). choice 분포는 선택값 하나뿐이다.
-// 응답 전체 거절(message.refusal)은 모든 질문의 refusal로 바꿔 각 질문의 onRefusal을 따른다(매핑이 쓰는 choice가 거절이면 번들 전체 unknown).
 import { EgressError, ModelGuardError } from '@sax/net';
 import type { RedactedText, RunToken } from '../contract.ts';
 import type { LoadedBundle } from '../bundle/types.ts';
@@ -19,11 +14,8 @@ export interface CompatTransport {
 
 export interface OpenAICompatOptions {
   transport: CompatTransport;
-  /** 키는 메모리에만. 로그·보고서·감사에 남기지 않는다. */
   apiKey: string;
-  /** 공급사 모델 ID(예: OpenRouter `openai/gpt-…`) */
   model: string;
-  /** 공급사별 추가 본문 필드(예: OpenRouter provider 라우팅·데이터 수집 거부) */
   extraBody?: Record<string, unknown>;
 }
 
@@ -122,7 +114,7 @@ export class OpenAICompatDecideAdapter implements DecideAdapter {
       if (t === 'predicate') entries.push([name, { type: 'predicate', probability: a.probability }]);
       else if (t === 'choice') entries.push([name, { type: 'choice', choice: a.choice, confidence: a.confidence, probabilities: [{ value: a.choice, probability: a.confidence }] }]);
       else if (t === 'score') entries.push([name, { type: 'score', score: a.score, confidence: a.confidence }]);
-      else entries.push([name, { type: 'refusal' }]); // 모르는 이름: joinByName이 answer_names_mismatch로 거른다
+      else entries.push([name, { type: 'refusal' }]);
     }
     return joinByName(b.def, entries);
   }

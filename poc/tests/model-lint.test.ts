@@ -1,5 +1,3 @@
-// M1-1 린트 경계: 위반 예제 파일(tests/fixtures/lint-violations/*.ts.txt)을 머리말 경로에 있는 것처럼 검사해
-// 우회 import(D01 §3)·공급사 SDK(ADR-015)·비밀 직렬화(D05 §2)·RedactedText 단언(D06 §8)을 규칙별 개수까지 잡는지 본다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';

@@ -36,13 +36,11 @@ const id = (v: unknown): string => {
   if (typeof v !== 'string' || !v) throw new DataError('profile_not_found');
   return v;
 };
-/** 거래처 id(저장 품목 명령). 문자열이 아니면 거래처가 없는 것과 같다 */
 const cpId = (v: unknown): string => {
   if (typeof v !== 'string' || !v) throw new DataError('not_found');
   return v;
 };
 const nullableId = (v: unknown): string | null => (v === null || v === undefined ? null : id(v));
-/** 없으면 사업자(기본). 그 밖의 값은 거부(저장소 load·clear는 종류를 검사하지 않는다). */
 const profileKind = (v: unknown): OnboardingState['profileKind'] => {
   if (v === undefined) return 'business';
   if (v === 'business' || v === 'personal') return v;
@@ -54,7 +52,6 @@ const str = (v: unknown, code: string): string => {
   return v;
 };
 const optStr = (v: unknown, code: string): string | undefined => (v === undefined ? undefined : str(v, code));
-/** 렌더러가 아닌 main만 부르지만, 저장소 정규식이 undefined를 'undefined'로 받지 않게 문자열 필드를 먼저 확인한다. */
 function consentInput(p: Params): ConsentInput {
   return {
     profileId: nullableId(p.profileId),
@@ -79,7 +76,6 @@ export class DataService {
   private readonly verifier: BizVerifier;
   private readonly db: Db;
 
-  /** vaultDir: 보관함 폴더(기본은 앱 루트의 vault, 처음 쓸 때 정한다). now: 만료 계산 기준 시각(시험용). */
   constructor(db: Db, verifier: BizVerifier, opts: { vaultDir?: string; now?: () => Date } = {}) {
     this.profiles = new ProfileRepo(db);
     this.counterparties = new CounterpartyRepo(db);
@@ -156,7 +152,6 @@ export class DataService {
         return this.consents.latest(nullableId(p.profileId), str(p.kind, 'bad_consent_kind') as ConsentKind);
       case 'consent.attach':
         return this.consents.attachToProfile(id(p.profileId));
-      // 셸 이어 하기(run-resume.ts): 한 값만 둔다. take는 읽고 지운다. 모양은 셸이 검사한다(여기서는 크기만).
       case 'resume.save': {
         if (p.value === null) return void this.db.prepare('DELETE FROM settings WHERE key = ?').run(RESUME_KEY);
         if (typeof p.value !== 'string' || p.value.length > RESUME_MAX_CHARS) throw new DataError('bad_resume');
@@ -178,7 +173,6 @@ export class DataService {
         if (p.loginId !== null && typeof p.loginId !== 'string') throw new DataError('bad_login_id');
         return this.profiles.setPortalLoginId(id(p.id), p.loginId);
       case 'profile.setCertName':
-        // 온보딩 [홈택스 인증서]에서 고른 인증서 이름(CN, 공개 정보). H-01 2.3.0이 이 이름으로 인증서 창의 행을 고른다
         if (p.name !== null && typeof p.name !== 'string') throw new DataError('bad_cert_name');
         return this.profiles.setCertName(id(p.id), p.name);
     }

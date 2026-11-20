@@ -1,12 +1,9 @@
-// .xls(BIFF8 in OLE 복합 문서)·HTML 표(.xls로 내려받은 것) 읽기(샌드박스 모듈, Electron 없음). 값은 모두 가짜다.
-// xls는 이 파일 안의 작은 CFB·BIFF8 작성기로 만든다(실제 은행·홈택스 파일은 쓰지 않는다).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { decodeHtmlEntities, metaCharset, readSheetBytes, SandboxError, sniffFormat } from '@sax/docparse/sandbox';
 
 const code = (p: Promise<unknown>) => p.then(() => 'ok', (e: unknown) => (e instanceof SandboxError ? e.code : `throw:${(e as Error)?.message}`));
 
-// ── 바이트 도우미 ──
 const u16 = (n: number) => [n & 0xff, (n >> 8) & 0xff];
 const u32 = (n: number) => [n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff];
 const f64 = (n: number) => {
@@ -16,9 +13,7 @@ const f64 = (n: number) => {
 };
 const isWide = (s: string) => [...s].some((c) => c.charCodeAt(0) > 0xff);
 const charBytes = (s: string, wide: boolean) => (wide ? [...s].flatMap((c) => u16(c.charCodeAt(0))) : [...s].map((c) => c.charCodeAt(0)));
-/** XLUnicodeString(cch u16, flags, 글자) */
 const xlStr = (s: string) => [...u16(s.length), isWide(s) ? 1 : 0, ...charBytes(s, isWide(s))];
-/** ShortXLUnicodeString(cch u8, flags, 글자) */
 const shortStr = (s: string) => [s.length, isWide(s) ? 1 : 0, ...charBytes(s, isWide(s))];
 const rec = (type: number, data: number[]) => [...u16(type), ...u16(data.length), ...data];
 const cat = (...parts: number[][]) => parts.flat();
@@ -42,7 +37,6 @@ const SPLIT = '메모-적요-ABCDEF';
 const STRINGS = [...HEAD, '입금', RICH, SPLIT, '=HYPERLINK("x")', '숨김행', '숨긴 시트 글자'];
 const [I_IN, I_RICH, I_SPLIT, I_FORM, I_HROW, I_HSHEET] = [6, 7, 8, 9, 10, 11];
 
-/** SST + CONTINUE. SPLIT 글자 도중('메모-적요-' 뒤)에서 CONTINUE로 넘기고, 넘어간 꼬리는 압축(플래그 0)으로 적는다 */
 function sst(): number[] {
   const a: number[] = [...u32(STRINGS.length), ...u32(STRINGS.length)];
   let b: number[] = [];
@@ -50,12 +44,11 @@ function sst(): number[] {
     const s = STRINGS[i]!;
     const wide = isWide(s);
     if (i === I_RICH) {
-      // 서식 런 1개 + 확장 4바이트(건너뛰어야 한다)
       (b.length ? b : a).push(...u16(s.length), (wide ? 1 : 0) | 0x08 | 0x04, ...u16(1), ...u32(4), ...charBytes(s, wide), ...u16(0), ...u16(1), 9, 9, 9, 9);
     } else if (i === I_SPLIT) {
       const head = '메모-적요-';
       a.push(...u16(s.length), 1, ...charBytes(head, true));
-      b = [0, ...charBytes(s.slice(head.length), false)]; // 새 조각 첫 바이트 = 플래그(압축)
+      b = [0, ...charBytes(s.slice(head.length), false)];
     } else (b.length ? b : a).push(...u16(s.length), wide ? 1 : 0, ...charBytes(s, wide));
   }
   return [...rec(0x00fc, a), ...rec(0x003c, b)];
@@ -67,24 +60,23 @@ function sheet1(): number[] {
     ROW(0, false),
     ROW(3, true),
     ...HEAD.map((_, c) => LABELSST(0, c, c)),
-    NUMBER(1, 0, 46326.5, 1), // 사용자 서식 yyyy-mm-dd hh:mm(XF 1) → 시각 포함
+    NUMBER(1, 0, 46326.5, 1),
     LABELSST(1, 1, I_IN),
     LABELSST(1, 2, I_RICH),
     MULRK(1, 3, [rkInt(0), rkInt(150000), rkInt(1234567, true)]),
-    NUMBER(2, 0, 46327, 2), // 내장 서식 14(XF 2)
-    FORMULA(2, 1, [0, 0, 0, 0, 0, 0, 0xff, 0xff]), // 문자열 결과 → 다음 STRING
-    rec(0x04bc, [0, 0]), // SHRFMLA 흉내(FORMULA와 STRING 사이에 올 수 있다)
+    NUMBER(2, 0, 46327, 2),
+    FORMULA(2, 1, [0, 0, 0, 0, 0, 0, 0xff, 0xff]),
+    rec(0x04bc, [0, 0]),
     rec(0x0207, xlStr('이체')),
     LABELSST(2, 2, I_SPLIT),
     NUMBER(2, 3, 50000),
     FORMULA(2, 5, f64(1100000)),
-    LABELSST(3, 0, I_HROW), // 숨김 행
+    LABELSST(3, 0, I_HROW),
     NUMBER(3, 1, 999),
     LABEL(4, 0, '메모'),
     BOOLERR(4, 1, 1, false),
     BOOLERR(4, 2, 0x2a, true),
     LABELSST(4, 3, I_FORM),
-    // 시트 안 차트(BOF…EOF)는 건너뛴다
     BOF(0x0020),
     NUMBER(9, 9, 777),
     EOF,
@@ -113,7 +105,6 @@ function workbook(o: { filepass?: boolean; ver?: number } = {}): Uint8Array {
   return new Uint8Array([...globals(len, len + s1.length), ...s1, ...s2]);
 }
 
-// ── CFB(v3, 512바이트 섹터) 작성기 ──
 const END = 0xfffffffe;
 const FREE = 0xffffffff;
 const FATSECT = 0xfffffffd;
@@ -121,7 +112,6 @@ const NOSTREAM = 0xffffffff;
 
 interface Cfb {
   bytes: Uint8Array;
-  /** 스트림 이름 → 첫 섹터(큰 스트림만) */
   starts: Record<string, number>;
   fatSector: number;
   dirSector: number;
@@ -132,7 +122,6 @@ function cfb(streams: Array<{ name: string; data: Uint8Array }>): Cfb {
   const secs = (n: number) => Math.ceil(n / SEC);
   const small = streams.filter((s) => s.data.length < 4096);
   const big = streams.filter((s) => s.data.length >= 4096);
-  // 미니 스트림
   const miniStart: number[] = [];
   const miniParts: number[] = [];
   const miniFat: number[] = [];
@@ -182,7 +171,6 @@ function cfb(streams: Array<{ name: string; data: Uint8Array }>): Cfb {
   for (let i = 0; i < 109; i++) v.setUint32(76 + i * 4, i < fatN ? i : FREE, true);
   const at = (s: number) => SEC + s * SEC;
   fat.forEach((x, i) => v.setUint32(at(0) + i * 4, x, true));
-  // 디렉터리: 루트 + 자식(오른쪽 형제로 줄줄이)
   const ents = [{ name: 'Root Entry', type: 5, start: miniN ? miniStreamStart : END, size: miniParts.length }, ...streams.map((s) => {
     const bi = big.indexOf(s);
     return { name: s.name, type: 2, start: bi >= 0 ? bigStart[bi]! : miniStart[small.indexOf(s)]!, size: s.data.length };
@@ -205,7 +193,6 @@ function cfb(streams: Array<{ name: string; data: Uint8Array }>): Cfb {
   return { bytes: out, starts: Object.fromEntries(big.map((s, i) => [s.name, bigStart[i]!])), fatSector: 0, dirSector: dirStart };
 }
 
-/** Workbook을 4096바이트 넘게 늘려 큰 섹터 체인에 둔다(EOF 뒤 0은 읽지 않는다) */
 const padded = (b: Uint8Array) => {
   const out = new Uint8Array(Math.max(b.length, 5000));
   out.set(b);
@@ -248,7 +235,6 @@ describe('xls(BIFF8) 읽기', () => {
 
   it('1904 날짜 체계(DATEMODE=1)', async () => {
     const wb = workbook();
-    // DATEMODE 레코드(0x0022) 값 0 → 1
     const i = wb.findIndex((_, k) => wb[k] === 0x22 && wb[k + 1] === 0 && wb[k + 2] === 2 && wb[k + 3] === 0);
     wb[i + 4] = 1;
     const out = await readSheetBytes(cfb([{ name: 'Workbook', data: wb }]).bytes);
@@ -270,12 +256,12 @@ describe('xls(BIFF8) 읽기', () => {
     const loop = cfb([{ name: 'Workbook', data: padded(workbook()) }]);
     const v = new DataView(loop.bytes.buffer);
     const s = loop.starts.Workbook!;
-    v.setUint32(512 + (s + 2) * 4, s, true); // 세 번째 섹터가 첫 섹터로 돌아간다
+    v.setUint32(512 + (s + 2) * 4, s, true);
     assert.equal(await code(readSheetBytes(loop.bytes)), 'sheet_invalid');
 
     const dirLoop = cfb([{ name: 'A', data: new Uint8Array(10) }, { name: 'Workbook', data: workbook() }]);
     const dv = new DataView(dirLoop.bytes.buffer);
-    dv.setUint32(512 + dirLoop.dirSector * 512 + 2 * 128 + 72, 1, true); // Workbook의 오른쪽 형제 = A(순환)
+    dv.setUint32(512 + dirLoop.dirSector * 512 + 2 * 128 + 72, 1, true);
     assert.equal(await code(readSheetBytes(dirLoop.bytes)), 'sheet_invalid');
 
     const short = cfb([{ name: 'Workbook', data: padded(workbook()) }]);
@@ -332,7 +318,7 @@ describe('HTML 표(.xls로 내려받은 것) 읽기', () => {
 
   it('EUC-KR: meta charset=ks_c_5601-1987, meta 없음(UTF-8 실패 → EUC-KR), meta가 utf-8이라고 거짓말', async () => {
     const ascii = (s: string) => [...s].map((c) => c.charCodeAt(0));
-    const IPGEUM = [0xc0, 0xd4, 0xb1, 0xdd]; // '입금'
+    const IPGEUM = [0xc0, 0xd4, 0xb1, 0xdd];
     const body = (meta: string) => new Uint8Array([...ascii(`<html><head>${meta}</head><body><table><tr><td>`), ...IPGEUM, ...ascii('</td><td>1,000</td></tr></table></body></html>')]);
     for (const meta of ['<meta http-equiv="Content-Type" content="text/html; charset=ks_c_5601-1987">', '', '<meta charset="utf-8">']) {
       const out = await readSheetBytes(body(meta));

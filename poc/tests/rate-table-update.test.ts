@@ -1,5 +1,3 @@
-// M6-10 서명 배포 → 급여 표 저장소(데이터 트랙): .sxp kind:data → 엔진 loadDataPackage(2-of-3·다이제스트·validatePackage·버전) → applyRateTableUpdate → RateTableRepo.
-// 실패하면 저장소·설치 기록은 그대로고 계산은 기존 표로 계속된다(rate_table_missing으로 바뀌지 않는다).
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -18,7 +16,6 @@ import { SAMPLE_NOW, SAMPLE_RATE_TABLES, sampleKeys } from './registry-samples.t
 const K = sampleKeys();
 const bundled = loadBundledPackage();
 
-/** 패키지 키 두 개로 서명한 .sxp를 만들어 다시 읽는다(레지스트리에서 받은 바이트처럼) */
 function sxpOf(body: unknown, o: { version?: string; signers?: typeof K.pkg } = {}): RawDataPackage {
   const bytes = Buffer.from(`${JSON.stringify(body, null, 2)}\n`, 'utf8');
   const desc: Record<string, unknown> = {
@@ -34,7 +31,6 @@ describe('서명 배포 시행일 표 → 표 저장소(M6-10)', () => {
   let dir: string;
   let db: Db;
   let repo: RateTableRepo;
-  /** 업데이트 채널이 하는 일: 설치본을 ctx.installed로 넘기고, 결과를 저장소에 반영 */
   const update = (raw: RawDataPackage, o: Partial<DataLoaderContext> = {}) =>
     applyRateTableUpdate(repo, loadDataPackage(raw, { roots: K.roots, revoked: new Set(), now: SAMPLE_NOW, hold: false, schemas: RATE_TABLE_SCHEMAS, installed: repo.installedPackage(RATE_TABLES_PACKAGE_ID), ...o }));
   const tablesNow = () => availableTables(repo.list(), bundled);

@@ -1,37 +1,16 @@
-// 거래처 장부 쓰기(M4-3 거래처 OCR 입력, 08 O-05·§168, 02 §59). 렌더러 폼 → 엔진 counterparty.create/update. 엔진 명령은 여기서 고정한다.
-// - [등록증으로 채우기]: 사용자가 고른 등록증 → bizcert-read.ts(docparse 샌드박스 → 엔진 bizcert.parse) → 폼 후보(상호·번호·대표자).
-//   결과는 후보다. 사용자가 폼에서 보고 고친 뒤 [추가]를 눌러야 저장한다.
-// - 주소는 렌더러로 보내지 않고 main이 들고 있다가, 같은 번호로 새 거래처를 저장할 때 source 'ocr'과 함께 넣는다(30분 안, 한 번만).
-//   렌더러가 주소·출처를 정하지 못한다. 번호를 고쳐 저장하면 등록증과 다른 거래처라 손으로 넣은 것('manual')으로 본다.
-//   OCR이 번호를 잘못 읽어(검증 숫자 틀림) 칸을 비웠으면, 그 읽기에서 이어진 저장(같은 폼이 돌려준 읽기 표 hold)이면 사용자가 넣은 번호로 주소를 붙인다
-//   (부장 지시 2026-11-11: 번호를 직접 넣어 저장하면 주소가 빠졌다). 다른 폼·다른 읽기·시간이 지난 표·한 번 쓴 표는 붙이지 않는다.
-// - 저장 품목(08 §144, #144 counterparty.setItems·getItems): 폼의 [저장 품목] 칸은 목록의 첫 품목이다. 칸을 바꾸면 첫 품목만 바꾸고
-//   나머지 품목·같은 이름 품목의 단가·단위는 그대로 둔다. 칸을 비우면 첫 품목을 뺀다. 품목은 발급 값이 아니라 요청 때의 후보다.
-// - 글자·필드 값은 로그에 남기지 않는다(bizcert-read가 형식·결과 코드만 남긴다).
 import { randomUUID } from 'node:crypto';
 import { COUNTERPARTY_ITEMS_MAX, isValidBizNo, type Counterparty as DbCounterparty, type CounterpartyItem } from '@sax/db';
 import type { BizFields } from './onboarding.ts';
 
-/**
- * 폼 칸 상한. 렌더러 공통 칸(static/shell/fields.js LIMITS)과 같다: 상호·대표자는 내 사업장(BIZ_FIELD_MAX)과 같은 100,
- * 품목은 DB 저장 품목 상한(COUNTERPARTY_ITEM_NAME_MAX)과 같은 100, 이메일 254. 번호는 하이픈까지 20자에서 자른 뒤 숫자만 남긴다.
- */
 export const CP_FIELD_MAX = { name: 100, bizNo: 20, rep: 100, email: 254, item: 100 } as const;
-/** 읽은 등록증 주소를 들고 있는 시간. */
 export const CP_CERT_HOLD_MS = 30 * 60_000;
 
-/** 등록증 읽기 결과: 후보, 'unreadable'(골랐지만 못 읽음), null(고르지 않음). */
 export type CpCertRead = BizFields | 'unreadable' | null;
-/** hold: 이 읽기의 표(폼이 저장 때 돌려준다, 값 없음). item: 등록증 종목(저장 품목 후보, F-15). */
 type CpCertReply = { found: true; name: string; bizNo: string; rep: string; hold: string; item: string } | { found: false; reason: 'cancelled' | 'unreadable' };
 
 type Rpc = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
 
 const text = (v: unknown, n: number) => String(v ?? '').trim().slice(0, n);
-/**
- * 등록증의 종목 → 저장 품목 후보(F-15). 등록증에는 품목 칸이 없어 거래처를 등록증으로 넣으면 첫 발급이 품목 없이 멈췄다.
- * 종목이 여러 개면("소프트웨어 개발, 컨설팅") 첫 것만. 폼 칸에 채울 뿐이고 사용자가 보고 고친 뒤 [추가]해야 남는다.
- */
 export const certItem = (s: string): string =>
   String(s ?? '')
     .split(/[,，、/·\n]/)[0]!
@@ -52,7 +31,6 @@ export class CounterpartyBook {
     this.now = now;
   }
 
-  /** 등록증 고르기·읽기. 한 번에 하나(파일 대화상자가 겹치지 않게). 못 읽으면 들고 있던 주소도 버린다. */
   async readCert(): Promise<CpCertReply> {
     if (this.reading) throw new Error('busy');
     this.reading = true;
@@ -64,28 +42,24 @@ export class CounterpartyBook {
         return { found: false, reason: 'unreadable' };
       }
       this.hold = { id: randomUUID(), bizNo: f.bizNo, address: f.address, at: this.now() };
-      // 사업자번호는 체크섬이 맞을 때만 채운다. 거래처 폼에는 온보딩의 [고칠게요] 안내가 없어서, OCR이 한 자리 잘못 읽은 번호를 채우면 사용자가 못 알아챈다
       return { found: true, name: f.name.slice(0, CP_FIELD_MAX.name), bizNo: isValidBizNo(f.bizNo) ? f.bizNo : '', rep: f.rep.slice(0, CP_FIELD_MAX.rep), hold: this.hold.id, item: certItem(f.bizItem) };
     } finally {
       this.reading = false;
     }
   }
 
-  /** 추가(id 없음)·수정(id). 사업자번호는 추가할 때만 받는다. */
   async save(p: Record<string, unknown>): Promise<DbCounterparty> {
     const v = { name: text(p.name, CP_FIELD_MAX.name), repName: text(p.rep, CP_FIELD_MAX.rep) || null, email: text(p.email, CP_FIELD_MAX.email) || null };
     const id = typeof p.id === 'string' && p.id ? p.id : null;
     if (id) return (await this.rpc('counterparty.update', { id, patch: v })) as DbCounterparty;
     const bizNo = text(p.bizNo, CP_FIELD_MAX.bizNo).replace(/\D/g, '');
     const live = this.hold && this.now() - this.hold.at <= CP_CERT_HOLD_MS ? this.hold : null;
-    // 같은 번호면 그 등록증(예전과 같다). 읽은 번호가 틀려 칸을 비웠으면, 같은 읽기의 표를 든 저장일 때만 사용자가 넣은 번호로 붙인다.
     const h = live && (live.bizNo === bizNo || (!isValidBizNo(live.bizNo) && typeof p.certHold === 'string' && p.certHold === live.id)) ? live : null;
     const saved = (await this.rpc('counterparty.create', { ...v, bizNo, source: h ? 'ocr' : 'manual', ...(h?.address ? { address: h.address } : {}) })) as DbCounterparty;
     if (h) this.hold = null;
     return saved;
   }
 
-  /** 저장 품목 목록(엔진 counterparty.getItems). 못 읽으면 빈 목록(화면은 품목 없이 그린다). */
   async items(id: string): Promise<CounterpartyItem[]> {
     try {
       const r = await this.rpc('counterparty.getItems', { id });
@@ -95,10 +69,6 @@ export class CounterpartyBook {
     }
   }
 
-  /**
-   * 폼의 [저장 품목] 칸(첫 품목)을 반영한다. 값이 null·undefined면(칸을 보내지 않음) 건드리지 않는다.
-   * 같은 이름이 목록에 있으면 그 품목(단가·단위)을 맨 앞으로 옮긴다. 바뀐 것이 없으면 쓰지 않는다.
-   */
   async setFirstItem(id: string, raw: unknown): Promise<void> {
     if (raw === null || raw === undefined) return;
     const name = text(raw, CP_FIELD_MAX.item);

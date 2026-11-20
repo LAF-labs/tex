@@ -1,5 +1,3 @@
-// 측정 전용 OpenAI 호환 Chat Completions 판정(ADR-035 W-5, 2026-11-05 yulmu: 실측은 OpenRouter 키).
-// DemoEgress.toCompatModel이 BYOK와 같은 검사를 하는지, 어댑터가 json_schema 답을 이름 조인으로 정규화하는지 본다.
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';

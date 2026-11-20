@@ -1,6 +1,3 @@
-// D05 §3.3~§3.5 표 대조: 중계 허용 목록·명시 거부·세션 범위·응답 정리·비밀 창 2상태(ADR-005 v3 결정 2·3·4).
-// CDP 명령 전체 목록은 고정한 playwright-core(1.64.1)의 protocol.d.ts에서 읽는다. 허용 목록 밖 명령은 하나도 빠짐없이 거부되어야 한다.
-// Chrome 없이 가짜 연결로 돈다(실 Chrome 회귀는 vault-relay·playwright-relay).
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
@@ -12,7 +9,6 @@ import {
 import { fakeRelay, tick, type Json } from './fake-relay.ts';
 import { testPolicy } from './harness.ts';
 
-/** CDP 명령 전체(Protocol.CommandParameters의 키). */
 function allCdpCommands(): string[] {
   const require = createRequire(import.meta.url);
   const pkg = path.dirname(require.resolve('playwright-core/package.json'));
@@ -25,12 +21,7 @@ function allCdpCommands(): string[] {
 
 const COMMANDS = allCdpCommands();
 
-/**
- * 기대 표(D05 §3.3 + S6b 측정 + 이 PR의 도메인 안 메서드 목록). 상수(constants.ts)와 따로 적어 두 쪽이 어긋나면 실패한다.
- * 허용 도메인 안에서도 메서드 단위 허용 목록이다(도메인 '*' 없음).
- */
 const EXPECTED_ALLOWED: Record<string, string[]> = {
-  // Page: Playwright 1.64가 실제로 부르는 것(S6b 관측 + coreBundle 조사) 중 정보·권한을 넓히지 않는 것
   Page: [
     'enable', 'disable', 'getFrameTree', 'setLifecycleEventsEnabled', 'addScriptToEvaluateOnNewDocument', 'removeScriptToEvaluateOnNewDocument',
     'createIsolatedWorld', 'navigate', 'reload', 'stopLoading', 'getNavigationHistory', 'navigateToHistoryEntry', 'getLayoutMetrics', 'setFontFamilies',
@@ -41,30 +32,23 @@ const EXPECTED_ALLOWED: Record<string, string[]> = {
     'enable', 'disable', 'getDocument', 'describeNode', 'resolveNode', 'requestNode', 'requestChildNodes', 'pushNodesByBackendIdsToFrontend', 'querySelector', 'querySelectorAll',
     'getAttributes', 'getBoxModel', 'getContentQuads', 'scrollIntoViewIfNeeded', 'getFrameOwner', 'focus',
   ],
-  // 접근성·DOMSnapshot은 읽기만이고 응답은 금고가 정리한다(§3.4). D06 마스킹 계층의 입력.
   Accessibility: ['enable', 'disable', 'getFullAXTree', 'getPartialAXTree', 'getRootAXNode', 'getChildAXNodes', 'queryAXTree', 'getAXNodeAndAncestors'],
   DOMSnapshot: ['enable', 'disable', 'captureSnapshot'],
   Input: ['dispatchKeyEvent', 'dispatchMouseEvent', 'dispatchTouchEvent', 'dispatchDragEvent', 'insertText', 'setInterceptDrags', 'cancelDragging', 'setIgnoreInputEvents'],
   Log: ['enable', 'disable', 'clear'],
-  // 이벤트 수신·읽기 전용. 응답 바디 조회는 없다(N-51).
   Network: ['enable', 'disable', 'getRequestPostData', 'setCacheDisabled', 'setExtraHTTPHeaders', 'setBypassServiceWorker'],
-  // 커밋 가드용. enable은 허용 호스트 패턴일 때만(fetchPatternsAllowed). fulfillRequest·응답 바디는 없다.
   Fetch: ['enable', 'disable', 'continueRequest', 'failRequest', 'getRequestPostData', 'continueWithAuth'],
-  // 포커스 관련(+ Playwright 미디어 2개, S6b)
   Emulation: ['setFocusEmulationEnabled', 'setEmulatedMedia', 'setAutoDarkModeOverride'],
-  // page 세션 수준 자식 자동 부착·분리만(브라우저 수준은 가상 루트)
   Target: ['setAutoAttach', 'detachFromTarget'],
   CSS: ['enable', 'disable'],
   Inspector: ['enable', 'disable'],
 };
 
-/** D05 §3.3 deniedMethods(와일드카드 도메인 포함). 허용 도메인 안의 것은 상수에도 명시돼 있어야 한다. */
 const D05_DENIED_EXACT = [
   'Target.createBrowserContext', 'Target.exposeDevToolsProtocol', 'Target.attachToBrowserTarget', 'Page.setDownloadBehavior', 'Network.getAllCookies', 'Network.getCookies',
   'Network.getResponseBodyForInterception', 'Network.streamResourceContent', 'Page.captureSnapshot', 'Page.getResourceContent', 'DOMSnapshot.getSnapshot',
 ];
 const D05_DENIED_DOMAINS = ['Browser', 'Storage', 'SystemInfo', 'Tracing', 'IO'];
-/** D05 §3.3·§3.5 본문: 응답 바디 조회는 허용 목록에 없다. */
 const D05_NOT_ALLOWED = ['Network.getResponseBody', 'Fetch.getResponseBody', 'Fetch.fulfillRequest', 'Fetch.takeResponseBodyAsStream'];
 
 const NEUTRAL = { active: false, tainted: false };
@@ -74,7 +58,6 @@ const isExpectedAllowed = (m: string) => {
   const [d, n] = m.split('.') as [string, string];
   return EXPECTED_ALLOWED[d]?.includes(n) ?? false;
 };
-/** 판정이 인자에 따라 갈리는 허용 메서드에 넣을 정상 인자. */
 const OK_PARAMS: Record<string, Json> = {
   'Page.navigate': { url: 'http://127.0.0.1:1/login' },
   'Target.setAutoAttach': { autoAttach: true, waitForDebuggerOnStart: false, flatten: true },
@@ -209,7 +192,6 @@ describe('D05 §3.4 응답 정리 표', () => {
     f.relay.deactivateWindow(t);
     const r = await f.call('Runtime.getProperties', { objectId: 'X' }, {
       result: [
-        // Chrome은 문자열 RemoteObject의 값을 description에도 복사한다.
         { name: 'value', value: { type: 'string', value: 'TEST-PROP-1', description: 'TEST-PROP-1' } },
         { name: 'defaultValue', value: { type: 'string', value: 'TEST-PROP-2', description: 'TEST-PROP-2' } },
         { name: 'id', value: { type: 'string', value: 'pw' } },
@@ -224,7 +206,6 @@ describe('D05 §3.4 응답 정리 표', () => {
     const t = f.relay.targets.get('RUN')!;
     f.relay.openWindow(t, 'human', 'RUN', 7);
     f.relay.deactivateWindow(t);
-    // type=text 칸(짧은 숫자 등): 비밀 노드 ID로만 알 수 있다(짧은 값은 알려진 값 치환에도 안 걸린다).
     const node = () => ({ nodeId: 1, backendNodeId: 7, nodeName: 'INPUT', attributes: ['type', 'text', 'value', '1234'], value: '1234' });
     f.conn.emitEvent('DOM.setChildNodes', { parentId: 0, nodes: [node()] }, f.sid);
     f.conn.emitEvent('DOM.childNodeInserted', { parentNodeId: 0, previousNodeId: 0, node: node() }, f.sid);
@@ -251,7 +232,6 @@ describe('D05 §3.4 응답 정리 표', () => {
     const before = f.conn.raw.length;
     for (const [m, params] of reqs) f.relay.onEngineMessage(JSON.stringify({ id: id++, method: m, params, sessionId: f.sid }));
     await tick(1);
-    // 응답보다 먼저 문서 커밋(금고 세션에서 바로 처리) → 창이 닫히고 비밀 노드가 비워진다.
     f.relay.endWindow(t, 'commit');
     assert.equal(t.win, undefined);
     const sent = f.conn.raw.slice(before);
@@ -263,7 +243,6 @@ describe('D05 §3.4 응답 정리 표', () => {
     await tick(5);
     await f.relay.drained();
     assert.doesNotMatch(JSON.stringify(f.toEngine), /TEST-RACE/);
-    // 커밋 뒤 새로 보낸 요청은 오염이 아니다.
     const r = await f.call('Runtime.getProperties', { objectId: 'Y' }, { result: [{ name: 'value', value: { type: 'string', value: 'plain-after' } }] });
     assert.match(JSON.stringify(r), /plain-after/);
   });

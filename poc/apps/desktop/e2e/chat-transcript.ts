@@ -1,9 +1,4 @@
-// 대화 녹취(agent-chat 설계 근거): 실제 셸(시연 fixture, 씨앗 이력, 격리 프로필)에 시나리오 문장을 차례로 보내고 턴마다 화면에 새로 생긴 것을 적는다.
-// 실행: electron apps/desktop/e2e-dist/chat-transcript.js <출력.json> [--agent]
-// 기본(전, 옛 길): 해석기는 "정답 판정"(intent_route_v1이 가장 잘 고른 경우)이고, chat.respond 자리는 녹취 대역(CHAT_STUB)이다.
-// --agent(뒤, 대화 에이전트): main AgentChat·렌더러는 실제이고 chat.step 자리는 녹취 대역(AGENT_STUB)이다. 대역은 머리말을 잘 따르는 모델이 낼 만한
-// 도구 호출과 답(슬롯·토큰)을 내고, 엔진이 하는 역치환(이름 → 거래처 id, 오타 별칭)과 세무 차단을 흉내 낸다. 마스킹은 tests/chat-agent.test.ts가 본다.
-import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
+import './os-guard.js';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
@@ -25,7 +20,6 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let S: Shell | undefined;
 const js = <T = unknown>(code: string): Promise<T> => S!.win.webContents.executeJavaScript(code) as Promise<T>;
 
-// 정답 판정: 문장마다 intent_route_v1 선택지 중 맞는 것(모델이 틀리지 않은 가장 좋은 경우)
 const ROUTES: Array<[RegExp, IntentRoute]> = [
   [/비용\s*처리|경비/, { outcome: 'refuse_advice', via: 'model' }],
   [/매출|매입/, { outcome: 'route', playbook: 'hometax.summary.view', adviceMentioned: false, via: 'model' }],
@@ -39,7 +33,6 @@ const resolver: IntentResolver = {
     return { route: ROUTES.find(([re]) => re.test(text))?.[1] ?? { outcome: 'unknown', via: 'model' }, fallback: null };
   },
 };
-// chat_reply 대역: 모델이 받는 것은 이번 문장 하나뿐이라(chat.ts) 앞 턴을 모르고 답한다. 그 조건에서 나올 만한 답을 적어 둔다.
 const CHAT_STUB: Array<[RegExp, ChatReply]> = [
   [/부가세\s*별도/, { reply: '부가세 별도로 어떤 일을 할까요? 세금계산서 발급을 도와드릴 수 있어요.', kind: 'clarify', suggest: ['hometax.invoice.issue'], filtered: null }],
   [/못\s*받은\s*돈/, { reply: '받을 돈 확인은 아직 도와드리지 못해요. 세금계산서 발급을 할 수 있어요.', kind: 'out_of_scope', suggest: ['hometax.invoice.issue'], filtered: null }],
@@ -54,7 +47,6 @@ const chatter: ChatResponder = {
   },
 };
 
-// chat.step 대역(--agent): 문장마다 도구 호출 하나와 답. 결과 ref는 도구 결과에서, 카드 ref는 화면 프레임에서 읽는다.
 type Cp = { id: string; name: string };
 let BOOK: Cp[] = [];
 const stepSeen: StepParams[] = [];
@@ -62,7 +54,6 @@ let lastResult = '';
 let pending: ((out: { ref: string | null; status: string }) => StepResult) | null = null;
 const R = (r: Partial<Extract<StepResult, { kind: 'reply' }>['reply']>): StepResult => ({ kind: 'reply', reply: { kind: 'answer', text: '', show: [], ask: null, filtered: null, values: {}, unknownName: null, ...r } });
 const call = (c: DomainCall): StepResult => ({ kind: 'tools', calls: [{ callId: 'call-1', ...c }] });
-/** 엔진 역치환 흉내: 장부 이름, 한 글자 다른 별칭(정확히 한 거래처일 때만) */
 const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const cpIn = (t: string): Cp | null => BOOK.find((c) => t.includes(c.name)) ?? BOOK.find((c) => c.name.length >= 3 && [...Array(c.name.length).keys()].some((i) => new RegExp(`${esc(c.name.slice(0, i))}.${esc(c.name.slice(i + 1))}`).test(t))) ?? null;
 const tok = (cp: Cp) => ({ '[NAME_1]': cp.name });

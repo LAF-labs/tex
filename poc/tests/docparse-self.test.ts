@@ -1,5 +1,3 @@
-// docparse 샌드박스 자기 점검(정적, Electron 없음): 네트워크 0·eval 0을 코드와 설정에서 본다.
-// 실행 중 점검(창 안에서 fetch·WebSocket·WebRTC·eval 시도 → 0)은 Electron e2e(apps/desktop/src/docparse-e2e.ts)가 한다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';

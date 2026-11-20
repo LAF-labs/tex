@@ -1,4 +1,3 @@
-// M2-4 GuardedActuator(D03 §5.2 R-A1·R-A2·커밋 그림자, V-20 런타임판, §5.3 커밋 항목)과 대화상자 정책(D03 §6, V-24). 가짜 포트, 실제 포털 접속 없음.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
@@ -19,15 +18,11 @@ const DICT: SelectorDict = {
     'f.name': entry({ role: 'textbox', namePattern: '^상호$', landmark: 'f.root', candidates: [{ kind: 'role', role: 'textbox', name: '상호' }], fieldKey: 'counterpartName' }),
     'f.lookup': entry({ role: 'button', namePattern: '^조회$', landmark: 'f.root', candidates: [{ kind: 'css', value: '#lk' }] }),
     'f.issue': entry({ role: 'button', namePattern: '^발급', landmark: 'f.root', candidates: btn('발급하기'), commits: true, commitEffect: 'issue_document' }),
-    // 같은 요소를 다른 후보로 가리키는 비커밋 항목(R-A2)
     'f.alias': entry({ role: 'button', namePattern: '^발급하기$', landmark: 'f.root', candidates: [{ kind: 'css', value: '#iss' }], reviewNote: { by: 'qa', reason: '시험' } }),
-    // 진행형 이름(DENY_ACTION_NAME): 검토 없음 / 검토됨
     'f.next': entry({ role: 'button', namePattern: '^다음$', landmark: 'f.root', candidates: btn('다음') }),
     'f.nextOk': entry({ role: 'button', namePattern: '^다음 단계$', landmark: 'f.root', candidates: btn('다음 단계'), reviewNote: { by: 'qa', reason: '조회 화면 이동' } }),
-    // 검토됐어도 같은 랜드마크 커밋 항목 패턴(^발급)에 맞으면 그림자
     'f.history': entry({ role: 'button', namePattern: '^발급 내역$', landmark: 'f.root', candidates: btn('발급 내역'), reviewNote: { by: 'qa', reason: '내역 보기' } }),
     'f.pw': entry({ role: 'textbox', namePattern: '^비밀번호$', landmark: 'f.root', candidates: [{ kind: 'role', role: 'textbox', name: '비밀번호' }], inputType: 'password', secretKind: 'portal_password', secretPurpose: 'login' }),
-    // 다른 랜드마크: 양식의 커밋 패턴과 대조하지 않는다
     'd.root': entry({ role: 'dialog', namePattern: '^안내$', landmark: 'p.root', candidates: [{ kind: 'role', role: 'dialog', name: '안내' }] }),
     'd.history': entry({ role: 'button', namePattern: '^발급 내역$', landmark: 'd.root', candidates: btn('발급 내역'), reviewNote: { by: 'qa', reason: '안내 창' } }),
   },
@@ -132,7 +127,6 @@ describe('GuardedActuator', () => {
     s.page.els.get('lookup')!.name = '조회 후 발급';
     assert.equal(code(await s.act.click(t)), 'step.identity_mismatch');
     s.page.els.get('lookup')!.name = '조회';
-    // 옛 요소는 남고 같은 이름의 새 요소로 바뀜: 해석은 새 요소를 고른다
     s.page.els.delete('lookup');
     s.page.els.set('lookup2', { id: 'lookup2', role: 'button', name: '조회', parent: 'form', css: ['#lk'] });
     assert.equal(code(await s.act.click(t)), 'step.identity_mismatch');

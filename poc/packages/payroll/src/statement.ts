@@ -1,7 +1,3 @@
-// 임금명세서·임금대장 법정 항목 누락 검사(R14 D-L12, §3 대조표). 새 로직이다(팀장 지시 2026-11-05).
-// 근로기준법 제48조, 시행령 제27조(임금대장)·제27조의2(임금명세서). 결과는 빠진 항목 코드 목록뿐이다:
-// - 경고용이고 막지 않는다(D-L12 (a)). 빈 목록이어도 "법정 양식 충족"이라고 쓰지 않는다(화면 문구는 데스크톱 2차).
-// - 노무 판단(가산 계산·주휴 판단)을 하지 않는다. 적힌 칸이 비었는지, 합계가 맞는지만 본다.
 import type { PayrollResult } from './payroll.ts';
 
 /** 임금명세서 항목(시행령 §27의2 1~6호) */
@@ -27,9 +23,7 @@ export type LedgerItemCode = keyof typeof LEDGER_ITEMS;
 export interface StatementPayItem {
   name: string;
   amount: number;
-  /** 계산방법 문장 */
   calc?: string | null;
-  /** 출근일수·시간에 따라 달라지는 항목(시급 × 시간, 연장수당 등). 그러면 계산방법이 있어야 한다 */
   variesWithTime?: boolean;
 }
 
@@ -48,7 +42,6 @@ export interface StatementHours {
 /** 한 사람의 그달 임금명세서(PDF에 들어갈 값) */
 export interface WageStatement {
   employee: { name: string | null; birthDate?: string | null; employeeNo?: string | null };
-  /** 임금지급일 'YYYY-MM-DD' */
   payDate: string | null;
   gross: number | null;
   items: readonly StatementPayItem[];
@@ -99,12 +92,9 @@ export interface WageLedgerRow {
     employeeNo?: string | null;
     hiredOn: string | null;
     job: string | null;
-    /** 30일 미만 일용근로자: 생년월일·사원번호(2호)와 계산기초(5호) 생략 가능(§27②) */
     dailyUnder30Days?: boolean;
-    /** 근로기준법 §63 적용 제외 근로자: 시간 수(7·8호) 생략 가능(§27③) */
     section63?: boolean;
   };
-  /** 임금·가족수당 계산기초(예: '월급 2,500,000원', '시급 10,320원') */
   wageBasis: string | null;
   workDays: number | null;
   hours: StatementHours;

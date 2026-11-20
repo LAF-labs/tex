@@ -1,4 +1,3 @@
-// ADR-028 결정 7·#76 인계 ④: 셸 토큰은 빌드에 들어가는 생성 파일(tokens.gen.ts)에서만 읽는다. 설치본은 저장소 밖 디자인 시스템을 읽지 못한다.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';

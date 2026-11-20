@@ -1,5 +1,3 @@
-// 홈택스 사용량 상한(대표 결정 2026-11-12): 시범 상한이 없어도 평소 사용은 막히지 않고, 새 상한에 닿으면 사람이 읽는 문구로 거절한다.
-// 브라우저 없이 실제 SQLite와 고정 시계로 RunService 시작·RateGuard를 본다. 페이지는 열리지 않는다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -12,7 +10,6 @@ import { Egress } from '@sax/net';
 import { FileEventLog } from '@sax/platform';
 import { NOTE } from '../apps/desktop/src/shell-runs.ts';
 
-/** 월말 KST 12:00. */
 const CLOCK: Clock = { wall: () => Date.parse('2026-11-30T03:00:00Z'), mono: () => 0 };
 const PORTAL: PortalConfig = { ...fixturePortal('http://127.0.0.1:9'), kind: 'hometax', verify: { minElapsedMs: 60_000, lookups: 2, intervalMs: 10_000, maxMs: 300_000 } };
 
@@ -27,7 +24,6 @@ describe('홈택스 사용량 상한(대표 결정 2026-11-12)', () => {
     await fs.rm(dir, { recursive: true, force: true });
   });
 
-  /** 내장 홈택스 정책으로 도는 RunService(받은 정책 없음). guard는 같은 DB·시계의 카운터를 실제 실행처럼 올린다. */
   const setup = () => {
     const db = openDatabase(path.join(dir, `${dbs.length}.sqlite`), new Uint8Array(randomBytes(32)));
     dbs.push(db);
@@ -39,7 +35,6 @@ describe('홈택스 사용량 상한(대표 결정 2026-11-12)', () => {
     const guard = new RateGuard(db, 'hometax', policyFor('hometax'), CLOCK);
     const service = () => new RunService({ engine: 'h01', db, data, ledgerKey: new Uint8Array(32), portal: PORTAL, clock: CLOCK, log, page: () => Promise.reject(new Error('no page')), postGate: () => {} });
     let n = 0;
-    /** 발급 준비 한 번. 시작했으면 실행이 끝날 때까지 기다린다. 거절이면 RunEnd를 던진다. */
     const start = async (runs: RunService) => {
       const runId = `cap-${++n}`;
       const ended = new Promise<RunEvent>((r) => runs.on('event', (e: RunEvent) => e.runId === runId && e.type === 'end' && r(e)));

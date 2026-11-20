@@ -40,7 +40,6 @@ export abstract class CdpConnection extends EventEmitter {
     this.emit('close');
   }
 
-  /** 금고 자신의 요청. */
   send<T = Record<string, unknown>>(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<T> {
     if (this.closed) return Promise.reject(new Error('cdp pipe closed'));
     const id = this.nextId++;
@@ -52,7 +51,6 @@ export abstract class CdpConnection extends EventEmitter {
     });
   }
 
-  /** 중계 요청: 응답은 'message' 이벤트로 돌아온다. id 공간은 send()와 겹치지 않게 할당한다. */
   allocId(): number {
     return this.nextId++;
   }
@@ -117,7 +115,6 @@ export class PortConnection extends CdpConnection {
     this.post({ t: 'cdp', m: JSON.stringify(msg) });
   }
 
-  /** 금고가 내린다: main에 알리고(보기를 닫는다) 이쪽도 닫는다. */
   close(): void {
     if (this.isClosed) return;
     this.post({ t: 'cdp_closed' });

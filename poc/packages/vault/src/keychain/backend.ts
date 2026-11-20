@@ -1,8 +1,3 @@
-// 키체인 어댑터의 플랫폼 계층(D05 §7, ADR-026 결정 2). 세 가지 부품으로 나눈다.
-// - ItemStore: OS 자격 증명 저장소의 바이트 항목(Windows Credential Manager / macOS Keychain). 암호문·래핑된 KEK만 담는다.
-// - KekWrapper: 슬롯 KEK를 이 기기에 결박하는 래핑(TPM 내보낼 수 없는 키 → 없으면 DPAPI). macOS는 개발용.
-// - HelloProvider: Windows Hello 결박 사본(KeyCredentialManager 서명-챌린지 → KEK). 사람 확인 프롬프트가 뜬다.
-// Windows 구현은 네이티브 헬퍼(Rust N-API, S10c) 전까지 인터페이스와 실패 구현만 둔다. 실측 목록: reports/M1-3-windows.md.
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import type { KeyTier } from '../protocol.ts';
 import { KEYCHAIN_SERVICE } from '../keystore.ts';
@@ -13,7 +8,6 @@ export const ITEM_MAX_BYTES = 2_560;
 export interface ItemStore {
   get(name: string): Promise<Uint8Array | null>;
   set(name: string, value: Uint8Array): Promise<void>;
-  /** 지웠으면 true. */
   delete(name: string): Promise<boolean>;
 }
 
@@ -74,14 +68,10 @@ export interface HelloPrompt {
 }
 
 export interface HelloProvider {
-  /** KeyCredentialManager.IsSupportedAsync 상당. */
   available(): Promise<boolean>;
   wrap(kek: Uint8Array, label: string): Promise<Uint8Array>;
-  /** 사람 확인 프롬프트를 띄운다. 사용자가 취소하면 null. */
   unwrap(blob: Uint8Array, label: string, prompt: HelloPrompt): Promise<Uint8Array | null>;
 }
-
-// ───────────────────────── AES-256-GCM 봉투(항목·래핑 공통) ─────────────────────────
 
 const SEAL_V1 = 0x01;
 
@@ -109,8 +99,6 @@ export function open(key: Uint8Array, blob: Uint8Array, aad: string): Uint8Array
   }
 }
 
-// ───────────────────────── 래핑 구현 ─────────────────────────
-
 /**
  * 시험용·개발용 래핑: 기기 래핑 키 하나로 슬롯 KEK를 AES-GCM 래핑한다.
  * - MemoryWrapper: 래핑 키를 메모리에만(시험).
@@ -119,7 +107,6 @@ export function open(key: Uint8Array, blob: Uint8Array, aad: string): Uint8Array
 export class MemoryWrapper implements KekWrapper {
   readonly tier: KeyTier = 'memory';
   private readonly key = new Uint8Array(randomBytes(32));
-  /** 시험: 다른 기기(다른 래핑 키)를 흉내 낸다. */
   static otherDevice(): MemoryWrapper {
     return new MemoryWrapper();
   }

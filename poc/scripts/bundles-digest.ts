@@ -1,6 +1,3 @@
-// 번들 다이제스트·앱 내장 허용 목록·임계값 프로필 다이제스트를 다시 쓴다(BV-06).
-// node --conditions=development scripts/bundles-digest.ts [--check]
-// --check: 쓰지 않고 차이만 확인(CI). 다이제스트가 바뀐 번들에 재산정 프로필(overrides)이 있으면 실패한다.
 import fs from 'node:fs';
 import { assemblePrefix, computeDigest, readBundleDefs, wireIdOf, type ThresholdProfile } from '@sax/model';
 
@@ -29,8 +26,6 @@ if (fs.readFileSync(allowFile, 'utf8') !== allowSrc) {
   if (!check) fs.writeFileSync(allowFile, allowSrc);
 }
 
-// 프로필: OpenAI gpt-6-luna = 설계 초기값(initial). Upstage solar-decide = 재산정 전이라 사용 불가(uncalibrated, ADR-015).
-// OpenRouter decisions Jev 계열(typesafe/jev-, 제품 L1, 별칭 ~typesafe/jev-latest, 2026-11-16) = 초기값에서 시작, S7 코퍼스로 재산정한 번들은 calibrated + overrides.
 const profFile = new URL('profiles/thresholds.json', root);
 const prev = JSON.parse(fs.readFileSync(profFile, 'utf8')) as ThresholdProfile[];
 const next: ThresholdProfile[] = [];

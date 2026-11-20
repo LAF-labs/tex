@@ -1,11 +1,3 @@
-// save_pdf(M2-3, D02 §4 표·V-23, D05 §3.3, D07 §1): 발급 결과 PDF를 금고가 받아 staging에 두고, 엔진이 보관함으로 옮긴다.
-// - 엔진은 PDF 바이트·원래 파일 이름·URL을 보지 않는다. 금고가 자기 세션에서 인쇄하거나 무장된 다운로드 1건을 받아
-//   검사(15 MiB, %PDF- 머리, %%EOF 꼬리)를 통과하면 staging/<fileId>.pdf로 두고 fileId만 준다(금고 #164 계약).
-//   엔진의 Page.printToPDF·Page/Browser.setDownloadBehavior는 중계가 거부한다(A-13).
-// - 보관함 이동(docparse → 보관함, V-23 이름)은 포트 store가 한다. 파일 이름에 PII 없음({docType}_{yyyyMMdd}_{shortId}.pdf).
-// - Phase 1 엔진은 print·page_pdf만 한다. 둘 다 금고 pdf.print(금고 세션의 Page.printToPDF, 지금 포털 탭)다.
-//   original(다운로드 버튼)은 IR에 버튼 타깃이 없고 wallet은 구현이 없다. 둘은 로드 때 V-23a로 거부하고, 실행 시에도 금고를 부르지 않는다.
-// - 저널에는 스텝 id·docType·사유 코드만(⑦). fileId·보관함 id는 남기지 않는다.
 import type { SavePdfStep } from './types.ts';
 
 /** 금고 staging 파일 id(32 hex 무작위, 금고 #164). 이 모양이 아니면 받지 않는다(경로 주입 방어). */
@@ -32,14 +24,12 @@ export interface PdfPort {
   armDownload(r: { runId: string; stepId: string }): Promise<{ armed: true } | { armed: false; reason: string }>;
   awaitDownload(r: { runId: string; stepId: string; timeoutMs: number }): Promise<PdfFileResult>;
   disarmDownload(): Promise<void>;
-  /** staging의 fileId를 보관함으로 옮긴다(V-23: nameTemplate 또는 엔진 기본). 돌려주는 것은 보관함 문서 id(파일 경로 아님). */
   store(r: { runId: string; stepId: string; fileId: string; docType: string; nameTemplate?: string }): Promise<{ ok: true; documentId: string } | { ok: false; reason: string }>;
 }
 
 export interface SavePdfDeps {
   pdf: PdfPort;
   runId: string;
-  /** 실행 값 참조($artifacts.pdf, D02 §4.2). 사후조건 {artifact:"pdf"}가 본다. */
   artifacts: Map<string, string>;
   journal(type: string, payload: Record<string, string | number | boolean>): void;
 }
@@ -71,7 +61,6 @@ export async function savePdf(d: SavePdfDeps, s: SavePdfStep): Promise<SavePdfRe
 }
 
 function failed(d: SavePdfDeps, s: SavePdfStep, stage: 'print' | 'store', reason: string): SavePdfResult {
-  // 사유는 금고·보관함의 열거 코드다. 모양이 다르면 남기지 않는다(⑦).
   d.journal('save_pdf.failed', { stepId: s.id, stage, reason: /^[a-z_]{1,40}$/.test(reason) ? reason : 'other' });
   return { ok: false, code: 'save_pdf.failed' };
 }

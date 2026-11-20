@@ -1,7 +1,3 @@
-// 무장 → 누르기 전 동일성 불일치(identity_mismatch) → s21 not_committed → HandedOff → [직접 발급함]의 회귀 시험.
-// 고치기 전에는 Ledger.observedManual이 ledger_not_committed로 던져 write_failed만 남았다. 사다리는 "모두 not_committed"로 보고 다음 칸으로 갈 수 있었다.
-// 고친 뒤: s21 종결은 그대로, 따로 행 s21.manual(같은 발급 키)이 생기고 verify 판정은 그 행에 붙는다. 같은 키 재요청은 새 시도를 만들지 않는다.
-// 처음 모양은 mid-verify 세션의 zz-known-gap 스크래치 시험이다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fsp from 'node:fs/promises';
@@ -46,7 +42,6 @@ describe('무장 → identity_mismatch → [직접 발급함]', () => {
       const INTENT = ulid();
       const ROW = (o: Partial<ArmRow> = {}): ArmRow => ({ intentId: INTENT, stepId: 's21', runId: 'r1', businessKey: 'bk', playbookId: 'test.pb', inputsHash: 'ih', packageDigest: 'd', actionHash: 'ah', deviceId: 'dv', cpBizNoHmac: 'h', recipientEmailHmac: null, issueKey: K, ...o });
       const journal: Array<[string, Record<string, unknown> | undefined]> = [];
-      // RunService가 IR 실행에 주는 것과 같은 모양: s21 행에만 발급 키, manualRow는 초안 재료.
       const port = new LedgerCommitPort({
         db, ledger, intentId: INTENT, ir: IR, dict: DICT,
         row: (x) => ROW({ stepId: x.stepId, actionHash: x.actionHash, issueKey: x.stepId === 's21' ? K : null }),
@@ -55,13 +50,11 @@ describe('무장 → identity_mismatch → [직접 발급함]', () => {
         pageUrl: () => 'https://hometax.go.kr/form', verifyRef: (v) => `ref-${v}`, journal: (t, p) => journal.push([t, p]),
       } as ConstructorParameters<typeof LedgerCommitPort>[0]);
 
-      // 1) 승인 → 무장(s21 armed, 발급 키)
       gates.open('q1', 'r1');
       gates.decide('q1', 'approved', 'local');
       assert.deepEqual(port.arm({ stepId: 's21', reqId: 'q1', actionHash: 'ah' }), { ok: true });
       assert.equal(ledger.get(INTENT, 's21')?.state, 'armed');
 
-      // 2) 상태 머신: 커밋 구간에서 identity_mismatch → HandedOff + ledger.not_committed{identity_mismatch} (실제 전이표의 효과)
       const t1 = transition(state('Running', { commit: true }), { t: 'identity_mismatch' }, { allowed: true, ledger: ['armed'] });
       assert.ok(t1.ok && t1.state.name === 'HandedOff');
       const e1 = t1.effects.filter((e) => e.startsWith('ledger.'));
@@ -69,15 +62,12 @@ describe('무장 → identity_mismatch → [직접 발급함]', () => {
       for (const e of e1) port.ledgerEffect(e, 's21');
       assert.equal(ledger.get(INTENT, 's21')?.state, 'not_committed');
 
-      // 3) 사장님 [직접 발급함]: 전이표의 효과(ledger.observed_manual)를 X(s21)에 적는다(RunController.attestManualCommit과 같은 at).
       const t2 = transition(t1.state, { t: 'attest_manual_commit' }, { allowed: true, ledger: ['not_committed', 'observed_manual'] });
       assert.ok(t2.ok);
       for (const e of t2.effects.filter((x) => x.startsWith('ledger.'))) port.ledgerEffect(e, 's21');
-      // 4) verify 결과 효과(verify 스텝 sv에서): committed면 ledger.committed, unknown이면 in_doubt 쪽
       const t3 = transition(t2.state, { t: 'verify', result: verifyAfterAttest }, { allowed: true, ledger: [ledger.get(INTENT, 's21')!.state] });
       if (t3.ok) for (const e of t3.effects.filter((x) => x.startsWith('ledger.'))) port.ledgerEffect(e, 'sv');
       if (verifyAfterAttest === 'not_committed') {
-        // 따로 행이 하한을 채운 verify로 not_committed가 됐다. 같은 실행이 게이트로 돌아가 다시 무장하면 판정은 s21 새 시도에 붙어야 한다.
         assert.ok(t3.ok);
         assert.equal(ledger.get(INTENT, 's21.manual')?.state, 'not_committed');
         gates.open('q2', 'r1');
@@ -92,7 +82,6 @@ describe('무장 → identity_mismatch → [직접 발급함]', () => {
       const rows = ledger.byIssueKey(K);
       const states = rows.map((r) => `${r.stepId}:${r.state}`);
       const writeFailed = journal.filter(([t]) => t === 'ledger.write_failed').map(([, p]) => p);
-      // 사다리 재요청: 칸 실행 수를 센다.
       let calls = 0;
       const rung: Rung = { route: routeSpec('hometax.auto'), available: () => ({ ok: true }), run: async () => (calls++, { code: 'assert.supplier_mismatch' }) };
       const ladder = new IssueLadder({ rungs: [rung], ledger, log: new FileEventLog(null, 'engine') });

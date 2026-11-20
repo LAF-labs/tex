@@ -1,4 +1,3 @@
-// 결과 매핑(첫 일치 승리)과 도달 가능 결과 계산. 결과·임계값은 언제나 로컬 번들 정의로 계산한다(D04 §5, C-24).
 import type { Answer } from '../contract.ts';
 import { predQuestion, type BundleDef, type Pred, type Question, type Rule } from './types.ts';
 
@@ -50,7 +49,6 @@ export interface MappingResult {
   outcome: string;
   rule: number;
   confidence: number;
-  /** 핵심 choice 질문이 refusal(→ unknown)이라 번들 전체를 unknown으로 내렸다(D04 §2). */
   coreRefusal: boolean;
 }
 
@@ -92,9 +90,6 @@ function ruleConfidence(r: Rule, states: Record<string, ResolvedState>): number 
   return hits.length ? Math.max(...hits.map((p) => predConfidence(p, st(p)))) : null;
 }
 
-// ── 도달 가능 결과(BV-02, L0 단독 결정 가부) ──────────────────────────────
-// 질문마다 매핑 조건의 임계값 경계로 대표 상태를 만들고, 조건 진리값 벡터가 같은 상태는 하나로 합친다.
-// 그 위에서 질문 간 곱집합을 돌면 모든 답 조합에 대한 결과 집합을 정확히 얻는다(조건이 질문별 구간 조건뿐이므로).
 
 const EPS = 1e-6;
 const clamp = (x: number) => Math.min(1, Math.max(0, x));
@@ -125,7 +120,6 @@ export function representativeStates(def: BundleDef, q: Question, includeRefusal
     const probPts = thresholdPoints(def, q.name, (x) => ('choiceProbability' in x ? x.gte : null));
     for (const c of q.choices) {
       for (const conf of confs) {
-        // argmax의 확률이 가장 크므로 다른 라벨 확률은 min(conf, 1 − conf) 이하
         const combos: Array<Record<string, number>> = [{}];
         for (const l of labels) {
           if (l === c.value) continue;

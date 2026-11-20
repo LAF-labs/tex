@@ -1,5 +1,3 @@
-// 최소 WebSocket 서버(RFC 6455). 의존성을 늘리지 않으려고(ADR-028) 릴레이가 쓰는 부분만 직접 구현한다:
-// 마스킹된 클라이언트 프레임, 텍스트·바이너리·close·ping·pong, 조각 프레임 거부, 프레임 ≤ maxPayload(D08 §8: 65,535B).
 import { createHash } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -94,7 +92,7 @@ export class WsConn {
       const b1 = this.buf[1]!;
       const fin = (b0 & 0x80) !== 0;
       const opcode = b0 & 0x0f;
-      if ((b0 & 0x70) !== 0 || (b1 & 0x80) === 0) return this.close(CLOSE.protocol); // RSV 비트·마스크 없음(클라이언트 프레임은 반드시 마스킹)
+      if ((b0 & 0x70) !== 0 || (b1 & 0x80) === 0) return this.close(CLOSE.protocol);
       let len = b1 & 0x7f;
       let off = 2;
       if (len === 126) {
@@ -114,7 +112,7 @@ export class WsConn {
       const payload = Buffer.from(this.buf.subarray(off + 4, off + 4 + len));
       for (let i = 0; i < payload.length; i++) payload[i]! ^= mask[i & 3]!;
       this.buf = this.buf.subarray(off + 4 + len);
-      if (!fin || opcode === 0x0) return this.close(CLOSE.unsupported); // 조각 프레임은 받지 않는다(프레임 하나 = 메시지 하나)
+      if (!fin || opcode === 0x0) return this.close(CLOSE.unsupported);
       if (opcode === 0x8) return this.close(CLOSE.normal);
       if (opcode === 0x9) {
         if (len > 125) return this.close(CLOSE.protocol);

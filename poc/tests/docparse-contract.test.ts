@@ -1,5 +1,3 @@
-// @sax/docparse 공개 계약(Electron 없음): parse(bytes, kind, host) → 스키마 통과 결과, 샌드박스 출력 검증, 수동 입력 폴백, 보관 이름.
-// host는 가짜(샌드박스가 낼 모양을 그대로 돌려준다). 실제 샌드박스 host는 apps/desktop/src/docparse.ts의 sandboxHost(e2e).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { checkManual, DocparseError, parse, parseOutcomeErrors, shortId, storedFileName, validateParseOutcome, validateSandboxOutput, type DocparseHost, type ImageOcr, type PdfExtract } from '@sax/docparse';

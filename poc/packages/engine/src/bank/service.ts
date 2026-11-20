@@ -1,7 +1,3 @@
-// 돈 맞추기(09) 1단계 받을 돈 + 2단계 낼 돈(11 §2): 내 계좌·거래내역 넣기·받을 돈 건(원장 + 홈택스 발급 목록)·맞추기·수동 체크·되돌리기·기록.
-// main 전용 명령이다(계좌번호·입금자명·금액이 오간다, protocol BANK_*). 파일은 main이 docparse 샌드박스에서 읽어 다듬은 줄만 보낸다.
-// 엔진은 원본 파일을 열지 않고 보관함에 그대로 둔다(대표 결정 ⑦, 지울 수 있음). 모델·네트워크를 쓰지 않는다.
-// 거래내역 "원천"은 회차의 source(file | auto)다. 자동 연결 원천(source.ts TxnSource, 예: CODEF)은 registerSource로 꽂고 bank.refresh가 원천 → 넣기 → 맞추기를 한다.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -39,7 +35,6 @@ const SIDE: Record<Kind, Side> = { sale: 'in', purchase: 'out' };
 const kindOf = (v: unknown): Kind => (v === undefined || v === null || v === 'sale' ? 'sale' : v === 'purchase' ? 'purchase' : fail('bad_kind'));
 const sideOf = (v: unknown): Side => (v === undefined || v === null || v === 'in' ? 'in' : v === 'out' ? 'out' : fail('bad_side'));
 
-/** {from, to} 날짜 구간(YYYY-MM-DD, from ≤ to)이면 그대로, 아니면 null */
 const periodOf = (v: unknown): { from: string; to: string } | null => {
   const o = v as { from?: unknown; to?: unknown } | null;
   return o && typeof o === 'object' && typeof o.from === 'string' && typeof o.to === 'string' && ISO.test(o.from) && ISO.test(o.to) && o.from <= o.to ? { from: o.from, to: o.to } : null;
@@ -92,13 +87,10 @@ export interface ReceivableView {
   remaining: number;
   dueOn: string | null;
   promisedOn: string | null;
-  /** 받기로 한 날 − 오늘(지나면 음수). 기한 없음이면 null */
   dueIn: number | null;
   overdue: boolean;
   status: ReceivableStatus;
-  /** 받음일 때: auto | manual(사람이 붙였거나 표시) */
   via: 'auto' | 'manual' | null;
-  /** 계좌 밖 결제 방법(받음·직접일 때) */
   offAccount: AllocMethod | null;
   sources: Array<'ledger' | 'hometax'>;
   excludedReason: string | null;
@@ -123,7 +115,6 @@ export interface TxnView {
 
 export interface BankSummary {
   today: string;
-  /** 거래내역 기준일(가장 늦은 거래일). 없으면 null */
   latestDay: string | null;
   stale: boolean;
   hasAccounts: boolean;
@@ -134,7 +125,6 @@ export interface BankSummary {
   oldestOverdue: { cpName: string | null; writtenOn: string; daysOver: number } | null;
   reviewCount: number;
   autoCount: number;
-  /** 낼 돈(11 §2.5 판 카드 "안 낸 돈"). 매입 건이 없으면 0들 */
   payable: PayableSummary;
 }
 
@@ -143,13 +133,11 @@ export interface PayableSummary {
   unpaidTotal: number;
   overdueCount: number;
   overdueTotal: number;
-  /** 오늘부터 7일 안에 낼 날이 오는 건 */
   dueSoonCount: number;
   dueSoonTotal: number;
   reviewCount: number;
 }
 
-/** 한 쪽 맞추기 결과 */
 interface MatchRun {
   autoTxnIds: string[];
   review: string[];
@@ -173,7 +161,6 @@ export interface RefreshJob {
   startedAt: string;
   finishedAt: string | null;
   code: string | null;
-  /** source.too_soon이면 다시 가져올 수 있는 시각(ISO) */
   retryAt?: string | null;
   result: { rows: number; newCount: number; duplicateCount: number; match: { auto: number; review: number; unknown: number } } | null;
 }
@@ -212,7 +199,6 @@ export class BankService {
     this.opts = opts;
   }
 
-  /** 자동 연결 원천을 꽂는다(공급자 이름마다 하나). 계좌의 link_provider가 고른다 */
   registerSource(src: TxnSource): void {
     if (src.kind !== 'auto' || !/^[a-z0-9_-]{1,40}$/.test(src.provider)) throw new BankError('bad_provider');
     this.sources.set(src.provider, src);
@@ -229,7 +215,6 @@ export class BankService {
   }
 
   async handle(method: string, p: Params): Promise<unknown> {
-    // 최신화는 원천 수집이 오래 걸릴 수 있어 줄 밖에서 시작만 하고 바로 돌아온다(넣기·맞추기는 다시 줄을 탄다)
     if (method === 'bank.refresh' || method === 'db.query.bank.refreshStatus') {
       try {
         return method === 'bank.refresh' ? this.refresh(p ?? {}) : this.refreshStatus(p ?? {});
@@ -246,7 +231,6 @@ export class BankService {
     }
   }
 
-  /** 명령은 한 줄로 차례대로 돈다 */
   private serial<T>(fn: () => T | Promise<T>): Promise<T> {
     const run = this.chain.then(fn);
     this.chain = run.catch(() => {});
@@ -355,8 +339,6 @@ export class BankService {
     return t && t.profileId === pid ? t : fail('txn_not_found');
   }
 
-  // ---- 설정 ----
-
   private settingKey(pid: string, k: string) {
     return `profile.${pid}.bank.${k}`;
   }
@@ -373,7 +355,6 @@ export class BankService {
     this.db.prepare('INSERT INTO settings (key, value_json) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json').run(key, JSON.stringify(v));
   }
 
-  /** 기본 결제 조건. 받을 돈과 낼 돈은 따로 둔다(11 §2.2, 둘 다 기본 작성일 + 30일) */
   defaultTerms(pid: string, kind: Kind = 'sale'): PayTerms {
     try {
       return normalizePayTerms(this.getSetting(this.settingKey(pid, kind === 'purchase' ? 'defaultOutTerms' : 'defaultTerms'))) ?? DEFAULT_TERMS;
@@ -387,7 +368,6 @@ export class BankService {
     return { terms: t };
   }
 
-  /** 기억한 서식(사람이 고른 열). 서식 열쇠 = 머리글 글자 */
   private format(signature: string) {
     const all = this.getSetting<Record<string, unknown>>('bank.formats') ?? {};
     return { mapping: all[createHash('sha256').update(signature).digest('hex').slice(0, 24)] ?? null };
@@ -402,7 +382,6 @@ export class BankService {
     this.putSetting('bank.formats', all);
   }
 
-  /** 계좌 추가 동의(09 §9.4 첫 문구). 동의 기록(문구 판·시각)은 이 PC에만 둔다. 동의 전에는 계좌를 저장하지 않는다 */
   consentOf(pid: string): { version: string; at: string } | null {
     return this.getSetting<{ version: string; at: string }>(this.settingKey(pid, 'consent'));
   }
@@ -412,8 +391,6 @@ export class BankService {
     this.putSetting(this.settingKey(pid, 'consent'), v);
     return v;
   }
-
-  // ---- 원본 파일 보관 ----
 
   private async keepFile(pid: string, docType: 'bank_statement' | 'hometax_issue_list', file: unknown): Promise<string | null> {
     if (file === undefined || file === null) return null;
@@ -445,8 +422,6 @@ export class BankService {
     }
   }
 
-  // ---- 내 계좌 ----
-
   private accounts(pid: string) {
     const last = this.db.prepare('SELECT max(day) FROM bank_txns WHERE account_id = ?').pluck();
     const count = this.db.prepare('SELECT count(*) FROM bank_txns WHERE account_id = ?').pluck();
@@ -454,9 +429,6 @@ export class BankService {
     return this.repo.accounts(pid).map((a) => ({ ...a, canRefresh: a.linkState !== 'file_only' && !!a.linkProvider && this.sources.has(a.linkProvider), refresh: this.jobView(this.jobs.get(a.id)), lastDay: (last.get(a.id) as string | null) ?? null, txnCount: Number(count.get(a.id)), lastImportAt: (lastImport.get(a.id) as string | undefined) ?? null }));
   }
 
-  // ---- 원천 연결·최신화 ----
-
-  /** bank.setLink {profileId, accountId, state: file_only|auto_connected|auto_error, provider?, error?} — 자동 연결 세션이 연결·끊기 때 부른다 */
   private setLink(p: Params) {
     const id = this.ownAccount(p);
     const state = p.state === 'file_only' || p.state === 'auto_connected' || p.state === 'auto_error' ? p.state : fail('bad_link_state');
@@ -469,16 +441,10 @@ export class BankService {
     return { id: j.id, accountId: j.accountId, state: j.state, done: j.done, jobs: j.jobs, range: { ...j.range }, startedAt: j.startedAt, finishedAt: j.finishedAt, code: j.code, retryAt: j.retryAt ?? null, result: j.result };
   }
 
-  /** db.query.bank.refreshStatus {profileId, accountId} → RefreshJob | null */
   private refreshStatus(p: Params): RefreshJob | null {
     return this.jobView(this.jobs.get(this.ownAccount(p)));
   }
 
-  /**
-   * bank.refresh {profileId, accountId, from?, to?} → RefreshJob(시작 상태). 원천 수집 → 넣기(source auto) → 맞추기.
-   * 기간 기본: 마지막 거래일 하루 전(없으면 90일 전) ~ 오늘. 이미 도는 중이면 그 진행을 돌려준다.
-   * 실패하면 이미 들인 줄은 그대로 두고 계좌 연결 상태만 자동 오류(코드)로 바꾼다.
-   */
   private refresh(p: Params): RefreshJob {
     const pid = this.profile(p.profileId);
     const id = this.ownAccount(p);
@@ -522,7 +488,6 @@ export class BankService {
       const got = await src.fetch({ id: a.id, profileId: pid, bank: a.bank, number, last4: a.last4 }, job.range, { onProgress, signal: job.abort.signal });
       if (job.abort.signal.aborted) throw new SourceError('source.cancelled');
       const rows = sourceRowsToInput(src.provider, Array.isArray(got?.rows) ? got.rows : []);
-      // 넣기·맞추기는 다른 명령과 같은 줄에서(계좌가 그새 지워졌으면 account_not_found)
       const result = await this.serial(() => this.importAuto(pid, accountId, src.provider, rows, got?.range ?? job.range));
       job.result = { rows: rows.length, ...(result as Omit<NonNullable<RefreshJob['result']>, 'rows'>) };
       finish('done', null);
@@ -531,28 +496,22 @@ export class BankService {
       if (e instanceof SourceError && e.retryAt) job.retryAt = e.retryAt;
       finish('failed', /^[a-z0-9_.-]{1,80}$/i.test(code) ? code : 'source.failed');
     }
-    // 연결 상태는 줄에서 바꾼다(그새 계좌가 지워졌거나 연결을 끊었으면 그대로 둔다)
     await this.serial(() => {
       const a = this.repo.account(accountId);
-      // 방금 가져왔거나(too_soon) 오늘 상한(daily_limit)이라 이번엔 부르지 않은 것은 연결 상태를 그대로 둔다
       if (!a || a.linkState === 'file_only' || job.code === 'source.too_soon' || job.code === 'source.daily_limit') return;
       this.repo.setLink(accountId, job.code ? { state: 'auto_error', provider: src.provider, error: job.code } : { state: 'auto_connected', provider: src.provider }, this.at());
     }).catch(() => {});
   }
 
-  /** 줄 안에서: 자동 원천 행 넣기 + 맞추기 */
   private importAuto(pid: string, accountId: string, provider: string, raw: Array<Record<string, unknown>>, range: unknown) {
     if (!this.repo.account(accountId)) return fail('account_not_found');
     const rows = this.txnRows(raw);
     const period = periodOf(range);
-    // 거래가 없던 기간도 "그 기간을 봤다"는 기록으로 남긴다(현금흐름이 그달을 덮었는지 보려고). 기간을 모르면 남기지 않는다
     if (!rows.length && !period) return { newCount: 0, duplicateCount: 0, match: { auto: 0, review: 0, unknown: 0 } };
     const { import: imp, newIds } = this.repo.importTxns({ profileId: pid, accountId, source: 'auto', provider, documentId: null, format: { range }, rows, period }, this.at());
     const r = this.afterImport(pid, imp, rows.length, newIds);
     return { newCount: r.newCount, duplicateCount: r.duplicateCount, match: r.match };
   }
-
-  // ---- 거래내역 넣기 ----
 
   private txnRows(v: unknown): TxnInput[] {
     if (!Array.isArray(v) || v.length > ROWS_MAX) return fail('bad_rows');
@@ -568,14 +527,9 @@ export class BankService {
       return { day, occurredAt, direction, amount, balance, payer: text(o.payer), memo: text(o.memo), counterAccount: typeof o.counterAccount === 'string' ? o.counterAccount.slice(0, 40) : null, sourceKey };
     });
     const keys = rowKeys(rows);
-    // 원천 고유 id가 있으면 그것이 줄 열쇠다(같은 거래를 다시 받아도 한 줄)
     return rows.map(({ sourceKey, ...r }, i) => ({ ...r, rowKey: sourceKey ? createHash('sha256').update(`src|${sourceKey}`).digest('hex').slice(0, 32) : keys[i]! }));
   }
 
-  /**
-   * bank.importTxns {profileId, accountId, rows, source?, signature?, mapping?, file?:{bytes, ext, displayName}, period?:{from, to}(조회한 기간, 현금흐름 덮음 판정)}
-   * → {import, newCount, duplicateCount, match:{auto, review, unknown}}. 새 줄만 맞추기에 들어간다(이미 있던 줄은 그대로).
-   */
   private async importTxns(p: Params) {
     const pid = this.profile(p.profileId);
     const accountId = this.ownAccount({ profileId: pid, id: p.accountId });
@@ -599,11 +553,6 @@ export class BankService {
     };
   }
 
-  /**
-   * bank.importInvoices {profileId, rows: HometaxInvoiceRow[], file?} → {created, merged, purchase, purchaseCreated, skipped, match, payMatch}.
-   * 같은 승인번호는 한 건으로 합친다(원장 건과도). 공급받는자가 내 사업자번호인 줄은 매입 = 낼 돈 건으로 넣는다(11 §2.1, purchase로 센다).
-   * 거래처(매출은 공급받는자, 매입은 공급자) 사업자번호가 장부에 없으면 거래처를 만든다(source hometax). 개인(주민번호)·번호 없음이면 이름만 둔다.
-   */
   private async importInvoices(p: Params) {
     const pid = this.profile(p.profileId);
     if (!Array.isArray(p.rows) || p.rows.length > 5000) return fail('bad_rows');
@@ -624,7 +573,6 @@ export class BankService {
         }
         const buyer = typeof raw.buyerBizNo === 'string' ? raw.buyerBizNo.replace(/\D/g, '') : '';
         const supplier = typeof raw.supplierBizNo === 'string' ? raw.supplierBizNo.replace(/\D/g, '') : '';
-        // 공급받는자가 나면 매입(낼 돈, 11 §2.1): 거래처는 공급자다. 아니면 매출(받을 돈): 거래처는 공급받는자다
         const kind: Kind = me && buyer === me && supplier !== me ? 'purchase' : 'sale';
         const side = kind === 'purchase' ? { bizNo: supplier, name: raw.supplierName, rep: raw.supplierRep } : { bizNo: buyer, name: raw.buyerName, rep: raw.buyerRep };
         const text = (x: unknown) => (typeof x === 'string' && x.trim() ? x.trim().slice(0, 120) : null);
@@ -659,10 +607,6 @@ export class BankService {
     return { ...out, documentId, match: { auto: m.autoTxnIds.length, review: m.review.length, unknown: m.unknown.length }, payMatch: { auto: m.out.autoTxnIds.length, review: m.out.review.length, unknown: m.out.unknown.length } };
   }
 
-  /**
-   * 원장(H-01 committed)에서 받을 돈 건을 들인다. 실행 입력 요약(runs.inputs_json_enc: 거래처·공급가·세액)을 읽을 수 있는 실행만.
-   * 승인번호(verify_ref)가 있으면 그것으로 홈택스 목록 건과 합친다. 작성일은 원장 무장 시각의 한국 날짜다.
-   */
   syncLedger(pid: string): number {
     const rows = this.db
       .prepare(`SELECT l.run_id, l.verify_ref, l.armed_at, r.inputs_json_enc FROM irreversible_log l JOIN runs r ON r.id = l.run_id
@@ -694,8 +638,6 @@ export class BankService {
     return n;
   }
 
-  // ---- 맞추기 ----
-
   private cpKeyOf(r: Receivable): string {
     return r.counterpartyId ?? (r.cpBizNo ? `biz:${r.cpBizNo}` : `r:${r.id}`);
   }
@@ -720,7 +662,6 @@ export class BankService {
     const paid = this.remainingOf(pid);
     const def = this.defaultTerms(pid, kind);
     const terms = new Map<string, PayTerms>();
-    // 사람이 확정한 맞춤은 같은 쪽(받을 돈/낼 돈)에서만 센다: 입금을 확인했다고 출금 자동 확정을 열지 않는다
     const human = new Set(
       (this.db.prepare(`SELECT DISTINCT r.counterparty_id FROM receivable_allocs a JOIN receivables r ON r.id = a.receivable_id WHERE a.profile_id = ? AND r.kind = ? AND a.removed_at IS NULL AND a.decided_by <> 'auto' AND a.txn_id IS NOT NULL AND r.counterparty_id IS NOT NULL`).pluck().all(pid, kind) as string[]),
     );
@@ -750,11 +691,6 @@ export class BankService {
     return { recvs, receivables, txns, cps: [...cpMap.values()], rejects: this.repo.rejects(pid) };
   }
 
-  /**
-   * 다시 맞추기: 자동 확정을 적용하고(기록 남김) 후보·미지정 줄 id를 돌려준다. 사람이 한 것은 바꾸지 않는다.
-   * 맨 위 칸은 받을 돈(입금), out은 낼 돈(출금, 11 §2.3)이다. candidates는 두 쪽을 합친 것이다(줄 id가 겹치지 않는다).
-   * 낼 돈 건이 하나도 없으면 출금은 맞추지 않는다(모든 출금을 "미지정"으로 세지 않는다).
-   */
   rematch(pid: string): MatchRun & { out: MatchRun } {
     this.syncLedger(pid);
     const sale = this.rematchKind(pid, 'sale');
@@ -777,8 +713,6 @@ export class BankService {
     for (const [t, c] of res.candidates) (c.length ? review : unknown).push(t);
     return { autoTxnIds: res.auto.map((a) => a.txnId), review, unknown, candidates: res.candidates };
   }
-
-  // ---- 보기 ----
 
   private views(pid: string, kind: Kind = 'sale'): { list: ReceivableView[]; byId: Map<string, ReceivableView> } {
     this.syncLedger(pid);
@@ -824,7 +758,6 @@ export class BankService {
     };
   }
 
-  /** 한 쪽(받을 돈 = 입금, 낼 돈 = 출금)의 목록. 출금 쪽은 낼 돈 건이 없으면 확인할 줄을 내지 않는다 */
   private sideLists(pid: string, kind: Kind, m: MatchRun & { out: MatchRun }) {
     const { list, byId } = this.views(pid, kind);
     const acct = new Map(this.repo.accounts(pid).map((a) => [a.id, { last4: a.last4, bank: a.bank }]));
@@ -846,10 +779,6 @@ export class BankService {
     return { list, unpaid, received, excluded, review, recent };
   }
 
-  /**
-   * D-09 목록: 못 받은 돈·받은 돈·확인할 입금(후보·미지정)·전체 입금.
-   * payables는 낼 돈 쪽 같은 모양(11 §2.5): unpaid = 안 낸 돈, paid = 낸 돈, review = 확인할 출금, recent = 전체 출금.
-   */
   overview(pid: string) {
     const m = this.rematch(pid);
     const s = this.sideLists(pid, 'sale', m);
@@ -889,12 +818,10 @@ export class BankService {
     };
   }
 
-  /** 판 카드·대화용 요약(목록 없음) */
   summary(pid: string): BankSummary {
     return this.overview(pid).summary;
   }
 
-  /** 건 상세: 붙은 입금·기록·붙일 수 있는 입금(창 안의 남은 입금) */
   private detail(pid: string, id: string) {
     const r = this.ownReceivable(pid, id);
     const m = this.rematch(pid);
@@ -924,8 +851,6 @@ export class BankService {
     return { accounts: this.repo.cpAccounts(cpId), aliases: this.repo.aliases(cpId), terms: this.repo.payTerms(cpId) };
   }
 
-  // ---- 사람이 하는 일(모두 기록·되돌리기) ----
-
   private event(pid: string, e: Omit<ReceivableEvent, 'seq' | 'at' | 'actor'> & { actor?: ReceivableEvent['actor'] }): number {
     return this.repo.addEvent(pid, { actor: 'user', ...e }, this.at());
   }
@@ -939,9 +864,7 @@ export class BankService {
     return r.total - this.repo.liveAllocs(pid, { receivableId: r.id }).reduce((s, a) => s + a.amount, 0);
   }
 
-  /** 한 줄을 건(들)에 붙인다. 한 줄은 한 거래처의 건들에만(09 §6.4) */
   private allocate(pid: string, txn: BankTxn, recvs: Receivable[], amounts: number[] | null, decidedBy: 'candidate' | 'manual', reason: string | null): number[] {
-    // 입금은 받을 돈에만, 출금은 낼 돈에만 붙는다(11 §2.3). 오류 코드는 1단계 것(not_incoming)을 받을 돈 쪽에 그대로 둔다
     if (recvs.some((r) => SIDE[r.kind] !== txn.direction)) return fail(txn.direction === 'in' ? 'not_outgoing' : 'not_incoming');
     const keys = new Set(recvs.map((r) => this.cpKeyOf(r)));
     if (keys.size !== 1) return fail('mixed_counterparties');
@@ -963,7 +886,6 @@ export class BankService {
     return seqs;
   }
 
-  /** 거래처가 장부에 없으면(홈택스 목록 건의 번호만 있는 경우) 만든다. 별칭·계좌를 붙일 자리 */
   private ensureCounterparty(r: Receivable): string | null {
     if (r.counterpartyId) return r.counterpartyId;
     if (!r.cpBizNo || !isValidBizNo(r.cpBizNo) || !r.cpName) return null;
@@ -973,7 +895,6 @@ export class BankService {
     return id;
   }
 
-  /** 별칭 제안(09 §7.3): 이 입금자 이름이 이 거래처 별칭이 아니고, 다른 거래처 별칭도 아니면 제안 */
   private aliasOffer(txn: BankTxn, cpId: string | null): { name: string; counterpartyId: string; conflict: boolean } | null {
     if (!cpId || !txn.payer) return null;
     const norm = normalizePayerName(txn.payer);
@@ -983,7 +904,6 @@ export class BankService {
     return { name: txn.payer, counterpartyId: cpId, conflict: owners.length > 0 };
   }
 
-  /** bank.accept {profileId, txnId, receivableIds, closeFee?}: 후보 [맞아요] */
   private accept(p: Params) {
     const pid = this.profile(p.profileId);
     const txn = this.ownTxn(pid, p.txnId);
@@ -998,7 +918,6 @@ export class BankService {
     return { seqs, aliasOffer: this.aliasOffer(txn, cpId) };
   }
 
-  /** bank.attach {profileId, txnId, receivableId, amount?}: [입금 붙이기] */
   private attach(p: Params) {
     const pid = this.profile(p.profileId);
     const txn = this.ownTxn(pid, p.txnId);
@@ -1008,7 +927,6 @@ export class BankService {
     return { seqs, aliasOffer: this.aliasOffer(txn, this.ensureCounterparty(r)) };
   }
 
-  /** bank.detach {profileId, allocId}: [떼기]. 뗀 (줄, 건) 짝은 다시 후보로 내지 않는다 */
   private detach(p: Params) {
     const pid = this.profile(p.profileId);
     const a = typeof p.allocId === 'string' ? this.repo.alloc(p.allocId) : null;
@@ -1022,7 +940,6 @@ export class BankService {
     return { seq };
   }
 
-  /** bank.reject {profileId, txnId, receivableId}: 후보 [아니에요] */
   private reject(p: Params) {
     const pid = this.profile(p.profileId);
     const txn = this.ownTxn(pid, p.txnId);
@@ -1031,7 +948,6 @@ export class BankService {
     return { seq: this.event(pid, { receivableId: r.id, txnId: txn.id, allocId: null, action: 'reject', reason: null, undoOf: null }) };
   }
 
-  /** bank.markReceived {profileId, receivableId, amount?, on?, method, memo?}: [받았음 표시](계좌 밖 결제 포함) */
   private markReceived(p: Params) {
     const pid = this.profile(p.profileId);
     const r = this.ownReceivable(pid, p.receivableId);
@@ -1053,7 +969,6 @@ export class BankService {
     return [this.event(pid, { receivableId: r.id, txnId: null, allocId: a.id, action: 'close_fee', reason: String(gap), undoOf: null })];
   }
 
-  /** bank.closeFee {profileId, receivableId}: [차액은 수수료로 닫기](허용치 안의 남은 돈만) */
   private closeFee(p: Params) {
     const pid = this.profile(p.profileId);
     const r = this.ownReceivable(pid, p.receivableId);
@@ -1062,7 +977,6 @@ export class BankService {
     return { seqs: this.closeFeeNow(pid, r, gap) };
   }
 
-  /** bank.ignoreTxn {profileId, txnId, reason|null}: [상관없는 입금](이자·내 돈 옮김 등). null이면 되돌림 */
   private ignoreTxn(p: Params) {
     const pid = this.profile(p.profileId);
     const t = this.ownTxn(pid, p.txnId);
@@ -1071,11 +985,6 @@ export class BankService {
     return { seq: this.event(pid, { receivableId: null, txnId: t.id, allocId: null, action: reason ? 'ignore' : 'unignore', reason: t.ignoredReason, undoOf: null }) };
   }
 
-  /**
-   * bank.assignTxn {profileId, txnId, counterpartyId, remember}: [이 거래처 입금으로].
-   * remember면 입금자 이름을 그 거래처 별칭으로 기억한다(다른 거래처 별칭이면 기억하지 않고 conflict). 아니면 이 줄만 그 거래처로.
-   * 결과로 그 줄의 새 후보(맞추기를 다시 돈 뒤)를 돌려준다.
-   */
   private assignTxn(p: Params) {
     const pid = this.profile(p.profileId);
     const t = this.ownTxn(pid, p.txnId);
@@ -1097,7 +1006,6 @@ export class BankService {
     return { seq, conflict, aliasId: alias?.id ?? null, auto, txn: this.txnView(this.repo.txn(t.id)!, this.txnFree(pid, t.id), acct, m.candidates.get(t.id) ?? [], byId) };
   }
 
-  /** bank.setPromised {profileId, receivableId, on|null}: [기다리는 중으로] */
   private setPromised(p: Params) {
     const pid = this.profile(p.profileId);
     const r = this.ownReceivable(pid, p.receivableId);
@@ -1106,7 +1014,6 @@ export class BankService {
     return { seq: this.event(pid, { receivableId: r.id, txnId: null, allocId: null, action: 'promise', reason: r.promisedOn, undoOf: null }) };
   }
 
-  /** bank.exclude {profileId, receivableId, reason|null}: [목록에서 빼기]. null이면 되살림 */
   private exclude(p: Params) {
     const pid = this.profile(p.profileId);
     const r = this.ownReceivable(pid, p.receivableId);
@@ -1115,11 +1022,6 @@ export class BankService {
     return { seq: this.event(pid, { receivableId: r.id, txnId: null, allocId: null, action: 'exclude', reason: r.excludedReason, undoOf: null }) };
   }
 
-  /**
-   * bank.undo {profileId, seq}: 기록 하나를 되돌린다(지우지 않고 반대 동작을 더한다, 09 §7.5). 이미 되돌린 것은 already_undone.
-   * attach·mark_received·close_fee → 맞춤 떼기(뗀 짝 표시는 하지 않음), detach → 되살림, reject → 짝 표시 지움,
-   * promise·exclude·ignore → 이전 값으로, alias_learned → 별칭 지움, assign → 지정 지움.
-   */
   private undo(p: Params) {
     const pid = this.profile(p.profileId);
     const seq = Number.isSafeInteger(p.seq) ? (p.seq as number) : fail('not_found');
@@ -1177,7 +1079,6 @@ export class BankService {
   private addCpAccount(p: Params) {
     const cpId = this.str(p.counterpartyId, 'not_found');
     const a = this.repo.addCpAccount({ counterpartyId: cpId, bank: p.bank, number: p.number, holder: p.holder, usage: p.usage, memo: p.memo }, this.at());
-    // 예금주를 별칭 후보로 제안한다(자동으로 넣지 않는다, 09 §7.3). 예금주 자체는 S3 신호로 쓰인다.
     return { account: a, holderOffer: a.holder && !this.repo.aliasOwners(normalizePayerName(a.holder)).includes(cpId) ? a.holder : null };
   }
 
@@ -1190,9 +1091,6 @@ export class BankService {
     return this.repo.addAlias(cpId, p.name, source, this.at());
   }
 
-  // ---- 현금흐름(11 §3, ADR-045) ----
-
-  /** 분석 입력을 DB에서 읽는다. 맞추기를 먼저 돌려 붙은 금액을 최신으로 한다. 값은 이 PC 밖으로 나가지 않는다 */
   private cashflowInput(pid: string, month: string) {
     this.rematch(pid);
     const today = this.today();
@@ -1236,7 +1134,6 @@ export class BankService {
     const receipts = rows<{ day: string; amount: number; merchantBizNo: string | null }>(
       'SELECT r.issued_on AS day, r.amount, r.merchant_biz_no AS merchantBizNo FROM receipts r JOIN documents d ON d.id = r.doc_id WHERE d.profile_id = ? AND r.issued_on IS NOT NULL AND r.amount IS NOT NULL AND r.amount > 0',
     );
-    // 확정한 급여만, 달마다 가장 늦은 판
     const confirmed = `SELECT m.profile_id AS pid, m.month, m.revision FROM payroll_months m WHERE m.profile_id = ? AND m.status = 'confirmed' AND m.revision = (SELECT max(revision) FROM payroll_months x WHERE x.profile_id = m.profile_id AND x.month = m.month AND x.status = 'confirmed')`;
     const payroll = rows<{ month: string; gross: number; net: number }>(`SELECT l.month, sum(l.gross) AS gross, sum(l.net_pay) AS net FROM payroll_lines l JOIN (${confirmed}) c ON c.pid = l.profile_id AND c.month = l.month AND c.revision = l.revision GROUP BY l.month`);
     const payees = (this.db.prepare(`SELECT e.name, l.month, l.net_pay AS net FROM payroll_lines l JOIN (${confirmed}) c ON c.pid = l.profile_id AND c.month = l.month AND c.revision = l.revision JOIN employees e ON e.id = l.employee_id`).all(pid) as Array<{ name: string; month: string; net: number }>)
@@ -1246,13 +1143,11 @@ export class BankService {
     return { today, month, accounts, txns, invoices, cashSales, cardTxns, cardRanges, receipts, payroll, payees, rules };
   }
 
-  /** db.query.bank.cashflow {profileId, month?(YYYY-MM, 기본 이번 달)} → 그달 요약 + 지금 모습 + 알림(11 §3.4·§3.5) */
   cashflow(pid: string, month: unknown): CashFlowResult {
     const m = month === undefined || month === null ? this.today().slice(0, 7) : typeof month === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(month) && month <= this.today().slice(0, 7) ? month : fail('bad_month');
     return analyzeCashFlow(this.cashflowInput(pid, m));
   }
 
-  /** db.query.bank.cashflowSeries {profileId, months?(1~12, 기본 6)} → 이번 달까지 달마다 요약(오래된 달이 앞) */
   cashflowSeries(pid: string, months: unknown): { months: CashFlowMonth[] } {
     const n = months === undefined || months === null ? 6 : Number.isInteger(months) && (months as number) >= 1 && (months as number) <= 12 ? (months as number) : fail('bad_months');
     const cur = this.today().slice(0, 7);
@@ -1262,11 +1157,6 @@ export class BankService {
     return { months: out };
   }
 
-  /**
-   * bank.categorize {profileId, txnId, category|null, remember?}: 입출금 한 줄의 갈래를 사람이 정한다(11 §3.6).
-   * 줄의 갈래는 ignored_reason에 둔다(확인할 입출금 목록에서도 빠진다). remember면 같은 통장 표시는 다음부터 그 갈래로 본다.
-   * null이면 이 줄의 갈래를 지우고(규칙은 그대로) 되돌릴 수 있게 기록한다.
-   */
   private categorize(p: Params) {
     const pid = this.profile(p.profileId);
     const t = this.ownTxn(pid, p.txnId);

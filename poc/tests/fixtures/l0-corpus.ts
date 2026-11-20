@@ -1,13 +1,9 @@
-// S-L0 합성 라벨 코퍼스. 홈택스 실화면이 아니라 설계 문서의 화면 서술로 만든 템플릿 × 변형이다.
-// 용도: 규칙 논리 검증과 측정 파이프라인 확인. 승격 근거가 아니다(promotion.ts: labeled_real만 인정).
-// 일부러 넣은 어려운 음성(hard negative): 공지 링크 속 '보안 경고', 도움말 속 '오류' 같은 문구.
 import type { AmountObservation, DocMetaObservation, IntentObservation, ObsNode, Observation, ScreenObservation } from '@sax/engine';
 
 export interface Sample {
   id: string;
   bundle: string;
   obs: Observation;
-  /** 질문 이름 → 정답(predicate는 boolean, choice는 값) */
   labels: Record<string, boolean | string>;
 }
 
@@ -41,7 +37,7 @@ type ScreenTpl = { key: string; make: (r: () => number) => { title: string; node
 const SCREEN_TPLS: ScreenTpl[] = [
   { key: 'home', make: (r) => ({ title: '홈택스', nodes: [...chrome(r, true), n('heading', 'My홈택스'), n('link', '전자세금계산서 발급')], labels: screenLabels('logged_in_home') }) },
   {
-    key: 'home_phishing_notice', // 어려운 음성: 공지 링크에 '보안 경고'
+    key: 'home_phishing_notice',
     make: (r) => ({ title: '홈택스', nodes: [...chrome(r, true), n('heading', 'My홈택스'), n('link', '[공지] 국세청을 사칭한 보안 경고 문자에 주의하세요')], labels: screenLabels('logged_in_home') }),
   },
   { key: 'login', make: (r) => ({ title: '홈택스 로그인', nodes: [...chrome(r, false), n('heading', '로그인'), n('tab', '공동·금융인증서'), n('tab', '간편인증'), n('tab', '아이디 로그인'), n('button', '로그인')], labels: screenLabels('login_page') }) },
@@ -62,7 +58,7 @@ const SCREEN_TPLS: ScreenTpl[] = [
     }),
   },
   {
-    key: 'form_help_error_word', // 어려운 음성: 도움말의 '오류'
+    key: 'form_help_error_word',
     make: () => ({
       title: '전자세금계산서 건별발급',
       nodes: [n('link', '로그아웃'), n('heading', '전자세금계산서 건별발급'), n('textbox', '품목'), n('alert', '입력 오류를 줄이려면 거래처를 먼저 등록하세요'), n('button', '발급하기')],
@@ -103,8 +99,8 @@ const POPUP_TPLS: Array<{ key: string; nodes: ObsNode[]; popup: string; asks: bo
   { key: 'security', nodes: [n('dialog', '보안 경고'), n('text', '비정상적인 접근이 감지되었습니다.', { inDialog: true }), n('button', '확인', { inDialog: true })], popup: 'security_warning', asks: false },
   { key: 'consent', nodes: [n('dialog', '동의'), n('text', '개인정보 수집·이용에 동의하시겠습니까?', { inDialog: true }), n('button', '동의', { inDialog: true })], popup: 'consent_required', asks: false },
   { key: 'captcha', nodes: [n('dialog', '보안문자'), n('img', '보안문자', { inDialog: true }), n('textbox', '자동입력 방지 문자', { inDialog: true })], popup: 'captcha', asks: false },
-  { key: 'notice_under_error_title', nodes: [n('dialog', '공지사항'), n('text', '연말정산 간소화 서비스 오픈 안내', { inDialog: true }), n('button', '닫기', { inDialog: true })], popup: 'notice_dismissable', asks: false }, // 제목에만 '오류'(리뷰 회귀, title은 아래에서 붙임)
-  { key: 'notice_error_word', nodes: [n('dialog', '안내'), n('text', '시스템 오류 신고는 126으로 전화하세요', { inDialog: true }), n('button', '닫기', { inDialog: true })], popup: 'notice_dismissable', asks: false }, // 어려운 음성
+  { key: 'notice_under_error_title', nodes: [n('dialog', '공지사항'), n('text', '연말정산 간소화 서비스 오픈 안내', { inDialog: true }), n('button', '닫기', { inDialog: true })], popup: 'notice_dismissable', asks: false },
+  { key: 'notice_error_word', nodes: [n('dialog', '안내'), n('text', '시스템 오류 신고는 126으로 전화하세요', { inDialog: true }), n('button', '닫기', { inDialog: true })], popup: 'notice_dismissable', asks: false },
 ];
 
 export function screenCorpus(perTpl = 20, seed = 7): Sample[] {
@@ -127,14 +123,12 @@ export function screenCorpus(perTpl = 20, seed = 7): Sample[] {
       out.push({ id: `pc.${p.key}.${i}`, bundle: 'popup_class_v1', obs, labels: { popup: p.popup, asks_to_proceed_or_issue: p.asks } });
     }
   }
-  // recovery: 기대 화면 = 건별발급 양식. WebSquare는 pathname이 같고 화면 ID가 w2xPath 쿼리에 있다.
   const ISSUE = `${HOME_URL}?w2xPath=/ui/etxsa/a/RETEETBDB01.xml`;
   const OTHER = `${HOME_URL}?w2xPath=/ui/etxsa/a/RETEETBDB02.xml`;
   const expected = { urlPath: '/websquare/websquare.html', heading: '전자세금계산서 건별발급', screenParams: { w2xPath: '/ui/etxsa/a/RETEETBDB01.xml' } };
   const rec: Array<[string, () => ScreenObservation]> = [
     ['element_missing_same_screen', () => ({ kind: 'screen', url: ISSUE, title: '전자세금계산서 건별발급', nodes: [n('link', '로그아웃'), n('heading', '전자세금계산서 건별발급'), n('textbox', '공급받는자 사업자번호')], expected })],
     ['different_screen', () => ({ kind: 'screen', url: HOME_URL, title: '홈택스', nodes: [...chrome(r, true), n('heading', 'My홈택스')], expected })],
-    // 같은 pathname·같은 제목, 다른 w2xPath(리뷰 회귀)
     ['different_screen', () => ({ kind: 'screen', url: OTHER, title: '전자세금계산서 건별발급', nodes: [n('link', '로그아웃'), n('heading', '전자세금계산서 건별발급'), n('textbox', '품목')], expected })],
     ['modal_blocking', () => ({ kind: 'screen', url: ISSUE, title: '전자세금계산서 건별발급', nodes: [n('heading', '전자세금계산서 건별발급'), n('dialog', '공지'), n('text', '안내', { inDialog: true })], expected })],
     ['session_expired', () => ({ kind: 'screen', url: ISSUE, title: '홈택스', nodes: [n('alert', '로그인 시간이 경과되었습니다. 다시 로그인해 주세요.')], expected })],
@@ -143,8 +137,6 @@ export function screenCorpus(perTpl = 20, seed = 7): Sample[] {
   return out;
 }
 
-// [문장, 플레이북 라벨, mentions_tax_advice 라벨(생략 = false)]. D04 §3: 급여 원천세·4대보험 계산은 세무 상담이 아니고,
-// 경비 인정·공제·절세 판단은 세무 상담이다(구분 오탐률 측정용).
 const INTENTS: Array<[string, string, boolean?]> = [
   ['[NAME_1]에 세금계산서 발행해줘', 'hometax.invoice.issue'],
   ['계산서 끊어줘 [NAME_2] 앞으로', 'hometax.invoice.issue'],
@@ -165,16 +157,15 @@ const INTENTS: Array<[string, string, boolean?]> = [
   ['납세증명서 언제까지 유효해?', 'query.documents'],
   ['안녕', 'none_of_these'],
   ['부가세 신고 방법 알려줘', 'none_of_these', true],
-  ['계산서 발행하면 부가세 얼마 내야 해?', 'hometax.invoice.issue', true], // 세무 질문 섞임 → 규칙 기권
-  ['등본이랑 납세증명서 둘 다', 'none_of_these'], // 둘 이상 → 기권(라벨은 모델·사람 몫)
-  ['어제 뽑은 거 다시 보여줘', 'query.documents'], // 사전 밖 구어 → 기권
-  // M6-11: 화면만 여는 선택지 3개(ADR-031·032). 급여 계산 요청은 세무 상담이 아니다.
+  ['계산서 발행하면 부가세 얼마 내야 해?', 'hometax.invoice.issue', true],
+  ['등본이랑 납세증명서 둘 다', 'none_of_these'],
+  ['어제 뽑은 거 다시 보여줘', 'query.documents'],
   ['이번 달 급여대장 만들어줘', 'payroll.ledger'],
   ['직원 월급 명세서 뽑아줘', 'payroll.ledger'],
   ['임금명세서 작성해야 돼', 'payroll.ledger'],
   ['이번 달 원천세 얼마야', 'payroll.ledger'],
-  ['알바 급여 4대보험 공제액 계산해줘', 'payroll.ledger'], // L0 taxAdvice(공제)에 걸려 기권 → 모델 몫
-  ['4대보험 빼고 실수령액 정리해줘', 'payroll.ledger'], // L0 fourins 사전에 걸리는 급여 문장(엔진 L0 오답 사례)
+  ['알바 급여 4대보험 공제액 계산해줘', 'payroll.ledger'],
+  ['4대보험 빼고 실수령액 정리해줘', 'payroll.ledger'],
   ['[NAME_1] 이번 달 월급 정리해줘', 'payroll.ledger'],
   ['세무사한테 보낼 꾸러미 만들어줘', 'bundle.monthly'],
   ['이번 달 세무사 자료 묶어줘', 'bundle.monthly'],
@@ -210,14 +201,14 @@ export function amountCorpus(count = 320, seed = 11): Sample[] {
   const r = rng(seed);
   const out: Sample[] = [];
   for (let i = 0; i < count; i++) {
-    const man = 10 + Math.floor(r() * 990); // 10만~999만
+    const man = 10 + Math.floor(r() * 990);
     const said = man * 10000;
     const form = i % 4;
     const phrase = form === 0 ? `${man}만원` : form === 1 ? `${said.toLocaleString('en-US')}원` : form === 2 ? `${korean(said)}원` : `${man}만 원`;
     const vatMode = r() < 0.5 ? 'excluded' : 'included';
     const supply = vatMode === 'excluded' ? said : Math.round(said / 1.1);
     const tax = vatMode === 'excluded' ? Math.round(said * 0.1) : said - Math.round(said / 1.1);
-    const bug = r() < 0.3; // 파서 버그 흉내: 단위 10배 오독
+    const bug = r() < 0.3;
     const parse = bug ? { vatMode, supply: supply * 10, tax: tax * 10, total: (supply + tax) * 10 } : { vatMode, supply, tax, total: supply + tax };
     const obs: AmountObservation = { kind: 'amount', userText: `[NAME_1]에 ${phrase} 계산서 발행`, parse: parse as AmountObservation['parse'] };
     out.push({ id: `ap.${i}`, bundle: 'amount_parse_check_v1', obs, labels: { parse_matches_user_text: !bug } });

@@ -1,7 +1,3 @@
-// OpenRouter decisions(알파, POST /api/alpha/decisions) 어댑터: System One 계약(state 문자열 + 이름 키 questions, predicate → noul)이라
-// Upstage 스텁과 같은 요청·정규화를 쓰고 호출만 붙인다. Clef(cloudflare/clef-flash·clef·clef-omni)와 TypeSafe Jev가 같은 엔드포인트다
-// (대표 2026-11-16 "jev와 clef는 기본적으로 같음", 맥북 탐침: 생성 없이 확률만, 호출 0.4~0.6초, 입력 토큰만 과금).
-// 측정(scripts/s7-regression.ts --decisions=<모델>)용이다. 제품 경로는 게이트웨이를 거친다(키는 서버만).
 import type { RedactedText, RunToken } from '../contract.ts';
 import type { LoadedBundle } from '../bundle/types.ts';
 import { AdapterError, type AdapterLimits, type ProviderDecision } from './types.ts';
@@ -12,20 +8,15 @@ export interface OpenRouterDecisionsOptions {
   apiKey: string;
   model: string;
   baseUrl?: string;
-  /** 송신 함수(측정 스크립트는 fetch, 제품은 egress). 필수: 제품 코드에서 전역 fetch를 쓰지 않는다. */
   fetchFn: typeof fetch;
   timeoutMs?: number;
-  /** OpenRouter provider 필드(보관 조건 등). 없으면 싣지 않는다. */
   provider?: Record<string, unknown>;
 }
 
 export class OpenRouterDecisionsAdapter extends UpstageSystemOneAdapter {
   override readonly provider = 'openai_compat' as const;
-  /** 응답 model 접두·프로필 키. Jev(별칭 포함)는 계열 접두 L1_MODEL, 그 밖에는 요청 모델 그대로. */
   override readonly model: string;
-  /** 요청에 싣는 모델(별칭 그대로) */
   readonly requestModel: string;
-  /** clef/flash는 state 앞 약 2,000토큰만 읽는다(가이드). 바이트 상한은 보수적으로 그 근처. 선택지 상한은 미확인이라 System One 26. */
   override readonly limits: AdapterLimits = { maxChoices: 26, maxQuestions: 32, refusals: false, maxRequestBytes: 24_000 };
   private readonly o: OpenRouterDecisionsOptions;
 

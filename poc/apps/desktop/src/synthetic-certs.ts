@@ -1,5 +1,3 @@
-// PoC-8 시험 자료: 홈택스 민원증명 2종의 서식(국세징수법 시행규칙 별지 제94호, 민원사무처리규정 별지 제5호) 배치를 흉내 낸 합성 서류.
-// 이름·번호·세무서는 모두 가짜다. 실제 출력본과 글자 단위로 같지 않다(실물은 PoC-8 측정 스크립트로 잰다).
 import { createHash, randomBytes } from 'node:crypto';
 import { formatBizNo, syntheticBizNo } from '@sax/db';
 
@@ -10,7 +8,6 @@ export interface SyntheticCert {
   id: string;
   kind: SyntheticKind;
   html: string;
-  /** 추출기가 내야 할 값. 지원하지 않는 종류는 docType null. */
   expected: { docType: 'national_tax_cert' | 'biz_registration_cert' | null; issuedOn: string | null; validUntil: string | null; issuer: string | null; docNo: string | null; bizNo: string | null };
 }
 
@@ -37,14 +34,12 @@ const CORPS = [
   { name: '자차카 공방', rep: '정자차', corp: false },
 ];
 
-/** 4-3-4-3 발급번호. 첫 칸은 영문 대문자가 섞일 수 있다(원본확인 입력란). */
 function docNo(seed: number): string {
   const n = String(seed * 7_368_787 + 1_234_567_890_123).padStart(14, '0').slice(-14);
   const first = seed % 3 === 0 ? `T${n.slice(1, 4)}` : n.slice(0, 4);
   return `${first}-${n.slice(4, 7)}-${n.slice(7, 11)}-${n.slice(11, 14)}`;
 }
 
-/** 서식 라벨은 글자 사이를 띄워 인쇄된다. spaced면 그대로, 아니면 붙여 쓴다. */
 const L = (label: string, spaced: boolean) => (spaced ? label.split('').join(' ').replace(/ \( /g, ' (').replace(/ \) /g, ') ') : label);
 
 const PAGE = `<!doctype html><meta charset="utf-8"><style>
@@ -53,7 +48,6 @@ h1{text-align:center;font-size:20pt;letter-spacing:8pt;margin:6mm 0}table{border
 td,th{border:1px solid #000;padding:2mm;vertical-align:middle;font-weight:normal}th{background:#eee;text-align:center}
 .r{text-align:right}.c{text-align:center}.small{font-size:9pt}.foot{margin-top:10mm}
 .seal{display:inline-block;width:15mm;height:15mm;margin-left:-12mm;vertical-align:middle;border:1.2mm solid #c8322d;border-radius:50%;background:rgba(214,58,50,.35)}</style><body>`;
-/** 붉은 직인(글자 없음). 실제 증명서처럼 기관명 위에 겹친다. OCR 전처리가 붉은색을 지우는지 본다. */
 const SEAL = '<span class="seal"></span>';
 
 function taxCertHtml(o: { no: string; spaced: boolean; corp: (typeof CORPS)[number]; bizNo: string; issued: string; valid: string; shortened: boolean; style: DateStyle; office: string; deferral: boolean; printedAt: boolean }): string {
@@ -122,14 +116,12 @@ function negativeHtml(kind: 'localtax_cert' | 'biz_registration' | 'closure_cert
 
 const STYLES: DateStyle[] = ['ko', 'ko0', 'dot', 'dash'];
 
-/** 합성 서류 묶음: 납세증명 8건, 사업자등록증명 8건, 지원하지 않는 서류 3건. */
 export function syntheticCerts(): SyntheticCert[] {
   const out: SyntheticCert[] = [];
   for (let i = 0; i < 8; i++) {
     const corp = CORPS[i % CORPS.length]!;
     const bizNo = syntheticBizNo(40 + i);
     const issued = addDays('2026-10-01', i * 3);
-    // 30일 원칙(발급일+29·+30 둘 다), 지정납부기한으로 짧아진 경우
     const shortened = i % 4 === 3;
     const valid = shortened ? addDays(issued, 12) : addDays(issued, i % 2 ? 30 : 29);
     const office = OFFICES[i % OFFICES.length]!;
@@ -160,14 +152,9 @@ export function syntheticCerts(): SyntheticCert[] {
   return out;
 }
 
-/** 시연 서류에 얹는 "견본" 표시(사선 글자). 본문 판독에 걸리지 않게 짧은 한 단어만 넣는다. */
 export const SAMPLE_MARK = '<div style="position:fixed;top:38%;left:0;right:0;text-align:center;font-size:110px;font-weight:700;color:rgba(200,30,30,.16);transform:rotate(-28deg)">견본</div>';
 const marked = (html: string) => html.replace('</body>', `${SAMPLE_MARK}</body>`);
 
-/**
- * 시연용 서류(오늘 기준 날짜, 데모 사업장 이름·번호, "견본" 표시). 모두 가상이다.
- * 납세증명서 정상·임박·만료, 사업자등록증명(만료일은 규칙 추정), 지방세 납세증명(지원 밖 → 확인 필요).
- */
 export function demoCerts(today: string, me: { name: string; rep: string; bizNo: string }): Array<{ file: string; html: string }> {
   const corp = { name: me.name, rep: me.rep, corp: false };
   const tax = (issued: string, no: number) => marked(taxCertHtml({ no: docNo(no), spaced: false, corp, bizNo: me.bizNo, issued, valid: addDays(issued, 29), shortened: false, style: 'ko', office: OFFICES[0]!, deferral: false, printedAt: false }));
@@ -180,13 +167,11 @@ export function demoCerts(today: string, me: { name: string; rep: string; bizNo:
   ];
 }
 
-/** 여러 쪽짜리(maxPages 확인용). 쪽마다 같은 납세증명 본문. */
 export function multiPageHtml(pages: number): string {
   const one = syntheticCerts()[0]!.html.replace(/^[\s\S]*?<body>/, '').replace('</body>', '');
   return `${PAGE}${Array.from({ length: pages }, (_, i) => `<div style="${i ? 'page-break-before:always' : ''}">${one}</div>`).join('')}</body>`;
 }
 
-/** 최소 PDF 작성기(시험 전용): 객체 본문 목록 → xref·trailer를 붙인 바이트. 객체 번호는 1부터 순서대로. */
 function writePdf(objs: Buffer[], trailerExtra = ''): Uint8Array {
   const parts: Buffer[] = [Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n', 'latin1')];
   const offsets: number[] = [];
@@ -204,10 +189,6 @@ function writePdf(objs: Buffer[], trailerExtra = ''): Uint8Array {
 
 const stream = (dict: string, data: Buffer) => Buffer.concat([Buffer.from(`<< ${dict} /Length ${data.length} >>\nstream\n`), data, Buffer.from('\nendstream')]);
 
-/**
- * 스캐너·복합기가 만드는 '검색 가능 PDF' 흉내: 쪽 전체 그림(JPEG) 위에 보이지 않는 글자(렌더 모드 3 Tr)를 덧입힌다.
- * 글자는 ASCII(Helvetica)라 한글 서류 흉내는 아니다. docparse가 이 층을 원본 텍스트로 믿지 않는지(scanned) 본다.
- */
 export function scannedTestPdf(jpeg: Buffer, width: number, height: number, text: string): Uint8Array {
   const content = Buffer.from(`q 595 0 0 842 0 0 cm /Im1 Do Q BT 3 Tr /F1 12 Tf 60 760 Td (${text.replace(/[()\\]/g, '')}) Tj ET`, 'latin1');
   return writePdf([
@@ -220,7 +201,6 @@ export function scannedTestPdf(jpeg: Buffer, width: number, height: number, text
   ]);
 }
 
-// ── 암호 PDF(시험 전용): 표준 보안 처리기 V1·R2(RC4 40비트). 열기 암호·권한 암호 경로를 의존성 없이 만든다. ──
 const PASSWORD_PAD = Buffer.from('28bf4e5e4e758a4164004e56fffa01082e2e00b6d0683e802f0ca9fe6453697a', 'hex');
 const md5 = (...parts: Buffer[]) => createHash('md5').update(Buffer.concat(parts)).digest();
 
@@ -242,7 +222,6 @@ function rc4(key: Buffer, data: Buffer): Buffer {
 
 const padPassword = (pw: string) => Buffer.concat([Buffer.from(pw, 'latin1'), PASSWORD_PAD]).subarray(0, 32);
 
-/** 한 쪽짜리 ASCII 본문 PDF. userPassword가 빈 문자열이면 권한 암호만 걸린 PDF(그냥 열린다). */
 export function encryptedTestPdf(userPassword: string, ownerPassword: string, text: string): Uint8Array {
   const id = randomBytes(16);
   const o = rc4(md5(padPassword(ownerPassword || userPassword)).subarray(0, 5), padPassword(userPassword));
@@ -265,7 +244,6 @@ export function encryptedTestPdf(userPassword: string, ownerPassword: string, te
   );
 }
 
-/** printToPDF 결과의 /ToUnicode 키를 같은 길이의 다른 키로 바꿔 글자 대응표를 끊는다(텍스트 층 판정 시험용). 바꾼 수를 돌려준다. */
 export function breakToUnicode(pdf: Uint8Array): { pdf: Uint8Array; replaced: number } {
   const b = Buffer.from(pdf);
   const from = Buffer.from('/ToUnicode');

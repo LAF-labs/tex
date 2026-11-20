@@ -1,5 +1,3 @@
-// 금고 장기 키 연산(D05 §5.1, D08 §2.1·§3, schemas/SIGNING.md §8): signVd·signAik(purpose‖msg), noiseDH, HPKE 개봉,
-// 키 보관·감사, 그리고 받는 쪽(서버·폰) 방식으로 검증되는지(DPoP·기기 목록·인증서·Kv 배포).
 import assert from 'node:assert/strict';
 import { createCipheriv, createHash, createHmac, createPrivateKey, createPublicKey, diffieHellman, verify as edVerify } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -35,7 +33,6 @@ function setup(ks: KeyStore = new MemoryKeyStore(), now?: () => number) {
 }
 
 describe('HPKE Base 개봉(RFC 9180 A.2.1 시험 벡터)', () => {
-  // DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20Poly1305, Base. RFC 9180 부록 A.2.1 값 그대로.
   const skRm = hex('8057991eef8f1f1af18f4a9491d16a1ce333f695d4db8e38da75975c4478e0fb');
   const pkRm = hex('4310ee97d88cc1f088a5576c77ab0cf5c3ac797f3d95139c6c84b5429c59662a');
   const encap = hex('1afa08d3dec047a643885163f1180476fa7ddb54c6a8029ea33f95796bf2ac4a');
@@ -78,7 +75,6 @@ describe('HPKE Base 개봉(RFC 9180 A.2.1 시험 벡터)', () => {
   });
 });
 
-/** 시험용 HPKE 봉인(RFC 9180 Base, 같은 스위트). 금고 구현과 따로 짰다. */
 function sealTo(pkR: Uint8Array, skE: Uint8Array, info: Uint8Array, aad: Uint8Array, pt: Uint8Array) {
   const e = createPrivateKey({ key: Buffer.concat([PKCS8_X, skE]), format: 'der', type: 'pkcs8' });
   const encap = new Uint8Array(createPublicKey(e).export({ format: 'der', type: 'spki' }).subarray(-32));
@@ -121,7 +117,6 @@ describe('금고 장기 키 연산', () => {
     ks.set(CRYPTO_KEY_ITEMS.rk, rk);
     const { c } = setup(ks);
     const { aik, vd } = await c.publicKeys();
-    // 파생 고정값: HKDF-SHA256(ikm=0x07×32, salt=없음, info="aik", 32)
     assert.equal(Buffer.from(aikSeedFromRk(rk)).toString('hex'), '55a2e146044cdb42e85556e2c92343562f0887ba83d0da5a25f7f16e748e7a75');
     assert.deepEqual(aik, ed25519FromSeed(aikSeedFromRk(rk)).pub);
     assert.notDeepEqual(aik, vd);
@@ -233,20 +228,15 @@ describe('계정 루트 키 넘기기(ADR-048 결정 3, D08 §4.3)', () => {
     assert.deepEqual(await newPc.c.rkImport({ ...sealed, info, aad, aikPub: aikOld }), aikOld);
     const after = await newPc.c.publicKeys();
     assert.deepEqual(after.aik, aikOld);
-    // 기기 키는 그대로다(RK와 무관)
     assert.deepEqual([after.noiseStatic, after.vd, after.qd, after.kv], [before.noiseStatic, before.vd, before.qd, before.kv]);
     assert.deepEqual(await newKs.get(`${RK_PREV_ITEM}${t}`, 32), rkBefore);
-    // 새 AIK로 서명한다
     const sig = await newPc.c.signAik({ purpose: 'SAX-devlist-v1', msg: utf8('x') });
     assert.ok(verifyCtx(aikOld, 'SAX-devlist-v1', utf8('x'), sig));
-    // 넘겨받기 키는 지워졌다
     await assert.rejects(newPc.c.rkImport({ ...sealed, info, aad, aikPub: aikOld }), /no_link_key/);
-    // 로그에는 결과만 남는다
     assert.ok(oldPc.log.lines.some((l) => l.includes('vault.rk_sealed')));
     assert.ok(newPc.log.lines.some((l) => l.includes('vault.rk_imported')));
     const rkHex = Buffer.from((await newKs.get(CRYPTO_KEY_ITEMS.rk, 32))!).toString('hex');
     for (const l of [...oldPc.log.lines, ...newPc.log.lines]) assert.ok(!l.includes(rkHex) && !l.includes(Buffer.from(hx).toString('hex')));
-    // 다시 띄워도 넘겨받은 RK다
     assert.deepEqual((await setup(newKs).c.publicKeys()).aik, aikOld);
   });
 
@@ -259,7 +249,6 @@ describe('계정 루트 키 넘기기(ADR-048 결정 3, D08 §4.3)', () => {
     await assert.rejects(newPc.c.rkImport({ enc: new Uint8Array(32).fill(9), ct: new Uint8Array(48), info, aad, aikPub: aikOld }), /no_link_key/);
     const hx = await newPc.c.linkKey();
     const sealed = await oldPc.c.rkSeal({ recipient: hx, info, aad });
-    // 서버가 기존 PC인 척 다른 RK를 봉인해 준 경우: AIK가 다르다
     const other = setup();
     await other.c.publicKeys();
     const evil = await other.c.rkSeal({ recipient: hx, info, aad });
@@ -274,10 +263,8 @@ describe('계정 루트 키 넘기기(ADR-048 결정 3, D08 §4.3)', () => {
     ]) await assert.rejects(newPc.c.rkImport(bad), /bad_params/);
     assert.deepEqual((await newPc.c.publicKeys()).aik, mine);
     assert.equal(newPc.log.lines.filter((l) => l.includes('vault.rk_import_failed')).length, 3);
-    // 넘겨받기 키를 다시 만들면 앞 키로 봉인한 것은 열리지 않는다
     await newPc.c.linkKey();
     await assert.rejects(newPc.c.rkImport({ ...sealed, info, aad, aikPub: aikOld }), /open_failed/);
-    // 같은 RK를 다시 받으면 보관 항목을 만들지 않는다
     const again = setup(newKs);
     const hx2 = await again.c.linkKey();
     await again.c.rkImport({ ...(await oldPc.c.rkSeal({ recipient: hx2, info, aad })), info, aad, aikPub: aikOld });
@@ -322,7 +309,6 @@ describe('계정 루트 키 넘기기(ADR-048 결정 3, D08 §4.3)', () => {
     assert.equal(new TextDecoder().decode(chk.info), CTX.pclinkRk);
     assert.equal(CTX.pclinkRk, RK_LINK_INFO);
     assert.deepEqual(await newPc.c.rkImport({ enc: chk.enc, ct: chk.ct, info: RK_LINK_INFO, aad: chk.aad, aikPub: chk.aikPub }), o.aik);
-    // 새 PC가 넘겨받은 AIK로 목록을 서명하면 계정의 AIK로 검증된다
     const aik2: AikSigner = { publicKey: o.aik, sign: (purpose, msg) => newPc.c.signAik({ purpose, msg }) };
     const c2 = await issueCert(aik2, { device_id: newId, role: 'desktop', Sx: n.noiseStatic, Vx: n.vd, not_after: Date.now() + 86_400_000 });
     assert.ok(verifyCert(c2, o.aik));
@@ -357,12 +343,10 @@ describe('계정 공유 기록 키(ADR-048 결정 5, D07 §10)', () => {
     assert.deepEqual(k2.signPub, k0.signPub);
     const pk = await c.publicKeys();
     for (const other of [pk.aik, pk.vd]) assert.notDeepEqual(k0.signPub, other);
-    // 금고 서명으로 봉인한 줄을 공개키만 가진 쪽(폰)이 연다
     const r = row(DEV);
     const wire = await sealShareRow(k0.key, r, (msg) => c.signShare({ msg }));
     assert.deepEqual(openShareRow(k0.key, wire, { sharePub: k0.signPub, mobileSignPub: () => null }), { ok: true, row: r });
     assert.deepEqual(openShareRow(k0.key, wire, { sharePub: pk.aik, mobileSignPub: () => null }), { ok: false, reason: 'signature' });
-    // 기록에는 연산 이름만 남는다
     assert.ok(log.lines.some((l) => l.includes('"op":"shareKey"')) && log.lines.some((l) => l.includes('"op":"signShare"')));
     assert.ok(!log.lines.some((l) => l.includes('1234567890') || l.includes('가나다상사')));
   });
@@ -394,7 +378,6 @@ describe('계정 공유 기록 키(ADR-048 결정 5, D07 §10)', () => {
 
 const CRYPTO_METHODS = ['crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen', 'crypto.linkKey', 'crypto.rkSeal', 'crypto.rkImport', 'crypto.shareKey', 'crypto.signShare'] as const;
 
-/** 금고 서비스 control 포트(main, VaultClient)로 만든 데스크톱 키(packages/remote DesktopKeys 모양). `engine`은 거부 확인용. */
 async function vaultDesktop() {
   const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-crypto-'));
   const log = new FileEventLog(null, 'vault');
@@ -443,17 +426,14 @@ describe('받는 쪽 검증(금고 control 포트 경유)', () => {
         assert.ok(d.log.lines.some((l) => l.includes('vault.rpc_denied') && l.includes(m) && l.includes('"port":"engine"')), `${m} 거부 기록`);
       }
       assert.equal(d.log.lines.filter((l) => l.includes('vault.crypto_op')).length, before, '거부된 요청은 키 연산을 하지 않는다');
-      // 같은 요청이 control 포트에서는 된다
       assert.deepEqual(await d.control.rpc('crypto.publicKeys'), d.pk);
       assert.equal(((await d.control.rpc('crypto.signVd', params['crypto.signVd'])) as { sig: Uint8Array }).sig.length, 64);
       assert.equal(((await d.control.rpc('crypto.signAik', params['crypto.signAik'])) as { sig: Uint8Array }).sig.length, 64);
-      // 연결 연산의 결과 모양: {pub}·{enc, ct}·{aik}
       const link = await d.control.rpc<{ pub: Uint8Array }>('crypto.linkKey');
       assert.equal(link.pub.length, 32);
       const sealed = await d.control.rpc<{ enc: Uint8Array; ct: Uint8Array }>('crypto.rkSeal', { recipient: link.pub, info: RK_LINK_INFO, aad: new Uint8Array(32) });
       assert.deepEqual([Object.keys(sealed).sort(), sealed.enc.length, sealed.ct.length], [['ct', 'enc'], 32, 48]);
       assert.deepEqual(await d.control.rpc('crypto.rkImport', { ...sealed, info: RK_LINK_INFO, aad: new Uint8Array(32), aikPub: d.pk.aik }), { aik: d.pk.aik });
-      // 공유 기록 키의 결과 모양: {key, signPub}·{sig}
       const sk = await d.control.rpc<{ key: Uint8Array; signPub: Uint8Array }>('crypto.shareKey', { epoch: 0 });
       assert.deepEqual([Object.keys(sk).sort(), sk.key.length, sk.signPub.length], [['key', 'signPub'], 32, 32]);
       assert.equal(((await d.control.rpc('crypto.signShare', params['crypto.signShare'])) as { sig: Uint8Array }).sig.length, 64);
@@ -465,7 +445,6 @@ describe('받는 쪽 검증(금고 control 포트 경유)', () => {
   it('키 연산이 실패하면 vault.rpc_failed 한 줄: 메서드·포트·사유 코드만(오류 문장은 남기지 않는다)', async () => {
     const d = await vaultDesktop();
     try {
-      // 낮은 차수 점으로는 봉인하지 않는다. 부르는 쪽은 코드 없는 오류만 받으니 사유를 금고 로그에 남긴다
       await assert.rejects(d.control.rpc('crypto.rkSeal', { recipient: new Uint8Array(32), info: RK_LINK_INFO, aad: new Uint8Array(32) }), /bad_point/);
       await assert.rejects(d.control.rpc('crypto.rkSeal', { recipient: new Uint8Array(31), info: RK_LINK_INFO, aad: new Uint8Array(32) }), /bad_params/);
       const failed = d.log.lines.filter((l) => l.includes('"vault.rpc_failed"'));
@@ -473,13 +452,11 @@ describe('받는 쪽 검증(금고 control 포트 경유)', () => {
       assert.ok(failed[0]!.includes('"method":"crypto.rkSeal"') && failed[0]!.includes('"port":"control"') && failed[0]!.includes('"error":"bad_point"'), failed[0]);
       assert.ok(failed[1]!.includes('"error":"bad_params"'), failed[1]);
       assert.ok(!d.log.lines.some((l) => l.includes('vault.rk_sealed')), '실패한 봉인은 봉인 기록이 없다');
-      // 된 요청은 실패 줄을 남기지 않는다
       await d.control.rpc('crypto.publicKeys');
       assert.equal(d.log.lines.filter((l) => l.includes('"vault.rpc_failed"')).length, 2);
     } finally {
       await d.close();
     }
-    // 런타임 오류는 Node 오류 코드만, 그 밖의 문장은 남기지 않는다
     assert.equal(rpcErrorCode(Object.assign(new Error('Unknown cipher'), { code: 'ERR_CRYPTO_UNKNOWN_CIPHER' })), 'ERR_CRYPTO_UNKNOWN_CIPHER');
     assert.equal(rpcErrorCode(new Error("ENOENT: no such file or directory, open '/Users/someone/x'")), 'error');
     assert.equal(rpcErrorCode(new Error('vault.keystore_mismatch')), 'vault.keystore_mismatch');
@@ -493,7 +470,6 @@ describe('받는 쪽 검증(금고 control 포트 경유)', () => {
       for (const v of Object.values(d.pk)) assert.ok(v instanceof Uint8Array && v.length === 32);
       assert.deepEqual(await d.control.rpc('crypto.publicKeys'), d.pk);
       await assert.rejects(d.control.rpc('crypto.signAik', { purpose: 'SAX-dpop-v1', msg: new Uint8Array(1) }), /purpose_not_allowed/);
-      // 결과 모양(NOTES §7): {shared}·{sig}·{pt}
       const peer = x25519FromSeed(new Uint8Array(32).fill(4));
       const dh = await d.client.rpc<{ shared: Uint8Array }>('crypto.noiseDH', { remotePub: peer.pub, ctx: 'SAX-session-v1' });
       assert.ok(dh.shared instanceof Uint8Array && dh.shared.length === 32);
@@ -511,7 +487,6 @@ describe('받는 쪽 검증(금고 control 포트 경유)', () => {
       const token = 'sxd1.TEST-TOKEN';
       const htu = 'https://gateway.tex.laf-co.com/v1/model/answer';
       const now = Date.now();
-      // model/egress #48: GatewayAuth.headers(req) → Authorization·DPoP. 서명은 금고 crypto.signVd{purpose:'SAX-dpop-v1'}.
       const auth = { headers: (req: { method: 'POST'; url: string }) => deviceAuthHeaders(token, d.vd, req.method, req.url, now) };
       const h = await auth.headers({ method: 'POST', url: htu });
       assert.equal(h.Authorization, `DPoP ${token}`);
@@ -557,7 +532,6 @@ describe('받는 쪽 검증(금고 control 포트 경유)', () => {
       const vdPub = Buffer.from(d.pk.vd);
       const sign = async (purpose: string, obj: unknown) =>
         Buffer.from(((await d.client.rpc('crypto.signAik', { purpose, msg: utf8(jcs(obj)) })) as { sig: Uint8Array }).sig).toString('base64');
-      // DPoP: remote deviceAuthHeaders + 금고 Vd → 서버 verifyDpop
       const token = 'sxd1.TEST-TOKEN';
       const htu = 'https://account.tex.laf-co.com/v1/devices';
       const h = await deviceAuthHeaders(token, d.vd, 'POST', htu, now);
@@ -569,13 +543,11 @@ describe('받는 쪽 검증(금고 control 포트 경유)', () => {
       const h2 = await deviceAuthHeaders(token, d.vd, 'POST', htu, now);
       assert.throws(() => verifyDpop(h2.DPoP, { ...check, cnf: aikPub, jti: new JtiCache() }), 'AIK 공개키로는 검증되지 않는다');
       assert.throws(() => verifyDpop(h2.DPoP, { ...check, token: 'sxd1.OTHER', jti: new JtiCache() }), '다른 토큰의 ath');
-      // 기기 목록·인증서: remote가 금고 AIK로 만들고 서버 검증기가 받는다
       const list = await initialDeviceList(d.aik, { deviceId: '0b6a3f7e-2c1d-4e5f-9a8b-7c6d5e4f3a2b', role: 'desktop', noisePub: d.pk.noiseStatic, signPub: d.pk.vd, registeredAt: now });
       for (const e of list.entries) assert.ok(entrySigOk(aikPub, e as Parameters<typeof entrySigOk>[1]), 'SAX-devlist-v1');
       const cert = await issueCert(d.aik, { device_id: '0b6a3f7e-2c1d-4e5f-9a8b-7c6d5e4f3a2b', role: 'desktop', Sx: d.pk.noiseStatic, Vx: d.pk.vd, Kx: d.pk.kv, not_after: now + 86_400_000 });
       assert.ok(certSigOk(aikPub, cert as Parameters<typeof certSigOk>[1]), 'SAX-cert-v1');
       assert.ok(!certSigOk(vdPub, cert as Parameters<typeof certSigOk>[1]));
-      // 폐기·계정 작업: 금고 signAik로 JCS(obj) 서명
       const rev = { device_id: '0b6a3f7e-2c1d-4e5f-9a8b-7c6d5e4f3a2b', revoked_at: now };
       assert.ok(revokeSigOk(aikPub, { ...rev, aikSig: await sign('SAX-revoke-v1', rev) }), 'SAX-revoke-v1');
       const op: AcctOp = { op: 'device.reactivate', account_id: 'acct-TEST', target: '0b6a3f7e-2c1d-4e5f-9a8b-7c6d5e4f3a2b', ts: now };

@@ -1,5 +1,3 @@
-// 세무사 꾸러미 항목 구성(ADR-032 결정 2·8, 02 §17): 1층 모든 업체 공통 고정, 2층 업종 묶음(설정에서 고르면 생김), 3층 사장님 추가.
-// 모델을 부르지 않는다(ADR-032 결정 11).
 import type { BundleCadence, BundleItem, BundleItemSource, BundleRepo } from '@sax/db';
 
 export type BuiltinKind = 'tax_invoice' | 'payroll' | 'card' | 'paper_receipt';

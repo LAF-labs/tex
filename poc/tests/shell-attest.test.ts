@@ -1,7 +1,3 @@
-// M4-2 3부(3b): InDoubt 증언 바(ADR-021 결정 5, D03 §2 InDoubt 행). 엔진 계약은 @sax/engine/gate(#73)의 타입·함수 그대로다.
-// - approval-gate: 증언 바 요약·정적 HTML·LocalAttestation 발급(승인과 다른 HMAC 문맥).
-// - ShellRuns: 증언 요청은 무장만(summaryHash 일치·InDoubt 카드만), 철회·판정·엔진 종료.
-// - 소스 경계: 렌더러는 카드 열림·닫힘만 알리고, 증언은 바 클릭 → main → 게이트 포트로만 간다.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
@@ -59,7 +55,6 @@ class FakeHost extends EventEmitter {
 const attestFor = (runId: string, over: Partial<Record<'counterpartName' | 'counterpartBizNo' | 'totalAmount', string>> = {}, manualCheck = false): AttestRequest =>
   buildAttestRequest({ runId, intentId: 'i-1', stepId: 's22', portal: 'hometax', summary: { counterpartName: 'C테크', counterpartBizNo: '4182577343', totalAmount: '440000', ...over }, manualCheck });
 
-/** C테크 실행을 InDoubt로 끝낸다(게이트 승인 뒤 엔진이 in_doubt). */
 async function inDoubtRun() {
   const host = new FakeHost();
   const runs = new ShellRuns(host, { counterparties: () => CPS, auth: () => '사업자 간편인증' });
@@ -219,7 +214,6 @@ describe('ShellRuns 증언(무장만, 상태는 엔진 이벤트만 따른다)',
   });
 });
 
-/** C테크 실행을 게이트 승인 뒤 엔진 상태 in_doubt로 둔다(M2-3 RunEvent: InDoubt는 end가 아니라 state). */
 async function liveInDoubtRun() {
   const host = new FakeHost();
   const runs = new ShellRuns(host, { counterparties: () => CPS, auth: () => '사업자 간편인증' });
@@ -308,7 +302,6 @@ describe('증언 경계(소스)', () => {
     const app = read('apps/desktop/src/shell-app.ts');
     const handlers = between(app, "'incident.open': (p) =>", "'docs.list'");
     assert.ok(handlers.includes('needGesture(3_000)') && handlers.includes('incidents.open(') && handlers.includes('incidents.close('));
-    // 바는 카드를 연 실행의 요청만, 바 자리가 비었을 때만 올린다.
     const show = between(app, 'const showAttest =', 'const incidents =');
     assert.ok(show.includes('incidentOpen !== runId') && show.includes('bar.visible') && show.includes('verifyLocalAttestation(key, o.attestation)') && show.includes('runs.attestUsed('));
     assert.ok(show.indexOf('runs.attestUsed(') < show.indexOf('host.answerAttest('), '보내기 전에 요청을 쓴 것으로 표시한다');
@@ -334,7 +327,6 @@ describe('증언 경계(소스)', () => {
     const approve = between(bar, '  private approve(): void {', '  /** 창 크기와');
     assert.ok(approve.includes("req.kind === 'gate'") && approve.includes('issueLocalApproval(this.key, req.gate') && approve.includes('issueLocalAttestation(this.key, req.attest)'));
     assert.ok(bar.includes("reason: 'kind_mismatch'"));
-    // 키보드 경로는 게이트에만(키보드 승인은 꺼져 있고, 증언에는 처음부터 없다).
     assert.ok(bar.includes("if (this.req?.kind === 'gate' && this.shown && !this.refusal"));
   });
 });

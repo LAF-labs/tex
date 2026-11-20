@@ -1,4 +1,3 @@
-// 클라우드 공통 모듈(services/shared): 라우터 오류 코드, 무내용 로그, 일 회전 솔트, 서명 입력 규칙, 기기 토큰·DPoP.
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import type { Server } from 'node:http';
@@ -78,12 +77,12 @@ describe('shared: 로그 정제·탐지기·일 회전 솔트', () => {
   });
 
   it('일 회전 솔트: 같은 날 같은 값, KST 날짜가 바뀌면 다른 값(옛 솔트는 버려진다)', () => {
-    const c = new Clock(Date.UTC(2026, 10, 10, 14, 0, 0)); // KST 23:00
+    const c = new Clock(Date.UTC(2026, 10, 10, 14, 0, 0));
     const s = new DailySalt('ip', c.now);
     const a = s.hash('203.0.113.7');
     assert.equal(s.hash('203.0.113.7'), a);
     assert.match(a, /^[0-9a-f]{32}$/);
-    c.advance(3600_000 + 1); // KST 다음 날 00:00
+    c.advance(3600_000 + 1);
     assert.notEqual(s.hash('203.0.113.7'), a);
   });
 });

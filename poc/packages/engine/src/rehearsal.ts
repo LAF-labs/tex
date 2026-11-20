@@ -1,12 +1,9 @@
-// 홈택스 예행(B1 "실화면 예행 10회 연속", 부장 2026-11-13): 첫 게이트에서 멈추는 실행의 보고서 한 줄.
-// 엔진 로그 run.rehearsal_report에 단계별 시간, 폴백·판정 사용 수, 핸드오프 이유, 마지막 단계를 코드와 숫자로만 남긴다(값 없음).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { LogFields } from '@sax/platform';
 import type { Page } from 'playwright-core';
 import { estimateKrw } from './core/escalation.ts';
 
-/** 저널 이벤트 → 보고서 칸. 표에 없는 이벤트는 세지 않는다. */
 const COUNTED: Readonly<Record<string, string>> = {
   'fallback.refind': 'refind',
   'fallback.dropped': 'refind_dropped',
@@ -33,16 +30,13 @@ export const REHEARSAL_HANDOFF = 'rehearsal.handoff';
 export class RehearsalReport {
   private readonly t0: number;
   private readonly clock: () => number;
-  /** 쓴 패키지 출처: registry:<판> · local:<판>:<manifest 다이제스트 앞 12자> · h01:<판>(가짜 포털 TS 플레이북). */
   private readonly pkg: string;
   private readonly phaseMs = new Map<string, number>();
   private open: { phase: string; at: number } | null = null;
   private last = '';
   private readonly counts = new Map<string, number>();
   private readonly handoffs: string[] = [];
-  /** 닿은 게이트 스텝 id. 닿지 않았으면 null. */
   gateStep: string | null = null;
-  /** handoff 순간 화면 기록을 시작했다(실행마다 한 번). */
   snapped = false;
 
   constructor(pkg: string, clock: () => number = Date.now) {
@@ -86,7 +80,6 @@ export class RehearsalReport {
     };
     for (const [p, ms] of this.phaseMs) f[`${p}_ms`] = ms;
     for (const k of new Set(Object.values(COUNTED))) f[k] = this.counts.get(k) ?? 0;
-    // 이 실행의 AI 비용 추정(원, core/escalation.ts 칸 단가). 사다리가 싼 칸에서 끝났는지 본다.
     f.est_krw = estimateKrw(Object.fromEntries(this.counts));
     return f;
   }
@@ -98,7 +91,6 @@ export class RehearsalReport {
   }
 }
 
-/** 페이지 안에서 도는 요소 목록 함수(rehearsalSnap). 보이는 것 위주로 최대 600개. */
 const DOM_INVENTORY = (): unknown => {
   const vis = (e: Element) => {
     const r = (e as HTMLElement).getBoundingClientRect?.();
@@ -125,7 +117,6 @@ const DOM_INVENTORY = (): unknown => {
         x.text = t(l?.textContent ?? i.parentElement?.textContent ?? '');
       }
       x.disabled = i.disabled || undefined;
-      // 단추 꼴 input은 value가 접근성 이름이다(제출 단추 이름 확인용). 글 칸 값은 넣지 않는다
       if (i.type === 'button' || i.type === 'submit') x.text = t(i.value, 40);
     } else if (tag === 'select') {
       const s = e as HTMLSelectElement;
@@ -137,7 +128,6 @@ const DOM_INVENTORY = (): unknown => {
     }
     out.push(x);
   }
-  // id가 있고 자기 글(바로 아래 글 마디)이 있는 보이는 요소: 화면에 값만 보이는 칸(신청인 사업자번호·상호, 경로 표시)을 읽을 자리를 찾는다.
   const leaves: unknown[] = [];
   for (const e of document.querySelectorAll('[id]')) {
     if (leaves.length >= 400) break;
@@ -150,10 +140,8 @@ const DOM_INVENTORY = (): unknown => {
     leaves, url: location.pathname + location.search.replace(/([?&](?!w2xPath|tmIdx|tm2lIdx|tm3lIdx|menuCd)[^=&]+)=[^&]*/g, '$1=_'), items: out };
 };
 
-/** 화면 기록에 남기는 쿼리 키(메뉴·화면 위치만). 그 밖의 키는 값이 개인값일 수 있어 버린다. */
 const SNAP_QUERY_KEYS = new Set(['w2xPath', 'tmIdx', 'tm2lIdx', 'tm3lIdx', 'menuCd', 'screenId']);
 
-/** 예행 탭의 JS 대화상자(alert·confirm) 글: 최근 5개만, 로컬 snap 파일에만 쓴다(엔진 로그·게이트웨이로 보내지 않는다). */
 const DIALOGS = new WeakMap<Page, Array<{ kind: string; text: string; at: string }>>();
 
 /**
@@ -188,7 +176,6 @@ export async function rehearsalSnap(page: Page, dir: string, runId: string, at: 
   }
   const meta = { runId, phase: at.phase, code: at.code ?? '', origin: u.origin, path: u.pathname, query, title, shot, at: new Date().toISOString(), dialogs: DIALOGS.get(page) ?? [] };
   await fs.writeFile(path.join(dir, `snap-${runId}.json`), JSON.stringify(meta, null, 1), { mode: 0o600 });
-  // 패키지 맞춤용 요소 목록(예행 전용, 로컬 파일만): 누를 것·고를 것·칸 이름표. 입력 칸의 값은 넣지 않는다(select·radio는 고른 선택지 이름만).
   const dom = await page.evaluate(DOM_INVENTORY).catch(() => null);
   if (dom) await fs.writeFile(path.join(dir, `snap-${runId}.dom.json`), JSON.stringify(dom), { mode: 0o600 });
 }

@@ -1,6 +1,3 @@
-// 원장 시도 번호(ADR-042, 마이그레이션 v8): PRIMARY KEY(intent_id, step_id, attempt).
-// 팀장 조건: ① 앞선 시도가 모두 not_committed일 때만 새 시도(두 번째 승인으로 발급까지) ② committed 뒤 새 시도 영원히 거부
-// ③ 종결 안 된 행(in_doubt 등)이 남으면 거부 ④ v7 → v8 이전 전후 동치, 실패하면 이전 판 그대로(fail-closed). 새 시도는 토큰 소비와 한 트랜잭션에서만.
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -28,7 +25,6 @@ function setup(db: Db) {
   };
   const gates = new GateRepo(db);
   const l = new Ledger(db);
-  /** 새 게이트를 열고 승인한 뒤 그 토큰으로 무장한다. */
   const gateArm = (over: Partial<ArmRow> = {}): string => {
     const req = randomUUID();
     gates.open(req, runId);
@@ -67,7 +63,6 @@ describe('원장 시도 번호(ADR-042)', () => {
     assert.throws(() => l.consumeAndArm(req, row), code('ledger_committed'));
     assert.equal(gates.state(req), 'approved', '롤백: 토큰 소비 없음');
     assert.equal(l.attempts('intent-1', 's21').length, 1);
-    // not_committed가 사이에 있어도(1 not_committed, 2 committed) 같다
     const db2 = openDatabase(tmp(), key());
     const b = setup(db2);
     b.gateArm();
@@ -111,7 +106,6 @@ describe('원장 시도 번호(ADR-042)', () => {
       assert.throws(() => l.consumeAndArm(req, { ...row, ...over }), code('ledger_intent_mismatch'));
       assert.equal(gates.state(req), 'approved');
     }
-    // 승인 안 된 게이트로는 시도가 생기지 않는다
     const req = randomUUID();
     gates.open(req, runId);
     assert.throws(() => l.consumeAndArm(req, row), code('gate_not_approved'));
@@ -128,7 +122,7 @@ describe('원장 시도 번호(ADR-042)', () => {
     assert.throws(() => ins(2, 'committed'), /UNIQUE constraint failed/);
     assert.throws(() => ins(1, 'not_committed'), /UNIQUE constraint failed|PRIMARY KEY/);
     assert.throws(() => ins(0, 'not_committed'), /CHECK constraint failed/);
-    ins(2, 'not_committed'); // 종결 행은 여러 개일 수 있다(DB는 순서를 강제하지 않고 원장 API가 한다)
+    ins(2, 'not_committed');
     db.close();
   });
 
@@ -151,7 +145,6 @@ describe('원장 시도 번호(ADR-042)', () => {
     const db = openDatabase(file, k);
     assert.equal(db.pragma('user_version', { simple: true }), MIGRATIONS.length);
     const after = db.prepare('SELECT * FROM irreversible_log ORDER BY intent_id, step_id').all() as Array<Record<string, unknown>>;
-    // 뒤 판(v10 발급 키, v12 재확인 baseline_refs·reverify_day)이 더한 열은 옛 행에서 비어 있다.
     assert.deepEqual(
       after.map(({ attempt, issue_key, baseline_refs, reverify_day, ...r }) => (assert.equal(attempt, 1), assert.equal(issue_key, null), assert.equal(baseline_refs, null), assert.equal(reverify_day, null), r)),
       before,
@@ -160,7 +153,6 @@ describe('원장 시도 번호(ADR-042)', () => {
     assert.deepEqual(pk, ['intent_id', 'step_id', 'attempt']);
     const idx = (db.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='irreversible_log' AND name NOT LIKE 'sqlite_%' ORDER BY name`).all() as Array<{ name: string }>).map((r) => r.name);
     assert.deepEqual(idx, ['ix_irr_business', 'ix_irr_cp_hmac', 'ix_irr_email_hmac', 'ix_irr_run', 'ux_irr_issue_live', 'ux_irr_live']);
-    // 옮긴 뒤의 원장 의미도 같다: committed는 영원히, in_doubt는 미종결, not_committed는 다음 시도 가능
     const l = new Ledger(db);
     assert.deepEqual(l.checkIntent('i-a', 's21', 'H-01', 'ih'), { kind: 'committed', runId: 'run-a' });
     assert.deepEqual(l.checkIntent('i-b', 's22', 'H-01', 'ih'), { kind: 'unresolved', state: 'in_doubt' });

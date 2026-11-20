@@ -1,6 +1,4 @@
-// 셸 온보딩 e2e(M4-2, 08 §4 O-01~O-06·동의 4종): 실제 렌더러·preload·main 처리기로 온보딩을 끝까지 간다(fixture 모드, 목업 어댑터).
-// 실행: electron apps/desktop/e2e-dist/shell-onboarding-e2e.js → reports/raw/m4-2-onboarding.json. 앱 폴더·키체인을 쓰지 않는다.
-import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
+import './os-guard.js';
 import { rmSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -36,7 +34,6 @@ async function until(what: string, fn: () => Promise<boolean>, ms = 10_000): Pro
   return false;
 }
 const step = () => js<string | null>(`document.querySelector('section.onb')?.dataset.onboarding ?? null`);
-/** main이 본 실제 입력(ADR-027 결정 8) 뒤 그 버튼을 누른다. */
 async function press(sel: string) {
   S!.win.webContents.sendInputEvent({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 });
   await sleep(30);
@@ -58,7 +55,6 @@ async function main() {
   await S.ready;
   await until('renderer ready', async () => (await js('document.body.dataset.ready')) === '1');
 
-  // ④ 약관
   check('처음 화면은 약관(④) 동의 카드, 판은 숨김, 지난 타임라인 없음', (await step()) === 'terms' && (await js<boolean>(`document.querySelector('[data-board]').hidden && !document.querySelector('.sx-card [data-act]') && !document.querySelector('.sx-me')`)));
   const terms = await js<{ key: string; version: string; draft: string; buttons: string[] }>(`(() => { const c = document.querySelector('[data-consent]'); return { key: c.dataset.consent, version: c.dataset.consentVersion, draft: c.querySelector('.onb-draft')?.textContent ?? '', buttons: [...c.querySelectorAll('button')].map((b) => b.textContent) }; })()`);
   check('동의 카드: 판 붙은 키(consent.terms f06-pre.1)·"F-06 초안 전" 표시·버튼 하나(묶음 동의 없음)', terms.key === 'consent.terms' && terms.version === CONSENT_NOTICES.terms.version && terms.draft === 'F-06 초안 전 문구' && terms.buttons.length === 1, terms);
@@ -70,7 +66,6 @@ async function main() {
   const welcome = await js<string>(`[...document.querySelectorAll('.onb .sx-app')].at(-1).textContent`);
   check('환영 문구는 세금계산서 발급만 말한다(이 빌드는 증명서를 떼지 못한다)', welcome.includes('세금계산서 발급') && !welcome.includes('증명서'), welcome);
 
-  // O-02
   check('[사업자등록증 올리기] → 인식 카드: 상호·진위확인 배지와 출처(국세청 조회)·90일 고지', (await reply('[data-onb=upload]', 'biz-confirm')) && (await js<boolean>(`(() => { const t = document.querySelector('[data-onb-step=biz-confirm]').textContent; return t.includes('가나다컴퍼니') && t.includes('계속사업자 · 일반과세자') && t.includes('국세청 조회') && t.includes('90일 뒤에'); })()`)));
   const privacy = await js<string>(`document.querySelector('[data-onb-step=biz-confirm]').textContent`);
   check('인식 카드 개인정보 줄: 등록증은 이 PC 안에서만 읽고, 진위확인으로 보낸다는 약속은 없다(제품 빌드는 보내지 않는다)', privacy.includes('등록증 파일은 이 PC 안에서만 읽어요') && !privacy.includes('진위확인에 보내요') && !privacy.includes('우리 서버'), privacy);
@@ -79,7 +74,6 @@ async function main() {
   await press('[data-onb=save]');
   check('[고칠게요] → 그 자리에서 고치고 저장', await until('edited', async () => js<boolean>(`!document.querySelector('[data-onb-step=biz-confirm] form') && document.querySelector('[data-onb-step=biz-confirm]').textContent.includes('billing@ganada.example')`)));
 
-  // O-03
   check('[맞아요] → 발급 인증 4종 + 잘 모르겠어요·나중에', (await reply('[data-onb=confirm]', 'auth')) && (await js<number>(`document.querySelectorAll('.onb-auth').length`)) === 4);
   const appTypes = /알아서|대신 입력|앱이 입력|등록하면/;
   const auths = await js<Record<string, string>>(`Object.fromEntries([...document.querySelectorAll('.onb-auth')].map((b) => [b.dataset.onb, b.querySelector('.sx-meta').textContent]))`);
@@ -91,31 +85,25 @@ async function main() {
   await press('[data-onb=cert]');
   check('공동인증서 → 이 PC에서 찾은 인증서 목록, 30일 안 만료 경고', await js<boolean>(`(() => { const l = document.querySelector('[data-onb-certs]'); return !!l && l.querySelectorAll('[data-cert]').length === 2 && l.textContent.includes('30일 안에 만료돼요'); })()`));
 
-  // ②③
   check('사업자 간편인증 → 금고 위임 단계 없이 바로 ② 모델 국외 이전: 처리자 표는 설정 데이터 그대로', (await reply('[data-onb=simple]', 'model')) && !(await js<boolean>(`!!document.querySelector('[data-consent="consent.delegation"]')`)) && (await js<{ v: string; rows: number; first: string }>(`(() => { const t = document.querySelector('[data-processors]'); return { v: t.dataset.processors, rows: t.querySelectorAll('tbody tr').length, first: t.querySelector('tbody td').textContent }; })()`).then((t) => t.v === MOCK_CONSENT_CONFIG.processorsVersion && t.rows === MOCK_CONSENT_CONFIG.processors.length && t.first === MOCK_CONSENT_CONFIG.processors[0]!.name)));
   check('② 모델 동의는 필수: 버튼은 [동의하고 계속] 하나(거절 선택지 없음), main도 거절 답을 받지 않는다(bad_request)', (await js<string[]>(`[...document.querySelector('[data-consent="consent.model"]').querySelectorAll('button')].map((b) => b.textContent)`)).join() === '동의하고 계속' && (await callErr('onboarding.reply', { step: 'model', choice: 'decline' })) === 'bad_request');
   check('② [동의하고 계속] → ③ 사용 기록: 기본 꺼짐([끄고 계속]이 주 버튼)', (await reply('[data-onb=agree]', 'telemetry')) && (await js<boolean>(`document.querySelector('[data-onb=off]').classList.contains('sx-btn-primary')`)));
 
-  // O-04·O-05
   check('③ 사용 기록 카드는 없는 설정을 가리키지 않는다', !(await js<string>(`document.querySelector('[data-consent="consent.telemetry"]').innerText`)).includes('설정에서'));
   await reply('[data-onb=off]', 'tasks');
   await press('[data-task=H-02]');
   check('곧 되는 일(회색 칩)은 고를 수 없고 "지원되면 알려 드릴게요"', await js<boolean>(`document.querySelector('#toast').textContent.includes('지원되면') && document.querySelector('[data-onb=submit]').disabled`));
   await press('[data-task=H-03]');
   check('사업자등록증명은 지금 되는 일: 눌러서 고른다', await js<boolean>(`document.querySelector('[data-task=H-03]').getAttribute('aria-pressed') === 'true' && !document.querySelector('[data-onb=submit]').disabled`));
-  // 납세증명서(H-04)는 출시판에서 숨긴다(cert-docs hidden): 칩이 없다
   check('납세증명서 칩은 없다(출시판에서 숨김)', await js<boolean>(`!document.querySelector('[data-task=H-04]')`));
   await press('[data-task=H-01]');
   check('세금계산서를 고르면 O-05 거래처', await reply('[data-onb=submit]', 'counterparties'));
 
-  // O-06
   check('[나중에] → O-06 요약: 등록 내용 + 하는 일·하지 않는 일(F-06 자리표시) + 건너뛴 항목 안내', (await reply('[data-onb=later]', 'summary')) && (await js<boolean>(`(() => { const t = document.querySelector('[data-onb-step=summary]').textContent; return t.includes('사업자 간편인증') && !t.includes('금고에 등록함') && !!document.querySelector('[data-onb-scope] .onb-draft') && t.includes('이번 달 할 일에'); })()`)));
   const scope = await js<string[]>(`[...document.querySelectorAll('[data-onb-scope] li')].map((l) => l.textContent)`);
-  // 납세증명서(H-04)는 출시판에서 숨겨 O-04 표에서 빠진다(cert-docs hidden)
   check('요약 "지금 되는 일"은 세금계산서와 민원증명 1종(O-04 표 그대로)', scope[0] === '지금 되는 일: 세금계산서 발급·메일 전송, 사업자등록증명', scope);
   check('O-06 요약에 갈 곳 없는 [보관 위치 바꾸기]가 없다', !(await js<boolean>(`!!document.querySelector('[data-onb=storage]')`)));
   check('[확인했어요] → 프로필 저장(엔진 profile.upsert, 고친 이메일·간편인증)', (await reply('[data-onb=ok]', 'first')) && (await S.host.rpc('db.query.profiles.list').then((ps) => (ps as DbProfile[]).some((p) => p.kind === 'business' && p.email === 'billing@ganada.example' && p.signMethod === 'simple_auth'))));
-  // 저장은 실제 엔진 명령으로 DB에(onboarding-store.ts, 엔진 #91·db #53). main만 부를 수 있다.
   {
     const host = S.host;
     const biz = ((await host.rpc('db.query.profiles.list')) as DbProfile[]).find((p) => p.kind === 'business' && p.email === 'billing@ganada.example')!;
@@ -141,7 +129,6 @@ async function main() {
   check('온보딩이 끝난 뒤 답은 받지 않는다(실제 입력이 있어도 onboarding_done)', (await callErr('onboarding.reply', { step: 'first', choice: 'try' })) === 'onboarding_done');
   check('끝까지 비밀 입력 칸 없음', await noPasswordInputs());
 
-  // 설정 > 발급 인증 [바꾸기]는 내 사업장과 같은 온보딩 다시 열기다(onboarding.reopen auth).
   await press('[data-view=settings]');
   check('설정 > 발급 인증: 고른 인증 한 줄과 [바꾸기]', await until('settings auth', async () => js<boolean>(`(() => { const c = document.querySelector('[data-auth-card]'); return !!c && c.innerText.includes('사업자 간편인증') && !!c.querySelector('[data-act=auth-reopen]'); })()`)));
   await press('[data-act=auth-reopen]');

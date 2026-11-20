@@ -1,5 +1,3 @@
-// D02 §4.3 제어 흐름 의미론 = 정적 분석기의 간선 정의. 실행기(plan·resolveNext)와 검증기가 같은 그래프를 쓴다.
-// 노드: 스텝 id, 그리고 합성 노드 END·ABORT·FALLOFF·H:<출발>(핸드오프)·SECRET:<출발>(금고 경유 human:secret).
 import type { OnFail, PlaybookIR, Step } from './types.ts';
 
 export const END = 'END';
@@ -10,23 +8,20 @@ export const secretNode = (from: string) => `SECRET:${from}`;
 export const isSynthetic = (n: string) => n === END || n === ABORT || n === FALLOFF || n.startsWith('H:') || n.startsWith('SECRET:');
 
 export type EdgeKind =
-  | 'fall' // 같은 배열의 다음 원소, repeat 본문 끝 → 헤더, 헤더 → 다음
-  | 'body' // repeat 헤더 → 본문 첫 스텝
-  | 'out' // decide·branch·verify 결과, 비가역 → verify
-  | 'fail' // onFail(checkpoint:·handoff·abort·human:secret)
-  | 'recover' // onFail recover → 지배 체크포인트·실패한 그 스텝
-  | 'resume' // H → resumeAt / 출발 스텝, SECRET → 다음 스텝
-  | 'rewind' // 게이트 수정하기·waitMs 초과, human TTL → 지배 체크포인트(D03 §2)
-  | 'implicit' // 세션 만료 → session 체크포인트
-  | 'observed'; // 핸드오프 재개 시 원장 in_doubt → 그 X의 verify(R-C2). V-03 분석만 이 간선을 본다(§4.3-4)
+  | 'fall'
+  | 'body'
+  | 'out'
+  | 'fail'
+  | 'recover'
+  | 'resume'
+  | 'rewind'
+  | 'implicit'
+  | 'observed';
 
 export interface StepInfo {
   step: Step;
-  /** 이 스텝을 담은 repeat의 id 사슬(바깥 → 안). */
   repeats: string[];
-  /** 같은 배열의 다음 원소(없으면 null). */
   next: string | null;
-  /** 배열 안 위치(최상위 기준 전역 순서). */
   order: number;
 }
 
@@ -42,9 +37,7 @@ export interface Cfg {
   succ: Map<string, Map<string, EdgeKind>>;
   pred: Map<string, Map<string, EdgeKind>>;
   problems: CfgProblem[];
-  /** 각 노드의 지배자 집합(진입점에서 도달 가능한 노드만). R-C2 관측 간선 포함(V-03용). */
   dom: Map<string, Set<string>>;
-  /** R-C2 관측 간선을 뺀 지배자(값 참조 V-15 등). 관측 재개 때 미정 값은 실행기가 unknown으로 처리한다. */
   domData: Map<string, Set<string>>;
 }
 
@@ -56,7 +49,6 @@ export function effectiveOnFail(ir: PlaybookIR, s: Step): Required<OnFail> {
   return { retry: o.retry ?? 0, then: o.then ?? 'handoff' };
 }
 
-/** 실패할 수 있는 스텝(onFail 간선을 갖는 스텝). */
 const CAN_FAIL = (s: Step) => s.type !== 'end' && s.type !== 'branch' && s.type !== 'handoff';
 
 export function flatten(steps: Step[], repeats: string[] = [], out = new Map<string, StepInfo>(), dup: string[] = []): { info: Map<string, StepInfo>; dup: string[] } {
@@ -80,7 +72,6 @@ export function buildCfg(ir: PlaybookIR, opts: { irreversible?: ReadonlySet<stri
   const add = (a: string, b: string, k: EdgeKind) => {
     if (!succ.has(a)) succ.set(a, new Map());
     if (!pred.has(b)) pred.set(b, new Map());
-    // 같은 쌍에 여러 종류가 있으면 먼저 들어온 것을 둔다(분석은 종류보다 존재를 본다).
     if (!succ.get(a)!.has(b)) succ.get(a)!.set(b, k);
     if (!pred.get(b)!.has(a)) pred.get(b)!.set(a, k);
   };
@@ -91,7 +82,6 @@ export function buildCfg(ir: PlaybookIR, opts: { irreversible?: ReadonlySet<stri
     problems.push({ rule: 'V-11', step: from, message: `${what} 목적지 ${ref}가 없음` });
     return false;
   };
-  /** 같은 repeat 안이거나 바깥으로만(§4.3-5: repeat 경계를 넘는 점프 금지). */
   const jumpOk = (from: string, to: string): boolean => {
     const a = info.get(from)!.repeats;
     const b = info.get(to)?.repeats ?? [];
@@ -109,7 +99,6 @@ export function buildCfg(ir: PlaybookIR, opts: { irreversible?: ReadonlySet<stri
     if (!jumpOk(from, ref)) problems.push({ rule: 'V-05', step: from, message: `${what}가 repeat 경계를 넘어 ${ref}로 감` });
     add(from, ref, k);
   };
-  /** 폴스루 목적지: 다음 원소, 없으면 repeat 헤더, 최상위 끝이면 FALLOFF. */
   const fallTarget = (id: string): string => {
     const i = info.get(id)!;
     if (i.next) return i.next;
@@ -118,7 +107,6 @@ export function buildCfg(ir: PlaybookIR, opts: { irreversible?: ReadonlySet<stri
   const checkpoints = new Map<string, string>();
   for (const [id, { step }] of info) if (step.type === 'checkpoint') checkpoints.set(step.name, id);
 
-  // ---- 1단계: 명시 간선 ----
   for (const [id, { step: s }] of info) {
     switch (s.type) {
       case 'end':
@@ -137,7 +125,6 @@ export function buildCfg(ir: PlaybookIR, opts: { irreversible?: ReadonlySet<stri
         jump(id, s.on.unknown, 'out', 'verify.unknown');
         break;
       case 'pick':
-        // IR rev v1.3.6: 못 고르면 ifNone, 고르면 then(없으면 다음 원소).
         if (s.ifNone) jump(id, s.ifNone, 'out', 'pick.ifNone');
         if (s.then) jump(id, s.then, 'out', 'pick.then');
         else add(id, fallTarget(id), 'fall');
@@ -156,7 +143,6 @@ export function buildCfg(ir: PlaybookIR, opts: { irreversible?: ReadonlySet<stri
       case 'submit':
       case 'human_commit':
       case 'send_email':
-        // §4.3-2: 비가역 스텝의 다음은 항상 verify. 폴스루 없음.
         if (known(s.verify, id, `${s.type}.verify`)) add(id, s.verify, 'out');
         break;
       default:
@@ -167,7 +153,6 @@ export function buildCfg(ir: PlaybookIR, opts: { irreversible?: ReadonlySet<stri
       if (then === 'abort') add(id, ABORT, 'fail');
       else if (then === 'handoff') {
         add(id, hNode(id), 'fail');
-        // 비가역 스텝의 실패 뒤 재개는 다시 누르는 것이 아니라 verify다(D03 §2 HandedOff 재개, §5.3 "실패는 곧바로 verify").
         const v = IRREVERSIBLE_TYPES.has(s.type) ? (s as { verify: string }).verify : id;
         if (info.has(v)) add(hNode(id), v, 'resume');
         add(hNode(id), ABORT, 'resume');
@@ -183,7 +168,6 @@ export function buildCfg(ir: PlaybookIR, opts: { irreversible?: ReadonlySet<stri
   }
 
   const entry = ir.steps[0]?.id ?? END;
-  // ---- 2단계: 지배 관계에 기대는 간선(recover·rewind·implicit) ----
   const dom0 = dominators(entry, succ);
   const domCps = (id: string) => [...(dom0.get(id) ?? [])].filter((d) => d !== id && info.get(d)?.step.type === 'checkpoint');
   const sessionCp = checkpoints.get('session');
@@ -193,11 +177,8 @@ export function buildCfg(ir: PlaybookIR, opts: { irreversible?: ReadonlySet<stri
       add(id, id, 'recover');
     }
     if (s.type === 'gate' || s.type === 'human') for (const cp of domCps(id)) add(id, cp, 'rewind');
-    // 세션 만료 → session 체크포인트(그 체크포인트가 지배하는 스텝만).
     if (sessionCp && sessionCp !== id && dom0.get(id)?.has(sessionCp) && !IRREVERSIBLE_TYPES.has(s.type) && s.type !== 'end') add(id, sessionCp, 'implicit');
   }
-  // R-C2(§4.3-4): 핸드오프 중 가드가 커밋 요청을 관측하면 원장이 in_doubt가 되고, 재개는 resumeAt 대신 그 X의 verify다.
-  // 어느 핸드오프에서든 일어날 수 있으므로 모든 H 노드에서 각 X의 verify로 간선을 둔다.
   const irr = [...(opts.irreversible ?? [])].filter((x) => info.has(x));
   const hs = [...succ.keys()].filter((n) => n.startsWith('H:'));
   for (const x of irr) {
@@ -257,7 +238,6 @@ export function dominators(entry: string, succ: Map<string, Map<string, EdgeKind
 /** a가 b를 지배하는가(b가 진입점에서 도달 불가면 거짓). */
 export const dominates = (cfg: Cfg, a: string, b: string) => cfg.dom.get(b)?.has(a) ?? false;
 
-/** 커밋 구간 W(X) = G(X)에서 X로 가는 경로 위 노드(G·X 포함). G를 다시 지나지 않는 경로만 본다. */
 /**
  * opts.followUp: 후속 비가역 Y의 구간. 관측 간선과 핸드오프·비밀 창 합성 노드를 지나지 않는다 — HandedOff 진입은 미소비 토큰을
  * 폐기하고(R-G2) 후속 토큰은 같은 커밋 구간의 committed 전이에서만 발급되므로(D03 §3) 그 길로는 Y를 실행할 수 없다.

@@ -1,6 +1,3 @@
-// 모델 게이트웨이 클라이언트 계약(D04 §7, D09 §3, gateway-request.schema.json). 송신 자체는 Egress.toGateway()만 한다.
-// 와이어 정본은 services/gateway/API.md(M4-6). 인증: 기기 범위 토큰 + DPoP 증명(SAX-dpop-v1, ADR-029). 서명은 금고(crypto.signVd)가 하므로 이 모듈은 헤더를 만드는 콜백만 받는다.
-// 응답은 비신뢰 입력이다(C-24): 이 모듈은 JSON 모양만 확인하고, 질문 해시 대조·매핑은 model 계층이 로컬 번들로 한다.
 
 /** 게이트웨이 경로(services/gateway/API.md, D04 §7). 이 밖의 경로는 보내지 않는다. 사용량 조회는 계정 서비스 몫이다. */
 export const GATEWAY_PATHS = { decide: '/v1/decide', respond: '/v1/respond', runTokens: '/v1/run-tokens', codefToken: '/v1/codef/token' } as const;
@@ -15,10 +12,6 @@ export const GATEWAY_ORIGIN = 'https://tax.laf-co.com';
 /** DPoP 헤더 생성기(금고 crypto.signVd purpose SAX-dpop-v1). htm·htu·본문 해시를 받아 Authorization·DPoP 헤더를 돌려준다. 토큰·증명은 기록하지 않는다. */
 export interface GatewayAuth {
   headers(req: { method: 'POST'; url: string; bodySha256: string }): Promise<Record<string, string>>;
-  /**
-   * 게이트웨이가 401(gateway.unauthorized)을 줬다. 캐시한 기기 토큰을 버리게 한다(ADR-040 결정 3·5).
-   * 있으면 Egress.toGateway가 이것을 부른 뒤 한 번만 다시 보낸다. 없으면 다시 보내지 않는다(같은 토큰이라 소용없다).
-   */
   invalidate?(): void;
 }
 

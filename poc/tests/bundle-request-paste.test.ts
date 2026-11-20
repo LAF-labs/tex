@@ -1,5 +1,3 @@
-// 세무사 요청 붙여넣기 → 꾸러미 항목 후보(D14 M6-7, ADR-032 결정 8·11): 규칙 사전, 모델 없음, DB에 쓰지 않음.
-// 1·2층 자료는 기존 항목을 가리키고(새로 넣지 않음), 3층은 후보만. 사장님이 고른 것만 bundle.addItem {source:'pasted_request'}.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -79,7 +77,6 @@ describe('붙여넣기 → 후보(규칙 사전)', () => {
     assert.deepEqual(names(await cands('사업자등록증명 떼서 보내 주세요')), []);
     assert.deepEqual(names(await cands('사업자등록증 사본 보내 주세요')), ['사업자등록증 사본']);
     assert.deepEqual(await cands('사장님 이번 달도 수고 많으셨습니다. 다음 주에 연락드릴게요.'), []);
-    // 신고 묶음을 가리키는 말은 서류가 아니다(꾸러미 전체가 답이다)
     assert.deepEqual(await cands('이번 부가세 자료 부탁드립니다. 종소세 신고 관련 서류도 준비해 주세요. 기타 자료 보내 주세요'), []);
   });
 

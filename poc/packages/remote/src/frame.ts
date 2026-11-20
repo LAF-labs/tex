@@ -1,9 +1,3 @@
-// D08 §6 메시지 프레이밍.
-//   outer = ver(1B) ‖ kind(1B: HS/DATA/ENV) ‖ ctr(8B, DATA만) ‖ len(2B)
-//   DATA  = outer ‖ ChaCha20-Poly1305(k_tx, nonce=0^32‖LE64(ctr), ad=outer, pt=pad(inner))
-//   pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
-// 수신은 ctr 슬라이딩 창(1024)으로 중복·역전을 거르고, 실패는 조용히 버린다(오류 코드 송신 없음, C/X-12).
-// 키 교체는 ctr가 2^20의 배수가 될 때 양쪽이 결정적으로 한다(§5.4, C-33): k_e = REKEY(k_{e-1}).
 
 import { concat, u64be, readU64be, wipe } from './bytes.ts';
 import { chachaOpen, chachaSeal, noiseNonce } from './crypto.ts';
@@ -13,8 +7,8 @@ export const FRAME_VER = 1;
 export const KIND = { HS: 1, DATA: 2, ENV: 3 } as const;
 export type FrameKind = (typeof KIND)[keyof typeof KIND];
 
-const HS_HEADER = 4; // ver kind len(2)
-const DATA_HEADER = 12; // ver kind ctr(8) len(2)
+const HS_HEADER = 4;
+const DATA_HEADER = 12;
 const TAG = 16;
 /** DATA 평문(패딩 포함) 최대 = 65535 − 머리 12 − 태그 16. */
 export const MAX_PADDED = NOISE_MAX_MSG - DATA_HEADER - TAG;
@@ -79,12 +73,10 @@ export function parseFrame(f: Uint8Array): ParsedFrame | null {
   return null;
 }
 
-/** Noise REKEY: k' = ENCRYPT(k, 2^64−1, ε, 0^32)[:32]. */
 function rekey(k: Uint8Array): Uint8Array {
   return chachaSeal(k, noiseNonce(2n ** 64n - 1n), new Uint8Array(), new Uint8Array(32)).slice(0, 32);
 }
 
-/** 한 방향 전송 키를 epoch별로 유도·보관한다. */
 class EpochKeys {
   #epoch = 0n;
   #cur: Uint8Array;
@@ -92,13 +84,11 @@ class EpochKeys {
   constructor(k: Uint8Array) {
     this.#cur = k.slice();
   }
-  /** 송신: epoch는 앞으로만 간다. */
   forSend(epoch: bigint): Uint8Array {
     while (this.#epoch < epoch) this.#advance();
     if (epoch !== this.#epoch) throw new Error('frame: epoch went backwards');
     return this.#cur;
   }
-  /** 수신: 현재·직전 epoch만, 다음 epoch는 한 칸만 앞당긴다. 커밋 전 시험용 키를 돌려준다. */
   peek(epoch: bigint): { key: Uint8Array; commit: () => void } | null {
     if (epoch === this.#epoch) return { key: this.#cur, commit: () => {} };
     if (epoch + 1n === this.#epoch && this.#prev) return { key: this.#prev, commit: () => {} };
@@ -144,7 +134,6 @@ export class Transport {
     return concat(header, chachaSeal(key, noiseNonce(ctr), header, p));
   }
 
-  /** 실패(형식·창·인증·패딩)는 모두 null. 원인은 내보내지 않는다. */
   open(frame: Uint8Array): Uint8Array | null {
     const f = parseFrame(frame);
     if (!f || f.kind !== KIND.DATA || f.ctr === undefined) return null;
@@ -174,7 +163,6 @@ export class Transport {
     }
   }
 
-  /** 시험 전용: 송신 ctr를 옮긴다(rekey 경계 시험). */
   _testSetSendCtr(ctr: bigint): void {
     this.#ctr = ctr;
   }

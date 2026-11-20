@@ -1,4 +1,3 @@
-// S6b: Playwright가 금고 MessagePort 중계(기본 거부 허용 목록) 위에서 동작하는가, 최소 CDP 메서드 집합.
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import type { Browser, Page } from 'playwright-core';
@@ -93,7 +92,6 @@ describe('S6b Playwright over vault relay', () => {
       assert.match(r[k]!, /^error/, `${k} must fail`);
     }
     assert.equal(r['page.screenshot() (not tainted)'], 'ok');
-    // 실패 후에도 같은 페이지로 계속 쓸 수 있다
     await page.goto(`${fx.origin}/login`);
     assert.equal(await page.title(), 'login');
   });
@@ -142,7 +140,6 @@ describe('S6b Playwright over vault relay', () => {
       'page.evaluate()': await outcome(() => page.evaluate(() => 1)),
       'page.title()': await outcome(() => page.title()),
     };
-    // 사용자 입력 대역(금고 세션) 후 blur
     await h.vault.relay!.send('Runtime.evaluate', { expression: `document.getElementById('pw').focus()` }, t.vaultSession);
     await h.vault.relay!.send('Input.insertText', { text: secret }, t.vaultSession);
     const closed = h.client.once('secret_window.closed', (d) => d.targetId === targetId, 5000);
@@ -173,7 +170,7 @@ describe('RunBrowserSlot + 실제 금고: 동시 열기, Chrome이 내려간 뒤
       const pid = h.vault.chromePid;
       assert.ok(pid);
       const disconnected = new Promise<void>((r) => a.browser.once('disconnected', () => r()));
-      await h.client.rpc('browser.shutdown'); // 사용자가 Chrome을 닫거나 금고가 내린 경우의 대역
+      await h.client.rpc('browser.shutdown');
       await Promise.race([disconnected, new Promise((r) => setTimeout(r, 5000))]);
       assert.equal(a.browser.isConnected(), false);
       const c = await slot.open();

@@ -1,5 +1,3 @@
-// RFC 8785 JCS. 엔진 gate.ts의 jcs·클라우드 services/shared의 jcs와 같은 규칙이다(키는 UTF-16 코드 단위 순서, 공백 없음, 정수만).
-// AIK 서명 객체(기기 목록 항목·폐기 레코드·기기 인증서)와 DPoP 증명의 서명 입력은 utf8(ctx) ‖ utf8(JCS(객체))다(services/shared/CONTRACT.md §1).
 
 import { fromUtf8, utf8 } from './bytes.ts';
 
@@ -12,7 +10,6 @@ export function jcs(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(jcs).join(',')}]`;
   if (typeof v === 'object') {
     const o = v as Record<string, unknown>;
-    // undefined 값은 JSON.stringify처럼 뺀다.
     const keys = Object.keys(o).filter((k) => o[k] !== undefined).sort();
     return `{${keys.map((k) => `${JSON.stringify(k)}:${jcs(o[k])}`).join(',')}}`;
   }

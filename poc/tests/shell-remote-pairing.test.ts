@@ -1,5 +1,3 @@
-// 폰 연결 main 쪽(remote-pairing.ts, S-03, D08 §4.2): 실제 계정 서비스(개발 스택, acct-claim 서명) + 메모리 릴레이 + 실제 MobilePairing(폰).
-// 폰은 앱에 고정한 계정 서비스 키로 pair.ok의 acctClaim을 검증한다(팀장 결정 2026-11-06, 설계 #120).
 import assert from 'node:assert/strict';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -66,7 +64,6 @@ describe('폰 연결: 룸 → QR → 6자리 → 대리 등록·목록·우편�
     });
     return { acct, host, keys, dir };
   };
-  /** 폰은 화면의 QR 이미지를 읽는다(jsQR로 다시 읽은 글자). */
   const phoneScan = async (accountKeys = [fromB64(s.claimSigner.publicKey)]) => {
     const phone = mockPhone('사장님 폰');
     const mob = new MobilePairing({ keys: phone.keys, accountKeys, relayAllowlist: [RELAY_HOST], now: s.clock.now, pairOkTimeoutMs: 5_000 });
@@ -116,14 +113,12 @@ describe('폰 연결: 룸 → QR → 6자리 → 대리 등록·목록·우편�
     assert.equal(m.identity.desktopName, 'Windows PC');
     assert.deepEqual(relayCalls, ['room', 'mailbox']);
     assert.equal(paired.length, 1);
-    // 서버(계정)와 신원 파일에 같은 새 목록(PC + 폰)
     const after = await new RemoteIdentityFile(dir).load(s.clock.now());
     assert.equal(after!.deviceList.entries.length, 2);
     assert.deepEqual(acct.device()!.deviceList, after!.deviceList);
     assert.ok(s.client.calls.includes('POST /v1/devices/enroll') && s.client.calls.includes('PUT /v1/device-list') && s.client.calls.includes('GET /v1/acct-claim'));
     const t = JSON.stringify(logs);
     for (const bad of ['사장님', mob.sas!, EMAIL]) assert.ok(!t.includes(bad), bad);
-    // 설정 화면 연결 칸의 [닫기]: 화면만 쉬는 자리로(취소 기록·우편함 지우기 없음)
     assert.equal(host.dismiss().step, 'idle');
     assert.deepEqual(relayCalls, ['room', 'mailbox']);
     assert.ok(!JSON.stringify(logs).includes('cancelled'));

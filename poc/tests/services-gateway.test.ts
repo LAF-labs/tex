@@ -1,4 +1,3 @@
-// M4-6 모델 게이트웨이(D09 §3·§4.1, D04 §7, gateway-request.schema.json 규칙 (1)~(7)). 공급사·국세청은 모의.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
@@ -28,7 +27,6 @@ interface Env {
   pc: Signed;
   call(path: string, body: unknown, who?: Signed): ReturnType<Env['req']>;
   runToken(who?: Signed, scope?: object): Promise<string>;
-  /** 같은 DB·키를 쓰는 두 번째 인스턴스(한도 카운터는 DB로 공유, 메모리 캐시는 따로) */
   twin(): Promise<{ server: Server; req: Env['req']; call: Env['call'] }>;
 }
 
@@ -120,7 +118,6 @@ describe('M4-6 게이트웨이: 인증(기기 범위 토큰 + DPoP, 데스크톱
   });
 });
 
-/** 정지 전에 받아 둔 토큰을 흉내 내려 정지를 잠시 풀고 받은 뒤 다시 정지한다(토큰 자체는 15분 유효). */
 async function tokenBefore(e: Env): Promise<string> {
   await e.s.db.run("UPDATE devices SET state = 'active' WHERE device_id = $1", [e.pc.d.id]);
   const t = await e.pc.token();
@@ -145,7 +142,6 @@ describe('M4-6 게이트웨이: /v1/decide 번들 주입·스키마·트립와�
     const byok = new OpenAIDecisionsAdapter({ apiKey: 'unused', egress: { providerFetch: fetch } as unknown as Egress, model: 'model-decide' }).buildRequest(SCREEN, '홈택스 > 조회/발급 화면입니다.' as never) as unknown as Record<string, unknown>;
     const strip = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([k]) => k !== 'prompt_cache_key' && k !== 'safety_identifier'));
     assert.deepEqual(strip(sent), strip(byok));
-    // 응답: cached_tokens 없음, questionsDigest = sha256(정규 JSON(질문))
     assert.deepEqual(r.json.usage, { input_tokens: 1000, output_tokens: 20 });
     assert.ok(!r.text.includes('cached'));
     assert.equal(r.json.questionsDigest, sha256hex(canonicalJson(SCREEN.def.questions)));
@@ -160,7 +156,7 @@ describe('M4-6 게이트웨이: /v1/decide 번들 주입·스키마·트립와�
     assert.notEqual(a!.prompt_cache_key, b!.prompt_cache_key);
     assert.notEqual(a!.safety_identifier, b!.safety_identifier);
     const before = e.svc.safetyId(e.pc.accountId);
-    e.s.clock.t = Date.UTC(2026, 10, 30, 15, 0, 0); // KST 12월 1일 00:00
+    e.s.clock.t = Date.UTC(2026, 10, 30, 15, 0, 0);
     assert.notEqual(e.svc.safetyId(e.pc.accountId), before);
     assert.equal(e.svc.cacheKey(e.pc.accountId, 'b', 'x'), e.svc.cacheKey(e.pc.accountId, 'b', 'x'));
   });
@@ -197,7 +193,6 @@ describe('M4-6 게이트웨이: /v1/decide 번들 주입·스키마·트립와�
   });
 
   it('PII 누출 단언은 무작위 필드(aid HMAC 16진수·ms)의 우연한 숫자에 흔들리지 않고, 진짜 누출은 그대로 잡는다', () => {
-    // 2026-11-07 엔진 #184 Windows CI: aid 16진수가 '4111'을 우연히 담아 옛 부분 문자열 단언이 실패했다
     const access = (o: Record<string, unknown>) => JSON.stringify({ t: 0, svc: 'gateway', m: 'POST', route: '/v1/decide', status: 400, code: 'gateway.pii_tripwire', bytesIn: 1, bytesOut: 1, ...o });
     const raw = ['900101-1234567', '4111 1111 1111 1111'];
     assertNoPii([access({ aid: 'e94111900101ab12', ms: 4111 }), access({ aid: '9001011234567aaa', ms: 900101 })], raw);
@@ -207,21 +202,14 @@ describe('M4-6 게이트웨이: /v1/decide 번들 주입·스키마·트립와�
   });
 });
 
-/**
- * 로그에 원문 PII가 없다는 단언(경계 있는 비교).
- * - 줄 전체(무작위 필드 포함)에서 원문 값과 숫자만 남긴 값이 영숫자 경계로 나타나면 실패. 16진수 aid 안에 우연히 숫자가 이어져도 경계가 없어 걸리지 않는다
- * - 무작위 필드(aid: 실행마다 새 솔트의 HMAC, ms: 측정값)를 뺀 나머지에서는 숫자 조각만 있어도 실패(잘린 누출). 고정 필드라 우연이 없다
- */
 function assertNoPii(lines: readonly string[], raws: readonly string[]): void {
   const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const bounded = raws.flatMap((v) => [v, v.replace(/\D/g, '')]).map((v) => new RegExp(`(?<![0-9A-Za-z])${esc(v)}(?![0-9A-Za-z])`));
-  // 조각: 숫자만 남긴 값의 앞 6자리, 그리고 4자리 이상인 첫 묶음(옛 단언의 '900101'·'4111'을 포함한다)
   const fragments = [...new Set(raws.flatMap((v) => [v.replace(/\D/g, '').slice(0, 6), /^\D*(\d+)/.exec(v)![1]!]).filter((f) => f.length >= 4))];
   for (const line of lines) {
     for (const re of bounded) assert.ok(!re.test(line), `원문 PII ${re.source}: ${line}`);
     const rest = JSON.stringify(JSON.parse(line), (k, v: unknown) => (k === 'aid' || k === 'ms' ? undefined : v));
     for (const f of fragments) {
-      // 잘린 값도 구분자를 지운 형태로 본다(900101-12 → 90010112)
       assert.ok(!rest.includes(f) && !rest.replace(/[\s-]/g, '').includes(f), `원문 PII 조각 ${f}: ${line}`);
     }
   }
@@ -262,12 +250,11 @@ describe('M4-6 게이트웨이: runToken·실행당 예산·한도', () => {
     e.s.close();
     e = await start({ monthlyTokens: 1000 });
     const rt = await e.runToken();
-    assert.equal((await e.call('/v1/decide', decideBody(rt, FORM, '신고서 작성 화면'))).status, 200); // 1,020 토큰
+    assert.equal((await e.call('/v1/decide', decideBody(rt, FORM, '신고서 작성 화면'))).status, 200);
     assert.equal((await e.call('/v1/respond', respondBody(await e.runToken()))).json.error, 'gateway.quota_exceeded');
-    assert.equal((await e.call('/v1/decide', decideBody(rt, FORM, '신고서 작성 화면'))).status, 200); // 2,040 ≥ 2,000
+    assert.equal((await e.call('/v1/decide', decideBody(rt, FORM, '신고서 작성 화면'))).status, 200);
     assert.equal((await e.call('/v1/decide', decideBody(rt, FORM, '신고서 작성 화면'))).json.error, 'gateway.quota_exceeded');
     assert.equal((await e.call('/v1/decide', decideBody(rt, SCREEN))).status, 200);
-    // 하드 상한 이후 안전 판정은 낮은 속도로만(계정당 분당 6회)
     const rt2 = await e.runToken();
     for (let i = 1; i < GATEWAY.safetyAfterCapPerMinute; i++) assert.equal((await e.call('/v1/decide', decideBody(i < 11 ? rt : rt2, SCREEN))).status, 200);
     assert.equal((await e.call('/v1/decide', decideBody(rt2, SCREEN))).json.error, 'gateway.quota_exceeded');
@@ -324,7 +311,6 @@ describe('M4-6 게이트웨이: /v1/respond 툴셋·replay 태그·이미지 거
     assert.deepEqual(Object.keys(q.criteria), ['22', '23', 'none']);
     const out = r.json.output as Array<{ item: { content: Array<{ text: string }> } }>;
     assert.deepEqual(JSON.parse(out[0]!.item.content[0]!.text), { choice: '22', confidence: 0.9, p: 0.95 });
-    // 글이 JSON이 아니거나, 선택지가 하나뿐이거나, 메시지가 둘이면 공급사로 보내지 않고 400
     for (const messages of [
       [{ role: 'user', content: [{ type: 'input_text', text: '그냥 글' }] }],
       [{ role: 'user', content: [{ type: 'input_text', text: JSON.stringify({ state: 's', choices: { none: '없음' } }) }] }],
@@ -345,7 +331,6 @@ describe('M4-6 게이트웨이: /v1/respond 툴셋·replay 태그·이미지 거
       respondBody(rt, {}, 'intent_fill'),
     ];
     for (const b of bad) assert.deepEqual((await e.call('/v1/respond', b)).json, { error: 'gateway.param_rejected' });
-    // replay 항목(스키마가 열어 둔 객체) 안의 이미지도 거부
     const img = { item: { type: 'message', content: [{ type: 'input_image', image_url: 'https://x' }] }, tag: '0'.repeat(64) };
     assert.equal((await e.call('/v1/respond', respondBody(rt, { replay: [img] }))).json.error, 'gateway.param_rejected');
     assert.equal(e.provider.responds.length, 0);
@@ -377,7 +362,6 @@ describe('M4-6 게이트웨이: /v1/respond 툴셋·replay 태그·이미지 거
     e.provider.respondOutput = [{ type: 'function_call', call_id: 'call_1', name: 'find_candidates', arguments: '{"role":"button","nameContains":"조회","maxResults":3}' }];
     const first = await e.call('/v1/respond', respondBody(rt, {}, 'selector_repair'));
     assert.equal(first.status, 200, first.text);
-    // 게이트웨이 툴셋의 scopeId는 형식 제한(엔진이 로컬 열거로 다시 검증)
     const tools = e.provider.responds[0]!.tools as Array<{ name: string; parameters: { properties: Record<string, { enum?: unknown; pattern?: string }> } }>;
     assert.equal(tools.find((t) => t.name === 'get_a11y_subtree')!.parameters.properties.scopeId!.pattern, '^[A-Za-z0-9_.-]{1,64}$');
     const tagged = (first.json.output as Array<{ item: Record<string, unknown>; tag: string }>)[0]!;
@@ -385,15 +369,13 @@ describe('M4-6 게이트웨이: /v1/respond 툴셋·replay 태그·이미지 거
     assert.equal((await e.call('/v1/respond', respondBody(rt, { replay: [{ ...tagged, tag: '0'.repeat(64) }, answer] }, 'selector_repair'))).json.error, 'gateway.param_rejected');
     assert.equal((await e.call('/v1/respond', respondBody(rt, { replay: [{ item: { ...tagged.item, name: 'propose_selectors' }, tag: tagged.tag }, answer] }, 'selector_repair'))).json.error, 'gateway.param_rejected');
     assert.equal((await e.call('/v1/respond', respondBody(rt, { replay: [{ ...answer, call_id: 'call_x' }] }, 'selector_repair'))).json.error, 'gateway.param_rejected');
-    // 다른 runToken으로는 같은 태그가 통하지 않는다
     const rt2 = await e.runToken();
     assert.equal((await e.call('/v1/respond', respondBody(rt2, { replay: [tagged, answer] }, 'selector_repair'))).json.error, 'gateway.param_rejected');
     const turn = await e.call('/v1/respond', respondBody(rt, { replay: [tagged, answer] }, 'selector_repair'));
     assert.equal(turn.status, 200, turn.text);
-    assert.equal((e.provider.responds[1]!.input as unknown[]).length, 4); // developer + user + function_call + output
+    assert.equal((e.provider.responds[1]!.input as unknown[]).length, 4);
     assert.equal((await e.call('/v1/respond', respondBody(rt, {}, 'selector_repair'))).status, 200);
     assert.equal((await e.call('/v1/respond', respondBody(rt, {}, 'selector_repair'))).json.error, 'gateway.run_budget_exceeded');
-    // 트립와이어는 function_call_output에도
     const rt3 = await e.runToken();
     const f3 = await e.call('/v1/respond', respondBody(rt3, {}, 'selector_repair'));
     const t3 = (f3.json.output as Array<{ item: Record<string, unknown>; tag: string }>)[0]!;
@@ -416,7 +398,6 @@ describe('M4-6 게이트웨이: /v1/respond 툴셋·replay 태그·이미지 거
     const dev = JSON.stringify((sent.input as unknown[])[0]);
     assert.match(dev, /chat_reply/);
     assert.doesNotMatch(dev, /판정기다/);
-    // 1턴: 이전 출력을 재생하면 예산 초과, 문장 속 식별자는 트립와이어
     const tagged = (r.json.output as Array<{ item: Record<string, unknown>; tag: string }>)[0]!;
     assert.equal((await e.call('/v1/respond', { ...body, replay: [tagged] })).json.error, 'gateway.run_budget_exceeded');
     const pii = { ...body, messages: [{ role: 'user', content: [{ type: 'input_text', text: '주민 900101-1234567 이거 뭐야' }] }] };
@@ -466,7 +447,6 @@ describe('M4-6 게이트웨이: 기기 자동 정지·계량 분리·진위확�
     assert.ok(e.s.mail.outbox.some((m) => m.kind === 'device_auto_suspended'));
     assert.ok(e.events.includes('auto_suspend'));
     assert.equal((await e.req('POST', '/v1/decide', { headers: e.pc.headers('POST', GW, '/v1/decide', await tokenBefore(e)), body: decideBody(rt) })).json.error, 'gateway.device_suspended');
-    // AIK 재활성화(여기서는 계정 DB로 대신) 뒤 다시 폭주하면 다시 정지한다(한 번 정지로 끝나지 않는다)
     await e.s.db.run("UPDATE devices SET state = 'active' WHERE device_id = $1", [e.pc.d.id]);
     const rt2 = await e.runToken();
     for (let i = 0; i < GATEWAY.abuseThreshold - 1; i++) await e.call('/v1/decide', decideBody(rt2, SCREEN, '900101-1234567'));
@@ -484,17 +464,16 @@ describe('M4-6 게이트웨이: 기기 자동 정지·계량 분리·진위확�
       assert.deepEqual(g.s.stopped, []);
       await other.call('/v1/decide', decideBody(rt, SCREEN, '900101-1234567'));
       assert.deepEqual(g.s.stopped, [g.pc.d.id]);
-      // 저장된 한도 키에 평문 기기·계정 ID가 없다
       const ks = (await g.db.all<{ k: string }>('SELECT k FROM lim_windows')).map((r) => r.k);
       assert.ok(ks.length > 0 && ks.every((k) => !k.includes(g.pc.d.id)));
 
       await g.s.db.run("UPDATE devices SET state = 'active' WHERE device_id = $1", [g.pc.d.id]);
       g.s.clock.advance(H);
       const codes: string[] = [];
-      const tok = await g.pc.token(); // 기기 토큰은 한 번만 받는다(계정 서비스의 발급 한도와 섞지 않게)
+      const tok = await g.pc.token();
       let rt2 = '';
       for (let i = 0; i < GATEWAY.l1PerMinute + 1; i++) {
-        if (i % 10 === 0) rt2 = await g.runToken(); // 실행 예산(L1 ≤ 12)보다 먼저 분당 한도를 본다
+        if (i % 10 === 0) rt2 = await g.runToken();
         const r = await (i % 2 ? g.req : other.req)('POST', '/v1/decide', { headers: g.pc.headers('POST', GW, '/v1/decide', tok), body: decideBody(rt2) });
         codes.push(r.status === 200 ? 'ok' : (r.json.error as string));
       }
@@ -522,7 +501,6 @@ describe('M4-6 게이트웨이: 기기 자동 정지·계량 분리·진위확�
     assert.deepEqual(
       stats.map((x) => [x.surface, x.outcome, Number(x.n)]),
       [
-        // 판정 모델이 밝힌 이름(별칭이 풀린 버전)을 날마다 센다(계정 없음)
         ['model:model-decide', 'seen', 1],
         ['query_parse', 'ok', 1],
         ['screen_state_v2', 'ok', 1],
@@ -553,7 +531,6 @@ describe('M4-6 게이트웨이: 기기 자동 정지·계량 분리·진위확�
       assert.ok(!l.includes('1234567'), l);
     }
     assert.equal((await e.db.all('SELECT * FROM call_records')).length, 0);
-    // 서비스 계층도 같은 한도를 지킨다(앱 검증을 거치지 않는 호출 경로 대비)
     for (const bad of [[], Array.from({ length: 11 }, () => '1234567891'), ['123-45-67891']]) {
       await assert.rejects(e.svc.bizStatus(bad), (x: Error & { code?: string }) => x.code === 'gateway.param_rejected');
     }
@@ -593,8 +570,6 @@ describe('M4-6 게이트웨이: 기기 자동 정지·계량 분리·진위확�
 
 describe('게이트웨이: 하루 AI 사용 금액 한도(체험·유료, KST 새벽 4시 초기화)', () => {
   let e: Env;
-  // 모의 공급사 respond = 입력 2,000(캐시 1,500)·출력 300 → 500×$1 + 1,500×$0.05 + 300×$5 = 2,075 마이크로 달러. 환율 1,000이면 약 2원
-  // 단가를 고정해 기본 단가(LIMIT_PRICES)가 바뀌어도 금액 계산 단언이 그대로다
   const PRICES = { decideIn: 100_000, decideCached: 10_000, decideOut: 0, respondIn: 1_000_000, respondCached: 50_000, respondOut: 5_000_000, agentIn: 1_000_000, agentCached: 50_000, agentOut: 5_000_000 };
   beforeEach(async () => (e = await start({ daily: { trialKrw: 5, paidKrw: 20, krwPerUsd: 1000 }, limitPrices: PRICES })));
   afterEach(() => (e.server.close(), e.s.close()));
@@ -604,16 +579,13 @@ describe('게이트웨이: 하루 AI 사용 금액 한도(체험·유료, KST �
     for (let i = 0; i < 3; i++) assert.equal((await e.call('/v1/respond', respondBody(rt)).then((r) => r.status)), 200);
     const over = await e.call('/v1/respond', respondBody(rt));
     assert.deepEqual([over.status, over.json.error], [429, 'gateway.daily_limit']);
-    // 시계: 2026-11-10 00:00Z = KST 09:00 → 다음 초기화는 다음 날 KST 04:00 = 2026-11-10 19:00Z
     assert.equal(Number(over.headers.get('retry-after')), (Date.UTC(2026, 10, 10, 19) - e.s.clock.now()) / 1000);
     const u = await e.req('GET', '/v1/usage', { headers: e.pc.headers('GET', GW, '/v1/usage', await e.pc.token()) });
     assert.deepEqual([u.json.limitKrw, u.json.tier, u.json.resetAt], [5, 'trial', Date.UTC(2026, 10, 10, 19)]);
     assert.equal(u.json.usedKrw, 6);
-    // 안전 판정(screen_state_v2)은 한도를 넘어도, 그 밖의 번들은 막힌다
     const rt2 = await e.runToken();
     assert.equal((await e.call('/v1/decide', decideBody(rt2))).status, 200);
     assert.equal((await e.call('/v1/decide', decideBody(rt2, FORM))).json.error, 'gateway.daily_limit');
-    // 새벽 4시가 지나면 다시
     e.s.clock.t = Date.UTC(2026, 10, 10, 19) + 1;
     const rt3 = await e.runToken(undefined, { chatSessionId: `chat-${randomBytes(6).toString('hex')}` });
     assert.equal((await e.call('/v1/respond', respondBody(rt3))).status, 200);
@@ -669,7 +641,6 @@ describe('게이트웨이: 폰 대화 직접 호출(ADR-047, chat 범위)', () =
     e.provider.respondOutput = [{ type: 'message', content: [{ type: 'output_text', text: '{"kind":"ask","text":"금액을 알려 주세요.","show":["d1"],"ask":"amount"}' }] }];
     const turn = await e.call('/v1/respond', phoneBody(rt, { replay: [tagged, { type: 'function_call_output', call_id: 'call_p1', output: '{"ref":"d1","status":"needs_input","fields":null,"needs":["amount"]}' }] }), phone);
     assert.equal(turn.status, 200, turn.text);
-    // PC가 받은 태그는 폰에서 쓸 수 없다(태그는 기기·실행 토큰에 묶인다)
     const pcRt = await e.runToken(e.pc, chatId());
     const stolen = await e.call('/v1/respond', { toolset: 'chat_digest', messages: phoneBody(rt).messages, runToken: pcRt, replay: [tagged] });
     assert.equal(stolen.json.error, 'gateway.param_rejected');
@@ -716,14 +687,11 @@ describe('게이트웨이: 폰 대화 직접 호출(ADR-047, chat 범위)', () =
   });
 
   it('역할과 범위는 짝이다: chat만 가진 폰 토큰만 통과하고, PC의 실행 토큰은 폰이 쓸 수 없다', async () => {
-    // relay·push만 받은 폰 토큰(범위 축소)은 게이트웨이에 들어오지 못한다
     const narrow = await deviceToken(e.s, e.pc.aik, phone.d, ['relay', 'push']);
     const r = await e.req('POST', '/v1/run-tokens', { headers: phone.headers('POST', GW, '/v1/run-tokens', narrow), body: chatId() });
     assert.deepEqual([r.status, r.json.error], [403, 'account.scope_denied']);
-    // chat만 받은 폰 토큰은 통과
     const only = await deviceToken(e.s, e.pc.aik, phone.d, ['chat']);
     assert.equal((await e.req('POST', '/v1/run-tokens', { headers: phone.headers('POST', GW, '/v1/run-tokens', only), body: chatId() })).status, 200);
-    // PC가 받은 실행 토큰(대화 범위든 실행 범위든)은 폰에서 무효
     for (const scope of [chatId(), { runId: 'run-12345678' }]) {
       const pcRt = await e.runToken(e.pc, scope);
       assert.equal((await e.call('/v1/respond', phoneBody(pcRt), phone)).json.error, 'gateway.run_token_invalid');
@@ -731,7 +699,6 @@ describe('게이트웨이: 폰 대화 직접 호출(ADR-047, chat 범위)', () =
   });
 
   it('하루 한도는 계정으로 PC와 같이 센다: 폰이 쓴 만큼 PC 한도가 줄고, 폰도 /v1/usage로 본다', async () => {
-    // 모의 공급사 respond 한 번 = 약 2원(위 한도 시험과 같은 단가). 체험 5원이면 세 번까지
     const prt = await e.runToken(phone, chatId());
     for (let i = 0; i < 2; i++) assert.equal((await e.call('/v1/respond', phoneBody(prt), phone)).status, 200);
     const rt = await e.runToken(e.pc, chatId());
@@ -742,7 +709,6 @@ describe('게이트웨이: 폰 대화 직접 호출(ADR-047, chat 범위)', () =
     assert.equal((await e.call('/v1/respond', respondBody(rt))).json.error, 'gateway.daily_limit');
     const u = await e.req('GET', '/v1/usage', { headers: phone.headers('GET', GW, '/v1/usage', await phone.token()) });
     assert.deepEqual([u.status, u.json.usedKrw, u.json.limitKrw, u.json.tier], [200, 6, 5, 'trial']);
-    // 호출 기록에는 폰 기기 ID와 표면(chat_phone)이 남는다(본문 없음)
     const rows = await e.db.all<{ device_id: string; surface: string }>('SELECT device_id, surface FROM call_records ORDER BY at');
     assert.deepEqual(rows.map((x) => [x.device_id === phone.d.id, x.surface]), [[true, 'chat_phone'], [true, 'chat_phone'], [false, 'query_parse']]);
   });
@@ -773,7 +739,6 @@ describe('게이트웨이: 폰 대화 직접 호출(ADR-047, chat 범위)', () =
     const first = await e.call('/v1/respond', phoneBody(rt), phone);
     const tagged = (first.json.output as Array<{ item: Record<string, unknown>; tag: string }>)[0]!;
     const out = { type: 'function_call_output', call_id: 'c1', output: '{"ref":"r1","status":"empty","fields":null,"needs":null}' };
-    // 재생한 모델 출력이 턴 상한(4)에 닿으면 더 부르지 못한다
     const replay = [tagged, out, tagged, out, tagged, out, tagged, out];
     await e.db.run('DELETE FROM usage_daily');
     assert.equal((await e.call('/v1/respond', phoneBody(rt, { replay }), phone)).json.error, 'gateway.run_budget_exceeded');
@@ -853,8 +818,6 @@ describe('M4-6 게이트웨이: 공급사 와이어', () => {
     assert.equal(url, 'https://api.odcloud.kr/api/nts-businessman/v1/status?serviceKey=k%2B%2F%3D');
   });
 
-  // 로컬 실호출(기본 건너뜀): set -a; . ./.env.local; set +a; SAX_NTS_LIVE=1 NTS_PROVIDER=odcloud node --conditions=development --test tests/services-gateway.test.ts
-  // 등록되지 않은 번호(0000000000) 하나만 보낸다. 키·응답 원문은 출력하지 않는다.
   it('진위확인 실호출(SAX_NTS_LIVE=1일 때만)', { skip: process.env.SAX_NTS_LIVE !== '1' }, async () => {
     const r = await ntsFromEnv({ ...process.env, NTS_PROVIDER: 'odcloud' }).status(['0000000000']);
     assert.equal(r.length, 1);
@@ -910,19 +873,16 @@ describe('M4-6 게이트웨이: 공급사 와이어', () => {
     assert.deepEqual(sent[0]!.body.provider, { zdr: true, data_collection: 'deny', only: ['openai', 'azure'], allow_fallbacks: false, require_parameters: true });
     assert.equal(sent[0]!.body.store, false);
     assert.deepEqual(events, ['upstream_zdr_pinned']);
-    // 고정 목록 밖 공급자가 답하면 결과를 쓰지 않는다
     reply = { ...reply, provider: 'SomeOther' };
     await assert.rejects(p.respond(SPEC), (e: ProviderError) => !e.retryable);
     assert.ok(events.includes('upstream_provider_mismatch'));
     reply = { ...reply, provider: 'OpenAI' };
     assert.equal((await p.respond(SPEC)).status, 'completed');
-    // 판정·에이전트(unpinned)는 provider 필드 없이 보내고, 응답 공급자를 고정 목록과 대조하지 않는다(라우터 모델)
     reply = { ...reply, provider: 'SomeOther' };
     assert.equal((await p.respond({ ...SPEC, unpinned: true })).status, 'completed');
     assert.equal(sent.at(-1)!.body.provider, undefined);
     assert.equal(sent.at(-1)!.body.unpinned, undefined);
     assert.equal(events.at(-1), 'upstream_unpinned');
-    // 판정·에이전트의 보관 조건(OPENROUTER_AGENT_PRIVACY): 공급자는 고정하지 않고 조건만 싣는다
     assert.equal(parseAgentPrivacy(undefined), 'off');
     assert.equal(parseAgentPrivacy('zdr'), 'zdr');
     assert.equal(parseAgentPrivacy('on'), null);
@@ -932,7 +892,6 @@ describe('M4-6 게이트웨이: 공급사 와이어', () => {
       assert.deepEqual(sent.at(-1)!.body.provider, field);
       assert.equal(events.at(-1), `upstream_unpinned_${mode}`);
     }
-    // 고정 공급자를 쓸 수 없으면(404) 재시도하지 않는다
     status = 404;
     await assert.rejects(p.respond(SPEC), (e: ProviderError) => !e.retryable);
     assert.ok(events.every((e) => /^upstream_[a-z_]+$/.test(e)));

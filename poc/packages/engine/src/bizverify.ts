@@ -1,14 +1,8 @@
 import { EgressError, type Egress } from '@sax/net';
 
-// H-05 사업자등록 상태조회·진위확인(공공데이터포털 국세청 API). 사용자 자기 서비스 키(D09 §4.1 (b)).
-// PoC는 비밀을 저장하지 않으므로 키는 실행 중 메모리에만 둔다(D05 §2 BYOK: egress 메모리, 엔진 안).
-// 키는 쿼리스트링이 아니라 Authorization 헤더(Infuser)로 보낸다(URL·접근 로그에 키가 남지 않게).
-// 교체 예정(ADR-035 W 목록 후보): 제품 경로는 클라우드 진위확인 프록시(M4-6) 경유다. 자기 키 직결은 개발 모드에서만 env로 켠다.
-// 코드 변경은 2차 플레이북 묶음(M3-3, H-05)에서 한다.
 
 export interface BizStatus {
   bizNo: string;
-  /** 01 계속, 02 휴업, 03 폐업, '' 미등록 */
   statusCode: '01' | '02' | '03' | '';
   status: string;
   taxType: string;
@@ -17,18 +11,14 @@ export interface BizStatus {
 
 export interface ValidateInput {
   bizNo: string;
-  /** 개업일자 YYYYMMDD */
   startDate: string;
-  /** 대표자 성명 */
   repName: string;
-  /** 상호(선택) */
   name?: string;
 }
 
 export interface ValidateResult {
   bizNo: string;
   valid: boolean;
-  /** 01 확인, 02 불일치 */
   validCode: string;
   message: string | null;
   status: BizStatus | null;
@@ -90,14 +80,12 @@ export class BizVerifier {
     return data as Json[];
   }
 
-  /** 상태조회(요청당 최대 100건, 게이트웨이 경로는 ≤10이지만 자기 키는 포털 한도를 따른다). */
   async status(bizNos: string[]): Promise<BizStatus[]> {
     const b_no = bizNos.map((b) => b.replace(/\D/g, ''));
     if (b_no.length === 0 || b_no.length > 100) throw new BizVerifyError('bad_request');
     return (await this.call('/api/nts-businessman/v1/status', { b_no })).map(toStatus);
   }
 
-  /** 진위확인. */
   async validate(input: ValidateInput): Promise<ValidateResult> {
     const business = [{
       b_no: input.bizNo.replace(/\D/g, ''),

@@ -1,5 +1,3 @@
-// 실행 시작 패키지 공급(PR-D2 앞부분, D03 §3.1): RegistrySync가 받아 둔 설치본을 실행을 시작할 때마다 loadPackage로 다시 검증해
-// RunService의 IrPackage로 만든다. 네트워크는 쓰지 않는다(받기는 RegistrySync.sync). 로그에는 코드만 남긴다.
 import { generateKeyPairSync, sign as edSign, type KeyObject } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -30,16 +28,13 @@ export function portalLookupDefs(portal: PortalConfig): Map<string, LookupDef> {
 }
 
 export interface InstalledIrSourceOptions {
-  /** 실행할 플레이북 id(RegistrySyncOptions.packages.ids 중 하나). */
   id: string;
   portal: PortalConfig;
   judge?: Pick<Judge, 'decide'>;
   pdf?: PdfPort;
   runToken?: RunToken;
   runTokenFor?: (runId: string) => Promise<RunToken>;
-  /** 공동인증서 비밀번호 차례의 금고(B1·B2, IrPackage.secret). 없으면 human:secret이 곧바로 시간 초과다. */
   secret?: { vault: SecretVault; targetId(): string };
-  /** AI 위치 찾기 모델 길(IrPackage.locate, 게이트웨이 selector_repair). */
   locate?: LocateResponder;
 }
 
@@ -66,11 +61,6 @@ export const REHEARSAL_PACKAGES_DIR = 'rehearsal-packages';
 const readJson = (f: string): unknown => JSON.parse(fs.readFileSync(f, 'utf8'));
 const jsonKey = (x: unknown) => JSON.stringify(x);
 
-/**
- * 로컬 패키지가 같은 id의 서명 설치본보다 약하지 않은가(예행 전용, 패키지와 무관한 앱 쪽 하한).
- * 비가역 판정(commits)·커밋 엔드포인트·허용 도메인은 패키지가 정하므로, 서명본이 비가역이라 한 것을 로컬이 풀지 못하게 한다.
- * 비가역 항목의 후보(셀렉터)를 다른 키에 새로 담아도 비가역이어야 한다. 틀리면 이유 코드.
- */
 function weakerThanSigned(local: PackageFiles, signed: PackageFiles): string | null {
   if (local.manifest.id !== signed.manifest.id || local.manifest.portal !== signed.manifest.portal) return 'id_or_portal';
   if (local.manifest.domains.some((d) => !signed.manifest.domains.includes(d))) return 'domains';
@@ -80,7 +70,6 @@ function weakerThanSigned(local: PackageFiles, signed: PackageFiles): string | n
   for (const [k, e] of Object.entries(sd.entries)) if (e.commits && ld.entries[k]?.commits !== true) return 'commits_dropped';
   for (const [k, e] of Object.entries(ld.entries)) {
     if (e.commits) continue;
-    // 서명본에 이미 있던 같은 키·같은 후보 겹침(검토를 거친 것)은 그대로 받는다. 새로 생긴 겹침만 막는다.
     const had = new Set((sd.entries[k] && !sd.entries[k].commits ? sd.entries[k].candidates : []).map(jsonKey));
     if (e.candidates.some((c) => commitCandidates.has(jsonKey(c)) && !had.has(jsonKey(c)))) return 'commit_target_unflagged';
   }
@@ -110,7 +99,6 @@ export function rehearsalIrSource(
       if (weaker) return { ok: false, code: `rehearsal.weaker_than_signed.${weaker}` };
       lookups = base.lookups;
     } else {
-      // 아직 게시한 적 없는 패키지(민원증명): 같은 포털 서명 설치본(unsignedBaseline, H-01)의 도메인 안에서만 받는다. 예행은 승인 카드 자리에서 멈추므로 비가역 스텝까지 가지 않는다.
       const anchor = o.unsignedBaseline ? registry.loadInstalled(o.unsignedBaseline) : null;
       if (!anchor?.ok) return { ok: false, code: 'rehearsal.no_signed_baseline' };
       if (!files.manifest?.domains || !files.selectors?.entries) return { ok: false, code: 'rehearsal.weaker_than_signed.shape' };
@@ -139,7 +127,6 @@ export function rehearsalIrSource(
   };
 }
 
-/** <dir>/<id>/의 패키지 파일. 없으면 null, 읽지 못하면 'unreadable'. */
 function readLocal(dir: string, id: string): PackageFiles | 'unreadable' | null {
   const d = path.join(dir, id);
   if (!fs.existsSync(path.join(d, 'manifest.json'))) return null;
@@ -151,10 +138,6 @@ function readLocal(dir: string, id: string): PackageFiles | 'unreadable' | null 
   }
 }
 
-/**
- * 서명 대신 같은 로더(loadPackage)를 그대로 지난다: 부를 때마다 만든 버리는 키 둘로 서명해 그 키만 믿는 문맥으로 로드한다(구조·V 규칙·번들 허용 목록·승인 요약 표).
- * 조회 다이제스트는 넘긴 조회 설치본에서 채운다.
- */
 function loadEphemeral(files: PackageFiles, lookups: ReadonlyMap<string, LoadedPackage>): { ok: true; pkg: LoadedPackage } | { ok: false; code: string } {
   const keys = [0, 1].map((n) => ({ keyId: `rehearsal-${n}`, ...generateKeyPairSync('ed25519') }));
   const bytes = (x: unknown) => Buffer.from(JSON.stringify(x), 'utf8');

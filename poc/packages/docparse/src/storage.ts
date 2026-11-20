@@ -1,6 +1,3 @@
-// 원본 보관 경로 규칙(D07 §4): 보관함 평면 레이아웃 {docType}_{yyyyMMdd}_{shortId}.{ext}. 파일명에 PII를 넣지 않는다.
-// 실제로 옮기고 documents 행을 만드는 일은 엔진(documents.ts)이 한다. 여기는 이름 규칙과 형식별 확장자만 정한다.
-// 폰 사진(M7-4, JPEG, EXIF 제거됨)도 같은 규칙으로 보관한다(receipts.source='phone_capture').
 import type { InputFormat } from './sandbox/index.ts';
 import type { DocKind } from './types.ts';
 
@@ -11,10 +8,8 @@ export const STORED_DOC_TYPE: Record<Exclude<DocKind, 'certificate'>, 'paper_rec
   insurance_notice: 'insurance_notice',
 };
 
-// HTML 표는 사장님이 받은 확장자(.xls) 그대로 보관한다(브라우저가 아니라 엑셀이 연다)
 const EXT: Record<InputFormat, string> = { pdf: 'pdf', jpeg: 'jpg', png: 'png', xlsx: 'xlsx', csv: 'csv', xls: 'xls', html: 'xls' };
 
-/** Crockford base32(헷갈리는 I·L·O·U 없음) */
 const B32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
 /** 4자리 짧은 id. random은 0 이상 1 미만(엔진은 crypto 난수를 넘긴다) */

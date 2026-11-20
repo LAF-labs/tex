@@ -1,7 +1,3 @@
-// 시연 씨앗(pnpm demo, fixture 모드 + demoSeed만): 견본 거래처·지난 발급 이력·문서함 PDF. e2e는 씨앗 없이 돈다.
-// 이름·번호·메일은 모두 가상이다(사업자번호는 체크섬만 맞는 합성 값, 메일은 *.example). 모든 PDF에 "견본" 표시를 얹는다.
-// 증명서 PDF는 실제 가져오기와 같은 길(docparse 샌드박스 → 엔진 document.import)로 보관함에 넣는다. 세금계산서·등본 등
-// 목업 서류는 견본 PDF 파일만 만들어 둔다(경로는 main 안 MockStore.files에만, 렌더러에 보내지 않는다).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { formatBizNo, syntheticBizNo } from '@sax/db';
@@ -16,7 +12,6 @@ import type { PastRun } from './run-history.ts';
 import { NOTE } from './shell-runs.ts';
 import { importBytes } from './vault-import.ts';
 
-/** fixture 기본 3곳(A상사·B상사·C테크)에 더하는 견본 거래처. */
 const SEED_COUNTERPARTIES = [
   { name: '(주)가나다상사', repName: '가나다', email: 'tax@ganada-sangsa.example', item: '사무용품' },
   { name: '라마바물산', repName: '라마바', email: 'acc@ramaba.example', item: '포장재' },
@@ -28,7 +23,6 @@ const SEED_COUNTERPARTIES = [
 
 type SeedStatus = 'done' | 'mail_unconfirmed' | 'stopped';
 
-// [며칠 전, 시각, 거래처, 공급가액, 상태]. 하루 전 B상사 건은 대화 타임라인의 지난 카드(seedTimeline)와 같다.
 const HISTORY: Array<[number, string, string, number, SeedStatus]> = [
   [-1, '16:20', 'B상사', 550_000, 'done'],
   [-2, '10:05', '(주)가나다상사', 1_200_000, 'done'],
@@ -46,13 +40,11 @@ const HISTORY: Array<[number, string, string, number, SeedStatus]> = [
   [-32, '15:45', 'C테크', 450_000, 'done'],
 ];
 
-/** 활동 기록·문서함에 보이는 지난 세금계산서(엔진 실행 이력과 같은 PastRun 모양). 발급 건의 견본 PDF는 문서함 줄 d-<runId>다. */
 function seedPast(): PastRun[] {
   return HISTORY.map(([d, time, who, supply, status], i) => {
     const day = dayOffset(d);
     const s = splitVat(supply, 'separate');
     const runId = `h${i}`;
-    // 하루 전 B상사 건은 타임라인 지난 카드와 같은 승인번호(seedTimeline)
     const seq = d === -1 ? '00000123' : String(200 + i).padStart(8, '0');
     const issued = status !== 'stopped';
     return {
@@ -68,7 +60,6 @@ function seedPast(): PastRun[] {
 const PAGE = '<!doctype html><meta charset="utf-8"><style>body{font-family:-apple-system,"Apple SD Gothic Neo",sans-serif;margin:48px;color:#111}h1{text-align:center;font-size:24px;letter-spacing:4px}table{width:100%;border-collapse:collapse;margin:16px 0}th,td{border:1px solid #444;padding:6px 8px;font-size:13px;text-align:left}th{background:#f2f2f2;width:22%}.r{text-align:right}.m{color:#666;font-size:12px}</style><body>';
 const won = (n: number) => n.toLocaleString('ko-KR');
 
-/** 견본 전자세금계산서(발급본) 한 장. */
 function invoiceHtml(o: { date: string; who: string; bizNo: string; rep: string; mail: string; item: string; supply: number; tax: number; approvalNo: string }): string {
   return `${PAGE}<h1>전자세금계산서</h1><p class="m">승인번호 ${o.approvalNo} · 작성일자 ${o.date}</p>
 <table><tr><th>공급자</th><td>${DEMO_PROFILE.displayName} (${formatBizNo(DEMO_PROFILE.bizNo)}) · 대표 ${DEMO_PROFILE.repName}</td></tr>
@@ -78,13 +69,11 @@ function invoiceHtml(o: { date: string; who: string; bizNo: string; rep: string;
 <p class="m">PoC 데모가 만든 견본입니다. 국세청에 전송되지 않았습니다.</p>${SAMPLE_MARK}</body>`;
 }
 
-/** 목업 서류(등본·중소기업확인서 등)의 견본 한 장. */
 function sampleHtml(title: string, rows: Array<[string, string]>): string {
   return `${PAGE}<h1>${title}</h1><table>${rows.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}</table><p class="m">PoC 데모 견본입니다. 실제 서류가 아닙니다.</p>${SAMPLE_MARK}</body>`;
 }
 
 let pdfSession: Session | null = null;
-/** PDF를 그리는 메모리 세션: data: 페이지만 받고 나머지 요청은 모두 막는다(셸 기본 세션은 sax-shell:만 받아 data:를 막는다). */
 function renderSession(): Session {
   if (pdfSession) return pdfSession;
   pdfSession = session.fromPartition('sax-demo-pdf');
@@ -93,7 +82,6 @@ function renderSession(): Session {
   return pdfSession;
 }
 
-/** HTML을 PDF로(보이지 않는 창, 스크립트 끔). */
 export async function htmlToPdf(html: string): Promise<Uint8Array> {
   const w = new BrowserWindow({ show: false, webPreferences: { sandbox: true, javascript: false, session: renderSession() } });
   hardenWindow(w);
@@ -107,16 +95,10 @@ export async function htmlToPdf(html: string): Promise<Uint8Array> {
 
 export interface DemoSeed {
   past: PastRun[];
-  /** 견본 PDF를 만들고 증명서를 보관함에 넣는다(몇 초). 창을 띄운 뒤 뒤에서 돌린다. */
   fill(): Promise<void>;
-  /** 실행이 발급을 마치면 그 발급본 견본 PDF를 만든다. */
   issued(doc: Doc, run: { counterparty: { name: string; bizNo: string }; email: { value: string }; item: string; supply: number; tax: number; result: { approvalNo: string } | null }): Promise<void>;
 }
 
-/**
- * 빈 데모 DB에 견본 거래처를 넣고(엔진 명령), 목업 문서함을 견본 서류로 바꾼다. 거래처의 지난 품목은 itemHints에 더한다.
- * PDF·보관함 가져오기는 fill()에서 한다(창을 먼저 띄우게).
- */
 export async function startDemoSeed(host: EngineHost, store: DocStore, root: string, itemHints: Record<string, string>): Promise<DemoSeed> {
   const have = new Set(((await host.rpc('db.query.counterparties.list')) as Array<{ bizNo: string }>).map((c) => c.bizNo));
   for (const c of SEED_COUNTERPARTIES) {
@@ -126,7 +108,6 @@ export async function startDemoSeed(host: EngineHost, store: DocStore, root: str
   const cps = new Map([...DEMO_COUNTERPARTIES, ...SEED_COUNTERPARTIES].map((c) => [c.name, c]));
   const past = seedPast();
   const issued = past.filter((p) => p.kind === 'issued');
-  // 지난 발급본이 문서함 세금계산서가 된다. 증명서 목업(d1·d2)과 예전 계산서 목업(d3·d4)은 견본으로 바꾼다.
   const invoices: Doc[] = issued.map((p) => ({ id: p.documentId!, name: `세금계산서 · ${p.who}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: p.day, expiresOn: null, source: '앱이 발급' }));
   const kept = store.docs.filter((d) => d.id === 'd5' || d.id === 'd6');
   store.docs.splice(0, store.docs.length, ...invoices, ...kept);

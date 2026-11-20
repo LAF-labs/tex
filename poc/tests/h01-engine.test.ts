@@ -1,5 +1,3 @@
-// PoC-6(Mac 선행분): H-01 실행기·게이트·원장을 Electron 없이 시험한다. 금고는 프로세스 안(시험 정책 127.0.0.1)·헤드리스 Chrome,
-// 페이지는 가짜 H-01 픽스처다. main 승인 바 대신 시험이 게이트 요청을 받아 해시를 다시 계산하고 LocalApproval v2를 넣는다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -21,7 +19,7 @@ const C = { bizNo: '4182577343', name: 'C테크', email: 'billing@ctech.example'
 describe('게이트 해시(D03 §3)', () => {
   it('결정적 CBOR: 맵 키는 인코딩 바이트 순, 가장 짧은 길이', () => {
     assert.equal(cbor({ b: 1, a: 2 }).toString('hex'), 'a2616102616201');
-    assert.equal(cbor({ aa: 1, b: 2 }).toString('hex'), 'a261620262616101'); // 짧은 키가 먼저(길이 머리 바이트)
+    assert.equal(cbor({ aa: 1, b: 2 }).toString('hex'), 'a261620262616101');
     assert.equal(cbor(23).toString('hex'), '17');
     assert.equal(cbor(24).toString('hex'), '1818');
     assert.equal(cbor(1_000_000).toString('hex'), '1a000f4240');
@@ -239,14 +237,12 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
     assert.equal(field(req, '$dup.businessKey'), undefined);
     assert.equal(fx.posts(), 0, '게이트 전에는 제출하지 않는다');
 
-    // 위조·중계 경로 근거는 거부한다.
     assert.deepEqual(runs.answer(approval(req, { approvalNonce: 'x' })), { ok: false, code: 'wrong_nonce' });
     assert.deepEqual(runs.answer(approval(req, { reqId: 'other' })), { ok: false, code: 'wrong_gate' });
     assert.deepEqual(runs.answer(approval(req, { actionHash: '0'.repeat(64) })), { ok: false, code: 'wrong_action' });
     assert.deepEqual(runs.answer(approval(req, { exp: Date.now() - 1 })), { ok: false, code: 'expired' });
     assert.deepEqual(runs.answer(approval(req, { exp: Date.now() + 3_600_000 })), { ok: false, code: 'expired' });
     assert.deepEqual(runs.answer(approval(req, { presence: 'click+waiver' })), { ok: false, code: 'presence_unsupported' });
-    // 폰 승인(ADR-052)은 처음 거래처·처음 보내는 이메일 게이트에 받지 않는다(main이 걸러도 엔진이 한 번 더 본다).
     assert.deepEqual(runs.answer(approval(req, { presence: 'remote+px' })), { ok: false, code: 'remote_not_allowed' });
     assert.deepEqual(runs.answer({ ...approval(req), v: 1 }), { ok: false, code: 'bad_version' });
     assert.throws(() => runs.answerFromRelay('gate.answer'), /forbidden_channel/);
@@ -307,7 +303,7 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
     const req = await gateFor(runId);
     try {
       assert.deepEqual(runs.answer(approval(req)), { ok: true });
-      fx.knobs.mutate = { field: 'splAmt', value: '7000001' }; // 거부 우선 창(2초) 안에 페이지가 바꾼다
+      fx.knobs.mutate = { field: 'splAmt', value: '7000001' };
       const end = await endOf(runId);
       assert.deepEqual([end.status, end.code], ['failed', 'pre_dispatch_mismatch']);
       assert.equal(fx.posts(), 1, '제출하지 않았다');
@@ -375,7 +371,7 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
     assert.equal((await endOf(r1)).status, 'stopped');
     assert.equal(new GateRepo(db).state(q1.reqId), 'denied');
     assert.equal(fx.posts(), posts);
-    fx.knobs.reflectDelayMs = 400; // verify 창(600ms·2회) 안에 반영되게
+    fx.knobs.reflectDelayMs = 400;
     try {
       const r2 = start(cpC, 130_000);
       assert.deepEqual(runs.answer(approval(await gateFor(r2))), { ok: true });
@@ -409,7 +405,6 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
     assert.throws(go, (e: Error & { code?: string }) => e.code === 'package.load_failed');
     assert.deepEqual(log.lines.slice(before).map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.code === 'run.package_refused').map((l) => l.code_), ['registry.signature_insufficient']);
     assert.equal(calls, 2);
-    // 앱 판이 패키지 minAppVersion보다 낮으면 검증 실패와 구분한다(사용자에게 "앱을 업데이트해 주세요"를 보이려고)
     answer = { ok: false, code: 'registry.app_version_low' };
     assert.throws(go, (e: Error & { code?: string }) => e.code === 'package.app_old');
     assert.equal(calls, 3);
@@ -439,7 +434,7 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
   });
 
   it('audit-e: delayed reflection beyond minElapsed resolves committed instead of in_doubt', async () => {
-    fx.knobs.reflectDelayMs = 1_500; // verify 하한(600ms·2회)을 넘겨 반영된다. 상한(3초)까지 조회를 이어 간다.
+    fx.knobs.reflectDelayMs = 1_500;
     try {
       const runId = start(cpC, 150_000);
       assert.deepEqual(runs.answer(approval(await gateFor(runId))), { ok: true });
@@ -479,7 +474,6 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
   });
 
   it('audit-e: portal issueDate different from intent ends assert.issue_date_mismatch before the gate', async () => {
-    // 하루 뒤 KST 날짜의 시계: 의도의 작성일자(내일) ≠ 가짜 페이지 작성일자(오늘). 따로 DB를 써 다른 시험의 시계 기록에 닿지 않는다.
     const t = await tempDb();
     try {
       const d = new DataService(t.db, new BizVerifier(new Egress()));

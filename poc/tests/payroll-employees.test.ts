@@ -1,4 +1,3 @@
-// 급여대장 직원 입력·"지난달과 같나요?"·급여 기능 켜기(08 D-06, D14 M6-9): BundleService 명령, main 전용, 주민번호 원문은 결과에 없다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -97,7 +96,6 @@ describe('직원 입력(처음 한 번)', () => {
     const all = (await call<EmployeeView[]>('db.query.payroll.employees', { profileId })).map((e) => e.name);
     assert.ok(oct.includes('최퇴사') && !nov.includes('최퇴사') && all.includes('최퇴사'));
     assert.ok(!all.includes('남의직원'));
-    // 주민번호 지우기(null)
     const lee = list.find((e) => e.name === '이직원')!;
     await call('payroll.updateEmployee', { profileId, employeeId: lee.id, patch: { rrn: '950505-2234567' } });
     const cleared = await call<EmployeeView>('payroll.updateEmployee', { profileId, employeeId: lee.id, patch: { rrn: null } });
@@ -128,7 +126,6 @@ describe('지난달과 같나요?(carryOver)', () => {
     assert.deepEqual(c.newEmployees, [{ id: newbie.id, name: '정신입' }]);
     assert.deepEqual(c.leftEmployees, [{ id: id('최퇴사'), name: '최퇴사' }]);
 
-    // 그대로 넣으면 지난달과 같은 과세 수당·차감 항목이 나온다(비과세 식대는 직원 설정에서 다시)
     const nov = await call<{ lines: Array<{ employeeId: string; result: { items: Array<{ name: string; amount: number; taxable: boolean }>; workDays: number | null } }> }>(
       'payroll.compute', { profileId, month: '2026-11', paidOn: '2026-12-05', inputs: c.inputs },
     );

@@ -1,4 +1,3 @@
-// 시험용 계정 서비스 스택: 게이트웨이·릴레이 시험이 실제 계정 서비스가 발급한 기기 범위 토큰으로 붙도록 한다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
@@ -19,9 +18,7 @@ export interface Stack {
   directory: DeviceDirectory;
   stopped: string[];
   hooks: DeviceStopHook[];
-  /** 페어링 룸 소비 확인(릴레이 시험이 실제 릴레이 내부 API로 바꿔 끼운다). 기본은 항상 실패 */
   pairing: { impl: PairingRooms | null };
-  /** acct_claim 고정용 공개키(표준 base64). 서명 키를 끈 스택이면 null */
   acctClaimPub: string | null;
   close(): void;
 }
@@ -60,9 +57,7 @@ export interface Signed {
   d: Device;
   accountId: string;
   session: string;
-  /** 계정 서비스에서 새 기기 범위 토큰을 받는다 */
   token(): Promise<string>;
-  /** 다른 서비스 호출용 헤더(Authorization: DPoP + DPoP 증명) */
   headers(method: string, origin: string, path: string, token: string): Record<string, string>;
 }
 
@@ -90,7 +85,6 @@ export async function signedDesktop(s: Stack, email: string): Promise<Signed> {
   };
 }
 
-/** scopes: 범위 축소 요청(ADR-040 결정 1). 없으면 전체 */
 export async function deviceToken(s: Stack, aik: EdKey, d: Device, scopes?: string[]): Promise<string> {
   const c = cert(aik, d, s.clock.now() + 90 * D);
   const t = await s.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ACCOUNT_ORIGIN + '/v1/device-tokens', jcs(c), d.V, s.clock.now()) }, body: { cert: c, ...(scopes ? { scopes } : {}) } });
@@ -98,7 +92,6 @@ export async function deviceToken(s: Stack, aik: EdKey, d: Device, scopes?: stri
   return t.json.token as string;
 }
 
-/** 폰 등록 → PC가 AIK 목록에 넣어 활성화 → 폰 토큰 */
 export async function signedPhone(s: Stack, pc: Signed): Promise<{ d: Device; token(): Promise<string>; headers: Signed['headers'] }> {
   const phone = device('mobile', s.clock.now());
   const en = await s.req('POST', '/v1/devices/enroll', { headers: { authorization: `Bearer ${pc.session}` }, body: { deviceId: phone.id, role: 'mobile', platform: 'ios', name: '폰', Sx: phone.S.b64, Vx: phone.V.b64 } });

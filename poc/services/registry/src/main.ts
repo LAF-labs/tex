@@ -1,5 +1,3 @@
-// 기동: 핀 키(TRUST_ROOT_JSON, 공개키만) → 투명성 로그(DB + 타임스탬프 온라인 키) → 저장소(REGISTRY_DIR) → HTTP.
-// 패키지·정책·루트·긴급·릴리스 서명 키는 이 서비스·이미지·CI 어디에도 없다(ADR-013·028). 서버가 갖는 키는 로그 헤드용 타임스탬프 키 하나다(D09 §8.2).
 import { fileURLToPath } from 'node:url';
 import { Logger, createServer, fromB64, listen, openFromEnv, openSqlite } from '@sax/svc-shared';
 import { registryRouter } from './app.ts';
@@ -40,7 +38,6 @@ export async function startRegistry(env: NodeJS.ProcessEnv = process.env, deps: 
   const store = deps.store ?? (env.REGISTRY_DIR ? new DirStore(env.REGISTRY_DIR) : env.REGISTRY_STORE === 'memory' ? new MemoryStore() : fail('REGISTRY_DIR'));
   const logger = new Logger('registry');
   const trust = parseTrustRoot(env.TRUST_ROOT_JSON);
-  // 투명성 로그는 필수다(로그 없이 게시하지 않는다). 운영 저장은 DATABASE_URL(PostgreSQL), 개발은 SAX_SQLITE_FILE 또는 메모리
   const signer = logSigningKey(env.REGISTRY_LOG_SIGNING_KEY, trust);
   const db = env.DATABASE_URL || env.SAX_SQLITE_FILE ? openFromEnv(env) : env.REGISTRY_STORE === 'memory' ? openSqlite() : fail('DATABASE_URL');
   const log = await TransparencyLog.open({ db, signer, now: Date.now, migrate: env.MIGRATE_ON_START !== '0' });

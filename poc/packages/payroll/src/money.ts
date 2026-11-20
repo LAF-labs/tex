@@ -1,5 +1,3 @@
-// 원 단위 정수 산술(ADR-031 결정 5). 부동소수를 쓰지 않는다: 요율은 백만분율(ppm) 정수, 곱셈은 BigInt, 끝처리는 표마다 정한 규칙으로.
-
 /** 끝처리 규칙. floor_10 = 10원 미만 절사, round_1 = 원 미만 반올림(0.5 올림) */
 export type Rounding = 'floor_1' | 'floor_10' | 'floor_100' | 'floor_1000' | 'round_1' | 'round_10';
 

@@ -1,4 +1,3 @@
-// 엔진 코어(M1-4) 공개 인터페이스.
 export * from './types.ts';
 export * from './schema.ts';
 export * from './re2.ts';

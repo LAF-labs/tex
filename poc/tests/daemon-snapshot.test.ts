@@ -1,5 +1,3 @@
-// daemon.snapshot(엔진 main 전용 읽기 질의, D10 §3) → @sax/daemon DaemonSnapshot 계약(#100 주석 예시).
-// 정책 null·프로필 0개·여러 프로필, 읽기 전용(DB 변경 없음), 꾸러미 알림 달 셈이 데몬 bundlePeriod와 같은지, 데몬이 그대로 받는지 본다.
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -14,13 +12,12 @@ import { COMMANDS, DAEMON_READ_QUERIES, MAIN_ONLY, PAYROLL_MAIN_ONLY, READ_QUERI
 
 type P = Pick<Policy, 'expiresAt' | 'daemon'>;
 type S = Pick<RegistryStatus, 'issuedAt' | 'expiresAt'>;
-// 타입 계약: 엔진 응답이 데몬 DaemonSnapshot·ProfileSnapshot에 그대로 들어간다
 const _snap: DaemonSnapshot = {} as DaemonSnapshotResult<P, S>;
 const _prof: ProfileSnapshot = {} as ProfileSnapshotRow;
 void _snap;
 void _prof;
 
-const NOW = new Date('2026-11-06T01:00:00.000Z'); // 한국 2026-11-06, 기본 알림 날 5일 → 꾸러미 달 2026-10
+const NOW = new Date('2026-11-06T01:00:00.000Z');
 const root = path.resolve(import.meta.dirname, '..');
 const entry = fs.readFileSync(path.join(root, 'packages/engine/src/entry.ts'), 'utf8');
 
@@ -78,7 +75,6 @@ describe('daemon.snapshot: 여러 프로필', () => {
     biz = profiles.upsert({ kind: 'business', displayName: '가게', bizNo: syntheticBizNo(21), ...base }).id;
     personal = profiles.upsert({ kind: 'personal', displayName: '개인', bizNo: null, ...base }).id;
     new EmployeeRepo(ctx.db, ctx.cipher).create({ profileId: biz, name: '김직원', birthDate: '1990-01-01', hiredOn: '2025-01-02', basePay: 2_500_000, dependents: 1, rrn: '900101-1234567' });
-    // 개인 프로필은 알림 날 20일 → 오늘(11-06)은 꾸러미 알림 달이 아니다
     new DaemonSettingsRepo(ctx.db).set(personal, { reminderDay: 20 });
     const docs = new DocumentRepo(ctx.db);
     for (const [profileId, docType] of [[biz, 'biz_registration_cert'], [biz, 'tax_payment_cert'], [personal, 'resident_registration']] as const) {
@@ -112,7 +108,6 @@ describe('daemon.snapshot: 여러 프로필', () => {
     assert.equal(p.missing, null);
     const json = JSON.stringify(snap);
     assert.ok(!json.includes('1234567') && !json.includes(ctx.dir), '주민번호·보관함 경로 없음');
-    // 데몬이 그대로 받는다
     for (const prof of snap.profiles) assert.doesNotThrow(() => planNotifications(prof, '2026-11-06'));
     assert.ok(planNotifications(b, '2026-11-06').notifications.some((n) => n.notification.id.startsWith('bundle.')), '꾸러미 알림 후보');
   });

@@ -1,5 +1,3 @@
-// 비밀 입력 창(main이 연다, 금고 secret.needed가 부를 때만). OS 프레임·제목줄이 있는 메인 창의 모달이다(N-11 PoC 부분).
-// 렌더러는 이 창을 열거나 라벨을 정할 수 없다. 포트는 금고 직결이고 main은 내용을 보지 않는다(D05 §3.8).
 import path from 'node:path';
 import { BrowserWindow, type MessagePortMain } from 'electron';
 import { hardenWindow } from './harden.ts';
@@ -7,7 +5,6 @@ import { IPC } from './ipc.ts';
 
 const STATIC = path.join(import.meta.dirname, '../static');
 
-/** 금고 직결 입력 창(제목은 main 내장 문구). 계좌 자동조회 인증서 비밀번호 창(bank-auto.ts)도 같은 창을 쓴다. */
 export function openVaultInputWindow(parent: BrowserWindow, port: MessagePortMain, url: string, title: string, height = 300, log?: (name: string, data: Record<string, string | number>) => void): BrowserWindow {
   const win = new BrowserWindow({
     parent,
@@ -35,14 +32,11 @@ export function openVaultInputWindow(parent: BrowserWindow, port: MessagePortMai
     win.setMenu(null);
     win.setContentProtection(true);
     hardenWindow(win);
-    // 제목줄은 main이 정한 글자 그대로(페이지 <title>로 바꾸지 못한다).
     win.on('page-title-updated', (e) => e.preventDefault());
   } catch (e) {
-    // 하드닝 못 한 창은 남기지 않는다(포트는 부른 쪽이 닫는다).
     win.destroy();
     throw e;
   }
-  // 넘기기 전에 창이 닫히면 포트를 닫아 금고 쪽 결속을 끝낸다(넘긴 뒤에는 창과 함께 사라진다).
   let sent = false;
   const drop = () => {
     if (!sent) port.close();
@@ -59,7 +53,6 @@ export function openVaultInputWindow(parent: BrowserWindow, port: MessagePortMai
     },
   );
   win.on('closed', drop);
-  // 창이 빈 채로 뜨면 원인이 로그에 남아야 한다(2026-11-19 실기기: 금고 창이 연달아 뜨는 중 까만 빈 창). 값·주소 없이 단계·코드만
   win.webContents.on('did-fail-load', (_e, code) => log?.('main.secret_window_blank', { step: 'load', code }));
   win.webContents.on('render-process-gone', (_e, d) => log?.('main.secret_window_blank', { step: 'gone', code: String(d.reason).slice(0, 20) }));
   win.webContents.on('unresponsive', () => log?.('main.secret_window_blank', { step: 'unresponsive' }));

@@ -1,18 +1,3 @@
-// 레지스트리 서명 의식 CLI(CEREMONY.md). 실행: node --conditions=development services/registry/src/ceremony/cli.ts <명령> …
-//   keygen        키체인에 서명 키 만들기(Secure Enclave로 감싼 블롭만 저장) → 공개키 기록
-//   keygen-all    단독 모드 한 세대 11개(root·package·policy 각 3, emergency·release 각 1). 타임스탬프 키는 서버 비밀값이라 만들지 않는다
-//   timestamp-pubkey  서버 env의 타임스탬프 시드(REGISTRY_LOG_SIGNING_KEY, hex 64자)에서 공개키만 뽑아 공개키 기록으로
-//   pubkey        이미 있는 키의 공개키 기록
-//   trust         공개키 기록들 → TRUST_ROOT_JSON(핀) + 루트 메타데이터(키 ID → 보유자 역할 표)
-//   prepare       문서 → 서명 입력 바이트(.tosign)와 확인 코드
-//   sign          확인 코드를 다시 입력해야 서명(Touch ID) → 서명 기록
-//   collect       서명 기록들 → signatures[](서로 다른 핀 키 정족수)
-//   timestamp     타임스탬프 서명 기록 → 문서 timestamp
-//   check         완성 문서를 레지스트리 게시 관문 규칙으로 확인
-//   backup-export 고른 키를 강한 암호(scrypt + ChaCha20-Poly1305)로 잠근 오프라인 파일 1개로
-//   backup-verify 백업 파일을 열어 핀과 같은지만 본다(들여오지 않음)
-//   backup-import 백업 파일 → 이 맥의 키체인(Secure Enclave로 다시 감싼다)
-// 시드는 서명 때 Node로 오지 않는다(도우미 안에서 서명). 백업 내보내기·들여오기만 예외이고 버퍼를 바로 0으로 덮는다.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,17 +12,14 @@ export const DEFAULT_HELPER = path.join(os.homedir(), '.sax', 'bin', 'sax-keycha
 
 export interface CliDeps {
   backend(o: { helper: string }): KeyStoreBackend;
-  /** 암호 입력(화면에 보이지 않게). confirm이면 두 번 묻고 같아야 한다. */
   passphrase(prompt: string, confirm: boolean): Promise<string>;
   out(line: string): void;
-  /** 환경 변수(timestamp-pubkey만 읽는다) */
   env: NodeJS.ProcessEnv;
   read(path: string): Buffer;
   write(path: string, data: string | Buffer): void;
   now(): Date;
 }
 
-/** 터미널에서 메아리 없이 한 줄 읽기. 터미널이 아니면 거부(파이프·파일로 암호를 넘기지 않는다). */
 async function readHidden(prompt: string): Promise<string> {
   const stdin = process.stdin;
   if (!stdin.isTTY) throw new CeremonyError('ceremony.no_tty', '암호는 터미널에서만 받는다');
@@ -80,7 +62,7 @@ const defaultDeps: CliDeps = {
   out: (l) => process.stdout.write(`${l}\n`),
   env: process.env,
   read: (p) => fs.readFileSync(p),
-  write: (p, d) => fs.writeFileSync(p, d, { flag: 'wx', mode: 0o600 }), // 이미 있는 파일은 덮지 않는다
+  write: (p, d) => fs.writeFileSync(p, d, { flag: 'wx', mode: 0o600 }),
   now: () => new Date(),
 };
 
@@ -161,7 +143,6 @@ export async function main(argv: readonly string[], deps: CliDeps = defaultDeps)
       return 0;
     }
     case 'timestamp-pubkey': {
-      // 서버 비밀값(REGISTRY_LOG_SIGNING_KEY와 같은 키)에서 공개키만. 시드는 출력·파일·로그에 남기지 않고 바로 0으로 덮는다.
       const name = one('env', false) || TIMESTAMP_ENV;
       const hex = deps.env[name];
       if (typeof hex !== 'string' || !/^[0-9a-f]{64}$/i.test(hex.trim())) throw new CeremonyError('ceremony.timestamp_seed_invalid', `${name}: hex 64자`);
@@ -247,9 +228,7 @@ export async function main(argv: readonly string[], deps: CliDeps = defaultDeps)
         if (kind === 'revoked_keys') verifyRevoked(doc as never, trust, null, now);
         else if (kind === 'status') verifyStatus(doc as never, trust, revoked, null, now);
         else if (kind === 'policy') verifyPolicy(doc as never, trust, revoked, null, now);
-        // 서버가 도장을 찍기 전 인덱스 초안(timestamp 없음)은 내용 서명·모양만 본다(ADR-043)
         else if (kind === 'index') verifyIndex(doc as never, channel, trust, revoked, null, now, undefined, { content: doc.timestamp === undefined });
-        // 서버 도장 전 초안(timestamp 없음)은 내용 서명·모양만 본다(인덱스와 같다)
         else if (kind === 'release') verifyRelease(doc as never, channel, trust, revoked, null, now, undefined, { content: doc.timestamp === undefined });
         else {
           const sigs = kind === 'root_change' ? (doc.rootChange as { signatures?: unknown } | undefined)?.signatures : doc.signatures;

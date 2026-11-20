@@ -1,9 +1,3 @@
-// PostgreSQL TLS: 신뢰 앵커를 코드에 고정하고 서버 인증서·호스트 이름을 항상 검증한다(팀장 결정 2026-11-06, D09 §9.1).
-// - node-pg는 연결 문자열의 sslmode·sslrootcert를 파싱해 우리가 넘긴 ssl 옵션을 덮어쓴다. 그래서 ssl* 매개변수를 문자열에서 빼고 ssl을 직접 넘긴다.
-// - 원격 호스트는 verify-full만 쓴다. require·verify-ca도 verify-full로 올린다(약해지지 않는다). prefer·allow·disable·no-verify는 거부한다.
-// - 앵커는 시스템 CA가 아니라 아래 고정 루트 하나다(공개 인증서, 비밀 아님). 함수 묶음에 들어가도록 파일이 아니라 문자열로 둔다.
-//   정본 사본은 services/deploy/supabase-root-2021.crt이고, 시험이 두 값과 지문(SHA-256)을 대조한다.
-// - 로컬 개발·시험 DB(localhost·127.0.0.1·::1·유닉스 소켓)만 TLS 없이 허용한다.
 import net from 'node:net';
 import type { ConnectionOptions } from 'node:tls';
 
@@ -36,9 +30,7 @@ o/bKiIz+Fq8=
 -----END CERTIFICATE-----
 `;
 
-/** 연결 문자열의 TLS 관련 매개변수(문자열에 남기면 node-pg가 ssl 옵션을 덮어쓰거나 파일을 읽는다) */
 const SSL_PARAMS = ['sslmode', 'ssl', 'sslrootcert', 'sslcert', 'sslkey', 'sslnegotiation', 'sslcrl', 'sslpassword'];
-/** 검증으로 올리는 모드. 나머지(prefer·allow·no-verify·disable)는 원격에서 거부 */
 const VERIFY = new Set(['require', 'verify-ca', 'verify-full']);
 
 const isLocal = (host: string) => host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1' || host === '' || host.startsWith('%2F');
@@ -71,7 +63,6 @@ export function pgConnectConfig(url: string, anchors: readonly string[] = [SUPAB
   const bare = host.startsWith('[') ? host.slice(1, -1) : host;
   return {
     connectionString,
-    // 고정 앵커만(시스템 CA 아님), 체인·만료·호스트 이름 검증(checkServerIdentity 기본값). IP면 SNI를 보내지 않는다(RFC 6066)
     ssl: { ca: [...anchors], rejectUnauthorized: true, ...(net.isIP(bare) ? {} : { servername: bare }) },
   };
 }

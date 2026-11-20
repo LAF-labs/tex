@@ -1,4 +1,3 @@
-// S-L0 측정: 라벨 코퍼스에 규칙을 돌려 질문별 답한 수·정답 수·기권 수를 센다(promotion.ts의 L0Measurement 모양).
 import type { Observation } from './observation.ts';
 import type { L0Measurement } from './promotion.ts';
 import { RULES } from './rules.ts';

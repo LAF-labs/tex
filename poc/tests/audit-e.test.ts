@@ -1,5 +1,3 @@
-// 감사 D(AUDIT-D) 패키지 E: 엔진·DB·net·모델 쪽 변경을 브라우저 없이 시험한다(가짜 페이지·임시 DB).
-// 실 Chrome이 필요한 것(대화상자 문구 종료 이벤트·반영 지연 verify·작성일자 대조·누출 의심)은 h01-engine·h01-policy에 있다.
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
@@ -20,7 +18,6 @@ const ORIGIN = 'http://127.0.0.1:9';
 const PORTAL = fixturePortal(ORIGIN);
 
 type Frame = { url: () => string; evaluate: (...a: unknown[]) => Promise<unknown> };
-/** RunPolicy·SignalWatch가 쓰는 만큼만 흉내 낸 페이지. framenavigated·dialog를 직접 쏜다. */
 function fakePage(frames: Frame[] = [], url = `${ORIGIN}/invoice/issue`) {
   return Object.assign(new EventEmitter(), { context: () => new EventEmitter(), isClosed: () => false, frames: () => frames, url: () => url });
 }
@@ -40,7 +37,6 @@ describe('감사 D 패키지 E(브라우저 없음)', () => {
     dbs.push(db);
     return db;
   };
-  /** 한 포털의 가드와 그 위의 실행 정책(가짜 페이지). 실행마다 policy()로 새로 만든다. */
   const setup = (kind: 'fixture' | 'hometax' = 'fixture', rate: RatePolicy = FIXTURE_POLICY) => {
     const db = freshDb();
     const g = new RateGuard(db, kind, rate);
@@ -52,7 +48,6 @@ describe('감사 D 패키지 E(브라우저 없음)', () => {
   };
   const streak = (s: ReturnType<typeof setup>, k: string) => s.repo.count(s.kind, '', k, '-');
 
-  // ---- E2 · N-02 ----
   it('audit-e: failure signal without an anchored text pattern is rejected by portalProblems', () => {
     const css = '#issue-error';
     assert.ok(portalProblems({ ...PORTAL, failureSignal: [{ css, text: '발급할 수 없습니다' }] }).includes('unanchored:failureSignal'));
@@ -70,7 +65,6 @@ describe('감사 D 패키지 E(브라우저 없음)', () => {
     assert.equal(failureMatches(entry, '  발급할 수 없습니다.\n입력 값을 확인하세요.  '), true, 'NFKC·공백 접기 뒤 비교');
   });
 
-  // ---- E3 · N-03 ----
   it('audit-e: two runs ending before the checkpoint switch to conservative', async () => {
     const s = setup();
     await s.policy().finish();
@@ -114,7 +108,6 @@ describe('감사 D 패키지 E(브라우저 없음)', () => {
     assert.equal(pathExpected(`${ORIGIN}/invoice/list?bizNo=1`, PORTAL), true);
     assert.equal(pathExpected(`${ORIGIN}/mail/list`, PORTAL), true);
     assert.equal(pathExpected('https://other.example/x', PORTAL), true, '포털 밖 주소는 여기서 보지 않는다(금고가 막는다)');
-    // 네비게이션 뒤 경로 밖 화면이면 커밋 전 핸드오프
     const s = setup();
     const p = s.policy(fakePage([], `${ORIGIN}/notice/maintenance`));
     await assert.rejects(p.settled(fakePage([], `${ORIGIN}/notice/maintenance`) as unknown as Page), (e: unknown) => e instanceof RunEnd && e.status === 'handoff' && e.code === 'portal.unexpected_page');
@@ -126,7 +119,6 @@ describe('감사 D 패키지 E(브라우저 없음)', () => {
     const data = new DataService(db, new BizVerifier(new Egress()));
     data.profiles.upsert({ kind: 'business', displayName: '가나다', bizNo: '1234567891', corpNo: null, repName: '김가나', bizType: null, bizItem: null, address: null, email: null, signMethod: 'simple_auth' });
     const cp = data.counterparties.create({ bizNo: '2148651233', name: 'A상사', email: null }).id;
-    // 홈택스 kind이지만 실행 전 점검을 지나는 설정(셀렉터는 가짜 페이지 값). 페이지는 열리지 않는다.
     const portal: PortalConfig = { ...PORTAL, kind: 'hometax', verify: { minElapsedMs: 60_000, lookups: 2, intervalMs: 10_000, maxMs: 300_000 } };
     const log = new FileEventLog(null, 'engine');
     const runs = new RunService({ engine: 'h01', db, data, ledgerKey: new Uint8Array(32), portal, policy: FIXTURE_POLICY, log, page: () => Promise.reject(new Error('no page')), postGate: () => {} });
@@ -139,7 +131,6 @@ describe('감사 D 패키지 E(브라우저 없음)', () => {
     assert.ok(log.lines.some((l) => l.includes('run.signal_dict_empty')));
   });
 
-  // ---- E4 · N-14 ----
   it('audit-e: extra_auth inside the login section never escalates', () => {
     const s = setup();
     for (let i = 0; i < 3; i++) {
@@ -173,7 +164,6 @@ describe('감사 D 패키지 E(브라우저 없음)', () => {
     const second = hit();
     assert.deepEqual([second?.status, second?.code], ['failed', 'portal.extra_auth_repeat']);
     assert.deepEqual(s.journal.filter(([t]) => t === 'block.signal').map(([, p]) => p), [{ id: 'extra_auth.repeat' }]);
-    // 양성 탐지 1회면 쿨다운인 정책에서는 쿨다운이 사유다
     const h = setup('hometax', { ...HOMETAX_POLICY, cooldown: { ...HOMETAX_POLICY.cooldown, positiveDetectionsForCooldown: 1 } });
     for (let i = 0; i < 2; i++) {
       const page = fakePage();
@@ -183,7 +173,6 @@ describe('감사 D 패키지 E(브라우저 없음)', () => {
     }
   });
 
-  // ---- E5 · N-16 ----
   it('audit-e: dismissed dialog text is kept in run memory only (NFKC, 200 chars)', async () => {
     const s = setup();
     const page = fakePage();
@@ -197,7 +186,6 @@ describe('감사 D 패키지 E(브라우저 없음)', () => {
     assert.ok(!JSON.stringify(s.journal).includes('점검'), '저널에는 문구가 없다');
   });
 
-  // ---- E7 · N-20 ----
   it('audit-e: SIGNAL_INSPECT_EXPR hashes to 712e7330…598944', () => {
     assert.equal(createHash('sha256').update(SIGNAL_INSPECT_EXPR).digest('hex'), '712e733067b2ccebb89ea8e1da5089577095c3954da089592bbb9ee3ec598944');
   });
@@ -209,18 +197,16 @@ describe('감사 D 패키지 E(브라우저 없음)', () => {
     await assert.rejects(p.beforeGate(), (e: unknown) => e instanceof RunEnd && e.status === 'handoff' && e.code === 'portal.unobservable');
     assert.deepEqual(s.journal.filter(([t]) => t === 'signal.inspect_unavailable').map(([, x]) => x), [{ reason: 'secret_window_tainted' }]);
     await assert.rejects(p.beforeCommit(), /portal\.unobservable/);
-    // 타임아웃·문서 교체 같은 다른 실패는 확인 불가가 아니다(빈 화면으로 넘긴다)
     const gone = { url: () => `${ORIGIN}/invoice/issue`, evaluate: () => Promise.reject(new Error('Execution context was destroyed')) };
     await s.policy(fakePage([gone])).beforeGate();
   });
 
-  // ---- E9 · N-26 ----
   it('audit-e: issueDate is the KST day at 00:30 KST (15:30Z) on a UTC machine', async () => {
     const db = freshDb();
     const data = new DataService(db, new BizVerifier(new Egress()));
     data.profiles.upsert({ kind: 'business', displayName: '가나다', bizNo: '1234567891', corpNo: null, repName: '김가나', bizType: null, bizItem: null, address: null, email: null, signMethod: 'simple_auth' });
     const cp = data.counterparties.create({ bizNo: '2148651233', name: 'A상사', email: 'tax@a.example' });
-    const wall = Date.parse('2026-12-31T15:30:00Z'); // KST 2027-01-01 00:30, UTC·로컬로는 12-31
+    const wall = Date.parse('2026-12-31T15:30:00Z');
     const clock: Clock = { wall: () => wall, mono: () => performance.now() };
     const runs = new RunService({ engine: 'h01', db, data, ledgerKey: new Uint8Array(32), portal: PORTAL, clock, log: new FileEventLog(null, 'engine'), page: () => Promise.reject(new Error('no page')), postGate: () => {} });
     const ended = new Promise<RunEvent>((r) => runs.on('event', (e: RunEvent) => e.type === 'end' && r(e)));
@@ -232,7 +218,6 @@ describe('감사 D 패키지 E(브라우저 없음)', () => {
     assert.ok(new RunJournal(db).types('kst').includes('run.started'));
   });
 
-  // ---- E11 · N-23 ----
   it('audit-e: envProblems lists DEBUG_FILE and NODE_TLS_REJECT_UNAUTHORIZED=0', () => {
     assert.deepEqual(envProblems({ DEBUG_FILE: '/tmp/x', NODE_TLS_REJECT_UNAUTHORIZED: '0', PATH: '/bin' }), ['DEBUG_FILE', 'NODE_TLS_REJECT_UNAUTHORIZED']);
     assert.deepEqual(envProblems({ NODE_TLS_REJECT_UNAUTHORIZED: '1', HOME: '/h' }), []);
@@ -251,7 +236,6 @@ describe('감사 D 패키지 E(브라우저 없음)', () => {
     assert.deepEqual(new Egress({ env: {} }).envTampered, []);
   });
 
-  // ---- E14 · N-58 ----
   it('audit-e: mailStatusVerdict classifies 전송실패·미전송·전송대기·전송중 as not_sent, 전송완료 as sent, 접수 as unknown', () => {
     for (const s of ['전송실패', '미전송', '전송대기', '전송중', '전송 오류', '발송 실패']) assert.equal(mailStatusVerdict(s), 'not_sent', s);
     for (const s of ['전송완료', ' 발송 완료 ', '전송 완료']) assert.equal(mailStatusVerdict(s), 'sent', s);

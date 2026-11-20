@@ -1,13 +1,6 @@
-// 가짜 홈택스 민원증명 페이지(127.0.0.1, 시험 전용). H-03 사업자등록증명·H-04 납세증명서·H-08 부가가치세 과세표준증명·H-09 표준재무제표증명 양식과
-// 민원신청 처리결과 조회(hometax.cert.issued_list)를 흉내 낸다. 실제 홈택스 화면·보안 모듈·전자서명은 흉내 내지 않는다. 모든 값은 가상이다.
-// - 칸 id·접근성 이름은 제품 패키지(packages/engine/playbooks/hometax.cert.*)의 셀렉터와 같게 둔다(2026-11-10 캡처 값). 그래서 fixture 변형 패키지는
-//   origin·id 접두만 바꾸고 셀렉터는 그대로 쓴다(tests/cert-fixture-package.ts).
-// - 실제 화면처럼 select의 value는 코드(선택지 이름과 다르다)이고, 발급유형·주민번호 공개 여부는 라디오 묶음이다.
-// - 처리결과 조회는 WebSquare 카드 목록(칸 id <목록>_<행>_<칸>)과 건수 strong이다(5차 예행 실화면). 조회 단추를 눌러야 그린다.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-/** 메뉴 코드(tm3lIdx) → 서류. H-09 코드는 캡처에 없어 가짜 값이다(제품 패키지는 메뉴 클릭으로 들어간다). */
 export const CERT_MENU = {
   '4315010800': 'H-03',
   '4315010300': 'H-04',
@@ -17,7 +10,6 @@ export const CERT_MENU = {
 type Doc = (typeof CERT_MENU)[keyof typeof CERT_MENU];
 const LOOKUP_MENU = '4315050000';
 
-/** 서류 이름(양식의 민원명 칸·처리결과의 민원명). */
 export const CERT_DOC_NAME: Readonly<Record<Doc, string>> = {
   'H-03': '사업자등록증명',
   'H-04': '납세증명서',
@@ -35,25 +27,19 @@ export interface CertRecord {
   doc: Doc;
   docName: string;
   receiptNo: string;
-  /** 접수 때 고른 값(시험 단언용, 가상 값). */
   values: Record<string, string>;
 }
 
 export interface CertKnobs {
-  /** 양식 대신 「개인사업자는 이용할 수 없습니다」 알림을 띄운다(H-04 사업자 인증서 로그인). */
   personal: boolean;
-  /** 접수를 거절하고 오류 문구를 보인다(명시적 실패 신호). */
   failIssue: boolean;
-  /** 처리결과 조회 화면이 열리지 않는다(조회 실패: verify unknown → in_doubt). */
   lookupDown: boolean;
-  /** 양식의 신청인(로그인한 사업자). */
   supplier: { bizNo: string; name: string };
 }
 
 export interface CertFixture {
   origin: string;
   records: CertRecord[];
-  /** 받은 접수 POST 수. */
   posts: () => number;
   knobs: CertKnobs;
   close(): Promise<void>;
@@ -67,16 +53,10 @@ const YEARS = ['2026', '2025', '2024', '2023'];
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const fmtBiz = (b: string) => `${b.slice(0, 3)}-${b.slice(3, 5)}-${b.slice(5)}`;
-/** select: value는 코드, 이름은 선택지. 첫 선택지는 「선택」(값 없음). */
 const select = (id: string | null, label: string, name: string, options: readonly string[], extra = '') =>
   `<label${id ? ` for="${id}"` : ''}>${esc(label)}</label><select ${id ? `id="${id}" ` : ''}name="${name}" aria-label="${esc(label)}" ${extra}><option value="">선택</option>${options.map((o, i) => `<option value="${String(i + 1).padStart(2, '0')}">${esc(o)}</option>`).join('')}</select>`;
-/**
- * 라디오 묶음: 실화면(run-6e212c37)처럼 역할 없는 div 안 라디오. 묶음 머리 이름표는 첫 라디오에 붙어(접근성 이름 「발급유형 한글증명」),
- * 선택지 글은 title에 있다. 처음 고른 것이 checked다.
- */
 const radios = (id: string, label: string, name: string, options: readonly string[], checked: string) =>
   `<label for="${id}_input_0">${esc(label)}</label><div id="${id}" title="${esc(label)}">${options.map((o, i) => `<input type="radio" id="${id}_input_${i}" name="${name}" value="${i}" title="${esc(o)}"${o === checked ? ' checked' : ''}><label for="${id}_input_${i}">${esc(o)}</label>`).join('')}</div>`;
-/** 표시 글(실화면 「기본 인적 사항」의 p, 역할 없음) */
 const disp = (id: string, value: string) => `<p id="${id}">${esc(value)}</p>`;
 const shown = (label: string, value: string, id?: string) => `<label>${esc(label)} <input type="text" readonly ${id ? `id="${id}" ` : ''}aria-label="${esc(label)}" value="${esc(value)}"></label>`;
 const page = (body: string, crumb = '') => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>국세청 홈택스</title></head><body><div id="mf_wrap"><a id="mf_wfHeader_hdGroup001" href="/">국세청 홈택스</a>${crumb ? `<strong id="mf_wfHeader_spn_third">${esc(crumb)}</strong>` : ''}<main aria-label="홈택스"><a href="/">홈</a>${body}</main></div></body></html>`;
@@ -88,7 +68,6 @@ function certForm(doc: Doc, k: CertKnobs): string {
   const title = FORM_TITLE[doc];
   const docName = CERT_DOC_NAME[doc];
   if (doc === 'H-04') {
-    // 납세증명서 양식: 제품 패키지가 역할·이름만 쓴다(캡처 전)
     return page(`<div id="mf_txppWframe"><h2>${esc(title)}</h2><form aria-label="${esc(title)}" method="post" action="/cert/issue"><input type="hidden" name="doc" value="H-04">
       ${shown('사업자등록번호', fmtBiz(k.supplier.bizNo))}${shown('민원명', docName)}${shown('상호', k.supplier.name)}
       ${select(null, '사용용도', 'purpose', H04_PURPOSES)}${select(null, '제출처', 'submitTo', H04_SUBMIT_TO)}
@@ -109,19 +88,15 @@ function certForm(doc: Doc, k: CertKnobs): string {
   if (doc === 'H-09') {
     extra.push(
       `<label for="mf_txppWframe_ibx_txyr">과세년도</label><input type="text" id="mf_txppWframe_ibx_txyr" name="fiscalYear" aria-label="과세년도" placeholder="YYYY">`,
-      // 실화면: 사업소득이면 개업일자 select는 숨김·선택지 없음
       `<select id="mf_txppWframe_selectbox1" name="openDate" title="개업일자" hidden><option value="">-선택-</option></select>`,
     );
   }
-  // 실화면(2026-11-18): H-03·H-09의 [작성완료]는 신청하지 않고 「…작성이 완료되었어요. 신청하시겠습니까?」 레이어(UTECAAA0A016)를 연다. 신청은 레이어의 [신청하기]
   const layer = '<div id="mf_txppWframe_UTECAAA0A016" class="w2window w2popup_window" hidden><p>' + esc(CERT_DOC_NAME[doc]) + '작성이 완료되었어요. 신청하시겠습니까?</p>'
     + '<button type="button" id="mf_txppWframe_UTECAAA0A016_wframe_btn_cncl" onclick="this.parentElement.hidden = true">취소</button>'
     + '<button type="submit" id="mf_txppWframe_UTECAAA0A016_wframe_btn_sbms">신청하기</button></div>';
   const submit = doc === 'H-03' || doc === 'H-09'
     ? '<button type="button" id="mf_txppWframe_btn_wrtCmpl" onclick="document.getElementById(\'mf_txppWframe_UTECAAA0A016\').hidden = false">작성완료</button>' + layer
     : doc === 'H-08' ? '<button type="submit" id="mf_txppWframe_btn_apln">신청하기</button>' : '<button type="submit">신청하기</button>';
-  // 수량은 수령방법을 고른 뒤에 켜진다(캡처)
-  // 실화면처럼 본문 틀 #mf_txppWframe(역할 없음) 안에 양식 제목 h2(2026-11-14 예행 run-e838a762)
   return page(`<div id="mf_txppWframe"><h2>${esc(title)}</h2><form aria-label="${esc(title)}" method="post" action="/cert/issue"><input type="hidden" name="doc" value="${doc}">
     ${disp('mf_txppWframe_pfm_UTECAAA0Z001_tbx_cvaAplnBscBsno', fmtBiz(k.supplier.bizNo))}${disp('mf_txppWframe_pfm_UTECAAA0Z001_tbx_cvaAplnBscTnm', k.supplier.name)}
     ${radios('mf_txppWframe_rad_englCvaAplnYn', '발급유형', 'lang', ['한글증명', '영문증명'], '한글증명')}
@@ -140,9 +115,6 @@ function home(): string {
 
 function lookupPage(records: readonly CertRecord[]): string {
   const data = JSON.stringify(records.map((r) => ({ n: r.docName, no: r.receiptNo }))).replace(/</g, '\\u003c');
-  // 5차 예행 실화면(run-a82e53d3, 2026-11-16): 본문 틀 #mf_txppWframe는 역할 없는 div, 민원명은 이름표 붙은 text 칸,
-  // 기간 단추는 input type=button(id 앞부분은 매번 바뀌는 wq_uuid), 건수는 strong 숫자, 결과는 WebSquare generator 카드 목록이다.
-  // 카드에는 머리글·이름표가 없고 칸 id가 <목록>_<행 번호>_<칸 이름>이다(tbx_cvaKndNm 민원명, tbx_rcatNo 접수번호, btn_cvaTrtStatCdNm 처리상태).
   return page(`<div id="mf_txppWframe"><h2>민원신청 처리결과 조회</h2>
     <label for="mf_txppWframe_ibx_cvaKndNm">민원명</label> <input type="text" id="mf_txppWframe_ibx_cvaKndNm" title="민원명">
     <input type="button" id="wq_uuid_835_btn_useWeek1" value="1주일" title="선택됨"><input type="button" id="wq_uuid_835_btn_useMonth1" value="1개월">
@@ -189,7 +161,6 @@ export async function startCertFixture(o: { supplier: { bizNo: string; name: str
     if (req.method === 'GET' && url.pathname === '/') return send(200, home());
     if (req.method === 'GET' && url.pathname === '/websquare/websquare.html') {
       const code = url.searchParams.get('tm3lIdx') ?? '';
-      // 메뉴 코드가 없으면 홈택스 메인(실화면과 같은 주소 /websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml)
       if (!code) return send(200, home());
       if (code === LOOKUP_MENU) return knobs.lookupDown ? send(503, page('<p>잠시 후 다시 이용해 주세요.</p>')) : send(200, lookupPage(records));
       const doc = (CERT_MENU as Record<string, Doc | undefined>)[code];
@@ -207,7 +178,6 @@ export async function startCertFixture(o: { supplier: { bizNo: string; name: str
         if (knobs.failIssue) return send(200, page('<div id="errorDialog" role="alert">발급에 실패했습니다. 잠시 후 다시 신청해 주세요.</div>'));
         const receiptNo = `2026-${String(++seq).padStart(6, '0')}`;
         records.push({ doc, docName: CERT_DOC_NAME[doc], receiptNo, values: Object.fromEntries([...f].filter(([k]) => k !== 'doc')) });
-        // H-04는 결과 영역의 [출력] → 증명서 화면(패키지 s31·s32). 나머지는 접수 완료 안내만.
         if (doc === 'H-04') return send(200, page(`<section aria-label="민원신청 결과"><p>신청이 접수되었습니다.</p><button type="button" onclick="location.href='/cert/doc'">출력</button></section>`));
         return send(200, page('<p>신청이 접수되었습니다.</p>'));
       });

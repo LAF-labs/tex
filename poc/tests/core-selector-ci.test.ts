@@ -1,4 +1,3 @@
-// D02 §6.3 셀렉터 CI SV-01~06, §2.2 핫픽스 적격 조건(E-03)과 CE-15, D03 §7.1 DENY_ACTION_NAME 정규화.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { applyHotfix, denyKey, hotfixEligibilityViolations, ineligibleEntries, isDenyActionName, selectorCi, sv06, validatePackage, type Hotfix, type Recording } from '@sax/engine/core';
@@ -7,7 +6,6 @@ import { bundleOutcomes, h01, lookups } from './core-fixtures.ts';
 const bundles = bundleOutcomes();
 const F = 'hometax.invoice.form.root';
 
-/** 골든 사전을 그대로 녹화 DOM으로 만든다: 항목마다 요소 하나, 이름은 namePattern의 본문. */
 function recordingOf(p = h01()): Recording {
   const sel = p.selectors;
   const uid = (k: string) => `u:${k}`;
@@ -89,9 +87,9 @@ describe('핫픽스 적격 조건(E-03)·CE-15', () => {
     assert.deepEqual(hotfixEligibilityViolations(fix, p, { bundles, lookups: lookups() }), []);
     const patched = applyHotfix(p.selectors, fix);
     const rec = recordingOf(p);
-    rec.resolved['hometax.invoice.form.lookupCounterpart'] = rec.resolved['hometax.invoice.form.issueButton']!; // 패치된 후보가 녹화에서 발급 버튼으로 해석
+    rec.resolved['hometax.invoice.form.lookupCounterpart'] = rec.resolved['hometax.invoice.form.issueButton']!;
     assert.ok(rules(selectorCi(patched, rec)).has('SV-01'));
-    assert.deepEqual(validatePackage({ ...p, selectors: patched }, { bundles, lookups: lookups() }), []); // 정적 규칙만으로는 못 잡는다: SV·R-A2가 막는다
+    assert.deepEqual(validatePackage({ ...p, selectors: patched }, { bundles, lookups: lookups() }), []);
   });
   it('조회 패키지 핫픽스는 항상 거부', () => {
     const lp = lookups().get('hometax.invoice.lookup')!;

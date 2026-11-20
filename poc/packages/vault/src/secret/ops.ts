@@ -56,7 +56,6 @@ export class OneShotSecrets {
     this.items.set(k, { runId: bind.runId, kind: bind.kind, bytes, timer });
   }
 
-  /** 같은 실행의 값만 꺼낸다. 꺼낸 값은 더 이상 들고 있지 않는다(부르는 쪽이 0으로 덮는다). */
   take(runId: string, kind: string, scope: string): Uint8Array | null {
     return this.drop(this.key(runId, kind, scope))?.bytes ?? null;
   }
@@ -81,7 +80,6 @@ interface Probe {
   len: number;
 }
 
-// 보안키보드형 가림 칸(type=text + -webkit-text-security, 대표 실화면 run-fb6d0e95 가설)은 password로 본다. 보이는 일반 글 칸은 아니다.
 const PROBE_FN = `function () {
   let a = this.ownerDocument.activeElement;
   while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
@@ -96,10 +94,8 @@ const PROBE_FN = `function () {
 interface HumanWatch {
   objectId: string;
   runId: string;
-  /** 인증서 비밀번호 기억(certMemory)에 쓸 프로필. 없으면 저장하지 않는다. */
   scope?: string;
   timer: NodeJS.Timeout;
-  /** blur + 값 있음을 처음 본 시각(N-47). 길이·포커스가 바뀌면 다시 센다. */
   idleSince?: number;
   lastLen?: number;
 }
@@ -107,36 +103,17 @@ interface HumanWatch {
 export type VaultEmit = (to: ReadonlyArray<'engine' | 'control'>, name: VaultEventName, data: Json) => void;
 
 export interface SecretOpsOptions {
-  /** 시험만 주입한다. 기본 SECRET_TTL_MS. */
   secretTtlMs?: number;
-  /** 비밀 사용 직후 그 값으로 훑을 폴더(N-17). 없으면 자기 스캔을 하지 않는다. */
   selfScan?: { roots: string[] };
-  /** 금고 이벤트(I-2·I-3). */
   emit?: VaultEmit;
-  /** 실행당 종류별 1회 기록(N-46). Chrome을 다시 띄워도 남도록 금고가 들고 있다. */
   usedSlots?: Set<string>;
-  /**
-   * 저장된 사람 비밀 칸 하나(ADR-026). 1회용 값이 없을 때만 부른다(포털은 pw 칸).
-   * 금고가 닫혔으면 vault_locked, suspect면 credential_suspect.
-   */
   stored?: (kind: string, scope: string) => Promise<StoredRead>;
-  /** 시험만 주입한다(사람 창 정착 판정 시계). 기본 Date.now. */
   now?: () => number;
-  /**
-   * 인증서 비밀번호 기억(대표 지시 2026-11-13). 비밀 창(openForHuman)은 인증서 비밀번호 칸에만 열린다.
-   * 저장값이 있으면 사람 창 대신 금고가 그 칸에 넣고 창을 닫는다(엔진에는 'done'). 없으면 사람이 넣은 값을 창이 닫힐 때 저장한다.
-   * 사람이 넣은 값은 바로 저장하지 않고 hold로 금고 메모리에만 둔다: 엔진이 로그인 확인(typist.authOk)을 알려야 저장하고,
-   * 틀림(typist.authFailed)이면 버리고 기억값도 지운다(틀린 비밀번호를 기억해 다음에 또 넣는 일, 연속 오류 잠금 방지, 부장 지시 2026-11-13).
-   */
   certMemory?: {
     scopeOf(runId: string): string | undefined;
     read(scope: string): Promise<StoredRead>;
     hold(runId: string, scope: string, bytes: Uint8Array): void;
   };
-  /**
-   * 기억값이 없을 때 인증서 비밀번호를 앱의 금고 직결 입력 창(secret.needed → secretInput 포트 → secret.provide)으로 받아
-   * 금고가 그 칸에 넣고 기억한다(부장 지시 2026-11-13 (b)). Chrome은 앱 뒤에 있어 사람이 그 칸을 찾지 않아도 된다.
-   */
   askApp?: () => boolean;
 }
 
@@ -153,17 +130,12 @@ export class SecretOps {
   private readonly opts: SecretOpsOptions;
   private readonly emit: VaultEmit;
   readonly secrets: OneShotSecrets;
-  /** main이 알려 준 실행 트리거(엔진의 주장으로 받지 않는다). */
   readonly runTriggers = new Map<string, 'local' | 'remote' | 'daemon'>();
   private readonly human = new Map<string, HumanWatch>();
-  /** 앱 입력 창을 기다리는 인증서 비밀번호 칸(targetId별). 값이 오면 금고가 이 칸에 넣고 창을 닫는다. */
   private readonly appAsk = new Map<string, { runId: string; scope: string; objectId: string }>();
-  /** 창 개시 진행 중인 타깃(await 사이 이중 개시 차단, N-43). */
   private readonly opening = new Set<string>();
   readonly usedSlots: Set<string>;
-  /** 가장 최근 자기 스캔(시험이 기다린다). */
   selfScanDone: Promise<void> = Promise.resolve();
-  /** 비밀 창 개시 조건(Preferences·확장·Google 로그인) 위반 사유. 열 때마다 다시 본다(N-18). null이면 통과. */
   openBlocker: () => Promise<string | null> = async () => 'profile_not_checked';
 
   constructor(relay: Relay, policy: RelayPolicy, log: EventLog, opts: SecretOpsOptions = {}) {
@@ -192,10 +164,6 @@ export class SecretOps {
     return { objectId, backendNodeId: Number(node.backendNodeId), frameId, frameUrl: findFrameUrl(frameTree, frameId) ?? '' };
   }
 
-  /**
-   * 사전의 frame이 iframe 선택자일 때(홈택스 인증서 창 iframe#dscert, 같은 출처 MagicLine4Web): 본 프레임에서 그 iframe을 찾아 하위 프레임 id를 얻는다.
-   * 같은 프로세스 iframe만 이 세션에서 닿는다. 못 찾으면 null(엔진은 사람 직접 입력으로 간다).
-   */
   private async childFrame(t: TargetState, frameSelector: string): Promise<string | null> {
     if (!t.mainFrameId) return null;
     const { executionContextId } = await this.relay.send<{ executionContextId: number }>('Page.createIsolatedWorld', { frameId: t.mainFrameId, worldName: '__sax_vault' }, t.vaultSession);
@@ -221,13 +189,11 @@ export class SecretOps {
     return { ok: false, reason: 'secret_window_refused' };
   }
 
-  /** 사람 비밀 입력은 local·remote 실행만(A-23·N-77). 없음·daemon·그 밖은 거부. */
   private triggerAllowed(runId: string): boolean {
     const trigger = this.runTriggers.get(runId);
     return trigger === 'local' || trigger === 'remote';
   }
 
-  /** 타이피스트: remote 실행은 시작 게이트 통과 플래그가 있을 때만(ADR-029 결정 2, D-34(N-13)). */
   private fillTriggerAllowed(req: FillRequest): boolean {
     const trigger = this.runTriggers.get(req.runId);
     return trigger === 'local' || (trigger === 'remote' && req.startGate === true);
@@ -237,16 +203,13 @@ export class SecretOps {
     const t = this.relay.exposedTarget(req.targetId);
     if (!t) return { ok: false, reason: 'not_found' };
     if (!this.fillTriggerAllowed(req)) return { ok: false, reason: 'denied' };
-    // 타이피스트는 포털 비밀번호만 넣는다. 인증서 비밀번호는 정책·허용 호스트와 상관없이 넣지 않는다(ADR-020 결정 2, ADR-025 결정 10).
     if (!isTypistKind(req.secret?.kind)) {
       this.log.event('vault.typist_kind_refused', { kind: String(req.secret?.kind).slice(0, 20) });
       return { ok: false, reason: 'denied' };
     }
-    // 요청 kind와 사전 칸의 kind가 같아야 한다(「또는」이 아니라 「그리고」, N-46).
     if (!req.slot || req.slot.secretKind !== req.secret?.kind) return { ok: false, reason: 'not_secret_slot' };
     const used = slotKey(req.runId, req.secret.kind);
     if (this.usedSlots.has(used)) return { ok: false, reason: 'denied' };
-    // 개시 검사와 표시는 await 없이 한 번에(N-43).
     if (t.win || this.opening.has(t.targetId)) return { ok: false, reason: 'denied' };
     this.opening.add(t.targetId);
     try {
@@ -268,24 +231,19 @@ export class SecretOps {
     if (!p0.active) return { ok: false, reason: 'denied' };
     let secret = this.secrets.take(req.runId, req.secret.kind, req.secret.scope);
     if (!secret && this.opts.stored) {
-      // 저장된 사람 비밀(세션 결박). 요청된 칸 하나만 복호한다.
       const r = await this.opts.stored(req.secret.kind, req.secret.scope);
       if (r.ok) secret = r.bytes;
       else if (r.reason === 'vault_locked' || r.reason === 'credential_suspect') return { ok: false, reason: r.reason };
-      // corrupt·kek_unavailable·secret_missing: 저장본을 못 쓰니 사람에게 1회용으로 받는다(아래 secret.needed).
     }
     if (!secret) {
-      // 비밀 창은 금고가 부른다(N-44): main만 창을 열고, 값은 결속된 secretInput 포트로 온다.
       this.emit(['control'], 'secret.needed', { runId: req.runId, targetId: t.targetId, kind: req.secret.kind, scope: req.secret.scope });
       return { ok: false, reason: 'secret_missing' };
     }
     this.usedSlots.add(used);
 
-    // Phase 1 한계(D05 §8): CDP JSON 직렬화 때문에 금고 힙에 문자열 사본이 생긴다(엔진 힙에는 없다).
     const text = new TextDecoder().decode(secret);
     secret.fill(0);
     this.relay.openWindow(t, 'typist', el.frameId, el.backendNodeId);
-    // 값을 미리 안다: 글자마다 페이지가 흘리는 접두사까지 입력 전에 올린다(S6f 회귀, 창 종료 뒤에만 올리면 입력 도중 것이 먼저 나간다).
     this.relay.addKnownSecret(t.targetId, knownValuePrefixVariants(text));
     let ok = true;
     let reason: FillReason | undefined;
@@ -324,7 +282,6 @@ export class SecretOps {
     return ok ? { ok } : { ok, reason };
   }
 
-  /** 기억한 인증서 비밀번호를 칸에 넣는다(타이피스트와 같은 방식: 한 글자씩, 칸이 바뀌면 멈춤, 끝에 길이 확인). */
   private async typeInto(t: TargetState, objectId: string, text: string): Promise<{ ok: boolean }> {
     const keyEvents = this.policy.typistInput === 'keyEvents';
     let ok = true;
@@ -357,10 +314,6 @@ export class SecretOps {
     return { ok };
   }
 
-  /**
-   * 비밀 사용 직후 그 값으로 logs·staging을 훑어 건수만 남긴다(N-17, PoC 빌드). 짧은 값은 정상 글자와 겹쳐 건너뛴다.
-   * 기다림은 SELF_SCAN_TIMEOUT_MS까지. 넘으면 결과를 버리고 vault.leak_scan_skipped.
-   */
   private selfScan(text: string): void {
     const roots = this.opts.selfScan?.roots;
     if (!roots?.length || text.length < KNOWN_VALUE_MIN_LEN) return;
@@ -392,7 +345,6 @@ export class SecretOps {
 
   async openForHuman(req: { runId: string; targetId: string; frame: string; element: string }): Promise<{ ok: boolean; auto?: boolean; reason?: 'secret_window_refused' | 'origin_not_allowed' | 'not_found' | 'denied' }> {
     const t = this.relay.exposedTarget(req.targetId);
-    // 같은 문서에서 다시 묻기(서명 [확인] 뒤 틀린 비밀번호 → 대화 카드, 2026-11-14): 오염 상태(tainted)는 받는다. 지금 입력 중인 창(active)만 막는다.
     if (!t || t.win?.phase === 'active' || this.opening.has(t.targetId)) return { ok: false, reason: 'not_found' };
     if (!this.triggerAllowed(req.runId)) return { ok: false, reason: 'denied' };
     this.opening.add(t.targetId);
@@ -414,16 +366,13 @@ export class SecretOps {
           this.relay.addKnownSecret(t.targetId, knownValuePrefixVariants(text));
           const typed = await this.typeInto(t, el.objectId, text);
           this.relay.addKnownSecret(t.targetId, knownValueVariants(text));
-          this.relay.deactivateWindow(t); // 엔진에 secret_window.closed → 'done'
+          this.relay.deactivateWindow(t);
           this.log.event('secret.used', { kind: 'cert_password', viaTypist: true, ok: typed.ok, remembered: true });
           this.selfScan(text);
-          // auto: 기억한 값을 금고가 넣었다(사람 창 없음). 엔진은 「창에 넣어 주세요」 차례를 알리지 않는다(5차 예행, 기동 직후 잠깐 뜨던 안내)
           if (typed.ok) return { ok: true, auto: true };
-          // 넣지 못했으면(칸이 바뀜 등) 사람 창으로 다시 연다
         }
       }
       if (this.opts.askApp?.()) {
-        // 칸은 금고가 잡아 두고(활성 창, 엔진 CDP·화면 중계 멈춤) 값은 앱 입력 창에서 받는다.
         const askScope = scope ?? 'business';
         this.relay.openWindow(t, 'human', el.frameId, el.backendNodeId);
         this.appAsk.set(t.targetId, { runId: req.runId, scope: askScope, objectId: el.objectId });
@@ -445,11 +394,6 @@ export class SecretOps {
     }
   }
 
-  /**
-   * 활성 창 종료 조건 (나)·(다): blur + 값 있음이 HUMAN_SETTLE_MS 동안 길이·포커스 변화 없이 이어짐(N-47), 노드 분리.
-   * 문서 커밋은 Relay가 처리한다.
-   */
-  /** 사람 입력 활성 창의 지금 값을 금고 세션에서 읽어 알려진 값(접두사 포함)으로 올린다. 창 동안 본 값은 창이 끝날 때까지 남는다. */
   private async noteHumanValue(targetId: string): Promise<void> {
     const w = this.human.get(targetId);
     const t = this.relay.targets.get(targetId);
@@ -497,13 +441,11 @@ export class SecretOps {
     this.stopHuman(t.targetId);
     const kind = t.win?.kind ?? 'human';
     if (w) {
-      // 오염 상태 동안 엔진행 메시지에서 이 값을 지우기 위해 금고가 읽는다(금고는 TB-1).
       try {
         const r = await this.relay.send<{ result: { value?: string } }>('Runtime.callFunctionOn', { objectId: w.objectId, functionDeclaration: 'function(){return typeof this.value==="string"?this.value:""}', returnByValue: true }, t.vaultSession);
         if (r.result.value) {
           this.relay.addKnownSecret(t.targetId, knownValueVariants(r.result.value));
           this.selfScan(r.result.value);
-          // 처음 넣은 인증서 비밀번호는 로그인 확인 뒤에 기억한다(hold → typist.authOk). 따로 묻지 않는다. 값은 로그에 남기지 않는다.
           if (this.opts.certMemory && w.scope) this.opts.certMemory.hold(w.runId, w.scope, new TextEncoder().encode(r.result.value));
         }
       } catch {
@@ -514,10 +456,6 @@ export class SecretOps {
     this.log.event('secret.used', { kind, viaTypist: false });
   }
 
-  /**
-   * 앱 입력 창이 인증서 비밀번호를 넘겼다(service가 secret.provide 직후 부른다). 기다리던 칸에 넣고, 넣었으면 확인 대기로 두고, 창을 닫는다.
-   * 칸이 사라졌거나 넣지 못했으면 두지 않고 창만 닫는다(엔진은 로그인 결과로 판단한다). 값은 로그·이벤트에 싣지 않는다.
-   */
   async appProvided(bind: { runId: string; kind: string; scope: string }): Promise<void> {
     if (bind.kind !== 'cert_password') return;
     const entry = [...this.appAsk].find(([, a]) => a.runId === bind.runId && a.scope === bind.scope);
@@ -536,20 +474,17 @@ export class SecretOps {
     this.relay.addKnownSecret(t.targetId, knownValuePrefixVariants(text));
     const typed = await this.typeInto(t, ask.objectId, text);
     this.relay.addKnownSecret(t.targetId, knownValueVariants(text));
-    // 기억은 로그인 확인 뒤(typist.authOk). 지금은 금고 메모리에만 둔다.
     if (typed.ok && this.opts.certMemory) this.opts.certMemory.hold(bind.runId, ask.scope, new TextEncoder().encode(text));
-    this.relay.deactivateWindow(t); // 엔진에 secret_window.closed → 'done'
+    this.relay.deactivateWindow(t);
     this.log.event('secret.used', { kind: 'cert_password', viaTypist: true, ok: typed.ok, fromApp: true });
     this.selfScan(text);
   }
 
-  /** 사용자가 "입력 완료"를 눌렀다(main 승인 창이나 금고 UI에서 온 신호만, 엔진 신호 아님). */
   async userDone(targetId: string): Promise<void> {
     const t = this.relay.exposedTarget(targetId);
     if (t?.win?.phase === 'active' && t.win.kind === 'human') await this.closeHuman(t);
   }
 
-  /** 엔진의 종료 요청(라): human 창만, 대상 노드 포커스 해제를 확인한 뒤 승인. 타이피스트 입력 중에는 닫지 않는다(N-43). */
   async requestClose(req: { runId: string; targetId: string }): Promise<{ ok: boolean }> {
     const t = this.relay.exposedTarget(req.targetId);
     if (!t?.win || t.win.phase !== 'active') return { ok: true };
@@ -567,11 +502,6 @@ export class SecretOps {
     return { ok: true };
   }
 
-  /**
-   * 오염 창 지우기: 값을 넣은 칸의 문서가 그대로라(홈택스 인증서 창 iframe#dscert는 서명 뒤 숨기만 하고 값을 남긴다, 실측 2026-11-13)
-   * 창이 오염인 채로 남으면 금고 자신의 인쇄(pdf.print)가 막힌다. 그 칸 값을 비우고 비었는지 확인한 뒤에만 창을 끝낸다.
-   * 활성 창(입력 중)은 건드리지 않는다. 칸을 못 찾으면(노드가 사라짐) 남은 값이 없는 것이다. 값은 읽지 않고 길이만 본다.
-   */
   async scrubTainted(t: TargetState): Promise<boolean> {
     if (!t.win) return true;
     if (t.win.phase !== 'tainted') return false;

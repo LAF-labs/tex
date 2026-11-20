@@ -1,6 +1,3 @@
-// 금고 PDF 저장(save_pdf 금고 쪽, D05 §3.3, ADR-025, 팀장 결정 2026-11-06).
-// 엔진의 직접 printToPDF·다운로드 설정은 거부하고, 금고가 자기 세션에서 인쇄하거나 무장된 다운로드 1건만 staging에 받는다.
-// 엔진에는 fileId만 간다(바이트·원래 파일 이름 없음). 크기 초과·비PDF는 staging에 아무것도 남기지 않는다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import http from 'node:http';
@@ -14,7 +11,6 @@ import { RawEngine, sleep } from './raw-engine.ts';
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const MINI_PDF = '%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n';
-/** 원래 파일 이름(PII 흉내). staging·엔진·로그 어디에도 나오면 안 된다. */
 const ORIGINAL_NAME = 'hong-gildong-invoice-20261106.pdf';
 
 describe('PDF 검사·경로(단위)', () => {
@@ -43,7 +39,6 @@ describe('PDF 검사·경로(단위)', () => {
       const events: Array<{ code: string; data?: unknown }> = [];
       const log = { event: (code: string, data?: unknown) => events.push({ code, data }) } as unknown as ConstructorParameters<typeof PdfSaver>[0]['log'];
       const saver = new PdfSaver({ staging, log, send: async () => ({}) as never, exposed: () => undefined, emit: () => {} });
-      // 무장 없이 시작된 다운로드 → 취소 → guid 파일 정리 → staging 정리
       await saver.onBrowserEvent('Browser.downloadWillBegin', { guid: '99999999-8888-7777-6666-555555555555', frameId: 'F' });
       await saver.settled();
       assert.deepEqual((await fs.readdir(staging)).sort(), [keep]);
@@ -55,7 +50,6 @@ describe('PDF 검사·경로(단위)', () => {
     }
   });
 
-  /** Chrome 없이 다운로드 이벤트를 넣는 PdfSaver. frameTreeMs만큼 늦게 답하는 Page.getFrameTree(하위 프레임 다운로드). */
   async function fakeSaver(o: { frameTreeMs?: number; stallMs?: number; resweepMs?: number[]; remove?: StagingRemove } = {}) {
     const staging = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-pdf-order-'));
     const emitted: Array<{ name: string; data: unknown }> = [];
@@ -78,8 +72,6 @@ describe('PDF 검사·경로(단위)', () => {
   }
 
   it('다운로드 이벤트 순서: downloadWillBegin을 처리하는 동안 온 completed를 버리지 않는다(Linux CI #239)', async () => {
-    // 중계는 브라우저 이벤트를 기다리지 않고 넘긴다. 작은 파일은 시작·끝 이벤트가 붙어 온다. 시작 처리(프레임 확인)가 끝나기 전에
-    // completed가 처리되면 그 다운로드는 "받는 중"으로 영원히 남고, 결과 이벤트가 없으며, 다음 무장은 already_armed가 된다.
     for (const frameId of ['T1', 'SUB']) {
       const f = await fakeSaver({ frameTreeMs: 50 });
       try {
@@ -108,7 +100,6 @@ describe('PDF 검사·경로(단위)', () => {
       f.saver.arm({ runId: 'r1', targetId: 'T1' });
       await f.saver.onBrowserEvent('Browser.downloadWillBegin', { guid, frameId: 'T1' });
       assert.deepEqual(f.saver.arm({ runId: 'r1', targetId: 'T1' }), { armed: false, reason: 'already_armed' }, '받는 중에는 무장 거부');
-      // 진행 이벤트는 기다림을 다시 센다.
       await sleep(120);
       await f.saver.onBrowserEvent('Browser.downloadProgress', { guid, state: 'inProgress', receivedBytes: 10, totalBytes: 100 });
       await sleep(120);
@@ -119,7 +110,6 @@ describe('PDF 검사·경로(단위)', () => {
       assert.ok(f.sent.includes('Browser.cancelDownload'));
       assert.deepEqual(await fs.readdir(f.staging), []);
       assert.deepEqual(f.saver.arm({ runId: 'r1', targetId: 'T1' }), { armed: true });
-      // 뒤늦게 온 끝 이벤트는 무시한다(두 번 알리지 않는다).
       await f.saver.onBrowserEvent('Browser.downloadProgress', { guid, state: 'canceled' });
       assert.equal(f.emitted.length, 1);
     } finally {
@@ -128,14 +118,12 @@ describe('PDF 검사·경로(단위)', () => {
     }
   });
 
-  /** 조건이 참이 될 때까지(최대 ms) 짧게 기다린다. */
   async function until(f: () => Promise<boolean>, ms = 3000): Promise<boolean> {
     for (const end = Date.now() + ms; Date.now() < end; await sleep(10)) if (await f()) return true;
     return f();
   }
 
   it('Windows 잠금 흉내: 끝난 guid 파일을 몇 초 잡고 있어 첫 정리가 못 지워도 다시 쓸어 지운다(WIN-REALDEVICE §10.1)', async () => {
-    // 실기기에서는 Chrome·백신이 막 끝난 파일을 몇 초 잡아(EBUSY) 끝 이벤트 직후의 정리와 짧은 재시도를 넘겼다. 그 뒤 쓸 사람이 없었다.
     const guid = '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0';
     let locked = 3;
     const remove: StagingRemove = async (file) => {
@@ -161,7 +149,7 @@ describe('PDF 검사·경로(단위)', () => {
     const f = await fakeSaver({ resweepMs: [30, 30] });
     try {
       const guid = '11111111-2222-3333-4444-555555555555';
-      await f.saver.onBrowserEvent('Browser.downloadWillBegin', { guid, frameId: 'T1' }); // 무장 없음 → 취소
+      await f.saver.onBrowserEvent('Browser.downloadWillBegin', { guid, frameId: 'T1' });
       await f.saver.onBrowserEvent('Browser.downloadProgress', { guid, state: 'canceled' });
       await f.saver.settled();
       await fs.writeFile(path.join(f.staging, `${guid}.crdownload`), 'late');
@@ -223,7 +211,6 @@ interface Site {
   close(): Promise<void>;
 }
 
-/** 다운로드 흉내 서버(127.0.0.1). /fake.pdf는 Content-Type만 PDF이고 내용은 HTML이다. */
 async function startSite(): Promise<Site> {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x');
@@ -262,15 +249,9 @@ async function stagingNames(h: Harness): Promise<string[]> {
 }
 
 async function clearStaging(h: Harness): Promise<void> {
-  // Windows Chrome은 끝난·취소한 다운로드 파일을 잠깐 잡고 있다(EBUSY). 다시 시도한다.
   for (const n of await fs.readdir(h.paths.staging)) await fs.rm(`${h.paths.staging}/${n}`, { force: true, recursive: true, maxRetries: 20, retryDelay: 100 });
 }
 
-/**
- * staging이 기대한 이름 목록이 될 때까지 기다린다(최대 ms). 금고의 staging 정리는 이벤트를 늦추지 않으려고 뒤에서 돌고,
- * Windows Chrome은 중간 파일(`*.crdownload`)을 잠깐 잡고 있어 바로 보면 남아 있다(Windows CI #196·#209).
- * 끝내 맞지 않으면 마지막 목록을 돌려줘 assert가 무엇이 남았는지 보이게 한다.
- */
 async function stagingSettles(h: Harness, expected: string[], ms = process.platform === 'win32' ? 20_000 : 8000): Promise<string[]> {
   let names = await stagingNames(h);
   for (const until = Date.now() + ms; JSON.stringify(names) !== JSON.stringify([...expected].sort()) && Date.now() < until; ) {
@@ -280,10 +261,6 @@ async function stagingSettles(h: Harness, expected: string[], ms = process.platf
   return names;
 }
 
-/**
- * 엔진·control IPC에 PDF 바이트가 없고, 엔진은 Page.download* 이벤트(guid·원래 파일 이름)를 받지 않는다.
- * 로그에는 바이트·원래 파일 이름·화면 글자가 없다(⑦). 응답 헤더(Content-Disposition)는 엔진이 원래 보는 Network 이벤트에 있다.
- */
 function assertNothingLeaked(h: Harness, eng: RawEngine): void {
   const ipc = JSON.stringify(h.capture);
   for (const needle of ['%PDF', 'JVBERi']) assert.ok(!ipc.includes(needle), `IPC에 ${needle}`);

@@ -1,7 +1,3 @@
-// 디자인 시스템(sovereign-ax/design-system) tokens.json·components/bundle.css → src/tokens.gen.ts(ADR-028 결정 7).
-// 앱은 설치본에서 저장소 밖 파일을 읽을 수 없다(package-win runtime_reads_outside_app). 빌드에 들어가는 이 생성 파일만 읽는다.
-// 실행: node apps/desktop/scripts/gen-tokens.mjs        → 생성 파일을 다시 쓴다
-//       node apps/desktop/scripts/gen-tokens.mjs --check → 디자인 시스템과 다르면 1로 끝난다(tests/shell-tokens.test.ts도 같은 비교)
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,7 +6,6 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const DESIGN_SYSTEM = path.resolve(HERE, '../../../../sovereign-ax/design-system');
 export const OUT = path.resolve(HERE, '../src/tokens.gen.ts');
 
-/** tokens.json → { light, dark, common }. "{accent}" 같은 참조를 푼다. */
 export function resolveTokens(t) {
   const light = {};
   const dark = {};
@@ -25,7 +20,6 @@ export function resolveTokens(t) {
   return { light, dark, common };
 }
 
-/** 생성 파일 본문. 렌더러는 네트워크가 없으므로 bundle.css의 Google Fonts @import는 뺀다(서체는 대체 서체로). */
 export function render() {
   const tokens = resolveTokens(JSON.parse(fs.readFileSync(path.join(DESIGN_SYSTEM, 'tokens.json'), 'utf8')));
   const bundle = fs.readFileSync(path.join(DESIGN_SYSTEM, 'components/bundle.css'), 'utf8').replace(/^@import[^;]+;\s*/m, '');

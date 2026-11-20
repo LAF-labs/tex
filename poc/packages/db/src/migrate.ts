@@ -1,9 +1,3 @@
-// 스키마 마이그레이션(D07 §7): 버전 테이블 + 순방향 전용, 앱 업데이트 시 자동 적용, 실패 시 이전 판 DB 백업 유지.
-// - 대기 중인 판 전부를 트랜잭션 하나로 적용한다. 중간에 실패하면 SQLite가 통째로 되돌리고 DB는 이전 판 그대로다.
-// - 적용 전에 DB 파일(암호문 그대로)을 같은 db 폴더에 백업한다. 이것은 **적용 전 상태의 사본**이다: 트랜잭션 되돌림 자체가
-//   실패해 파일이 상했을 때(디스크 손상 등) 이전 판으로 돌아갈 곳이다. 새 판을 적용한 뒤의 복구 지점이 아니다(그건 다음 판 적용 때 다시 만든다).
-// - 이미 적용한 판의 SQL이 바뀌었으면(sha256 불일치) 열지 않는다. 배포한 마이그레이션은 고치지 않고 새 판을 더한다.
-// - DB가 앱보다 새 판이면 열지 않는다(옛 앱이 새 스키마를 망가뜨리지 않게).
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,7 +12,6 @@ export class MigrationError extends Error {
   readonly code: MigrationErrorCode;
   readonly version: number | null;
   constructor(code: MigrationErrorCode, version: number | null, cause?: unknown) {
-    // 메시지에는 코드와 판 번호만 둔다(값 없음 원칙, D12).
     super(version === null ? code : `${code}:v${version}`, cause === undefined ? undefined : { cause });
     this.code = code;
     this.version = version;
@@ -26,11 +19,8 @@ export class MigrationError extends Error {
 }
 
 export interface MigrateOptions {
-  /** 시험용. 기본은 schema.ts의 MIGRATIONS */
   migrations?: readonly Migration[];
-  /** 백업할 DB 파일 경로. 없으면(메모리 DB) 백업하지 않는다 */
   file?: string | null;
-  /** 남겨 둘 백업 개수(가장 최근 것부터). 기본 2 */
   keepBackups?: number;
   now?: () => Date;
 }
@@ -93,7 +83,6 @@ export function listBackups(file: string): string[] {
     .map(({ n }) => path.join(dir, n));
 }
 
-/** 같은 초에 다시 시도하면 이름이 겹친다. 겹치면 -2, -3…을 붙인다(COPYFILE_EXCL로 덮어쓰지 않는다) */
 function freeBackupPath(file: string, fromVersion: number, at: Date): string {
   const base = backupName(file, fromVersion, at);
   if (!fs.existsSync(base)) return base;
@@ -104,7 +93,6 @@ function freeBackupPath(file: string, fromVersion: number, at: Date): string {
 }
 
 function backup(db: Db, file: string, fromVersion: number, at: Date): string {
-  // WAL 내용을 본 파일에 합친 뒤 복사한다. 파일은 암호문이라 사본도 같은 키로만 열린다.
   db.pragma('wal_checkpoint(TRUNCATE)');
   const dest = freeBackupPath(file, fromVersion, at);
   fs.copyFileSync(file, dest, fs.constants.COPYFILE_EXCL);
@@ -121,7 +109,6 @@ export function rolledBackCleanly(db: Db, version: number): boolean {
   }
 }
 
-/** 오래된 백업 정리. 마이그레이션이 성공한 뒤에만 부른다(실패한 시도가 복구 지점을 지우지 않게) */
 function pruneBackups(file: string, keep: number): void {
   const all = listBackups(file);
   for (const old of all.slice(0, Math.max(0, all.length - keep))) fs.rmSync(old, { force: true });
@@ -170,7 +157,6 @@ export function migrate(db: Db, opts: MigrateOptions = {}): MigrateResult {
     try {
       backupPath = backup(db, opts.file, current, at);
     } catch (e) {
-      // 백업을 못 만들면 적용하지 않는다. DB는 그대로다
       throw new MigrationError('db.migration_failed', pending[0]!.version, e);
     }
   }
@@ -181,7 +167,6 @@ export function migrate(db: Db, opts: MigrateOptions = {}): MigrateResult {
   try {
     db.transaction(() => {
       db.exec(VERSION_TABLE);
-      // 버전 테이블 이전 DB(user_version만 있던 PoC): 이미 적용된 판을 기록으로 채운다.
       for (const m of list) if (m.version <= current) insert(m, at.toISOString());
       for (const m of pending) {
         running = m.version;
@@ -192,8 +177,6 @@ export function migrate(db: Db, opts: MigrateOptions = {}): MigrateResult {
       db.pragma(`user_version=${latest}`);
     })();
   } catch (e) {
-    // 되돌림이 끝나 DB가 이전 판 그대로임을 확인했을 때만 이번 사본을 지운다(재시도마다 사본이 쌓이지 않게).
-    // 확인하지 못하면(되돌림 실패·파일 손상) 사본을 남긴다: 그때가 이 백업이 필요한 경우다. 프로세스가 도중에 죽어도 사본이 남는다
     if (backupPath && rolledBackCleanly(db, current)) fs.rmSync(backupPath, { force: true });
     throw new MigrationError('db.migration_failed', running, e);
   }

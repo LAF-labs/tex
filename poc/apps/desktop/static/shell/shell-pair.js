@@ -1,7 +1,3 @@
-// 폰 연결 칸(S-03): 설정 > 기기 연결의 계정 카드 안에서 [폰 연결]이 그 자리에서 펼쳐진다(QR).
-// 폰이 QR을 찍은 뒤의 6자리 넣기 → 연결됐어요(또는 멈춤)는 메인 창 안 모달(pairModal, 따로 창 없음)이다.
-// main(remote-pairing.ts)이 준 화면 값(PairView)으로만 그린다. QR은 main이 만든 SVG data URL 이미지로 오고 <img src>로만 쓴다(QR 글자는 렌더러에 없다).
-// 값은 모두 textContent로 넣는다. 6자리는 폰에서 보고 이 PC에 넣는다("일치" 버튼은 없다, D08 §4.2).
 import { btn, h, icon } from './shell-views.js';
 
 const QR_PREFIX = 'data:image/svg+xml;base64,';
@@ -19,14 +15,12 @@ const ERR = {
 };
 export const pairErrText = (c) => (c ? (ERR[c] ?? (c.startsWith('net.') ? '인터넷에 연결되지 않았어요. 연결을 확인하고 다시 해 주세요.' : '잠깐 문제가 생겼어요. [다시 시도]를 눌러 주세요.')) : '');
 
-/** 남은 시간 "1:43". */
 export const pairLeft = (expiresAt, now = Date.now()) => {
   const s = Math.max(0, Math.round((expiresAt - now) / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 export const pairTtlText = (expiresAt, now) => `${pairLeft(expiresAt, now)} 안에 찍어 주세요`;
 
-/** 칸이 펼쳐진 단계(쉬는 자리가 아닌 것). */
 export const pairOpen = (v) => !!v && v.step !== 'idle';
 
 function qrImg(src) {
@@ -36,11 +30,9 @@ function qrImg(src) {
   return i;
 }
 
-// 폰은 첫 실행이면 온보딩 마지막 단계(PC와 연결)가, 그 뒤에는 홈의 [PC와 연결]이 같은 QR 찍기 화면을 연다. 둘 다 맞게 화면 이름으로 쓴다.
 const STEPS = ['폰에서 택스오프를 열고', 'PC와 연결 화면에서', '이 QR을 찍어 주세요'];
 const steps = () => h('ol', { class: 'pair-steps' }, ...STEPS.map((t, i) => h('li', {}, h('span', { class: 'pair-step-n', 'aria-hidden': 'true' }, String(i + 1)), h('span', {}, t))));
 
-/** 왼쪽 QR 자리: QR · 만드는 중 · 시간이 지남(그 자리에 [새 QR]). 자리 크기는 같아서 단계가 바뀌어도 칸이 흔들리지 않는다. */
 function qrTile(v, act, busy) {
   if (v.step === 'waiting_phone') return h('div', { class: 'pair-qr' }, qrImg(v.qr));
   if (v.step === 'opening') return h('div', { class: 'pair-qr is-empty', 'aria-hidden': 'true' }, h('span', { class: 'pair-spin' }));
@@ -49,10 +41,6 @@ function qrTile(v, act, busy) {
 
 const mark = (kind) => h('span', { class: `pair-mk${kind ? ` is-${kind}` : ''}`, 'aria-hidden': 'true' }, icon(kind === 'done' ? 'check' : kind === 'attention' ? 'warn' : 'phone'));
 
-/**
- * 계정 카드 안의 폰 연결 자리. v가 없거나 쉬는 자리(idle)면 [폰 연결] 한 줄, 펼치면 그 자리에서 QR → 6자리 → 연결됐어요(또는 멈춤)로 바뀐다.
- * act = { open, submit(code), retry, cancel, codeOf(), setCode(v) }. 단추는 busy 동안 막는다.
- */
 export function pairSection(v, act, busy = false, now = Date.now(), inModal = false) {
   if (!pairOpen(v))
     return h(
@@ -78,7 +66,6 @@ export function pairSection(v, act, busy = false, now = Date.now(), inModal = fa
       ),
     );
 
-  // 6자리 단계부터 연결됐어요까지는 메인 창 안 모달(pairModal)이 맡는다. 뒤 카드에는 한 줄만 둔다.
   if (inModal) return h('div', { class: 'sx-actions', 'data-pair': v.step }, h('span', { class: 'sx-meta' }, '열린 창에서 폰 연결을 마무리해 주세요.'));
 
   if (v.step === 'paired')
@@ -88,7 +75,6 @@ export function pairSection(v, act, busy = false, now = Date.now(), inModal = fa
       h('div', { class: 'sx-actions' }, cancel('닫기')),
     );
 
-  // 멈춤(시간 지남 밖): 왜 멈췄는지와 다음 행동 하나
   return panel(
     { class: 'pair-panel is-attention' },
     h('div', { class: 'pair-head' }, mark('attention'), h('div', { class: 'pair-head-t' }, h('p', { class: 'pair-title' }, '연결이 멈췄어요'), h('p', { class: 'pair-text', 'data-pair-error': v.error ?? '' }, pairErrText(v.error)))),
@@ -96,17 +82,10 @@ export function pairSection(v, act, busy = false, now = Date.now(), inModal = fa
   );
 }
 
-/** 6자리 칸 수. */
 export const SAS_LEN = 6;
-/** 숫자만 남겨 6자리까지. */
 export const sasDigits = (s) => String(s ?? '').replace(/\D/g, '').slice(0, SAS_LEN);
-/** 남은 시간 한 줄 "남은 시간 1:43". */
 export const pairLeftText = (expiresAt, now) => `남은 시간 ${pairLeft(expiresAt, now)}`;
 
-/**
- * 6칸 입력. 칸마다 한 자리, 넣으면 다음 칸, 빈 칸에서 지우면 앞 칸, 붙여넣기는 6자리를 한 번에, 다 차면 onFull.
- * 값은 act.codeOf()/setCode()에 둔다(다시 그려도 남는다). DOM 속성에는 숫자를 넣지 않는다.
- */
 function sasBoxes(act, { disabled, wrong, shake, onFull }) {
   const boxes = [];
   const code = () => boxes.map((b) => b.value).join('');
@@ -170,10 +149,8 @@ function sasBoxes(act, { disabled, wrong, shake, onFull }) {
   return h('div', { class: `sas-boxes${wrong ? ' is-wrong' : ''}${shake ? ' is-shake' : ''}`, role: 'group', 'aria-label': '폰에 보이는 6자리', id: 'pair-sas' }, ...boxes.slice(0, 3), h('span', { class: 'sas-gap', 'aria-hidden': 'true' }), ...boxes.slice(3));
 }
 
-/** 6자리 단계부터 끝(연결됐어요·멈춤)까지 모달로 그릴지. sasSeen = 이번 연결에서 6자리 단계에 들어왔는지(멈춤을 모달에 이어 보여 준다). */
 export const pairInModal = (v, sasSeen) => !!v && (v.step === 'awaiting_sas' || v.step === 'checking' || v.step === 'paired' || (v.step === 'failed' && sasSeen));
 
-/** 모달 안에서 Tab이 밖으로 나가지 않게 한다. */
 function trapTab(root) {
   root.addEventListener('keydown', (e) => {
     if (e.key !== 'Tab') return;
@@ -189,10 +166,6 @@ function trapTab(root) {
   return root;
 }
 
-/**
- * 폰 연결 모달(메인 창 안, 배경 흐림). 6자리 → 확인하는 중 → 연결됐어요, 또는 멈춤.
- * shake = 방금 틀렸다(한 번만 흔든다). Esc·[취소]는 act.cancel.
- */
 export function pairModal(v, act, busy = false, now = Date.now(), shake = false) {
   const name = v.phoneName || '폰';
   const phone = () => h('span', { 'data-pair-phone': '' }, name);
@@ -202,7 +175,6 @@ export function pairModal(v, act, busy = false, now = Date.now(), shake = false)
   if (v.step === 'awaiting_sas' || v.step === 'checking') {
     const checking = v.step === 'checking';
     const submit = (c) => !busy && !checking && sasDigits(c).length === SAS_LEN && act.submit(sasDigits(c));
-    // 틀리면 칸을 빨갛게(다시 넣기 시작하면 푼다), 흔들기는 결과를 받은 그때 한 번만
     const wrong = (v.error === 'pair.sas_wrong' || v.error === 'pair.sas_shape') && !act.codeOf();
     const boxes = sasBoxes(act, { disabled: checking || busy, wrong, shake: wrong && shake, onFull: submit });
     const line = v.error

@@ -1,17 +1,3 @@
-// 발급 사다리 실모델 예행(가짜 홈택스 + 제품 H-01 패키지 + 실제 게이트웨이 코드 + OpenRouter 실호출). 실제 홈택스에 접속하지 않는다.
-// 한 번에 한 경우·한 번만 돌리고 칸마다 호출 기록(모델·공급사·시간·토큰·출력)을 남긴다: 로그를 보고 고친 뒤 다시 돌린다(대표 2026-11-16 "한두 번 해 보고 로그 확인").
-//
-// 키: OPENROUTER_API_KEY(환경 변수로만, 출력하지 않는다). 모델: MODEL_RESPOND(위치 찾기), MODEL_AGENT(판정·에이전트), MODEL_VISION(화면 보기).
-// OPENROUTER_ZDR=true·OPENROUTER_DATA_COLLECTION=deny·OPENROUTER_PROVIDERS가 있으면 운영처럼 위치 찾기를 공급자 고정한다. 없으면 모두 고정 없이.
-//
-//   node --conditions=development tests/ladder-live/run.ts --case=drift-judge --out=/tmp/ladder-live.json
-//
-// 경우(--case):
-//   script       어긋남 없음. 모델 호출 0이어야 한다(스크립트 단독).
-//   drift        품목명 칸 id가 바뀜. 위치 찾기(MODEL_RESPOND) 칸이 고쳐야 한다.
-//   drift-judge  같은 어긋남, 위치 찾기 끔. 판정 → 에이전트(MODEL_AGENT) 칸이 고쳐야 한다.
-//   drift-vision 같은 어긋남, 위치 찾기·에이전트 끔. 판정 → 화면 보기(MODEL_VISION) 칸.
-// --off=toolset,... 로 칸을 더 끌 수 있다.
 import { randomBytes, generateKeyPairSync } from 'node:crypto';
 import fs from 'node:fs';
 import type { LocateResponder } from '@sax/engine';
@@ -94,7 +80,6 @@ const live: LocateResponder = {
     }
     let rt = tokens.get(req.runToken);
     if (!rt) tokens.set(req.runToken, (rt = (await svc.issueRunToken(who, { runId: `run-${randomBytes(6).toString('hex')}` })).runToken));
-    // 보낸 글(가린 화면 목록·목표, 가짜 장부)과 사진을 남긴다: 모델이 무엇을 보고 답했는지 로그로 본다
     const parts = req.messages.flatMap((m) => m.content as Array<{ type: string; text?: string; image_url?: string }>);
     const sent = parts.filter((p) => p.type === 'input_text').map((p) => String(p.text)).join('\n');
     const shot = parts.find((p) => p.type === 'input_image')?.image_url;

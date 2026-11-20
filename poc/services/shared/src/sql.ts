@@ -1,6 +1,3 @@
-// SQL 계층: 운영은 PostgreSQL(D09 §1·§9.1, 표준 기능만), 로컬 시험은 Node 내장 node:sqlite.
-// SQL은 두 방언의 공통 부분집합으로 쓰고 자리표시자는 $1..$n이다. 방언 차이는 마이그레이션의 {{BLOB}}·{{BIGINT}} 치환과 forUpdate뿐이다.
-// ADR-029 결정 6: 메타데이터성 테이블에 서버 시각 컬럼을 두지 않는다. 서비스별 스키마 린트(lintSchema)가 금지 컬럼 이름을 막는다.
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -13,12 +10,9 @@ export interface Sql {
   readonly dialect: 'sqlite' | 'pg';
   all<T = Record<string, unknown>>(text: string, params?: Param[]): Promise<T[]>;
   one<T = Record<string, unknown>>(text: string, params?: Param[]): Promise<T | undefined>;
-  /** 영향받은 행 수 */
   run(text: string, params?: Param[]): Promise<number>;
   exec(script: string): Promise<void>;
-  /** 직렬화된 트랜잭션. pg는 행 잠금(forUpdate)과 함께 쓴다. */
   tx<T>(fn: (q: Sql) => Promise<T>): Promise<T>;
-  /** pg: ' FOR UPDATE', sqlite: ''(전역 직렬화) */
   readonly forUpdate: string;
   close(): Promise<void>;
 }
@@ -87,7 +81,6 @@ export function openSqlite(file = ':memory:'): Sql {
   return new SqliteSql(db);
 }
 
-// int8(BIGINT)을 문자열이 아니라 수로 읽는다(값은 epoch ms·카운터라 2^53 안).
 pg.types.setTypeParser(20, (v: string) => Number(v));
 
 type PgQueryable = pg.Pool | pg.PoolClient;
@@ -179,7 +172,6 @@ export function schemaColumns(dir: string): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.sql')).sort()) {
     const text = fs.readFileSync(path.join(dir, f), 'utf8').replace(/--.*$/gm, '');
-    // 문장 순서대로: CREATE(표 만들기), DROP(지우기), RENAME(표 다시 만들기 뒤 이름 바꾸기), ADD COLUMN
     const re = /CREATE TABLE(?: IF NOT EXISTS)? (\w+) \(([\s\S]*?)\);|DROP TABLE(?: IF EXISTS)? (\w+);|ALTER TABLE (\w+) RENAME TO (\w+);|ALTER TABLE (\w+) ADD COLUMN (\w+)/g;
     for (const m of text.matchAll(re)) {
       if (m[1]) {

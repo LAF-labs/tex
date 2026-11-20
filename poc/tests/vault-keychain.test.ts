@@ -1,4 +1,3 @@
-// 키체인 어댑터: 사람 비밀 세션 결박(D05 §2·§7, ADR-026 결정 2·3·4·7, ADR-020 결정 2). Chrome·OS 키체인 없이 모의 백엔드로 돈다.
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import {
@@ -26,11 +25,9 @@ function clock(start = 1_000_000) {
 const enc = (s: string) => new TextEncoder().encode(s);
 const dec = (b: Uint8Array) => new TextDecoder().decode(b);
 
-/** 포털 비밀번호 칸 하나(시험 값). */
 const pwEntry = (value = 'TEST-PW-value001') => [{ field: 'pw' as const, bytes: enc(value) }];
 const readText = (r: Awaited<ReturnType<HumanSecretVault['readOne']>>) => (r.ok ? dec(r.bytes) : null);
 
-/** 옛 판(보안카드 지원 시절)이 키체인에 남긴 보안카드 슬롯을 그대로 흉내 낸다: 색인 줄 + 칸·KEK 사본·동의 레코드. 값은 시험 바이트다. */
 async function plantRetiredCard(items: MemoryItemStore, scope: 'business' | 'personal' = 'business', rows = 30) {
   const raw = await items.get('index/human');
   const idx = raw ? (JSON.parse(dec(raw)) as unknown[]) : [];
@@ -83,12 +80,11 @@ describe('세션 잠금(SessionLock): Windows 세션 추종', () => {
     const l = new SessionLock({ now: c.now });
     l.reportIdle(899);
     assert.equal(l.check().open, true);
-    c.tick(2_000); // 보고 사이에 900초를 넘김
+    c.tick(2_000);
     assert.equal((l.check() as { reason: string }).reason, 'idle');
-    l.reportIdle(0); // 사용자가 돌아왔다
+    l.reportIdle(0);
     assert.deepEqual(l.check(), { open: false, reason: 'idle', helloCanOpen: true });
     assert.equal(l.helloConfirmed().open, true);
-    // Windows 잠금·해제 경로
     l.reportIdle(950);
     l.reportIdle(1);
     assert.equal(l.check().open, false);
@@ -121,7 +117,6 @@ describe('세션 잠금(SessionLock): Windows 세션 추종', () => {
   it('열린 지 28800초면 잠긴다(max_open)', () => {
     const c = clock();
     const l = new SessionLock({ now: c.now });
-    // 사용자는 계속 자리에 있다(main이 30초마다 유휴 0을 보고).
     for (let i = 0; i < 960; i++) {
       l.reportIdle(0);
       c.tick(30_000);
@@ -137,7 +132,6 @@ describe('세션 잠금(SessionLock): Windows 세션 추종', () => {
     l.setStrict(true);
     assert.deepEqual(l.check(), { open: false, reason: 'strict', helloCanOpen: true });
     assert.equal(l.helloConfirmed().open, true);
-    // main은 30초마다 유휴를 보고한다(120초 넘게 끊기면 따로 잠긴다).
     for (let i = 0; i < 9; i++) {
       c.tick(30_000);
       l.reportIdle(0);
@@ -167,9 +161,7 @@ describe('사람 비밀 저장소(HumanSecretVault)', () => {
     assert.ok(!items.items.has('kek/portal/business/hello'), 'Hello 없는 PC는 사본이 없다');
     const all = Buffer.concat([...items.items.values()].map((b) => Buffer.from(b)));
     for (const s of ['TEST-PW-plain001', 'TEST-PW-cert0001']) assert.equal(all.includes(Buffer.from(s)), false, '평문이 저장소에 없다');
-    // 동의 레코드에 값이 없다
     assert.doesNotMatch(JSON.stringify(await v.consent('portal_password', 'business')), /TEST-PW/);
-    // 칸 하나를 다른 칸 자리에 옮겨 붙이면 풀리지 않는다(AAD)
     items.items.set('cert/business/pw', items.items.get('portal/business/pw')!);
     assert.deepEqual(await v.readOne('cert_password', 'business', { field: 'pw' }), { ok: false, reason: 'corrupt' });
     assert.equal(readText(await v.readOne('portal_password', 'business', { field: 'pw' })), 'TEST-PW-plain001');
@@ -184,13 +176,10 @@ describe('사람 비밀 저장소(HumanSecretVault)', () => {
       () => v.store('portal_password', 'business', [{ field: 'pw', bytes: enc('1') }, { field: 'pw', bytes: enc('2') }], { version: 'v1' }),
       () => v.store('portal_password', 'business', [{ field: 'pw', bytes: new Uint8Array(257) }], { version: 'v1' }),
       () => v.store('portal_password', 'business', [], { version: 'v1' }),
-      // 보안카드는 지원하지 않는다(대표 결정 2026-11-19): 종류도 칸 번호도 받지 않는다
       () => v.store('security_card' as never, 'business', pwEntry(), { version: 'v1' }),
       () => v.store('portal_password', 'business', [{ row: 1, bytes: enc('1') } as never], { version: 'v1' }),
-      // 포털 아이디는 비밀이 아니라 금고에 칸이 없다(D05 §2·§4, ADR-035).
       () => v.store('portal_password', 'business', [{ field: 'id' as never, bytes: enc('me') }], { version: 'v1' }),
       () => v.store('portal_password', 'business', [{ field: 'id' as never, bytes: enc('me') }, { field: 'pw', bytes: enc('x') }], { version: 'v1' }),
-      // 인증서 비밀번호는 칸 하나(pw)만(처음 쓸 때 금고가 기억, 대표 지시 2026-11-13)
       () => v.store('cert_password', 'business', [{ row: 1, bytes: enc('x') } as never], { version: 'v1' }),
       () => v.store('portal_password', '../x', [{ field: 'pw', bytes: enc('x') }], { version: 'v1' }),
     ];
@@ -208,7 +197,6 @@ describe('사람 비밀 저장소(HumanSecretVault)', () => {
     const c = clock();
     const other = new HumanSecretVault({ backend: { items: copy, wrapper: MemoryWrapper.otherDevice(), hello: new UnavailableHello() }, log: new Log(), now: c.now });
     other.lock.reportIdle(0);
-    // 금고는 열렸지만 이 기기의 래핑 키로 KEK를 못 연다(잠금과 구분).
     assert.deepEqual(await other.readOne('portal_password', 'business', { field: 'pw' }), { ok: false, reason: 'kek_unavailable' });
   });
 
@@ -263,7 +251,6 @@ describe('사람 비밀 저장소(HumanSecretVault)', () => {
     assert.ok((await v.readOne('portal_password', 'business', { field: 'pw' })).ok);
     v.lock.runEnded();
     assert.deepEqual(await v.readOne('portal_password', 'business', { field: 'pw' }), { ok: false, reason: 'vault_locked' });
-    // 끄려면 열린 금고(KEK)가 있어야 한다
     assert.deepEqual(await v.setStrict(false), { ok: false, reason: 'unlock_required' });
     await v.unlockWithHello({ task: 't', portal: 'p' });
     assert.deepEqual(await v.setStrict(false), { ok: true });
@@ -292,7 +279,6 @@ describe('사람 비밀 저장소(HumanSecretVault)', () => {
     assert.deepEqual(await s1.v.setStrict(true), { ok: true });
     const c = clock();
     const v2 = new HumanSecretVault({ backend: s1.backend, log: new Log(), now: c.now });
-    // 설정을 읽기 전에 온 유휴·세션 보고는 금고를 열지 않는다(startup).
     assert.deepEqual(v2.lock.reportIdle(0), { open: false, reason: 'startup', helloCanOpen: false });
     assert.equal(v2.lock.sessionEvent('unlock-screen').open, false);
     await v2.ready();
@@ -349,7 +335,6 @@ describe('사람 비밀 저장소(HumanSecretVault)', () => {
     const items = new MemoryItemStore();
     const realGet = items.get.bind(items);
     let fails = 2;
-    // 기동 때 읽기(보안카드 슬롯 정리)와 첫 연산의 읽기가 실패한다
     items.get = async (name) => {
       if (name === 'index/human' && fails > 0) {
         fails--;
@@ -420,16 +405,13 @@ describe('사람 비밀 저장소(HumanSecretVault)', () => {
     const log = new Log();
     const v2 = new HumanSecretVault({ backend: s.backend, log, now: clock().now });
     v2.lock.reportIdle(0);
-    // 부르지 않아도 기동 때 지운다: 색인 읽기가 끝나면 키체인에 보안카드 항목이 없다
     await v2.list();
     assert.deepEqual(log.lines.map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.e === 'vault.card_purged'), [{ e: 'vault.card_purged', items: 65 }]);
     assert.ok(![...s.items.items.keys()].some((k) => k.includes('securitycard')), '칸·KEK 사본·동의 레코드가 없다');
     assert.doesNotMatch(dec(s.items.items.get('index/human')!), /security_card/, '색인에서도 빠진다');
     assert.ok(!log.lines.some((l) => l.includes('OLD-CARD') || l.includes('securitycard/')), '로그에 값·칸 이름이 없다');
-    // 다른 슬롯은 그대로
     assert.deepEqual((await v2.list()).map((x) => x.kind), ['portal_password']);
     assert.equal(readText(await v2.readOne('portal_password', 'business', { field: 'pw' })), 'TEST-PW-keep0001');
-    // 다음 기동에는 지울 것이 없다(로그도 없다)
     const log3 = new Log();
     await new HumanSecretVault({ backend: s.backend, log: log3, now: clock().now }).list();
     assert.ok(!log3.has('vault.card_purged') && !log3.has('vault.card_purge_failed'));
@@ -481,7 +463,6 @@ describe('금고 포트 연결: 등록 창 저장·control 세션 추종·인증
   let h: Harness;
   before(async () => {
     h = await startHarness();
-    // main은 기동 직후부터 유휴 시간을 보낸다(보고 전에는 금고가 닫혀 저장도 받지 않는다).
     await h.control.rpc('session.idle', { idleSec: 0 });
   });
   after(async () => {
@@ -518,12 +499,9 @@ describe('금고 포트 연결: 등록 창 저장·control 세션 추종·인증
     assert.equal(r.portalLoginId, 'user-login1');
     assert.equal(r.consent.items, 1);
     assert.deepEqual(itemKeys().filter((k) => k.startsWith('portal/')), ['portal/business/pw']);
-    // 금고 항목·색인·동의 레코드 어디에도 아이디가 없다.
     const blobs = (h.vault.human as unknown as { b: { items: MemoryItemStore } }).b.items.items;
     for (const [, val] of blobs) assert.doesNotMatch(Buffer.from(val).toString('latin1'), /user-login1/);
-    // 아이디 칸으로 보내면 거부, 저장도 안 한다.
     await assert.rejects(h.secretPort({ ...portalBind, scope: 'personal' }).rpc('secret.store', { entries: [{ field: 'id', bytes: enc('user-login1') }] }), /bad_cell/);
-    // 틀린 아이디(공백·제어 문자·길이 초과·문자열 아님)나 포털 아닌 결속(인증서 비밀번호)의 아이디는 거부하고 넘긴 바이트를 지운다.
     for (const [bind, id] of [
       [portalBind, 'a b'], [portalBind, 'a\u0000'], [portalBind, 'x'.repeat(65)], [portalBind, 123], [portalBind, ''],
       [storeBind, 'user-login1'],
@@ -603,7 +581,6 @@ describe('금고 포트 연결: 등록 창 저장·control 세션 추종·인증
     const got = h.control.once('secret.suspect');
     assert.deepEqual(await h.client.rpc('typist.authFailed', { runId: 'r1', kind: 'portal_password', scope: 'business' }), {});
     assert.deepEqual(await got, { kind: 'portal_password', scope: 'business' });
-    // 인증서 비밀번호 틀림도 같은 길(기억값을 suspect로, cert-secret.ts 재입력 1번)
     assert.deepEqual(await h.client.rpc('typist.authFailed', { runId: 'r1', kind: 'cert_password', scope: 'business' }), {});
     await assert.rejects(h.client.rpc('typist.authFailed', { runId: 'r1', kind: 'other', scope: 'business' }), /bad_params/);
     assert.equal(await h.control.rpc('secret.forget', { kind: 'portal_password', scope: 'business' }), true);

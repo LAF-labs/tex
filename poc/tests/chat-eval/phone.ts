@@ -1,14 +1,3 @@
-// 폰 대화 실모델 평가(chat-eval 폰 방식, ADR-047). 폰 대화 코어(@sax/chat-core PhoneChat·PhoneGateway: 가림·컨텍스트 조립·도구 실행·답 검사·슬롯 채우기)는
-// 제품 코드 그대로이고, 게이트웨이 자리만 이 파일이 맡아 실제 게이트웨이와 같은 본문(openAIResponsesBody + toolsetPrefix)으로 OpenRouter에 보낸다.
-// 게이트웨이가 하는 일 가운데 범위·한도·가림 2차 검사·턴 상한은 여기 없다(그쪽은 모의 공급사 시험 services-gateway·phone-chat-gateway가 본다).
-//
-// 쓰는 법(한두 사례씩 돌리고, 찍힌 로그를 읽고, 고치고, 다시 돌린다):
-//   set -a; . ./.env.local; set +a
-//   EVAL_MODEL=<OpenRouter 모델 ID> node --conditions=development tests/chat-eval/phone.ts --only=p-issue-basic,p-look-history [--runs=1] [--show-input] [--out=/abs/report.json]
-// - --only가 없으면 돌리지 않는다. 전부 돌릴 때만 --all을 붙인다(고친 뒤 되돌아간 것이 없는지 볼 때).
-// - --list는 사례 ID와 설명만 찍는다. --fake는 키 없이 늘 같은 답을 내는 가짜 상류로 배선만 확인한다.
-// - --show-input은 턴마다 모델에 보낸 글(가린 글)을 찍는다. 컨텍스트가 어떻게 짜였는지 볼 때 쓴다.
-// 키·응답 원문은 남기지 않는다. 장부가 가상이라 보고서의 문장·도구 인자·화면 문장에 실제 값은 없다.
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -28,7 +17,6 @@ const PROVIDERS = (process.env.EVAL_PROVIDERS ?? process.env.OPENROUTER_PROVIDER
 const RUNS = Number(arg('runs') ?? 1);
 const ONLY = arg('only')?.split(',').map((x) => x.trim()).filter(Boolean);
 const OUT = arg('out') ?? path.join(import.meta.dirname, '../../.tmp/chat-eval/phone-latest.json');
-/** 한 번 실행의 비용 상한(달러). 한도 단가(DeepSeek 공식 피크)로 센다. 한두 사례면 0.01달러 아래다. */
 const COST_CAP = Number(arg('cap') ?? 0.3);
 const PRICE = { in: 0.3, cached: 0.006, out: 1.2 };
 
@@ -50,13 +38,11 @@ if (!FAKE && (!KEY || !MODEL)) {
   process.exit(2);
 }
 
-// ── 게이트웨이 자리 ──
 const usage = { calls: 0, input: 0, cached: 0, output: 0, reasoning: 0, errors: 0 };
 const costUsd = () => ((usage.input - usage.cached) * PRICE.in + usage.cached * PRICE.cached + usage.output * PRICE.out) / 1e6;
 
 interface Call {
   toolset: string;
-  /** 이 호출에 같이 보낸 replay 항목 수(0이면 사용자 턴의 첫 호출) */
   sent: number;
   provider: string;
   inputTokens: number;
@@ -67,7 +53,6 @@ interface Call {
 }
 interface Sink {
   calls: Call[];
-  /** 사용자 턴의 첫 호출에 보낸 글(가린 글) */
   input: string;
   err: string;
 }
@@ -107,14 +92,12 @@ async function upstream(def: ToolsetDef, input: unknown[]): Promise<Omit<Call, '
     }
     if (attempt >= 2 || (res && res.status < 500 && res.status !== 429)) {
       usage.errors++;
-      // 상류 오류 본문에는 키가 없다(요청 헤더는 찍지 않는다). 앞 300자만 남긴다.
       throw new Error(`upstream ${res ? `${res.status} ${(await res.text().catch(() => '')).slice(0, 300)}` : 'network'}`);
     }
     await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
   }
 }
 
-/** 배선 확인용 가짜 상류: [지금]의 문장에 거래처·금액 토큰이 있으면 invoice_draft 한 번, 결과를 받으면 did로 답한다. 요약은 고정 문장. */
 function fakeUpstream(def: ToolsetDef, input: unknown[]): { status: string; output: Array<Record<string, unknown>> } {
   const msg = (o: object) => ({ status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify(o) }] }] });
   if (def.id === CHAT_DIGEST.id) return msg({ summary: '앞 대화를 줄였다.' });
@@ -131,21 +114,18 @@ function fakeUpstream(def: ToolsetDef, input: unknown[]): { status: string; outp
   return { status: 'completed', output: [{ type: 'function_call', call_id: `call_${randomBytes(3).toString('hex')}`, name: 'invoice_draft', arguments: JSON.stringify({ counterparty: name, amount: amt, vat: null, item: null, date_month_offset: null, date_day: null, quantity: null, unit_price: null }) }] };
 }
 
-/** 모델 출력 요약: 항목 종류, 도구 이름·인자, 문장(토큰·슬롯 그대로, 400자까지) */
 function brief(i: Record<string, unknown>): Record<string, unknown> {
   if (i.type === 'function_call') return { type: i.type, name: i.name, args: String(i.arguments ?? '').slice(0, 400) };
   if (i.type === 'message') return { type: i.type, content: (i.content as Array<{ type?: string; text?: string }> | undefined)?.map((c) => ({ type: c.type, text: String(c.text ?? '').slice(0, 400) })) };
   return { type: i.type };
 }
 
-/** PhoneGateway에 꽂는 fetch. 실제 게이트웨이의 /v1/run-tokens·/v1/respond와 같은 본문을 주고받는다(HTTP 서버 없이). */
 function gatewayFetch(sink: Sink) {
   const json = (status: number, v: unknown): HttpResponse => ({ status, text: async () => JSON.stringify(v) });
   return async (url: string, init: { method: 'GET' | 'POST'; headers: Record<string, string>; body?: string }): Promise<HttpResponse> => {
     const body = init.body ? (JSON.parse(init.body) as Record<string, unknown>) : {};
     if (url.endsWith('/v1/run-tokens')) return json(200, { runToken: `sxr1.${randomBytes(16).toString('hex')}.eval`, expiresAt: '2099-01-01T00:00:00Z' });
     if (!url.endsWith('/v1/respond')) return json(404, {});
-    // 폰 토큰에 열리는 툴셋은 둘뿐이다(게이트웨이 service.ts와 같다)
     const def = body.toolset === CHAT_PHONE.id ? CHAT_PHONE : body.toolset === CHAT_DIGEST.id ? CHAT_DIGEST : null;
     if (!def) return json(403, { error: 'account.scope_denied' });
     const messages = body.messages as Array<{ content: Array<{ text: string }> }>;
@@ -164,8 +144,6 @@ function gatewayFetch(sink: Sink) {
   };
 }
 
-// ── 폰 사본(PC가 넘긴 것으로 치는 가상 장부) ──
-/** 오늘(TODAY) 한국 시간 낮 12시 */
 const T0 = Date.parse(`${TODAY}T03:00:00Z`);
 const CP_ID = new Map(SEED.cps.map((c, i) => [c.name, `c${i + 1}`]));
 const CP_NAME = new Map([...CP_ID].map(([name, id]) => [id, name]));
@@ -183,10 +161,8 @@ const view = (d: PhoneDraft): CardView => ({ ref: d.ref, name: CP_NAME.get(d.cou
 
 interface TurnLog {
   say: string;
-  /** 모델에 보낸 글(사용자 턴의 첫 호출, 가린 글)과 그 글자 수 */
   input: string;
   calls: Call[];
-  /** 모델이 부른 도구 이름(순서대로) */
   tools: string[];
   ms: number;
   result: PhoneTurnResult;
@@ -215,7 +191,6 @@ async function runCase(c: Case): Promise<TurnLog[]> {
     const before = new Set((await chat.drafts()).map((d) => d.id));
     const t0 = performance.now();
     const result = await chat.send(t.say);
-    // 답 뒤에 도는 접기(chat_digest)가 있으면 끝날 때까지 기다린다(다음 턴 로그에 섞이지 않게)
     await chat.messages();
     const ms = Math.round(performance.now() - t0);
     const drafts = await chat.drafts();
@@ -232,13 +207,11 @@ async function runCase(c: Case): Promise<TurnLog[]> {
     };
     log.checks = score(t.expect, log, sink.err);
     logs.push(log);
-    // 사장님이 다음 말을 하기까지 20초(대화 세션은 15분 쉬어야 바뀐다)
     now += 20_000;
   }
   return logs;
 }
 
-// ── 채점(사장님 화면 기준, PC 평가 run.ts와 같은 규칙) ──
 function matchDraft(e: DraftExpect, d: CardView): string | null {
   if (e.cp !== undefined && d.name !== e.cp) return `거래처 ${d.name}≠${e.cp}`;
   if (e.amount !== undefined && d.amount !== e.amount) return `금액 ${d.amount}≠${e.amount}`;
@@ -256,7 +229,6 @@ function score(e: TurnExpect, l: TurnLog, upstreamError = ''): TurnLog['checks']
   const add = (name: string, ok: boolean, detail?: string) => out.push({ name, ok, ...(ok || !detail ? {} : { detail }) });
   const r = l.result;
   const text = r.text;
-  /** 모델이 낸 답 문장(검사 전, 토큰·슬롯 그대로) */
   const raw = l.calls.flatMap((x) => x.out.filter((o) => o.type === 'message').flatMap((o) => (o.content as Array<{ text?: string }> | undefined)?.map((c) => c.text ?? '') ?? [])).at(-1);
   if (r.kind === 'unavailable') {
     add('답을 받음', !!e.mayFail, `${r.code}${upstreamError ? ` (${upstreamError})` : ''}${raw ? ` 모델 답: ${raw}` : ''}`);
@@ -289,19 +261,16 @@ function score(e: TurnExpect, l: TurnLog, upstreamError = ''): TurnLog['checks']
     if (e.ask !== undefined) add(`되묻기 ${e.ask}`, (r.ask?.kind ?? null) === e.ask, r.ask?.kind ?? 'null');
     if (e.table) add(`표 ${e.table}`, r.show.some((s) => s.type === 'table' && s.table === e.table), r.show.map((s) => (s.type === 'table' ? s.table : 'card')).join(',') || '없음');
     if (e.filtered !== undefined) add(`걸러짐 ${e.filtered}`, r.filtered === e.filtered, String(r.filtered));
-    // 늘 보는 것: 문장이 고정 문장으로 바뀐 턴(사장님에게는 "표를 보세요"만 보인다)
     if ((r.filtered === 'number' || r.filtered === 'slot') && e.filtered !== r.filtered) add(`${r.filtered === 'number' ? '숫자' : '슬롯'} 걸러짐 없음`, false, raw);
     if (text === PHONE_SLOT_MISSING_TEXT) add('슬롯 채움', false, raw);
   }
   for (const s of e.says ?? []) add(`문장에 "${s}"`, text.includes(s), text);
   if (e.saysAny?.length) add(`문장에 ${e.saysAny.join('|')}`, e.saysAny.some((s) => text.includes(s)), text);
-  // 남의 말을 옮기거나 부정하는 꼴("발급됐다고 말하지 않아요")은 주장이 아니다
   const claims = (w: string) => [...text.matchAll(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))].some((m) => !/^\S*?다고/u.test(text.slice(m.index! + w.length)));
   for (const s of e.notSays ?? []) add(`문장에 "${s}" 없음`, !claims(s), text);
   return out;
 }
 
-// ── 로그(사람이 읽는다) ──
 const won = (n: number) => `${n.toLocaleString('ko-KR')}원`;
 function printTurn(id: string, i: number, l: TurnLog) {
   console.log(`\n── ${id} · ${i + 1}번째 말 ──`);
@@ -322,7 +291,6 @@ function printTurn(id: string, i: number, l: TurnLog) {
 async function main() {
   const cases = PHONE_CASES.filter((c) => !ONLY || ONLY.includes(c.id));
   const runs: Array<{ run: number; id: string; cat: string; why: string; pass: boolean; turns: TurnLog[] }> = [];
-  // 한 번에 한 사례씩 차례로 돌린다: 로그가 섞이지 않고, 분당 한도에도 걸리지 않는다
   for (let run = 1; run <= RUNS; run++) {
     for (const c of cases) {
       const turns = await runCase(c).catch((e) => [{ say: '(사례 오류)', input: '', calls: [], tools: [], ms: 0, result: { kind: 'unavailable', code: 'chat.unavailable', text: String(e), retry: false }, created: [], open: [], checks: [{ name: '실행', ok: false, detail: String(e) }] } as TurnLog]);

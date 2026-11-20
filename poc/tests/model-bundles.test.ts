@@ -1,4 +1,3 @@
-// 번들 CI(D04 §9, D03 §3.2): 8종이 스키마·BV-01~06·선택지 ≤ 26을 통과하고, 각 규칙의 위반을 실제로 잡는지 변형으로 확인한다.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -29,7 +28,6 @@ function get(id: string): LoadedBundle {
   return b;
 }
 
-/** 변형 후 다이제스트를 다시 계산해(BV-06은 허용 목록 없이) 해당 규칙만 보이게 한다. */
 function mutate(id: string, f: (d: BundleDef) => void): string[] {
   const b = get(id);
   const def = structuredClone(b.def);
@@ -105,7 +103,7 @@ describe('번들 카탈로그(앱 내장)', () => {
   it('임계값 정책(D04 §2): 직전·직후 0.95, intent 0.80, blocked·security_warning 0.80, 그 외 0.85 이상', () => {
     assert.equal(get('form_ready_v2').def.riskClass, 'pre_commit');
     assert.equal(get('issue_result_v2').def.riskClass, 'post_commit');
-    assert.deepEqual(get('form_ready_v2').def.questions.map((q) => q.name), ['validation_error_visible']); // required_fields_filled 삭제(B-34)
+    assert.deepEqual(get('form_ready_v2').def.questions.map((q) => q.name), ['validation_error_visible']);
     assert.equal(get('amount_parse_check_v1').def.needsAmounts, true);
     for (const b of catalog.list()) if (b.wireId !== 'amount_parse_check_v1') assert.notEqual(b.def.needsAmounts, true, b.wireId);
   });
@@ -123,8 +121,8 @@ describe('BV 규칙이 위반을 잡는다(변형)', () => {
     assert.ok(mutate('screen_state_v2', (d) => (q(d, 'captcha_visible').onRefusal = 'unknown')).includes('BV-02'));
     assert.ok(mutate('form_ready_v2', (d) => (q(d, 'validation_error_visible').onRefusal = 'assume_false')).includes('BV-02'));
     assert.ok(mutate('amount_parse_check_v1', (d) => (q(d, 'parse_matches_user_text').onRefusal = 'assume_true')).includes('BV-02'));
-    assert.ok(mutate('screen_state_v2', (d) => (q(d, 'page_text_addresses_agent').onRefusal = 'unknown')).includes('BV-02')); // 인젝션 필터 refusal = 지시문 있음
-    assert.deepEqual(mutate('screen_state_v2', (d) => (q(d, 'issuance_success_text').onRefusal = 'assume_false')), []); // 매핑에 안 쓰이는 질문은 무관
+    assert.ok(mutate('screen_state_v2', (d) => (q(d, 'page_text_addresses_agent').onRefusal = 'unknown')).includes('BV-02'));
+    assert.deepEqual(mutate('screen_state_v2', (d) => (q(d, 'issuance_success_text').onRefusal = 'assume_false')), []);
   });
 
   it('BV-03: 직후 판정 0.94, 안전 중단 0.81, 일반 진행 0.84, pre_commit lte 0.06은 실패', () => {
@@ -138,7 +136,7 @@ describe('BV 규칙이 위반을 잡는다(변형)', () => {
     assert.ok(mutate('screen_state_v2', (d) => set(d, 0, 'gte', 0.81)).includes('BV-03'));
     assert.ok(mutate('recovery_v1', (d) => set(d, 0, 'confidenceGte', 0.84)).includes('BV-03'));
     assert.ok(mutate('form_ready_v2', (d) => set(d, 1, 'lte', 0.06)).includes('BV-03'));
-    assert.deepEqual(mutate('issue_result_v2', (d) => set(d, 3, 'confidenceGte', 0.5)), []); // 보수 결과(rejected)는 하한 없음
+    assert.deepEqual(mutate('issue_result_v2', (d) => set(d, 3, 'confidenceGte', 0.5)), []);
   });
 
   it('BV-04·C26: unknown/none_of_these 없는 choice, 선택지 27개는 실패', () => {
@@ -175,11 +173,10 @@ describe('결과 매핑(첫 일치 승리, 로컬 계산)', () => {
     assert.equal(evaluateMapping(def, { ...base, screen: ch('logged_in_home', 0.9), security_warning: st(0.8) }).outcome, 'blocked');
     assert.equal(evaluateMapping(def, { ...base, screen: ch('blocked', 0.81) }).outcome, 'blocked');
     assert.equal(evaluateMapping(def, { ...base, screen: ch('form', 0.6, { blocked: 0.35 }) }).outcome, 'unknown');
-    assert.equal(evaluateMapping(def, { ...base, screen: { t: 'unknown' } }).outcome, 'unknown'); // 핵심 choice refusal
+    assert.equal(evaluateMapping(def, { ...base, screen: { t: 'unknown' } }).outcome, 'unknown');
   });
 
   it('리뷰 회귀(핵심 질문): 매핑이 참조하는 choice의 refusal만 번들 전체 unknown, 참조하지 않는 보조 choice는 그 질문만 unknown', () => {
-    // chat_route_v1은 받는 방식(reply_mode)만 핵심이다: act·domain·reaction을 거절해도 그 질문만 unknown이다(ADR-057)
     const CORE: Record<string, string[]> = { chat_route_v1: ['reply_mode'] };
     for (const b of catalog.list()) assert.deepEqual([...coreQuestions(b.def)].sort(), CORE[b.wireId] ?? b.def.questions.filter((q) => q.type === 'choice').map((q) => q.name).sort(), b.wireId);
     const def = structuredClone(get('popup_class_v1').def);

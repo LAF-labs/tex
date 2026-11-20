@@ -1,4 +1,3 @@
-// 표 규칙 공용: 머리글 줄 찾기, 칸 역할 붙이기, 합계 줄 알아보기.
 import type { Cell, SheetOutput, SheetTable } from './sandbox/index.ts';
 import type { WarningCode } from './types.ts';
 import { compact } from './util.ts';
@@ -7,11 +6,8 @@ export const cellText = (c: Cell | undefined): string => (c === null || c === un
 
 export interface RoleRule<R extends string> {
   role: R;
-  /** 머리글(공백·구두점 지운 것)에 들어 있으면 이 역할. 앞이 우선 */
   any: string[];
-  /** 이것이 들어 있으면 이 역할이 아니다 */
   not?: string[];
-  /** 한 표에 여러 칸이 이 역할일 수 있다(수수료 칸들) */
   multi?: boolean;
 }
 

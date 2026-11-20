@@ -1,8 +1,3 @@
-// 폰 사본(remote-envelope v1.8 phone.copy, ADR-046 결정 5). PC가 라이브 세션을 열 때마다 폰 화면에 필요한 요약을 보낸다.
-// - 숫자는 거래내역을 가진 PC가 계산한다(엔진 db.query.bank.summary·db.query.bank.cashflow). 폰은 마지막 사본을 날짜와 함께 보관만 한다.
-// - 넣지 않는 것: 대화 원문, 홈택스 비밀, 계좌번호(끝 4자리 포함, 은행 이름만), 거래처 이메일 원문(가린 힌트만), 거래처 장부 id 밖의 열쇠.
-// - 한 봉투가 한 프레임에 들어가도록 fitPhoneCopy가 오래 안 쓴 거래처부터 뺀다.
-// - phoneApprovable: 그 폰이 승인 기기이고(ADR-052) 전에 발급한 적이 있는 거래처면 true(힌트다. 처음 거래처인지는 승인 단계에서 엔진 원장으로 다시 본다).
 import type { CopyCashflow, CopyCounterparty, MoneySide, PhoneCopyBody } from '@sax/remote';
 import type { Counterparty, RunView } from './shell-model.ts';
 
@@ -15,14 +10,12 @@ const won = (v: unknown): number | null => (Number.isSafeInteger(v) && (v as num
 const count = (v: unknown): number => (Number.isSafeInteger(v) && (v as number) >= 0 ? Math.min(v as number, 1_000_000) : 0);
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) : s);
 
-/** "211-09-87654". 숫자 10자리면 끼워 넣고, 모양이 다르면 넣지 않는다. */
 export function bizNoOf(v: string): string | undefined {
   const d = v.replace(/\D/g, '');
   if (d.length !== 10) return BIZNO.test(v) ? v : undefined;
   return `${d.slice(0, 3)}-${d.slice(3, 5)}-${d.slice(5)}`;
 }
 
-/** "ta***@example.com"(앞 두 글자만). 모양이 이메일이 아니면 없음. */
 export function maskEmail(v: string): string | undefined {
   const at = v.lastIndexOf('@');
   if (at < 1 || at === v.length - 1) return undefined;
@@ -31,7 +24,6 @@ export function maskEmail(v: string): string | undefined {
   return out.length <= 80 ? out : undefined;
 }
 
-/** 거래처별 가장 최근 발급(이 PC의 실행 기록 중 done). */
 export function lastIssues(runs: readonly RunView[]): Map<string, CopyCounterparty['last']> {
   const out = new Map<string, NonNullable<CopyCounterparty['last']> & { at: string }>();
   for (const r of runs) {
@@ -45,17 +37,12 @@ export function lastIssues(runs: readonly RunView[]): Map<string, CopyCounterpar
   return new Map([...out].map(([k, { at, ...v }]) => (void at, [k, v])));
 }
 
-/** 거래처별 발급 건수(이 PC의 실행 기록 중 done). 폰 발급 시트가 "자주 발급한 곳" 순서로 쓴다. */
 export function issueCounts(runs: readonly RunView[]): Map<string, number> {
   const out = new Map<string, number>();
   for (const r of runs) if (r.status === 'done' && r.doc === 'H-01' && r.counterparty.id) out.set(r.counterparty.id, (out.get(r.counterparty.id) ?? 0) + 1);
   return out;
 }
 
-/**
- * 거래처 → 사본 줄. 최근에 발급한 거래처가 앞이고(fitPhoneCopy가 뒤에서부터 뺀다), 같은 날이면 자주 발급한 곳, 그다음 상호 순이다.
- * 폰은 이 순서를 그대로 목록에 쓴다(폰 발급 시트, 대표 요청 2026-11-19).
- */
 export function copyCounterparties(cps: readonly Counterparty[], last: Map<string, CopyCounterparty['last']>, approver = false, counts: ReadonlyMap<string, number> = new Map()): CopyCounterparty[] {
   const recent = (c: Counterparty) => last.get(c.id)?.day ?? c.lastIssuedOn ?? '';
   const many = (c: Counterparty) => counts.get(c.id) ?? 0;
@@ -75,7 +62,6 @@ export function copyCounterparties(cps: readonly Counterparty[], last: Map<strin
     });
 }
 
-/** 엔진 db.query.bank.summary에서 읽는 칸 */
 export interface BankSummaryLike {
   hasAccounts: boolean;
   unpaidCount: number;
@@ -86,14 +72,12 @@ export interface BankSummaryLike {
   payable: { unpaidCount: number; unpaidTotal: number; overdueCount: number; overdueTotal: number; dueSoonCount: number; dueSoonTotal: number; reviewCount: number };
 }
 
-/** 엔진 db.query.bank.cashflow에서 읽는 칸 */
 export interface CashFlowLike {
   month: { month: string; complete: boolean; hasAccounts: boolean; missing: Array<{ bank: string }>; cash: { in: { total: number }; out: { total: number }; net: number } };
   snapshot: { next30: { payOut: number; payOverdue: number; payIn: number; noDuePay: number } };
   alerts: Array<{ id: string; kind: string; gap?: number; cpName?: string | null; priorDays?: number; recentDays?: number; share?: number; total?: number }>;
 }
 
-/** 받을 돈 목록에서 7일 안에 받기로 한 건(BankSummary에는 받을 돈 dueSoon이 없다) */
 interface ReceivableLike {
   remaining: number;
   dueIn: number | null;
@@ -102,7 +86,6 @@ interface ReceivableLike {
 
 const fmtWon = (n: number) => `${n.toLocaleString('ko-KR')}원`;
 
-/** 11-cash-flow §3.5 알림 문구(사실만). 폰 money.ts alertLine과 같은 글이다. 모르는 종류는 버린다. */
 export function alertOf(a: CashFlowLike['alerts'][number]): NonNullable<CopyCashflow['alerts']>[number] | null {
   const who = a.cpName ?? '한 거래처';
   switch (a.kind) {
@@ -119,7 +102,6 @@ export function alertOf(a: CashFlowLike['alerts'][number]): NonNullable<CopyCash
   }
 }
 
-/** 돈 요약. 계좌가 없으면 cashflow는 넣지 않는다(폰은 "계좌 연결은 PC에서 해요"). 숫자를 믿을 수 없으면 null(0으로 보이지 않게). */
 export function copyMoney(s: BankSummaryLike, cf: CashFlowLike | null, recv: readonly ReceivableLike[] | null, accounts: number, now: number): PhoneCopyBody['money'] {
   const soon = (recv ?? []).filter((r) => !r.overdue && r.dueIn !== null && r.dueIn >= 0 && r.dueIn <= 7);
   const side = (x: Omit<MoneySide, 'dueSoonCount' | 'dueSoonTotal'> & Partial<MoneySide>): MoneySide => ({
@@ -159,9 +141,7 @@ export function copyMoney(s: BankSummaryLike, cf: CashFlowLike | null, recv: rea
 interface PhoneCopySource {
   counterparties: () => readonly Counterparty[];
   runs: () => readonly RunView[];
-  /** 엔진 은행 조회(BankHost.call, 사업자 프로필 id를 붙인다). 실패하면 돈 칸 없이 보낸다. */
   bank: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
-  /** 이 사본을 받을 폰이 승인 기기인지와 오늘 남은 폰 승인 수(ADR-052). 없으면 승인 칸을 싣지 않는다. */
   approval?: () => Promise<{ approver: boolean; left: number }>;
   now?: () => number;
 }
@@ -172,7 +152,6 @@ interface OverviewLike {
   accounts: unknown[];
 }
 
-/** 지금 보낼 사본(크기 맞추기 전). 돈 조회가 실패해도 거래처는 보낸다. */
 export async function buildPhoneCopy(src: PhoneCopySource): Promise<PhoneCopyBody> {
   const now = (src.now ?? Date.now)();
   const ap = (await src.approval?.().catch(() => null)) ?? null;

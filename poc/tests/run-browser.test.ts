@@ -1,4 +1,3 @@
-// 엔진 실행 브라우저 열기·닫기 순서(PoC-1 §5.1 후속): 동시 호출에도 금고 launch는 한 번, 띄우는 중의 닫기는 띄운 뒤 닫는다.
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -41,12 +40,11 @@ describe('RunBrowserSlot', () => {
     let connects = 0;
     const slot = new RunBrowserSlot(async () => (connects++, await g.wait, runs[i++]!.run), async () => void shutdowns++);
     const opened = slot.open();
-    while (connects === 0) await new Promise((r) => setImmediate(r)); // 붙기 시작한 뒤에 닫는다
+    while (connects === 0) await new Promise((r) => setImmediate(r));
     const closed = slot.close();
     g.open();
     await opened;
     await closed;
-    // 닫기는 띄우는 중이라 내리기를 먼저 한 번, 다 띄운 뒤 정리하며 한 번 더 보낸다.
     assert.deepEqual([runs[0]!.closed(), shutdowns, slot.current], [1, 2, null], '닫은 뒤에 브라우저가 남지 않는다');
     assert.equal((await slot.open()).targetId, 't2');
   });
@@ -56,9 +54,9 @@ describe('RunBrowserSlot', () => {
     const f = fakeRun('t1');
     let connects = 0;
     const slot = new RunBrowserSlot(async () => (connects++, f.run), async () => {});
-    const navigating = slot.open(() => g.wait); // 이동 중인 열기
+    const navigating = slot.open(() => g.wait);
     while (connects === 0) await new Promise((r) => setImmediate(r));
-    const queued = slot.open(); // 그 뒤에 줄 선 열기
+    const queued = slot.open();
     const closed = slot.close();
     g.open();
     await navigating;
@@ -90,7 +88,7 @@ describe('RunBrowserSlot', () => {
       () => new Promise<RunBrowser>((_, reject) => (failConnect = reject)),
       async () => {
         shutdowns++;
-        failConnect?.(new Error('cdp pipe closed')); // 금고가 Chrome을 내리면 파이프가 닫혀 붙기가 거부된다
+        failConnect?.(new Error('cdp pipe closed'));
       },
     );
     const opened = slot.open();
@@ -150,7 +148,6 @@ describe('RunBrowserSlot', () => {
 
 describe('커밋 클릭(N-21, 금고 중계 위 실 Chrome)', () => {
   it('dispatchClick reports blocked for a covered button', async () => {
-    // 투명 덮개가 덮은 버튼과 덮지 않은 버튼. 누르면 각자 횟수를 올린다.
     const html = `<!doctype html><meta charset="utf-8"><body style="margin:0">
 <button id="covered" style="position:absolute;left:10px;top:10px;width:120px;height:40px" onclick="window.nCovered=(window.nCovered||0)+1">발급하기</button>
 <div style="position:absolute;left:0;top:0;width:300px;height:100px;background:transparent"></div>
@@ -169,7 +166,6 @@ describe('커밋 클릭(N-21, 금고 중계 위 실 Chrome)', () => {
       assert.equal(await dispatchClick(covered), 'blocked');
       assert.ok(Date.now() - started < 10_000, 'Playwright 기본 30초를 기다리지 않는다');
       assert.equal(await dispatchClick((await page.$('#off'))!), 'blocked', '비활성 버튼');
-      // 확인 단계는 입력을 보내지 않는다: 페이지가 먼저 건 캡처 리스너도 아무것도 받지 않는다(trial 클릭은 받았다).
       assert.equal(await page.evaluate(() => (window as unknown as { cap: number }).cap), 0, '막힌 버튼에는 입력이 가지 않았다');
       const open = (await page.$('#open'))!;
       assert.equal(await dispatchClick(open), 'sent');

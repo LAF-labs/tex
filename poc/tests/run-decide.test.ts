@@ -1,5 +1,3 @@
-// M2-2 B decide 스텝(D02 §4 decide·V-07, D03 §5.3 (a)·§10, D04 §3 인젝션 사전 필터, D06 §2·§3 마스킹), L0 사전(intent_route_v1).
-// 가짜 화면 관측·가짜 판정기 + 실제 Redactor. 실제 포털·모델 접속 없음.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { AriaParseError, ariaToTree, bundleInfoFrom, DecideRunner, injectionPrefilter, ruleDecision, treeToObservation, type ScreenCapture, type ScreenObservation } from '@sax/engine';
@@ -58,8 +56,6 @@ describe('aria 스냅숏 → A11yNode(D06 §3 입력)', () => {
     assert.equal(o.nodes.find((n) => n.role === 'dialog')?.inDialog, undefined);
   });
 });
-
-// ---- DecideRunner ----
 
 const catalog = BundleCatalog.load();
 const TOKEN = 'run-token' as RunToken;
@@ -122,7 +118,6 @@ describe('decide 핸들러(D02 §4, D04 §3, D06)', () => {
     await run1(x.r);
     const [t, p] = x.journal.at(-1)!;
     assert.equal(t, 'decide.result');
-    // model: 응답이 밝힌 판정 모델(별칭이 풀린 버전). 화면 글이 아니다
     assert.deepEqual(p, { stepId: 's2', bundle: 'screen_state_v2', outcome: 'unknown', rule: 3, provider: 'openai', l0Only: false, injectionHit: false, model: 'm' });
     assert.ok(!JSON.stringify(x.journal).includes('알림'));
   });

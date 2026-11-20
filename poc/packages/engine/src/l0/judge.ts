@@ -1,12 +1,3 @@
-// L1 판정 조율: L0 규칙 → (필요할 때만) 모델 → 로컬 매핑 → 인젝션 사전 필터 강등.
-//
-// L0 규칙 어댑터는 규칙 답을 가짜 Decisions 응답(answers[], probability/confidence 1.0·0.0)으로 내고,
-// 공급사 응답과 같은 정규화(decisionsEntries → joinPartial)를 지난다. 그 위에 두 겹의 제한이 있다.
-//  1) 승격: 규칙 정확도 ≥ 99.5%(라벨 실코퍼스, n ≥ 300)인 질문만 규칙 답을 쓴다. 나머지는 그림자 모드(기록만).
-//  2) 단독 통과 금지: 비가역 직전·직후(pre_commit·post_commit), 안전(safety) 번들과 보안 질문은
-//     그 답 하나만으로 진행 결과가 나올 수 없을 때(= 중단 쪽)만 규칙 답을 쓴다(ADR-015 결정 4).
-// 규칙 전용 결정: 매핑이 참조하는 모든 질문(+ 뒤 단계가 쓰는 질문)에 쓸 수 있는 규칙 답이 있을 때만 모델을 부르지 않는다.
-// 하나라도 비면 모델을 부르고 규칙 답은 덮어쓰기로만 쓴다. 모델 호출이 허용되지 않은 번들이면 unknown(rules_incomplete).
 import {
   ZERO_USAGE,
   decisionsEntries,
@@ -46,7 +37,6 @@ export function requiredForRulesOnly(def: { questions: Array<{ name: string }>; 
 }
 
 export interface JudgeOptions {
-  /** 이 번들에 모델 호출이 허용되는가(기본: 모두 허용). 허용되지 않으면 규칙이 다 답하지 못할 때 unknown(rules_incomplete). */
   modelAllowed?: (bundleWireId: string) => boolean;
 }
 
@@ -71,7 +61,6 @@ export interface ShadowEntry {
   question: string;
   l0: string;
   used: boolean;
-  /** 쓰지 않은 이유 */
   why?: 'not_promoted' | 'restricted_progress';
 }
 
@@ -136,7 +125,6 @@ export class Judge {
   }
 }
 
-/** 사전 필터에 걸리면 progress 결과만 unknown으로 내린다. safety·conservative 결과는 유지(D04 §3). */
 function downgrade(r: DecideResult, progress: Set<string>, hit: boolean): DecideResult {
   return hit && progress.has(r.outcome) ? { ...r, outcome: 'unknown', confidence: 0, rule: -1, reason: 'injection_prefilter' } : r;
 }

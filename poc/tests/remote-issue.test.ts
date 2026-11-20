@@ -1,4 +1,3 @@
-// 폰 발급 명령(cmd.run hometax.invoice.issue)과 폰 사본(phone.copy) 크기 맞추기(remote-envelope v1.8, ADR-046 결정 2·5).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
@@ -68,7 +67,6 @@ describe('phone.copy 크기', () => {
     const bytes = encodeEnvelope(makeEnvelope('phone.copy', fit.body, ctx));
     assert.ok(bytes.length <= MAX_INNER);
     assert.equal(fit.body.counterparties.length + fit.dropped, 100);
-    // 받은 쪽도 그대로 풀린다(CBOR 항목 상한 안).
     assert.equal(decodeEnvelope(bytes)?.type, 'phone.copy');
   });
 

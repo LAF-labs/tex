@@ -1,8 +1,3 @@
-// 계정 확인 주장(acct_claim, 팀장 결정 2026-11-06, 설계 #120): 계정 서비스가 서명하고 PC가 PAIR_OK에 실어 보낸다.
-// 서명 입력 = utf8("SAX-acct-claim-v1") ‖ JCS({account_id, email, aik_pub, iat, exp}). iat·exp는 UTC 밀리초 정수이고
-// exp = iat + 600000(10분)이다(schemas/SIGNING.md §8, D08 §4.2 7단계).
-// 폰은 앱에 고정한 계정 서비스 공개키로 검증하고, exp가 지나지 않았는지, aik_pub가 PAIR_OK.aikPub와 같은지 본다.
-// 하나라도 실패하면 저장하지 않고 중단한다. 운반 형식은 cert와 같다: b64(JCS({claim, sig})).
 import { b64, equal, fromB64 } from './bytes.ts';
 import { CTX } from './contexts.ts';
 import { ed25519SignRaw, ed25519Verify, signInput } from './crypto.ts';
@@ -11,7 +6,6 @@ import { jcsBytes, parseJcs } from './jcs.ts';
 export interface AcctClaim {
   account_id: string;
   email: string;
-  /** 계정 AIK_pub(base64, 32B). */
   aik_pub: string;
   iat: number;
   exp: number;
@@ -19,14 +13,12 @@ export interface AcctClaim {
 
 export interface SignedAcctClaim {
   claim: AcctClaim;
-  /** 계정 서비스 Ed25519 서명(base64, 64B). */
   sig: string;
 }
 
 const CLAIM_KEYS = ['account_id', 'aik_pub', 'email', 'exp', 'iat'].join(',');
 /** 유효 기간 상한(exp - iat, 밀리초). 정본은 exp = iat + 600000. */
 export const ACCT_CLAIM_TTL_MS = 600_000;
-/** 받는 쪽 시계 어긋남 허용(iat가 미래인 정도, 밀리초). */
 const SKEW_MS = 300_000;
 
 /** 제어 문자·줄 구분자·양방향 재정렬 문자(화면을 속이는 데 쓰인다)가 있으면 참. */
@@ -56,7 +48,6 @@ export function verifyAcctClaim(
   field: unknown,
   o: { accountKeys: readonly Uint8Array[]; aikPub: Uint8Array; now?: number },
 ): { ok: true; claim: AcctClaim } | { ok: false; reason: AcctClaimFailure } {
-  // 시각은 모두 UTC 밀리초. 초 단위 값이 오면 exp가 지금(밀리초)보다 한참 작아 만료로 거절된다.
   const now = o.now ?? Date.now();
   let sc: SignedAcctClaim;
   try {

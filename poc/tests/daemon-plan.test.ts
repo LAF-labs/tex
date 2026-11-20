@@ -1,5 +1,3 @@
-// 데몬 알림 계획(D10 §2 notify, 02 §5·§17, ADR-032·033): 만료 단계, 월초 꾸러미(reminderDay·반기납부), 확인 안 한 급여,
-// 카드 [최신화] 알림만, 일정 끔·강등, payload 안전(금액·식별자 없음), 고정 문구, 폰 릴레이 메시지 제안.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { MissingReport } from '@sax/bundle';
@@ -39,7 +37,6 @@ const snap = (o: Partial<ProfileSnapshot> = {}): ProfileSnapshot => ({
 });
 const sched = (o: Partial<ScheduleRow> = {}): ScheduleRow => ({ id: 's1', profileId: P, docType: 'national_tax_cert', playbookId: 'hometax.tax_cert', mode: 'notify', windowJson: null, consentJson: null, nextDueAt: null, enabled: true, ...o });
 const ids = (s: ProfileSnapshot, today: string) => planNotifications(s, today).notifications.map((n) => n.notification.id);
-/** 서류 알림만(이 묶음의 스냅숏은 꾸러미 알림 날 뒤라 꾸러미 알림이 함께 나온다) */
 const docIds = (s: ProfileSnapshot, today: string) => ids(s, today).filter((i) => i.startsWith('doc.'));
 const taxDoc = { id: 'd1', docType: 'national_tax_cert', displayName: '납세증명서(국세)', issuedAt: '2026-11-01', expiresAt: '2026-11-30', meta: null };
 

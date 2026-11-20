@@ -1,5 +1,3 @@
-// 받은 서명 정책의 나머지 적용(팀장 지시 2026-11-09, D03 §5.6·§7·§7.1, ADR-004·023):
-// verify 타이밍은 내장 값보다 느슨해지지 않게, blockSignalsAdd는 더하기만, captchaRelay는 핸드오프만.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -66,7 +64,7 @@ describe('blockSignalsAdd: 앱 내장 사전에 더하기만(D03 §7 (d), C-24)'
     let current: Policy['cooldown']['blockSignalsAdd'] = { phrases: ['처음 문구'] };
     const dict = runSignalDict({ builtIn: SIGNAL_DICT.hometax, atStart: current, current: () => current, inCommit: () => false });
     assert.equal(matchSignal(dict, { text: BLOCK }), null);
-    current = { phrases: [BLOCK] }; // 처음 문구를 빼고 BLOCK을 더했다
+    current = { phrases: [BLOCK] };
     assert.equal(matchSignal(dict, { text: BLOCK })?.kind, 'block', '더한 것은 바로');
     assert.equal(matchSignal(dict, { text: '처음 문구' })?.kind, 'block', '뺀 것은 다음 실행부터');
   });
@@ -90,8 +88,6 @@ describe('blockSignalsAdd: 앱 내장 사전에 더하기만(D03 §7 (d), C-24)'
   it('RunService: 받은 정책은 홈택스만, 커밋 구간 = 이 실행의 원장 행이 armed·dispatched', () => {
     const src = fs.readFileSync(path.join(SRC, 'runs.ts'), 'utf8');
     assert.match(src, /if \(this\.d\.portal\.kind !== 'hometax' \|\| !received\) return builtIn;/);
-    // 발급 실행은 이 실행의 원장 행으로 커밋 구간을 본다. 재확인(reverifyInDoubt)은 발급하지 않으므로 늘 커밋 밖(() => false)이다
-    // run.start·run.startCert가 같은 launch()를 쓴다(PR #272): 실행 id는 launch의 runId
     assert.match(src, /this\.runSignals\(\(\) => this\.ledger\.statesByRun\((?:p\.)?runId\)\.some\(\(st\) => st === 'armed' \|\| st === 'dispatched'\), startPolicy\)/);
     assert.match(src, /return runSignalDict\(\{[\s\S]*?\n\s+inCommit,\n/);
     assert.match(fs.readFileSync(path.join(SRC, 'run/service-ir.ts'), 'utf8'), /dict: i\.signals \?\? SIGNAL_DICT\[i\.portal\.kind\]/);
@@ -116,7 +112,6 @@ describe('captchaRelay: 캡차는 사람에게 넘기기만(절대 규칙, ADR-0
   it('캡차 신호는 두 실행 경로 모두 핸드오프 코드(portal.captcha)다', () => {
     assert.match(fs.readFileSync(path.join(SRC, 'policy.ts'), 'utf8'), /captcha: 'portal\.captcha'/);
     assert.match(fs.readFileSync(path.join(SRC, 'core/interp.ts'), 'utf8'), /\['portal\.captcha', 'handoff'\]/);
-    // 사람에게 넘기기만 한다(재개 지점만 마지막 체크포인트로 정한다, B3). 값을 받아 채우는 중계는 없다.
     assert.match(fs.readFileSync(path.join(SRC, 'run/controller.ts'), 'utf8'), /if \(h\.kind === 'captcha'\) \{\s*this\.handoffResumeAt = this\.lastCp;\s*return this\.handoffWith\('portal\.captcha'\);\s*\}/);
   });
 });

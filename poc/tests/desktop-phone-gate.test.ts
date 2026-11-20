@@ -1,6 +1,3 @@
-// 폰 승인(ADR-052): 승인 키 등록(phone-link), 승인 요청 중계와 답 검증(phone-gate), 서명 입력(@sax/remote approve),
-// 엔진 쪽 규칙(remotePresenceRefusal), 그리고 라이브 세션 한 번(등록 → cmd.run accepted → gate.request → gate.response).
-// 폰의 하드웨어 키는 Node의 P-256 키로 대신한다(서명 형식은 네이티브와 같은 X9.62 DER → r‖s).
 import assert from 'node:assert/strict';
 import { createSign, generateKeyPairSync, type KeyObject } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -32,7 +29,6 @@ const tmp = async () => {
   return d;
 };
 
-/** 폰 하드웨어 키 대역 */
 function pxKey() {
   const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const jwk = publicKey.export({ format: 'jwk' });
@@ -154,7 +150,6 @@ describe('승인 요청 중계와 답 검증(PhoneGate)', () => {
     const a = w.answerOf(g);
     assert.equal(await w.gate.answer(PAIR, a), 'approved');
     assert.equal(w.st.approved, 1);
-    // 같은 답을 다시 보내도(재생) 열린 요청이 없다
     assert.equal(await w.gate.answer(PAIR, a), 'no_request');
     assert.equal(w.st.approved, 1);
     const rows = JSON.parse(await fs.readFile(w.file, 'utf8')).rows;
@@ -183,10 +178,8 @@ describe('승인 요청 중계와 답 검증(PhoneGate)', () => {
     assert.equal(await w.gate.answer(PAIR, { ...ok, sigAlg: 'ed25519' }), 'sig_alg');
     assert.equal(await w.gate.answer(PAIR, { ...ok, actionHash: 'ef'.repeat(32) }), 'wrong_action');
     assert.equal(await w.gate.answer(PAIR, w.answerOf(g, 'approve', pxKey().privateKey)), 'bad_sig');
-    // 거절 서명을 승인으로 바꿔 보낸다
     assert.equal(await w.gate.answer(PAIR, { ...w.answerOf(g, 'deny'), decision: 'approve' }), 'bad_sig');
     assert.equal(w.st.approved + w.st.denied, 0);
-    // 틀린 서명 3번이면 이 게이트는 PC에서만
     assert.equal(await w.gate.answer(PAIR, { ...ok, sig: b64(new Uint8Array(64).fill(1)) }), 'bad_sig');
     assert.equal(BAD_SIG_MAX, 3);
     assert.equal(w.gate.codeOf('run-1'), 'pc_only');
@@ -218,7 +211,6 @@ describe('승인 요청 중계와 답 검증(PhoneGate)', () => {
     assert.equal(w.sink.sent.length, 0);
     w.gate.attach(PAIR, w.sink);
     assert.equal(w.sink.sent.length, 1);
-    // 다시 붙으면 새 챌린지
     w.gate.detach(PAIR, w.sink);
     w.gate.attach(PAIR, w.sink);
     assert.notEqual(w.sink.sent[1]!.challenge, w.sink.sent[0]!.challenge);
@@ -270,7 +262,6 @@ describe('승인 요청 중계와 답 검증(PhoneGate)', () => {
     w.st.now += 24 * 3_600_000;
     await w.gate.offer('run-5', gateReq(), w.on);
     assert.equal(w.gate.codeOf('run-5'), undefined);
-    // 정책이 앱 상한보다 큰 값을 줘도 5를 넘지 않는다
     const big = await world({ perDay: 50 });
     assert.equal(await big.gate.leftToday(), REMOTE_PER_DAY);
   });
@@ -317,7 +308,6 @@ describe('승인 요청 중계와 답 검증(PhoneGate)', () => {
     const req = gateReq();
     await w.gate.offer('run-1', req, w.on);
     const g = w.sink.sent[0]!;
-    // 다른 게이트의 닫힘은 이 게이트를 닫지 않는다
     w.gate.close('run-1', 'other-req', 'pc');
     assert.deepEqual(w.sink.resolved, []);
     w.gate.close('run-1', req.reqId, 'pc');
@@ -325,7 +315,6 @@ describe('승인 요청 중계와 답 검증(PhoneGate)', () => {
     assert.deepEqual(w.sink.resolved, [{ runId: g.runId, reqId: g.reqId, by: 'pc' }]);
     assert.equal(await w.gate.answer(PAIR, w.answerOf(g)), 'no_request');
 
-    // 만료와 중지
     await w.gate.offer('run-2', gateReq(), w.on);
     w.gate.close('run-2', undefined, 'expired');
     await w.gate.offer('run-3', gateReq(), w.on);
@@ -341,17 +330,14 @@ describe('승인 요청 중계와 답 검증(PhoneGate)', () => {
     await w.gate.offer('run-2', gateReq(), w.on);
     assert.equal(await w.gate.answer(PAIR, w.answerOf(w.sink.sent[1]!, 'deny')), 'denied');
     assert.deepEqual(w.sink.resolved.map((x) => x.by), ['phone', 'phone']);
-    // 폰으로 보내지 않은 게이트
     await w.gate.offer('run-3', gateReq({ first: true }), w.on);
     w.gate.close('run-3', undefined, 'pc');
-    // 세션이 없을 때 닫힌 게이트: 보낼 곳이 없고, 다시 붙어도 다시 보내지 않는다
     await w.gate.offer('run-4', gateReq(), w.on);
     w.gate.detach(PAIR, w.sink);
     w.gate.close('run-4', undefined, 'pc');
     w.gate.attach(PAIR, w.sink);
     assert.equal(w.sink.resolved.length, 2);
     assert.equal(w.sink.sent.length, 3);
-    // 보내다 던져도 게이트는 닫힌다
     await w.gate.offer('run-5', gateReq(), w.on);
     w.sink.fail = true;
     w.gate.close('run-5', undefined, 'pc');
@@ -390,7 +376,6 @@ describe('v1.11 sync.v1: 폰 기능에 맞춰 보내기(phone-session sinkFor)',
   });
 });
 
-// ---- 라이브 세션 ----
 const asRelayLink = (l: Link): RelayLink => Object.assign(l, { onEnv() {}, closeCode: null }) as unknown as RelayLink;
 const seal: TokenSeal = { seal: (p) => `sealed:${b64(p)}`, open: (s) => fromB64(s.slice(7)) };
 const emptyQueue = () => ({ bundle: null, list: async () => [], listPage: async () => ({ items: [], more: false }), ack: async () => {}, putBundle: async () => {} });
@@ -461,7 +446,6 @@ describe('라이브 세션: 등록 → 발급 명령 → 폰 승인', () => {
       return e!.body as T;
     };
 
-    // 등록: 틀린 서명은 거절, 맞으면 바로 받는다(자동 등록)
     const k = pxKey();
     const enroll = async (key = k, hw: PxEnrollBody['hw'] = 'ios_se', deviceId = w.phone.keys.deviceId): Promise<PxEnrollBody> => ({
       pxPub: b64(key.pub), hw, sig: b64(await w.phone.vm.sign(CTX.pxEnroll, pxEnrollMessage(phone.pairId, deviceId, key.pub, hw))),
@@ -478,13 +462,11 @@ describe('라이브 세션: 등록 → 발급 명령 → 폰 승인', () => {
     assert.equal((await next<PxAckBody>('px.ack')).state, 'enrolled');
     assert.equal((await store.load())[0]!.px?.via, 'auto');
 
-    // 발급 명령: 승인 기기라 accepted
     const today = kstToday(Date.now());
     ch.send('cmd.run', issueCmd(ulid(), { counterpartyRef: 'cp_12', supply: 800_000, tax: 80_000, item: '과일', day: today }));
     const ack = await next<CmdAckBody>('cmd.ack');
     assert.equal(ack.state, 'accepted');
 
-    // 엔진이 게이트를 열었다
     const req = buildGateRequest({
       runId: 'engine-run', gateStepId: 's20', readback: { ...readback, issueDate: today },
       reserved: [{ fieldKey: '$first.bizNo', value: 'false' }, { fieldKey: '$first.email', value: 'false' }],
@@ -499,15 +481,12 @@ describe('라이브 세션: 등록 → 발급 명령 → 폰 승인', () => {
     assert.equal(g.actionHash, req.actionHash);
     assert.deepEqual(g.fields.map((f) => f.key).slice(0, 2), ['supplierBizNo', 'supplierName']);
 
-    // 폰이 서명해 답한다
     const sig = signRaw(k.privateKey, approveSignBytes({ pairId: phone.pairId, reqId: g.reqId, challenge: fromB64(g.challenge), actionHash: g.actionHash, decision: 'approve' }));
     ch.send('gate.response', { runId: g.runId, stepId: g.stepId, reqId: g.reqId, decision: 'approve', actionHash: g.actionHash, sigAlg: 'p256', sig: b64(sig) });
     await until(() => state.approved === 1);
 
-    // PC에서 폰 승인을 끄면 새 키를 바로 받지 않고, 다시 허용하면 그 키를 받는다
     assert.equal(await link.revokePx(phone.pairId), true);
     assert.equal(link.px(phone.pairId), null);
-    // 설정 > 기기 연결 줄: 꺼 둠(paused)과 아직 키 없음(off)을 나눠 보인다. 기기 ID로 줄과 맞춘다
     assert.equal(link.list()[0]!.approver, 'paused');
     assert.equal(link.list()[0]!.deviceId, w.phone.keys.deviceId);
     assert.equal(await link.revokePx(phone.pairId), false);
@@ -519,7 +498,6 @@ describe('라이브 세션: 등록 → 발급 명령 → 폰 승인', () => {
     assert.equal(await link.allowPx(phone.pairId), true);
     assert.deepEqual(Buffer.from(link.px(phone.pairId)!.pub), Buffer.from(k2.pub));
     assert.equal((await store.load())[0]!.px?.via, 'pc');
-    // 키가 바뀌면(생체 재등록) 새 키로 바꾼다
     const k3 = pxKey();
     ch.send('px.enroll', await enroll(k3));
     assert.equal((await next<PxAckBody>('px.ack')).state, 'enrolled');

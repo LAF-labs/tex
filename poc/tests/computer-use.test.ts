@@ -1,5 +1,3 @@
-// 화면 보기 칸(computer-use, 대표 결정 2026-11-16): 가린 사진만 나가고(PC 검사기·사진 가리기), 모델이 찍은 좌표는 그 자리 요소로 바뀌어
-// 브라우저 에이전트와 같은 가드로 실행되며, 넘긴 길은 에이전트 길 기억에 남아 다음에는 모델 없이 다시 걷는다.
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { chromium, type Browser, type Page } from 'playwright-core';
@@ -51,7 +49,6 @@ describe('화면 보기: 실제 Chromium', () => {
     const shot = await r.maskedShot();
     assert.ok(shot && shot.url.startsWith('data:image/jpeg;base64,') && shot.url.length <= MASKED_SHOT_MAX_BYTES);
     assert.deepEqual([shot.width, shot.height], [800, 400]);
-    // 찍은 사진을 다른 탭에 그려 픽셀을 본다(입력 칸 가운데·숫자 글·이름표)
     const input = (await page.locator('#itemX').boundingBox())!;
     const num = (await page.getByText(/123-45/).boundingBox())!;
     const label = (await page.locator('label').boundingBox())!;
@@ -110,7 +107,6 @@ describe('화면 보기: 실제 Chromium', () => {
     paths.confirmed('s2');
     assert.equal(file!.paths.s1!.actions[0]!.el!.id, 'itemX');
     assert.ok(!JSON.stringify(file).includes('사과'), '값은 남기지 않는다');
-    // 다음 실행: 같은 길을 모델 없이(다시 걷기)
     await page.setContent(HTML);
     const again = new BrowserAgent({
       page: reader, dict, act: act as never, frame: 'main', journal: (t) => journal.push(t), ir, scope: newScope({ inputs: { items: [{ name: '배 두 상자' }] } }),
@@ -119,7 +115,6 @@ describe('화면 보기: 실제 Chromium', () => {
     assert.equal(again.replayable('s1'), true);
     assert.equal(await again.replay('s1'), 's2');
     assert.equal(await page.locator('#itemX').inputValue(), '배 두 상자');
-    // 기록 때 id가 없던 요소가 지금은 id를 가져도 역할·이름이 유일하면 맞힌다
     file!.paths.s1!.actions[0]!.el!.id = null;
     await page.setContent(HTML);
     const third = new BrowserAgent({

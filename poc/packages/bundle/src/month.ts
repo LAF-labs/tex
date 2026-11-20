@@ -1,5 +1,3 @@
-// 세무사 꾸러미 이번 달 상태(08 D-05)와 "빠진 것"(D14 M6-14). 판정이 아니라 표시다: 앱은 무엇이 비어 있는지 보여 줄 뿐
-// 경비 인정·증빙 적격 여부를 정하지 않는다(ADR-032 결정 3·5).
 import { BundleRepo, CardRepo, CashSalesRepo, EmployeeRepo, PayrollRepo, ReceiptRepo, type BundleEntryStatus, type BundleItem, type CardTxn, type ColumnCipher, type Db } from '@sax/db';
 import { BundleError, monthRange, periodFor } from './items.ts';
 
@@ -18,9 +16,7 @@ export interface TaxInvoiceRow {
 /** 매출·매입 한 행과 내보내기 메모(산술 사실만, 판정 아님) */
 export interface InvoiceLine {
   row: TaxInvoiceRow;
-  /** 공급가액 + 세액 − 합계(0이 아니면 "확인 필요") */
   sumGap: number;
-  /** 같은 키로 뺀 행 중 금액이 이 행과 다른 것의 수 */
   differingDuplicates: number;
 }
 
@@ -50,11 +46,9 @@ export function tidyInvoices(rows: readonly TaxInvoiceRow[]): { lines: InvoiceLi
 
 export interface MonthContext {
   db: Db;
-  /** 직원 이름을 읽을 때만 쓴다(주민번호는 읽지 않는다) */
   cipher: ColumnCipher;
   profileId: string;
   month: string;
-  /** 설정 profile.<id>.payroll.enabled. 끄면 급여대장 항목은 파일 첨부 칸이다 */
   payrollEnabled: boolean;
   taxInvoices?: readonly TaxInvoiceRow[];
 }
@@ -63,11 +57,9 @@ export interface ItemStatus {
   item: BundleItem;
   period: string;
   status: BundleEntryStatus;
-  /** entry: 사장님이 표시한 상태, derived: 앱이 기록에서 센 상태 */
   basis: 'entry' | 'derived';
   docIds: string[];
   note: string | null;
-  /** 화면 보조 숫자(건수 등). 값은 넣지 않는다 */
   counts: Record<string, number>;
 }
 
@@ -117,20 +109,11 @@ export function monthStatus(ctx: MonthContext): ItemStatus[] {
 
 export interface MissingReport {
   month: string;
-  /** 비어 있거나 덜 된 항목 */
   emptyItems: Array<{ itemId: string; name: string; tier: number; period: string; status: 'missing' | 'partial' }>;
-  /** 확인 안 한 급여: 이달 급여대장이 없거나 초안이거나, 재직 직원 중 줄이 없는 사람 */
   payroll: { state: 'none' | 'draft' | 'confirmed'; revision: number | null; employeesWithoutLine: Array<{ id: string; name: string }> } | null;
-  /** 대조되는 종이 증빙·매입 세금계산서가 없는 카드 사용(취소된 승인은 뺀다). 확인용 표시(화면은 기본 접힘). cardSlipEnough면 비운다 */
   cardWithoutEvidence: Array<{ txnId: string; usedOn: string; merchant: string | null; amount: number; hasMemo: boolean }>;
-  /** 구간을 바꾼 뒤 다시 잇지 못한 카드 메모 수("메모 대상 확인 필요") */
   memosNeedCheck: number;
-  /** 사장님이 "카드 전표로 충분"으로 표시해 이 달은 카드 대조를 빠진 것에서 뺐다(판정 아님, ADR-032) */
   cardSlipEnough: boolean;
-  /**
-   * 공급가액 + 세액 ≠ 합계인 세금계산서(R15, 산술 차이 표시). 화면은 접힌 항목으로만 보이고 확인을 강제하거나 보내기를 막지 않는다(yulmu 2026-11-05).
-   * 엑셀에는 그 행의 메모 칸에만 적는다('빠진 것' 시트에 올리지 않는다)
-   */
   invoiceSumGaps: Array<{ direction: 'sales' | 'purchase'; issueDate: string; approvalNo: string; counterpartyName: string; gap: number }>;
 }
 
@@ -151,7 +134,6 @@ export function clearCardSlipEnough(db: MonthContext['db'], profileId: string): 
   new BundleRepo(db).setCardSlipEnough(profileId, null);
 }
 
-/** 날짜 차이(일) */
 const dayDiff = (a: string, b: string): number => Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86_400_000;
 
 /** 카드 승인과 그 취소(같은 승인번호·금액)를 지운 나머지 */
@@ -204,7 +186,6 @@ export function missingReport(ctx: MonthContext): MissingReport {
   }
 
   const cards = new CardRepo(ctx.db);
-  // 증빙 날짜가 달 경계를 넘을 수 있어 앞뒤 3일을 더 본다
   const pad = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
   const receipts = new ReceiptRepo(ctx.db)
     .list(ctx.profileId, pad(from, -3), pad(to, 3))

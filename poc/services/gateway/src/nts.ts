@@ -1,13 +1,8 @@
-// 사업자등록 진위확인 프록시(D09 §4.1, C-25, D-51(N-81)). 공공데이터포털 국세청 사업자등록정보 API(status).
-// 번호는 메모리로만 통과한다. 계정과 묶지 않고, 로그·DB·메트릭에 쓰지 않는다. 서비스 키는 환경 변수(ENV.md).
 
 export interface BizStatus {
   b_no: string;
-  /** 01 계속, 02 휴업, 03 폐업, '' 미등록 */
   b_stt_cd: string;
-  /** 과세 유형 코드 */
   tax_type_cd: string;
-  /** 폐업일 YYYYMMDD 또는 '' */
   end_dt: string;
 }
 

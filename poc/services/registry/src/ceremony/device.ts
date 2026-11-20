@@ -1,7 +1,3 @@
-// 서명 백엔드. Phase 1 단독 모드(ADR-037): macOS 키체인 + Secure Enclave 감싸기 + Touch ID(macos/sax-keychain.swift 도우미).
-// 이 모듈은 도우미에 "이 keyId로 이 바이트에 서명하라"만 보낸다. 서명은 도우미 프로세스 안에서 하고 시드는 Node로 오지 않는다.
-// 예외는 백업 내보내기·들여오기(exportSeeds·importSeed)뿐이다. 부르는 쪽이 바로 암호로 잠그고 버퍼를 0으로 덮는다.
-// 보유자 여럿으로 승격하면 YubiKey PIV(아래 PivDevice 인터페이스)로 옮긴다(CEREMONY.md §8). 그 구현은 승격 때 넣는다.
 import { spawn } from 'node:child_process';
 import { createPublicKey, verify as edVerify } from 'node:crypto';
 import type { Role } from '../verify.ts';
@@ -11,11 +7,8 @@ import { CeremonyError } from './content.ts';
 export const MAX_SIGN_BYTES = 512 * 1024;
 
 export interface SigningBackend {
-  /** 화면 표시용(비밀 없음) */
   describe(): string;
-  /** keyId의 Ed25519 공개키 32B(Touch ID 없음) */
   publicKey(keyId: string): Promise<Buffer>;
-  /** keyId로 message 전체에 서명(PureEdDSA, 64B). Touch ID 창에 confirm(확인 코드)을 보인다. */
   sign(keyId: string, message: Buffer, confirm: string): Promise<Buffer>;
 }
 
@@ -23,9 +16,7 @@ export interface SigningBackend {
 export interface KeyStoreBackend extends SigningBackend {
   generate(keyId: string): Promise<Buffer>;
   list(): Promise<string[]>;
-  /** 백업 전용. Touch ID 한 번. 돌려받은 seed 버퍼는 부르는 쪽이 0으로 덮는다. */
   exportSeeds(keyIds: readonly string[]): Promise<Array<{ keyId: string; pub: string; seed: Buffer }>>;
-  /** 백업 들여오기. 같은 keyId가 있으면 거부(덮지 않는다). 돌려주는 값은 공개키. */
   importSeed(keyId: string, seed: Buffer): Promise<Buffer>;
 }
 
@@ -77,7 +68,7 @@ export const spawnHelper: HelperRunner = (helper, args, stdin) =>
     p.on('close', (code) => {
       const buf = Buffer.concat(chunks);
       const stdout = buf.toString('utf8');
-      buf.fill(0); // 내보내기 응답에는 시드가 실린다
+      buf.fill(0);
       for (const c of chunks) c.fill(0);
       resolve({ code: code ?? 1, stdout });
     });

@@ -1,5 +1,3 @@
-// 게시본 H-01(hometax.invoice.issue)의 첫 스텝 s0는 session 체크포인트다. 제품 run.start는 이동 없이 금고가 about:blank로 연 탭에서 시작한다.
-// 가짜 H-01 패키지 앞에 같은 모양의 s0를 붙여 빈 탭에서 RunService(IR)를 돌리면 게이트까지 가야 한다(2026-11-11 고침 전에는 s0에서 step.assert_failed 핸드오프).
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -51,7 +49,6 @@ it('첫 스텝 session 체크포인트(s0): about:blank 탭에서 시작해도 u
     for (let i = 0; i < 100 && !ended(); i++) await new Promise((r) => setTimeout(r, 100));
     assert.ok(ended(), '중지 뒤 실행이 끝나야 한다');
   } finally {
-    // 실패(핸드오프)로 끝나도 사람 차례 타이머가 남지 않게 끈다.
     try {
       runs?.stop('r1');
     } catch {

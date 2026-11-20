@@ -1,5 +1,3 @@
-// D02 IR·셀렉터 사전·manifest·핫픽스·정책의 TS 모양. 정본은 sovereign-ax/design/schemas/*.schema.json이고
-// 이 파일은 그 사본(packages/engine/schemas)과 같은 모양이어야 한다(tests/core-schemas.test.ts가 픽스처로 대조).
 
 export const PORTALS = ['hometax', 'gov24', 'wetax', 'sminfo', 'insure4', 'iros', 'public_api'] as const;
 export type Portal = (typeof PORTALS)[number];
@@ -21,8 +19,6 @@ export type SecretKind = 'cert_password' | 'portal_password' | 'security_card';
 export type SecretPurpose = 'login' | 'sign';
 export type SignMethod = 'cert' | 'simple_auth' | 'security_card';
 
-// ---- 조건식(D02 §4.1) ----
-
 export type Cond =
   | { exists: string }
   | { textMatches: { target: string; patternRef: string } }
@@ -32,14 +28,8 @@ export type Cond =
   | { inputVerified: string }
   | { profileHas: string }
   | { artifact: string }
-  /** readback 값 산술(D02 §8 s19d): parts의 합 = total. 둘 다 readback fieldKey이고 화면을 다시 읽지 않는다(IR rev v1.3.2). */
   | { sumEquals: { parts: string[]; total: string } }
-  /**
-   * ifAbsent 'empty'(IR rev v1.3.3): 선택 입력이 비었으면 되읽은 값도 비어야 참(fill ifAbsent:'clear'의 짝). 없으면 참조가 비면 오류.
-   * 'skip'(IR rev v1.3.8): 선택 입력이 비었으면 대조하지 않는다(참, fill ifAbsent:'keep'의 짝: 포털이 채운 값을 둔다).
-   */
   | { readbackEquals: { fieldKey: string; ref: string; ifAbsent?: 'empty' | 'skip' } }
-  /** 되읽은 값이 비었는가(IR rev v1.3.3). 플레이북에 그 입력이 없을 때 칸이 비었음을 확인한다(V-03m). */
   | { readbackEmpty: string }
   | { fieldsFilled: { fields: string[] } }
   | { all: Cond[] }
@@ -51,7 +41,7 @@ export interface OnFail {
   retry?: number;
   then?: OnFailThen;
 }
-export type OutcomeTarget = string; // stepRef | 'handoff' | 'abort'
+export type OutcomeTarget = string;
 
 export type From = { selector: string } | { regex: { target: string; patternRef: string } } | { a11y: { target: string } };
 
@@ -67,9 +57,7 @@ export interface Lookup {
   baseline: 'pre_gate_snapshot' | 'none';
   notCommittedPolicy: { minElapsedMs: number; lookups: number };
   bind?: { approvalNo?: string };
-  /** 새 행 하나의 상태 문구 판정(v1.3.4): notSent 패턴 → not_committed 근거(먼저 본다), sent → committed, 그 밖 unknown. */
   rowVerdict?: { column: string; sent: string; notSent: string };
-  /** 이 verify만의 다시 보기 상한(v1.3.4, baseline:none 사후 확인만, V-03n). 없으면 policy.verify.maxMs. */
   maxMs?: number;
 }
 
@@ -79,22 +67,11 @@ export interface SignFlow {
   steps?: Partial<Record<SignMethod, SignFlowAction[]>>;
   rowLabel?: string;
   confirmTarget?: string;
-  /** IR rev v1.3.5: submit 클릭 뒤 차례로 한 번씩 누르는 commits:true 항목(포털 확인 창의 [인증 화면 이동] 등). */
   openTargets?: string[];
-  /** IR rev v1.3.5: 방식별로 openTargets 뒤 한 번 누르는 commits:true 항목(인증유형 선택). */
   methodTargets?: Partial<Record<SignMethod, string>>;
-  /** IR rev v1.3.5: 서명 화면이 떴다는 표지(비커밋, 방식 동작 전에 기다린다. 홈택스 iframe#dscert 보임). */
   readyTarget?: string;
-  /** IR rev v1.3.5: 서명이 끝났다는 표지(비커밋, human:secret 뒤·confirmTarget 없는 wait:push가 기다린다. 발급 완료 창). */
   doneTarget?: string;
-  /** IR rev v1.3.6: 서명 화면이 뜬 뒤 방식 동작 전에 고르는 목록 항목(rows 항목, 인증서 창). 행이 하나면 그것, 여럿이면 by 값과 이름 칸이 같은 행. 못 고르면 서명 차례(사람). */
   certPick?: { target: string; by: string };
-  /**
-   * IR rev v1.3.8(대표 지시 2026-11-14): 보안카드 서명 창. 방식 선택 뒤 실행 탭이 새 창(window: strings 키, 주소 정규식)을 연다.
-   * fields마다 target(type=password 칸)과 rowFrom(요청 글자 "[N]번 … 앞/뒤 2자리")을 금고가 읽고 친다. 그 창의 confirmTarget(commits:true)을
-   * 엔진이 누르고, 창의 알림 글(strings card.ok·card.wrong·card.locked)로 끝을 판정한다. secret_fill:security_card가 이것을 쓴다.
-   * 지원 안 함(대표 결정 2026-11-19): 형식 검사(V-08)만 하고 실행하지 않는다.
-   */
   card?: { window: string; fields: Array<{ target: string; rowFrom: string }>; confirmTarget: string };
   maxWaitMs: number;
 }
@@ -182,22 +159,14 @@ export interface PlaybookIR {
   postconditions: Cond[];
   recovery?: { default?: OnFail };
   pacing?: { profile?: 'interactive' | 'daemon' };
-  /** IR rev v1.3.6: 실행 중 새 창(팝업)이 뜨면 제목이 이 strings 패턴(^…$)에 맞을 때 닫는다(커밋 없는 안내 창). 다른 창은 두고 저널만. */
   closeWindows?: string[];
-  /**
-   * IR rev v1.3.7: 공지 레이어 닫기. 첫 스텝부터 until 스텝(또는 첫 게이트) 전까지 스텝마다 targets(closeAffordance 항목)를 본다.
-   * 보이고 동일성이 맞고 하나뿐이면 누른다. 없거나 틀리거나 여럿이면 건너뛴다(실행을 멈추지 않는다).
-   */
   closeLayers?: { targets: string[]; until: string };
 }
-
-// ---- 셀렉터 사전(D02 §2.1) ----
 
 export type Candidate = { kind: 'role'; role: string; name: string } | { kind: 'css'; value: string } | { kind: 'label'; value: string };
 
 export interface SelectorEntry {
   candidates: Candidate[];
-  /** editable(IR rev v1.3.6): 입력할 수 있는(readonly·disabled 아닌) 요소만 받는다. 아니면 없는 것으로 본다. */
   expect?: { visible?: boolean; enabled?: boolean; editable?: boolean };
   role: string;
   namePattern: string;
@@ -212,12 +181,7 @@ export interface SelectorEntry {
   navigationOnly?: boolean;
   fieldKey?: string;
   readbackOf?: string;
-  /** IR rev v1.3.5: readback 값 = 이 요소 하위에서 이 CSS에 맞고 글이 빈칸이 아닌 요소의 수(품목 행 수 등). fieldKey가 있을 때만. */
   countOf?: string;
-  /**
-   * IR rev v1.3.6: 이 요소는 목록이다(pick·signFlow.certPick). item = 행(하위 CSS), name = 행 안 이름 칸(행 하위 CSS),
-   * selected = 선택된 행(이 요소 하위 CSS, 정확히 하나). 값은 저널·로그에 남기지 않는다.
-   */
   rows?: { item: string; name: string; selected: string };
   allowedConstants?: string[];
   reviewNote?: { by: string; reason: string };
@@ -226,7 +190,6 @@ export interface SelectorEntry {
 
 export interface EndpointMatch {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
-  /** IR rev v1.3.5: 요청이 가야 하는 URL host(소문자, 포트 포함). 없으면 manifest.domains 어디든. 홈택스 발급 요청은 teet.hometax.go.kr이다. */
   host?: string;
   pathPattern: string;
   actionParam?: { name: string; value: string };
@@ -248,8 +211,6 @@ export interface SelectorDict {
 
 /** 비밀 칸(V-20): secretKind가 있거나 inputType이 password인 항목. */
 export const isSecretEntry = (e: Pick<SelectorEntry, 'secretKind' | 'inputType'> | undefined): boolean => !!e && (e.secretKind !== undefined || e.inputType === 'password');
-
-// ---- 패키지(D02 §2) ----
 
 export interface Signature {
   keyId: string;
@@ -297,8 +258,6 @@ export interface Hotfix {
   signatures: Signature[];
 }
 
-// ---- 정책(D03 §7) ----
-
 export type PortalMode = 'postprocess' | 'assisted' | 'auto';
 export type CaptchaRelay = 'allowed' | 'disabled_until_permission' | 'disabled';
 export type PortalMap<T> = Partial<Record<Portal, T>> & Record<'hometax' | 'gov24' | 'sminfo' | 'insure4', T>;
@@ -345,8 +304,6 @@ export interface Policy {
   queue: { maxIntentsPerPair: number; ttlHours: number };
   signatures: Signature[];
 }
-
-// ---- 검증 결과 ----
 
 /** 규칙 번호(V-01~24, V-03a~l·V-03c′·V-03j′·V-03j″, SV-01~06, HF-*, LD-*) 하나와 위치. 값은 담지 않는다. */
 export interface Violation {

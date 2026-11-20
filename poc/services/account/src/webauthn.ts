@@ -1,12 +1,9 @@
-// 패스키(WebAuthn Level 2) 검증. 등록은 attestation "none"만 받는다(기기 증명이 아니라 로그인 수단이므로).
-// 서명 알고리즘: ES256(-7), EdDSA(-8). 사용자 확인(UV)을 요구한다. 서버는 공개키·서명 카운터만 저장한다.
 import { createPublicKey, verify as cryptoVerify, type KeyObject } from 'node:crypto';
 import { fromB64u, safeEqual, sha256 } from '@sax/svc-shared';
 import { decodeCbor } from './cbor.ts';
 
 export interface RpConfig {
   rpId: string;
-  /** 허용 origin(정확히 일치). 예: https://account.example */
   origins: readonly string[];
 }
 
@@ -75,7 +72,6 @@ function parseAuthData(a: Buffer, rp: RpConfig): AuthData {
   return out;
 }
 
-/** COSE 키 → SPKI DER(base64). EC2/P-256/ES256 또는 OKP/Ed25519/EdDSA만. */
 function coseToKey(m: Map<unknown, unknown>): { key: KeyObject; alg: number } {
   const kty = m.get(1);
   const alg = m.get(3);

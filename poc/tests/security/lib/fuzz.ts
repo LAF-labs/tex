@@ -1,5 +1,3 @@
-// 결정적 퍼징 도우미: 씨앗 고정 난수, JSON 변이 연산자. 실패하면 씨앗과 회차를 메시지에 남겨 재현한다.
-// SAX_FUZZ_ITER(회차, 기본 300), SAX_FUZZ_SEED(씨앗, 기본 20261105)
 
 export type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 
@@ -19,7 +17,6 @@ export function rng(seed: number): () => number {
 
 export const pick = <T>(r: () => number, xs: readonly T[]): T => xs[Math.floor(r() * xs.length)]!;
 
-/** 이상한 값: 경계 숫자, 긴 문자열, 제어·보이지 않는 문자, 프로토타입 키, 위험 URL, ReDoS 모양 정규식. */
 export const NASTY: readonly Json[] = [
   null, true, false, 0, -1, 1e308, -1e308, 2 ** 53 + 1, 0.5, Number.MAX_SAFE_INTEGER,
   '', ' ', 'a'.repeat(10_000), '\u0000', '‮발급', '​', '__proto__', 'constructor', 'prototype',
@@ -34,7 +31,6 @@ interface Slot {
   key: string | number;
 }
 
-/** 모든 자리(부모, 키). 깊이 우선. */
 export function slots(doc: Json): Slot[] {
   const out: Slot[] = [];
   const walk = (v: Json) => {
@@ -59,7 +55,6 @@ const set = (s: Slot, v: Json) => ((s.parent as Record<string | number, Json>)[s
 
 export type MutationName = 'delete' | 'replace' | 'duplicate' | 'swap' | 'retype' | 'nest';
 
-/** doc을 제자리에서 한 번 변이한다. 무엇을 했는지 돌려준다. */
 export function mutate(doc: Json, r: () => number): string {
   const all = slots(doc);
   if (!all.length) return 'none';
@@ -84,7 +79,6 @@ export function mutate(doc: Json, r: () => number): string {
       const t = pick(r, all);
       const a = structuredClone(get(s));
       const b = structuredClone(get(t));
-      // 자기 조상과 바꾸면 순환이 생기므로 복제본으로 바꾼다
       set(s, b);
       set(t, a);
       return `swap ${where}<->${String(t.key)}`;

@@ -1,4 +1,3 @@
-// 지난 실행 보기(U5): 엔진 실행 이력 한 줄 → 활동 기록의 지난 실행(종류·문구). 원장이 먼저다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -130,7 +129,6 @@ describe('지난 실행 읽기는 기동을 막지 않는다(이력 한 줄이 �
 
   it('기동(shell.bootstrap)의 past는 엔진 이력(readPastRuns + host.rpc)에서 온다. 시연 씨앗만 넘기면 재시작 뒤 활동 기록이 빈다', () => {
     const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../apps/desktop/src/shell-app.ts'), 'utf8');
-    // 기동 응답 객체 앞에 쉼표 식(지난 실행 복구 예약 등)이 붙어도 past는 그 객체 안에서 pastNow()로 채운다
     assert.match(src, /'shell\.bootstrap': async \(\) => \((?:[^\n]*?, )?\{[\s\S]*?\bpast: await pastNow\(\),/);
     assert.match(src, /const pastNow = async \(\): Promise<PastRun\[\]> => \[\.\.\.\(await readPastRuns\(\(m, p\) => host\.rpc\(m, p\)/);
   });

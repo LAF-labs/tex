@@ -1,4 +1,3 @@
-// tests/measure-out.ts: 기본 출력은 gitignore된 reports/raw/.local/, 추적 경로는 명시 플래그로만(RETRO A-09).
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
@@ -17,7 +16,6 @@ describe('측정 산출물 출력 위치', () => {
 
   it('기본 출력 폴더는 git이 무시한다', () => {
     const probe = path.join(LOCAL_DIR, 'probe.json');
-    // 무시되지 않으면 git check-ignore가 1로 끝나 예외가 난다.
     assert.doesNotThrow(() => execFileSync('git', ['check-ignore', '-q', probe], { cwd: path.dirname(COMMITTED_DIR), stdio: 'pipe' }));
   });
 
@@ -30,7 +28,6 @@ describe('측정 산출물 출력 위치', () => {
 
   it('jsonl은 프로세스에서 처음 쓸 때 비운다(누적 없음), JSON은 덮어쓴다', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sax-measure-'));
-    // SAX_MEASURE_COMMIT가 켜져 있으면 추적 경로가 이기므로(위치 규칙 1) 시험 동안 끈다.
     const prev = process.env.SAX_MEASURE_DIR;
     const prevCommit = process.env.SAX_MEASURE_COMMIT;
     delete process.env.SAX_MEASURE_COMMIT;

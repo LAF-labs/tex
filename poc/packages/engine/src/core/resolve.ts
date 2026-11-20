@@ -1,8 +1,3 @@
-// 셀렉터 사전 항목 해석(D02 §2.1)과 R-A1 동일성 검사(D03 §5.2).
-// - 랜드마크 항목을 먼저 해석해 그 하위에서만 찾는다(frame·landmark 범위). 루트 항목은 landmark가 자기 자신이다.
-// - 후보를 순서대로 시도한다. 한 후보에 expect(보임·활성·입력 가능)를 만족하는 요소가 정확히 1개일 때만 받는다. 2개 이상이면 다음 후보로
-//   넘어가지 않고 실패한다(fail-closed: 첫 후보가 모호하면 다른 후보가 맞혀도 그것이 의도한 요소라는 보장이 없다).
-// - 받은 요소의 실제 역할·접근성 이름(NFKC·제로폭 제거·공백 접기 뒤)이 사전의 role·namePattern과 맞지 않으면 step.identity_mismatch.
 import { normalizeName } from './constants.ts';
 import type { ElementInfo, PageReader, Resolved } from './page.ts';
 import { compileRe2 } from './re2.ts';
@@ -18,7 +13,6 @@ export type ResolveResult = { ok: true; t: Resolved } | { ok: false; code: Resol
 export const STALE_RETRIES = 5;
 export const STALE_WAIT_MS = 100;
 
-/** 랜드마크 사슬 깊이 상한(사전 순환 방어. 정적 검사가 이미 막는다). */
 const MAX_LANDMARK_DEPTH = 8;
 
 const patternCache = new Map<string, RegExp>();
@@ -74,8 +68,6 @@ async function resolveOnce(page: PageReader, dict: SelectorDict, key: string, de
     }
     if (hits.length === 0) continue;
     if (hits.length > 1) {
-      // IR rev v1.3.7(부장 2026-11-14): 여럿 가운데 보이는 것이 정확히 하나면 그것(WebSquare가 같은 id로 숨은 사본을 남긴다).
-      // 커밋 항목은 그대로 모호함으로 끝낸다(fail-closed).
       const shown = hits.filter((h) => h.info.visible);
       if (entry.commits || shown.length !== 1) return { ok: false, code: 'step.selector_miss', ambiguous: true };
       hits.splice(0, hits.length, shown[0]!);

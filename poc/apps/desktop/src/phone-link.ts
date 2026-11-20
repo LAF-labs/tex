@@ -1,11 +1,3 @@
-// 연결된 폰 수신(D08 §5·§7·§8, ADR-007). 페어링이 끝난 폰마다 우편함 하나를 지켜 사진·현금매출을 받는다.
-// - 보관: 페어 기록(폰 공개키·우편함 ID·mbx_epoch·재전송 방지 최고값)은 앱 데이터의 remote-phones.json(0600)에,
-//   우편함 능력 토큰(tok_read·tok_write)은 seal(Electron safeStorage)로 봉인한 값만 둔다. 개인키는 금고 밖으로 나오지 않는다.
-//   토큰만으로는 우편함에 들어가지 못한다(기기 범위 토큰 + DPoP(Vd, 금고)가 함께 있어야 한다, services/relay/API.md 인증 두 겹).
-// - 받는 길 둘: (1) 라이브 우편함 WSS(폰·PC가 둘 다 켜져 있을 때, Noise_IK 세션), (2) HTTPS 큐(PC가 꺼져 있던 동안 쌓인 HPKE 봉투).
-//   운영 라이브는 룸 호스트 RELAY_LIVE=1일 때만 열린다. 닫혀 있으면 업그레이드가 거절되고, 큐 폴링만으로 받는다(늦게 다시 시도).
-// - 큐 번들(Q_D 공개키, Vd 서명)은 유효기간 7일이라 하루 남으면 새 seq로 다시 올린다.
-// - 로그는 단계·결과 코드만(우편함 ID·토큰·폰 이름·금액 없음).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -43,21 +35,16 @@ import type { PhoneReceiver } from './phone-receive.ts';
 
 const DAY = 86_400_000;
 const FILE_VERSION = 1;
-/** 폰 앱이 hello에서 보는 PC 기능. receipt.v2 = 종이 세금계산서 값(paperInvoice)을 받아 꾸러미에 넣는다. */
 export const DESKTOP_CAPS: readonly string[] = Object.freeze([CAP.receipt, CAP.receiptV2, CAP.cash]);
 
-/** 이 PC가 받는 승인 키 종류(ADR-052 결정 1). Android는 Key Attestation 검증기가 생긴 뒤에 더한다. */
 const PX_ACCEPTED_HW: readonly PxHw[] = Object.freeze(['ios_se'] as const);
 
-/** 받은 승인 키(Px). pub은 SEC1 비압축 65바이트(b64). */
 interface PxRecord {
   pub: string;
   hw: PxHw;
   enrolledAt: number;
-  /** auto: 폰의 등록 알림을 바로 받음 · pc: 폰 승인을 껐다가 PC에서 다시 허용 */
   via: 'auto' | 'pc';
 }
-/** 폰 승인을 꺼 둔 동안 폰이 청한 키(PC에서 다시 허용해야 받는다). */
 interface PxPending {
   pub: string;
   hw: PxHw;
@@ -70,13 +57,9 @@ interface PhoneRecord {
   name: string;
   platform: 'ios' | 'android';
   pairedAt: number;
-  /** 폰 Noise 정적 공개키 Sm(b64) */
   Sm: string;
-  /** 폰 서명 공개키 Vm(b64, 큐 봉투 서명 확인) */
   Vm: string;
-  /** 우편함 ID(b64, 32B) */
   mbxId: string;
-  /** 봉인한 {read, write}(seal 결과) */
   tok: string;
   mbxEpoch: number;
   ikTsMax: number;
@@ -84,17 +67,13 @@ interface PhoneRecord {
   qbundleSeq: number;
   qbundleValidTo: number;
   lastSeenAt: number | null;
-  /** 폰 승인 키(ADR-052). 없으면 이 폰은 승인 기기가 아니다. */
   px?: PxRecord;
   pxPending?: PxPending;
-  /** PC에서 이 폰의 승인을 껐다(revokePx). 켜져 있으면 등록 알림을 바로 받지 않는다. */
   pxOff?: boolean;
 }
 
-/** 지우지 못한 우편함(폰을 끊을 때 릴레이 삭제가 실패했다). 다음에 켤 때 다시 지운다(30일까지). */
 interface MailboxTrash {
   mbxId: string;
-  /** 봉인한 {read, write}(기록의 tok 그대로) */
   tok: string;
   deviceId: string;
   at: number;
@@ -108,11 +87,9 @@ const isTrash = (x: unknown): x is MailboxTrash => {
 interface FileShape {
   v: 1;
   phones: PhoneRecord[];
-  /** 지우지 못한 우편함(없으면 빈 목록) */
   trash?: MailboxTrash[];
 }
 
-/** 토큰 봉인. 제품은 Electron safeStorage(키체인·DPAPI). 시험은 그대로. */
 export interface TokenSeal {
   seal(plain: Uint8Array): string;
   open(sealed: string): Uint8Array;
@@ -137,7 +114,6 @@ const isRec = (r: unknown): r is PhoneRecord => {
 
 const isPxKey = (k: { pub?: unknown; hw?: unknown } | undefined): boolean =>
   !!k && typeof k === 'object' && typeof k.pub === 'string' && k.pub.length === 88 && PX_HW.includes(k.hw as PxHw);
-/** 승인 키 칸이 모양에 맞지 않으면 그 칸만 버린다(연결은 살리고 폰 승인만 꺼진다). */
 const cleanPx = (r: PhoneRecord): PhoneRecord => {
   const out = { ...r };
   const px = r.px as Partial<PxRecord> | undefined;
@@ -148,12 +124,10 @@ const cleanPx = (r: PhoneRecord): PhoneRecord => {
   return out;
 };
 
-/** remote-phones.json. 쓰기는 임시 파일 → rename(반쯤 쓴 파일이 남지 않게). 같은 객체 안에서 쓰기를 줄 세운다. */
 export class PhoneStore {
   #file: string;
   #chain: Promise<unknown> = Promise.resolve();
   #trash: MailboxTrash[] = [];
-  /** 지우지 못한 우편함(load 뒤). save가 기록과 같이 쓴다 */
   trash(): MailboxTrash[] {
     return [...this.#trash];
   }
@@ -184,7 +158,6 @@ export class PhoneStore {
       await fs.mkdir(path.dirname(this.#file), { recursive: true });
       const tmp = `${this.#file}.${process.pid}.tmp`;
       await fs.writeFile(tmp, JSON.stringify({ v: FILE_VERSION, phones: [...phones], ...(this.#trash.length ? { trash: this.#trash } : {}) } satisfies FileShape), { mode: 0o600 });
-      // Windows: 다른 프로세스(백신·색인·읽는 중)가 대상 파일을 열고 있으면 rename이 잠깐 EPERM·EBUSY로 실패한다
       for (let i = 0; ; i++) {
         try {
           await fs.rename(tmp, this.#file);
@@ -200,7 +173,6 @@ export class PhoneStore {
     this.#chain = p.catch(() => undefined);
     return p;
   }
-  /** 이미 시작한 저장이 모두 끝나면 풀린다(실패해도). */
   idle(): Promise<void> {
     return this.#chain.then(() => undefined);
   }
@@ -220,16 +192,10 @@ export interface PhoneView {
   pairedAt: number;
   online: boolean;
   lastSeenAt: number | null;
-  /** 계정 기기 ID(설정 > 기기 연결의 줄과 맞출 때) */
   deviceId: string;
-  /**
-   * 폰 승인: on = 승인 키를 받았다 · paused = PC에서 꺼 두었다 · asked = 꺼 두었고 폰이 다시 켜 달라고 청했다
-   * · off = 아직 승인 키가 없다(폰이 등록 알림을 보내지 않았다)
-   */
   approver: 'on' | 'paused' | 'asked' | 'off';
 }
 
-/** 라이브 세션 한 번에 붙는 PC 쪽 기능. peerCaps는 폰 hello의 capabilities. */
 export interface PhoneSessionHook {
   open(pairId: string, ch: Channel, peerCaps: readonly string[]): void | Promise<void>;
   handle(pairId: string, ch: Channel, env: Envelope): Promise<boolean>;
@@ -240,28 +206,15 @@ export interface PhoneLinkOptions {
   store: PhoneStore;
   seal: TokenSeal;
   keys: () => Promise<PhoneLinkKeys>;
-  /** 라이브 우편함(WSS). 없으면 큐만. */
   joinMailbox?: (mbxId: Uint8Array, tok: MailboxTokens) => Promise<RelayLink>;
-  /** HTTPS 큐(services/relay/API.md). @sax/remote relayQueue를 기기 인증과 함께 묶은 것 */
   queue: (mbxId: Uint8Array, tok: MailboxTokens) => Pick<RelayQueue, 'list' | 'listPage' | 'ack' | 'putBundle'>;
-  /** 페어 하나당 수신기(phone-receive.ts phoneReceiver) */
   receiver: (pairId: string) => PhoneReceiver;
-  /** 우편함 삭제(연결 해제·같은 폰 다시 연결). peer를 주면 릴레이가 그 폰의 자리도 비운다. 실패하면 기록은 지우고 다음에 켤 때 다시 지운다(trash). */
   deleteMailbox?: (mbxId: Uint8Array, tokWrite: Uint8Array, peer?: string) => Promise<void>;
   deviceListVersion: () => number;
   appVersion: string;
   capabilities?: () => readonly string[];
-  /**
-   * 계정 공유 기록 열쇠(remote-envelope v1.9 share.key, ADR-048 결정 5). 있으면 hello에 share.v1을 알리고,
-   * 폰이 share.v1을 알린 세션을 열 때와 pushShareKeys() 때 이 폰에 줄 열쇠 묶음을 묻는다. null이면 보내지 않는다(이 폰이 지금 기기 목록에 없다 등).
-   */
   shareKeys?: (deviceId: string) => Promise<ShareKeyBody | null>;
-  /**
-   * 라이브 세션 위의 PC 쪽 기능(v1.8 폰 발급 명령·폰 사본, phone-session.ts). 세션이 열리면 open, 봉투마다 handle(받았으면 true,
-   * 아니면 사진·현금 수신기로 넘긴다), 닫히면 close. 없으면 사진·현금만 받는다.
-   */
   session?: PhoneSessionHook;
-  /** 큐 폴링 간격(기본: 라이브 연결 중 5분, 아니면 30초) */
   pollMs?: { live: number; idle: number };
   now?: () => number;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
@@ -282,18 +235,13 @@ interface Runner {
   abort: AbortController;
   link: RelayLink | null;
   online: boolean;
-  /** 큐 폴링을 바로 깨운다({"t":"env"}) */
   kick: () => void;
-  /** 라이브 재시도 대기를 끊고 바로 다시 붙는다(백오프 초기화) */
   retry: (() => void) | null;
-  /** 지금 열려 있고 폰이 share.v1을 알린 세션의 보내는 쪽. 없으면 null */
   shareSend: ((body: ShareKeyBody) => void) | null;
 }
 
-/** 라이브 재연결 백오프: 1초부터 두 배씩, 30초 상한(집에 둔 PC가 밖의 폰에 늦어도 30초 안에 다시 붙는다). */
 export const LIVE_BACKOFF = { minMs: 1000, maxMs: 30_000 } as const;
 
-/** 폰 수신 관리. start()로 저장된 폰을 모두 지키고, add()로 방금 연결한 폰을 더한다. */
 export class PhoneLink {
   #o: PhoneLinkOptions;
   #recs: PhoneRecord[] = [];
@@ -302,9 +250,7 @@ export class PhoneLink {
   #sleep: NonNullable<PhoneLinkOptions['sleep']>;
   #log: NonNullable<PhoneLinkOptions['log']>;
   #started = false;
-  /** 돌고 있는 큐·라이브 루프. 멈춘 뒤에도 끝날 때까지 남는다(idle). */
   #loops = new Set<Promise<void>>();
-  /** 페어마다 수신기 하나(라이브와 큐가 같은 조립·중복 판정을 쓴다) */
   #receivers = new Map<string, PhoneReceiver>();
 
   constructor(o: PhoneLinkOptions) {
@@ -323,7 +269,6 @@ export class PhoneLink {
     void this.#emptyTrash();
   }
 
-  /** 지우지 못한 우편함을 다시 지운다. 지웠거나 30일이 지났거나 토큰을 열 수 없으면 목록에서 뺀다. */
   async #emptyTrash(): Promise<void> {
     const st = this.#o.store as Partial<Pick<PhoneStore, 'trash' | 'setTrash'>>;
     const list = st.trash?.() ?? [];
@@ -343,7 +288,6 @@ export class PhoneLink {
         this.#log('main.phone_link', { step: 'mailbox_retry', result: 'ok' });
       } catch (e) {
         const code = codeOf(e);
-        // 이미 없는 우편함이면 끝난 것이다
         if (code === 'relay.mailbox_not_found') continue;
         this.#log('main.phone_link', { step: 'mailbox_retry', result: code });
         keep.push(t);
@@ -353,7 +297,6 @@ export class PhoneLink {
     await this.#o.store.save(this.#recs);
   }
 
-  /** 페어링 결과를 저장하고 바로 지킨다. 같은 폰(deviceId)을 다시 연결하면 옛 기록을 바꾼다. */
   async add(r: DesktopPairResult): Promise<void> {
     const rec: PhoneRecord = {
       pairId: r.pairId,
@@ -377,7 +320,6 @@ export class PhoneLink {
     this.#recs = [...this.#recs.filter((x) => x.deviceId !== rec.deviceId && x.pairId !== rec.pairId), rec];
     await this.#o.store.save(this.#recs);
     this.#log('main.phone_link', { step: 'added' });
-    // 같은 폰을 다시 연결했으면 옛 우편함을 지운다(실패해도 새 연결은 그대로)
     for (const old of replaced) {
       if (old.mbxId === rec.mbxId) continue;
       void (async () => {
@@ -385,14 +327,11 @@ export class PhoneLink {
         await this.#o.deleteMailbox?.(fromB64(old.mbxId), t.write);
       })().catch((e) => this.#log('main.phone_link', { step: 'replace_mailbox', result: codeOf(e) }));
     }
-    // 아직 지키기 전(앱을 로그아웃 상태로 켜고 같은 실행에서 로그인한 뒤 바로 연결했다)이면 지금 시작한다.
-    // 2026-11-18 실기기: 기록만 저장되고 우편함에 붙지 않아 폰이 "PC 꺼짐"이었다(main.phone_link added 뒤 phone_live 기록 없음)
     if (this.#started) this.#run(rec);
     else await this.start();
     this.#o.onChange?.();
   }
 
-  /** 연결 해제: 우편함을 지우고(실패해도) 기록을 지운다. 폰은 다음 연결에서 우편함이 없다는 것을 안다. */
   async remove(pairId: string): Promise<boolean> {
     const rec = this.#recs.find((x) => x.pairId === pairId);
     if (!rec) return false;
@@ -401,7 +340,6 @@ export class PhoneLink {
     try {
       write = unpackTok(this.#o.seal.open(rec.tok)).write;
     } catch {
-      // 토큰을 열 수 없다(다른 앱 서명의 키체인 등): 다시 해도 안 되니 남기지 않는다. 릴레이는 끊긴 폰의 자리를 스스로 비운다
       this.#log('main.phone_link', { step: 'remove_mailbox', result: 'unsealable' });
     }
     if (write) {
@@ -410,7 +348,6 @@ export class PhoneLink {
       } catch (e) {
         const code = codeOf(e);
         this.#log('main.phone_link', { step: 'remove_mailbox', result: code });
-        // 네트워크 등으로 실패: 다음에 켤 때 다시 지운다
         const st = this.#o.store as Partial<Pick<PhoneStore, 'trash' | 'setTrash'>>;
         if (code !== 'relay.mailbox_not_found') st.setTrash?.([...(st.trash?.() ?? []), { mbxId: rec.mbxId, tok: rec.tok, deviceId: rec.deviceId, at: this.#now() }]);
       }
@@ -422,7 +359,6 @@ export class PhoneLink {
     return true;
   }
 
-  /** 기기 ID로 연결 해제(기기 화면에서 끊었거나 폰이 스스로 나갔을 때). 그 폰의 기록이 없으면 false. */
   async removeDevice(deviceId: string): Promise<boolean> {
     const ids = this.#recs.filter((x) => x.deviceId === deviceId).map((x) => x.pairId);
     let any = false;
@@ -434,14 +370,10 @@ export class PhoneLink {
     return this.#recs.map((r) => ({ pairId: r.pairId, name: r.name, platform: r.platform, pairedAt: r.pairedAt, online: this.#runs.get(r.pairId)?.online ?? false, lastSeenAt: r.lastSeenAt, deviceId: r.deviceId, approver: this.#pxUsable(r) ? 'on' : r.pxOff ? (r.pxPending ? 'asked' : 'paused') : 'off' }));
   }
 
-  // ---- 폰 승인 키(ADR-052 결정 2·3) ----
-
   #pxUsable(r: PhoneRecord): boolean {
     return !!r.px && PX_ACCEPTED_HW.includes(r.px.hw);
   }
 
-  /** 지금 이 폰의 승인 키(검증할 때마다 다시 읽는다: 폐기가 바로 듣는다). 없거나 받지 않는 종류면 null. */
-  /** 연결 기록의 그 폰 서버 deviceId(깨우기 대상, ADR-053). 끊은 폰이면 null. */
   deviceOf(pairId: string): string | null {
     return this.#recs.find((x) => x.pairId === pairId)?.deviceId ?? null;
   }
@@ -456,11 +388,6 @@ export class PhoneLink {
     }
   }
 
-  /**
-   * 폰의 등록 알림(px.enroll). 연결된 폰이 Vm으로 서명한 알림이면 바로 받는다(대표 결정 2026-11-19 "자동 등록").
-   * 키가 바뀌었으면(생체 재등록 등) 새 키로 바꾼다. PC에서 이 폰의 승인을 꺼 두었으면 "허용 대기"로 적고 needs_pc.
-   * 서명(Vm)·키 모양·기기 종류가 틀리면 rejected이고 아무것도 적지 않는다.
-   */
   async enrollPx(pairId: string, body: PxEnrollBody): Promise<PxAckBody> {
     const rec = this.#recs.find((x) => x.pairId === pairId);
     let pub: Uint8Array;
@@ -496,7 +423,6 @@ export class PhoneLink {
     return done('needs_pc');
   }
 
-  /** PC에서 다시 허용: 꺼 둔 폰 승인을 켠다. 그동안 폰이 청한 키가 있으면 바로 받고, 없으면 다음 등록 알림을 받는다. 꺼 둔 적이 없으면 false. */
   async allowPx(pairId: string): Promise<boolean> {
     const rec = this.#recs.find((x) => x.pairId === pairId);
     if (!rec?.pxOff) return false;
@@ -510,7 +436,6 @@ export class PhoneLink {
     return true;
   }
 
-  /** 폰 승인 끄기: 연결은 두고 승인 키와 청한 키를 지운다. 이 폰은 다시 연결하거나 PC에서 허용해야 승인할 수 있다. */
   async revokePx(pairId: string): Promise<boolean> {
     const rec = this.#recs.find((x) => x.pairId === pairId);
     if (!rec || rec.pxOff) return false;
@@ -523,22 +448,16 @@ export class PhoneLink {
     return true;
   }
 
-  /** 칸을 지워야 하는 갱신: 같은 객체를 고친다(돌고 있는 루프가 이 객체를 들고 있다). */
   #replace(rec: PhoneRecord, next: PhoneRecord): Promise<void> {
     for (const k of ['px', 'pxPending', 'pxOff'] as const) if (!(k in next)) delete rec[k];
     return this.#persist(rec, next);
   }
 
-  /** 모든 수신을 멈춘다(앱 종료). 기록은 그대로다. 진행 중이던 저장까지 끝나기를 기다리려면 idle()을 본다. */
   stop(): void {
     for (const id of [...this.#runs.keys()]) this.#stopRun(id);
     this.#started = false;
   }
 
-  /**
-   * 멈춘 루프가 다 빠져나가고 그 뒤의 늦은 저장(lastSeenAt·ikTsMax 등)까지 끝나면 풀린다.
-   * stop() 바로 뒤 폴더를 지우면(시험 정리) 늦은 저장이 임시 파일을 새로 만들어 Windows에서 ENOTEMPTY가 났다.
-   */
   async idle(): Promise<void> {
     while (this.#loops.size) await Promise.all([...this.#loops]);
     await this.#o.store.idle();
@@ -549,7 +468,6 @@ export class PhoneLink {
     this.#loops.add(done);
   }
 
-  /** 저장된 큐를 지금 한 번 비운다(시험·[지금 받기]). */
   async drainNow(pairId: string): Promise<number> {
     const rec = this.#recs.find((x) => x.pairId === pairId);
     if (!rec) return 0;
@@ -573,7 +491,6 @@ export class PhoneLink {
 
   #persist(rec: PhoneRecord, patch: Partial<PhoneRecord>): Promise<void> {
     Object.assign(rec, patch);
-    // 지운 폰의 늦은 갱신은 쓰지 않는다
     if (!this.#recs.includes(rec)) return Promise.resolve();
     return this.#o.store.save(this.#recs);
   }
@@ -584,7 +501,6 @@ export class PhoneLink {
     let wake: (() => void) | null = null;
     const run: Runner = { rec, abort, link: null, online: false, kick: () => wake?.(), retry: null, shareSend: null };
     this.#runs.set(rec.pairId, run);
-    // 큐: 번들 갱신 + 폴링
     this.#track((async () => {
       while (!abort.signal.aborted) {
         try {
@@ -593,7 +509,6 @@ export class PhoneLink {
         } catch (e) {
           this.#log('main.phone_queue', { result: codeOf(e) });
         }
-        // 멈춘 뒤에 걸어 둔 abort 듣기는 불리지 않는다: 대기에 들어가기 전에 빠져나간다
         if (abort.signal.aborted) break;
         const poll = this.#o.pollMs ?? { live: 5 * 60_000, idle: 30_000 };
         const ac = new AbortController();
@@ -605,14 +520,9 @@ export class PhoneLink {
         abort.signal.removeEventListener('abort', onAbort);
       }
     })());
-    // 라이브: 붙어 있는 동안 세션을 받는다. 실패하면 1초부터 30초까지 늘려 다시 시도한다(LIVE_BACKOFF).
     if (this.#o.joinMailbox) this.#track(this.#live(run));
   }
 
-  /**
-   * 깨어남·화면 잠금 해제·네트워크 변화: 재시도 대기를 끊고 바로 붙고, 큐도 바로 비운다.
-   * reconnect면 열린 연결도 닫고 새로 붙는다(잠자기 뒤의 TCP는 열려 보여도 죽어 있다).
-   */
   wake(why: 'resume' | 'unlock' | 'online', reconnect = why === 'resume'): void {
     if (!this.#started) return;
     for (const run of this.#runs.values()) {
@@ -623,7 +533,6 @@ export class PhoneLink {
     this.#log('main.phone_link', { step: 'wake', why, phones: this.#runs.size });
   }
 
-  /** 재시도 대기. wake()가 끊으면 백오프를 처음으로 돌린다. */
   async #retryWait(run: Runner, ms: number): Promise<boolean> {
     if (run.abort.signal.aborted) return false;
     const ac = new AbortController();
@@ -657,14 +566,12 @@ export class PhoneLink {
       backoff = LIVE_BACKOFF.minMs;
       run.link = link;
       link.onEnv(() => run.kick());
-      /** 지금 세션의 "폰이 우편함에서 나갔다" 신호. 폰 앱이 꺼지거나 close 봉투 없이 끊기면 서버가 알린다. */
       let gone: AbortController | null = null;
       link.onPeerGone?.(() => gone?.abort());
       this.#log('main.phone_live', { step: 'joined' });
       const keys = await this.#o.keys();
       const pair: PairRecord = { pairId: rec.pairId, phoneStatic: fromB64(rec.Sm), revoked: false, ikTsMax: rec.ikTsMax };
       const receiver = this.#receiver(rec.pairId);
-      /** 앞 세션 수신 중에 받은 폰의 새 IK(msg1). 다음 accept에 넘긴다 */
       let nextHs: Uint8Array | undefined;
       while (!link.closed && !abort.signal.aborted) {
         let sess: Awaited<ReturnType<typeof acceptDesktopSession>>;
@@ -679,21 +586,17 @@ export class PhoneLink {
           persistTs: (_id, ts) => this.#persist(rec, { ikTsMax: ts }),
           });
         } catch (e) {
-          // 세션 하나가 깨져도 라이브 루프는 산다(연결을 새로 받는다)
           this.#log('main.phone_live', { step: 'accept', result: codeOf(e) });
           link.close();
           break;
         }
         if (!sess) continue;
-        // 세션을 받은 뒤 바로 건다(사본 보내기 등을 기다리는 사이 폰이 나가도 놓치지 않게)
         const g = (gone = new AbortController());
         run.online = true;
         await this.#persist(rec, { lastSeenAt: this.#now() });
         this.#o.onChange?.();
         this.#log('main.phone_live', { step: 'session', listMismatch: sess.deviceListMismatch });
-        // 폰이 세션을 열 때 큐에 남긴 것도 비운다(라이브로 다시 보내기 전에 중복을 줄인다)
         run.kick();
-        // 계정 공유 기록 열쇠: 폰이 받겠다고 알렸을 때만 준다(세션을 열 때마다. 폰은 가진 것과 견줘 같은 것만 받는다)
         if (this.#o.shareKeys && sess.peerHello.capabilities.includes(CAP.share)) {
           const ch = sess.channel;
           run.shareSend = (body) => ch.send('share.key', body);
@@ -703,17 +606,10 @@ export class PhoneLink {
         try {
           await hook?.open(rec.pairId, sess.channel, sess.peerHello.capabilities);
         } catch (e) {
-          // 사본을 못 보내도 세션은 살린다(사진·현금 받기는 이어 간다)
           this.#log('main.phone_live', { step: 'open', result: codeOf(e) });
         }
         try {
-          // 폰은 보낼 것을 보내면 세션을 닫고(close 봉투) 우편함에서 나갔다가 다음 동기화 때 같은 우편함에 다시 와 새 IK를 연다.
-          // 우편함 연결은 PC 쪽에 그대로 남으므로 채널이 닫혔다고 보이지 않는다. 그래서 (1) close 봉투를 받으면 세션을 끝내고,
-          // (2) 새 IK 프레임이 오면 앞 세션을 끝내고 그 프레임으로 새 세션을 받는다.
-          // 2026-11-18 실기기: 첫 세션만 열리고, 60초 뒤부터 폰의 IK를 옛 채널이 삼켜 폰이 "PC 켜짐 → 꺼짐 → 찾는 중"을 오갔다.
-          // (3) 폰이 close 봉투 없이 우편함에서 나가면(앱을 끔, 망 끊김) 세션을 끝낸다. 그래야 승인 요청을 푸시로 깨운다(ADR-053, 실기기 11/19).
           while (!sess.channel.closed && !abort.signal.aborted) {
-            // 받은 프레임이 먼저다(나가기 전에 보낸 close 봉투 등). 더 받을 것이 없고 폰이 나갔으면 끝낸다.
             const f = g.signal.aborted ? queuedFrame(link) : await nextFrame(link, 30_000, g.signal);
             if (!f && g.signal.aborted) {
               this.#log('main.phone_live', { step: 'peer_gone' });
@@ -749,7 +645,6 @@ export class PhoneLink {
     }
   }
 
-  /** 열려 있는 세션으로 이 폰에 열쇠 묶음을 보낸다. 실패해도 세션은 그대로 둔다(다음 세션에서 다시 준다). 보냈으면 true */
   async #giveShareKeys(run: Runner): Promise<boolean> {
     try {
       const body = await this.#o.shareKeys?.(run.rec.deviceId);
@@ -767,7 +662,6 @@ export class PhoneLink {
     }
   }
 
-  /** 세대가 올랐을 때(기기를 끊었다) 지금 연결된 폰들에 새 열쇠 묶음을 다시 준다. 꺼져 있는 폰은 다음 세션에서 받는다. 보낸 폰 수를 돌려준다. */
   async pushShareKeys(): Promise<number> {
     let n = 0;
     for (const run of this.#runs.values()) if (run.shareSend && (await this.#giveShareKeys(run))) n++;
@@ -807,7 +701,6 @@ export class PhoneLink {
   }
 }
 
-/** 토큰 두 개(32B씩)를 64B 하나로 */
 export function packTok(read: Uint8Array, write: Uint8Array): Uint8Array {
   if (read.length !== 32 || write.length !== 32) throw new Error('phone.bad_token');
   const b = new Uint8Array(64);

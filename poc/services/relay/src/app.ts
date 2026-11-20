@@ -1,6 +1,3 @@
-// 릴레이 HTTP + WSS. 모든 우편함 호출은 기기 범위 토큰(relay 범위, DPoP)과 우편함 능력 토큰 둘 다 필요하다:
-// 기기 토큰은 남용 방지·긴급 정지 레이어, 능력 토큰은 우편함 접근 권한이다(D08 §8). 서버는 둘의 연결을 저장하지 않는다.
-// 페어링 룸(D08 §4.2)은 1회용·정원 2·120초이고 레코드에 계정이 없다. 룸 참가는 QR의 room_id만으로 한다(폰은 아직 기기 토큰이 없다).
 import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, Server } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -10,16 +7,13 @@ import { RelayService, raw32, type OuterEnvelope } from './service.ts';
 import { CLOSE, WsConn, acceptUpgrade, rejectUpgrade } from './ws.ts';
 
 const b64 = (max: number) => ({ type: 'string', maxLength: max, pattern: '^[A-Za-z0-9+/]*={0,2}$' });
-/** 우편함 keepalive(packages/remote ws-link RELAY_PING). 클라이언트 텍스트는 이것만 받는다. */
 const PING = Buffer.from('{"t":"ping"}');
 const PONG = '{"t":"pong"}';
 const id32 = { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' };
 const UUID4 = { type: 'string', pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' };
 
 const V = {
-  // peer: 이 우편함으로 이어질 폰의 기기 ID(자리 세기, v2). 예전 PC는 보내지 않는다
   mailbox: validator<{ mbxId: string; tokRead: string; tokWrite: string; peer?: string }>({ type: 'object', additionalProperties: false, required: ['mbxId', 'tokRead', 'tokWrite'], properties: { mbxId: id32, tokRead: id32, tokWrite: id32, peer: UUID4 } }),
-  // intent-envelope.schema.json의 바깥 객체 {v, kind, enc, ct}
   envelope: validator<OuterEnvelope>({ type: 'object', additionalProperties: false, required: ['v', 'kind', 'enc', 'ct'], properties: { v: { enum: [1] }, kind: { const: 'ENV' }, enc: { ...b64(44), minLength: 43 }, ct: { ...b64(RELAY.envelopeCtMax), minLength: 4 } } }),
   ack: validator<{ seq: number }>({ type: 'object', additionalProperties: false, required: ['seq'], properties: { seq: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER } } }),
   bundle: validator<{ bundle: string }>({ type: 'object', additionalProperties: false, required: ['bundle'], properties: { bundle: b64(4096) } }),
@@ -38,11 +32,8 @@ interface Room {
   conns: WsConn[];
   expires: number;
   timer: NodeJS.Timeout;
-  /** 룸을 만든 데스크톱 기기 ID의 sha256(메모리만, 계정 ID 없음). 폰 대리 등록 때 같은 PC인지 본다 */
   owner: string;
-  /** 정원 2가 한 번이라도 찼다(폰이 실제로 붙었다) */
   paired: boolean;
-  /** 계정 서비스가 폰 등록에 한 번 썼다 */
   redeemed: boolean;
 }
 
@@ -51,20 +42,12 @@ export interface RelayAppOpts {
   verifier: TokenVerifier;
   directory: DeviceDirectory & { invalidate?(deviceId: string): void };
   publicOrigin: string;
-  /**
-   * WSS 업그레이드(라이브 우편함)의 DPoP `htu` origin. 클라이언트는 QR의 릴레이 호스트(`wss://<relayHost>` → `https://<relayHost>`)로 만든다.
-   * 운영 룸 호스트는 HTTP 경로(`/v1/rooms`, Vercel 재작성)는 `https://tax.laf-co.com`, WSS는 `https://rooms.tax.laf-co.com`이다(`RELAY_WS_ORIGIN`). 없으면 publicOrigin.
-   */
   wsOrigin?: string;
-  /** 내부 경로(/internal/*) 서명 검사(INTERNAL_CALL_KEY HMAC, 팀장 결정 2026-11-06 #135) */
   internal: InternalCheck;
   logger: Logger;
   trustProxy?: boolean;
-  /** HTTP 경로 한도 카운터·키 솔트. 배포는 DB(`sqlLimits`, 인스턴스 공유), 없으면 메모리 */
   limits?: Limits;
-  /** 1회용 페어링 룸("룸 켬"). 기본 켬(시험), 기동 설정은 `RELAY_ROOMS=1`일 때만 */
   rooms?: boolean;
-  /** 우편함 라이브 WSS. 기본 켬(시험), 기동 설정은 `RELAY_LIVE=1`일 때만(Phase 1 꺼짐) */
   live?: boolean;
 }
 
@@ -82,10 +65,8 @@ export class RelayHub {
   readonly router = new Router();
   private readonly o: RelayAppOpts;
   private readonly auth: DeviceAuth;
-  /** WSS 업그레이드용(htu origin = wsOrigin) */
   private readonly wsAuth: DeviceAuth;
   private readonly limits: Limits;
-  /** 라이브 연결(WSS, Phase 1 기본 꺼짐) 프레임 속도: 연결이 붙은 인스턴스 안에서만 세면 되므로 메모리 */
   private readonly frameLimits: RateLimiter;
   private readonly ipSalt: KeySalt;
   private readonly limitSalt: KeySalt;
@@ -111,7 +92,6 @@ export class RelayHub {
     return this.auth.check(ctx, 'relay', 'relay.unauthorized', 'relay.device_suspended');
   }
 
-  /** 우편함 토큰. 실패는 IP(일 회전 HMAC)당 10분 20회까지만(넘으면 맞는 토큰도 창이 끝날 때까지 거부). */
   private async mailbox(ip: string, mbxId: string, token: unknown, which: 'read' | 'write'): Promise<string> {
     const k = `authf:${await this.ipSalt.hash(ip)}`;
     const f = await this.limits.limiter.count(k, RELAY.authFailureWindowMs);
@@ -119,13 +99,11 @@ export class RelayHub {
     try {
       return await this.o.svc.auth(mbxId, token, which);
     } catch (e) {
-      // 토큰 추측(우편함 없음·토큰 틀림)만 센다. DB 장애 같은 다른 실패를 세면 정상 토큰이 10분간 막힌다
       if (e instanceof ServiceError && e.code === 'relay.mailbox_not_found') await this.limits.limiter.hit(k, RELAY.authFailuresPerIp, RELAY.authFailureWindowMs);
       throw e;
     }
   }
 
-  /** 주기 정리(만료된 한도 창) */
   async sweep(): Promise<void> {
     await this.limits.limiter.sweep();
   }
@@ -138,7 +116,6 @@ export class RelayHub {
       return Array.isArray(v) ? undefined : v;
     };
 
-    // 폰이 이 계정에서 아직 쓰이는지(활성·연결 중). 지워졌거나 정지됐거나 다른 계정이면 아니다
     const peerAlive = async (acc: string, peer: string) => {
       const d = await this.o.directory.get(peer);
       return !!d && d.accountId === acc && d.role === 'mobile' && (d.state === 'active' || d.state === 'pending');
@@ -147,7 +124,6 @@ export class RelayHub {
       const c = await this.device(ctx);
       if (c.role !== 'desktop') fail('account.scope_denied');
       const b = V.mailbox(ctx.body);
-      // 이어질 폰은 같은 계정의 쓰이는 폰이어야 한다(남의 폰 ID로 자리를 만들지 못하게)
       if (b.peer && !(await peerAlive(c.acc, b.peer))) fail('request.param_rejected');
       await svc.createMailbox(c.dev, b, (p) => peerAlive(c.acc, p));
       return json(201, { ok: true });
@@ -156,13 +132,11 @@ export class RelayHub {
       const c = await this.device(ctx);
       if (c.role !== 'desktop') fail('account.scope_denied');
       const key = await this.mailbox(ctx.ip, ctx.params.id!, tok(ctx, 'x-mbx-write'), 'write');
-      // x-mbx-peer: 폰을 끊어 지우는 것이면 그 폰의 자리도 비운다(재발급은 보내지 않는다)
       const peer = ctx.headers['x-mbx-peer'];
       await svc.deleteMailbox(c.dev, key, typeof peer === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(peer) ? peer : undefined);
       this.closeMailbox(key, CLOSE.gone);
       return json(204, undefined);
     });
-    // 오프라인 의도 봉투: 폰이 넣고(쓰기 토큰) PC가 꺼낸다(읽기 토큰)
     r.add(
       'POST',
       '/v1/mailboxes/:id/envelopes',
@@ -181,7 +155,6 @@ export class RelayHub {
     r.add('GET', '/v1/mailboxes/:id/envelopes', async (ctx) => {
       const c = await this.device(ctx);
       if (c.role !== 'desktop') fail('account.scope_denied');
-      // 선택 쿼리 after(seq, 정수). 다른 쿼리 키·형식은 거부. DPoP htu는 쿼리를 빼고 origin + 경로다
       const keys = [...ctx.query.keys()];
       const afterRaw = ctx.query.get('after');
       if (keys.some((k) => k !== 'after') || ctx.query.getAll('after').length > 1 || (afterRaw !== null && !/^(0|[1-9]\d{0,14})$/.test(afterRaw))) fail('request.param_rejected');
@@ -195,7 +168,6 @@ export class RelayHub {
       const key = await this.mailbox(ctx.ip, ctx.params.id!, tok(ctx, 'x-mbx-read'), 'read');
       return json(200, { deleted: await svc.ack(key, seq) });
     });
-    // 우편함 번들 슬롯: PC가 게시(쓰기), 폰이 읽기
     r.add('PUT', '/v1/mailboxes/:id/bundle', async (ctx) => {
       const c = await this.device(ctx);
       if (c.role !== 'desktop') fail('account.scope_denied');
@@ -211,7 +183,6 @@ export class RelayHub {
       if (!b) fail('relay.mailbox_not_found');
       return json(200, { bundle: b!.toString('base64') });
     });
-    // 1회용 페어링 룸. 레코드(메모리)에 계정 없음. 계정당 시간당 5회는 한도 카운터(당일 솔트 HMAC 키)
     r.add('POST', '/v1/rooms', async (ctx) => {
       if (this.o.rooms === false) fail('request.not_found');
       const c = await this.device(ctx);
@@ -225,21 +196,17 @@ export class RelayHub {
       this.rooms.set(roomId, { conns: [], expires, timer, owner: sha256hex(c.dev), paired: false, redeemed: false });
       return json(201, { expiresAt: expires });
     });
-    // 계정 서비스의 긴급 정지·폐기 훅: 그 기기의 라이브 연결을 즉시 끊는다. 이후 연결·호출은 기기 상태 확인에서 막힌다.
     r.add(
       'POST',
       '/internal/v1/devices/:id/stopped',
       async (ctx) => {
         await this.o.internal.check(ctx);
         this.o.directory.invalidate?.(ctx.params.id!);
-        // 끊긴·정지된 폰의 우편함 자리를 비운다(PC가 우편함을 지우지 못했어도 자리가 풀린다)
         await svc.freePeer(ctx.params.id!);
         return json(200, { closed: this.stopDevice(ctx.params.id!) });
       },
       { raw: true },
     );
-    // 계정 서비스의 폰 대리 등록(페어링 7단계): 이 PC가 만든 룸에 폰이 붙었고 아직 쓰지 않았으면 한 번만 소비한다.
-    // 없음·만료·미페어링·다른 PC·이미 소비는 모두 같은 404(존재 오라클 없음)
     r.add(
       'POST',
       '/internal/v1/rooms/:id/redeem',
@@ -248,7 +215,6 @@ export class RelayHub {
       const { deviceId } = V.redeem(ctx.body);
       const room = this.rooms.get(ctx.params.id!);
       if (!room || room.expires <= svc.now() || !room.paired || !safeEqual(room.owner, sha256hex(deviceId))) fail('relay.room_unavailable');
-      // 룸 하나에 enroll 성공은 한 번(같은 키 재등록 200 포함). 룸 자체는 PAIR_OK·연결 종료까지 그대로 둔다. 409는 그 룸을 만든 PC에만 보인다
       if (room!.redeemed) fail('relay.room_used');
       room!.redeemed = true;
       return json(200, { ok: true });
@@ -267,7 +233,6 @@ export class RelayHub {
     r.add('GET', '/healthz', () => json(200, { ok: true }));
   }
 
-  /** 서버에 업그레이드 처리기를 붙인다. */
   attach(server: Server): void {
     server.on('upgrade', (req: IncomingMessage, socket: Duplex) => {
       const started = this.o.svc.now();
@@ -308,16 +273,14 @@ export class RelayHub {
     const ws = new WsConn(socket, { maxPayload: RELAY.frameMax, idleMs: RELAY.idleMs });
     const me: Live = { ws, deviceId: c.dev, side, fails: 0 };
     const slot = this.mailboxes.get(key) ?? {};
-    slot[side]?.ws.close(CLOSE.replaced); // 같은 쪽 새 연결이 옛 연결을 대신한다
+    slot[side]?.ws.close(CLOSE.replaced);
     slot[side] = me;
     this.mailboxes.set(key, slot);
     const other = () => this.mailboxes.get(key)?.[side === 'd' ? 'm' : 'd'];
-    // 기기 범위 토큰 만료 때 끊는다(재연결 때 다시 인증 = 긴급 정지·폐기가 늦어도 15분 안에 반영)
     const exp = setTimeout(() => ws.close(CLOSE.gone), Math.max(0, c.exp - this.o.svc.now()));
     exp.unref();
     ws.on({
       onMessage: (data, text) => {
-        // 앱 수준 keepalive(ws-link RELAY_PING): 상대에게 넘기지 않고 이 연결에만 답한다. 초당 1번을 넘는 ping은 버린다.
         if (text && data.length === PING.length && data.equals(PING)) {
           if (this.frameLimits.hit(`ping:${key}:${side}`, 1, 1000)) ws.send(PONG);
           return;
@@ -327,7 +290,7 @@ export class RelayHub {
           if (++me.fails >= RELAY.failuresPerConnection) ws.close(CLOSE.policy);
           return;
         }
-        if (!this.frameLimits.hit(`mbx:${key}`, RELAY.msgPerSecPerMailbox, 1000)) return; // 초과분은 드롭(프로토콜이 재전송)
+        if (!this.frameLimits.hit(`mbx:${key}`, RELAY.msgPerSecPerMailbox, 1000)) return;
         void this.o.svc.stat(kind, data.length).catch(() => undefined);
         other()?.ws.send(data);
       },
@@ -365,7 +328,6 @@ export class RelayHub {
         if (!this.frameLimits.hit(`room:${roomId}`, RELAY.msgPerSecPerMailbox, 1000)) return;
         for (const c of room!.conns) if (c !== ws) c.send(data);
       },
-      // 1회용: 어느 한쪽이 나가면 룸을 폐기한다(재참가 없음)
       onClose: () => this.closeRoom(roomId),
     });
   }
@@ -397,7 +359,6 @@ export class RelayHub {
     return n;
   }
 
-  /** 시험·종료용 */
   closeAll(): void {
     for (const k of [...this.mailboxes.keys()]) this.closeMailbox(k, CLOSE.normal);
     for (const k of [...this.rooms.keys()]) this.closeRoom(k);

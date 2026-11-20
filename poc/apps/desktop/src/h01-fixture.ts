@@ -1,6 +1,3 @@
-// 가짜 H-01 페이지(127.0.0.1). 홈택스 대신 발급 폼·발급·발급목록·메일발송목록을 흉내 낸다. 실제 홈택스 화면·보안 모듈·서명은 흉내 내지 않는다.
-// 요청률 정책 시험(D03 §7)용 차단 안내·추가 인증·자동입력방지 페이지와 HTTP 상태 손잡이도 있다(문구 가상).
-// 셀렉터·URL은 PoC-3 전까지 이 페이지에 맞춘 값이다(engine h01/portal.ts의 fixture 사전). 모든 값은 가상이다.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -17,32 +14,17 @@ export interface IssuedInvoice {
 }
 
 export interface H01Knobs {
-  /** 폼에 보이는 공급자(로그인한 사업자). 프로필과 다르면 s19c assert가 막아야 한다. */
   supplier: { bizNo: string; name: string };
-  /** 이 값이 있으면 폼 스크립트가 해당 칸을 바꾼다(게이트 뒤 화면 값이 바뀌는 경우). */
   mutate: { field: string; value: string } | null;
-  /** 발급목록 반영 지연(ms). */
   reflectDelayMs: number;
-  /** 발급 요청을 받고도 목록에 남기지 않는다(verify unknown). */
   dropIssue: boolean;
-  /** 발급을 거절하고 오류 문구를 보인다(명시적 실패 신호). */
   failIssue: boolean;
-  /** 발급목록 조회 응답 지연(ms). 기준선 조회 중 [중지] 시험용. */
   lookupDelayMs: number;
-  /** 받는 이메일 칸을 비우면 60ms 뒤 이 값으로 다시 채운다(포털이 거래처 등록 메일을 되살리는 경우). 폼을 열 때 정해진다. */
   refillEmail: string | null;
-  /**
-   * 차단 신호 시험(D03 §7). 'page': 발급 화면을 차단 안내 페이지(/notice/blocked)로 보낸다. 'dialog': 폼이 차단 문구 알림창을 띄운다.
-   * 'lookup': 발급목록 조회를 차단 안내 페이지로 보낸다. 문구·URL은 가상이다(엔진 fixture 사전과 맞춘 값).
-   */
   block: 'page' | 'dialog' | 'lookup' | null;
-  /** 다음 N번 발급 화면을 추가 인증 페이지(/auth/extra)로 보낸다. */
   extraAuth: number;
-  /** 다음 N번 발급 화면을 자동입력방지 페이지(/auth/captcha)로 보낸다. */
   captcha: number;
-  /** 이 경로(pathname)에 이 HTTP 상태로 답한다(403·429 시험). */
   status: { path: string; code: number } | null;
-  /** 폼이 네비게이션 없이(XHR로) 이 문구의 안내 레이어를 띄운다(WebSquare 레이어 알림 흉내). */
   notice: string | null;
 }
 
@@ -51,9 +33,7 @@ export const FIXTURE_BLOCK_TEXT = '비정상적인 접근이 감지되어 이용
 export interface H01Fixture {
   origin: string;
   issued: IssuedInvoice[];
-  /** 받은 발급 POST 수(목록 반영과 무관하게 "실제로 제출됐는가"). */
   posts: () => number;
-  /** 받은 요청(favicon 제외). 차단 신호 뒤 요청이 없는지 본다. */
   requests: Array<{ at: number; method: string; path: string }>;
   knobs: H01Knobs;
   close(): Promise<void>;
@@ -62,14 +42,11 @@ export interface H01Fixture {
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const page = (title: string, body: string) => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${esc(title)}</title></head><body>${body}</body></html>`;
 const pad = (n: number, w = 2) => String(n).padStart(w, '0');
-/** 작성일자는 PC 시간대가 아니라 한국 시간(KST) 날짜다(I-8, ADR-027 결정 1). */
 export const today = (now = Date.now()) => new Date(now + 9 * 3_600_000).toISOString().slice(0, 10);
 
-/** 가짜 사업자 조회 대장(공급받는자 확인 버튼). */
 type Registry = Record<string, string>;
 
 function form(k: H01Knobs): string {
-  // 합계는 공급가액 + 세액을 페이지가 계산해 보이는 별도 요소(readbackOf가 아닌 표시값)다.
   return page('전자세금계산서 건별발급', `
 <form id="invoice-form" aria-label="전자세금계산서 건별발급" method="POST" action="/invoice/issue">
   <fieldset><legend>공급자</legend>

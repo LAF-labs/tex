@@ -1,4 +1,3 @@
-// save_pdf 포트 구현(M2-3, D02 §4, D05 §3.3, D07 §1): 금고 #164 RPC·이벤트 + staging → 보관함. 가짜 금고·가짜 보관함, 실제 파일.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';

@@ -1,4 +1,3 @@
-// FileEventLog 줄 형식: 머리 키(at·c·code)는 필드가 덮지 못한다(WIN-REALDEVICE §7: main.engine_exit {code: 1}이 `{"code":1}`로만 남던 문제).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { FileEventLog } from '@sax/platform';

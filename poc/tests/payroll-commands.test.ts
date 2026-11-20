@@ -1,5 +1,3 @@
-// 급여·꾸러미·S-06 엔진 명령(팀장 결정 2026-11-06): protocol 이름 = BundleService 처리 = entry.ts 배선, 모두 main 전용.
-// data-service 형식(인자 검사 → code만 가진 오류, 모르는 이름 unknown_method, 프로필 범위)과 ColumnCipher 배선(DB 키를 지우기 전 파생, 로그 없음)을 확인한다.
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -11,7 +9,6 @@ import { ColumnCipher, deriveColumnKey, DocumentRepo, EmployeeRepo, openDatabase
 import type { InsuranceKind as DKind, InsuranceNoticeMatch as DMatch, InsuranceNoticeMatchInput as DInput } from '@sax/docparse';
 import { COMMANDS, GATE_ONLY_METHODS, MAIN_ONLY, PAYROLL_COMMANDS, PAYROLL_MAIN_ONLY, PAYROLL_READ_QUERIES, READ_QUERIES, RUN_COMMANDS } from '@sax/engine/protocol';
 
-// bundle이 docparse 타입을 같은 모양으로 다시 적었다(엔진 → bundle → docparse → 엔진 순환을 피하려고). 두 쪽이 서로 들어가야 한다.
 const same = <A, B>(_a: A extends B ? (B extends A ? true : false) : false): void => undefined;
 same<BKind, DKind>(true);
 same<BInput, DInput>(true);
@@ -42,7 +39,6 @@ before(() => {
   const profiles = new ProfileRepo(db);
   const base = { corpNo: null, repName: null, bizType: null, bizItem: null, address: null, email: null, signMethod: null };
   profileId = profiles.upsert({ kind: 'business', displayName: '가게', bizNo: syntheticBizNo(11), ...base }).id;
-  // 프로필은 종류마다 하나다. 다른 프로필은 개인 프로필로 만든다
   otherProfile = profiles.upsert({ kind: 'personal', displayName: '개인', bizNo: null, ...base }).id;
   const emps = new EmployeeRepo(db, cipher);
   kim = emps.create({ profileId, name: '김직원', birthDate: '1990-01-01', hiredOn: '2025-01-02', basePay: 2_500_000, dependents: 1, rrn: '900101-1234567', nontax: { meal: 200_000 } }).id;
@@ -74,7 +70,6 @@ describe('급여·꾸러미·S-06 명령 목록과 엔진 배선', () => {
 
   it('BundleService가 모든 이름을 처리하고(unknown_method 아님), 모르는 이름은 unknown_method', async () => {
     for (const m of ALL) {
-      // 인자 없이 부르면 검사 오류(code)가 나야 한다. 인자가 필요 없는 표 판 조회만 성공한다
       const err = await call(m, {}).then(() => null, (e: Error & { code?: string }) => e);
       if (m === 'db.query.rateTables.installed') assert.equal(err, null);
       else assert.ok(err && typeof err.code === 'string' && err.code !== 'unknown_method', `${m}: ${err?.code}`);
@@ -91,7 +86,6 @@ describe('급여·꾸러미·S-06 명령 목록과 엔진 배선', () => {
     assert.ok(entry.indexOf('columnKey.fill(0)') > cipher && entry.indexOf('columnKey.fill(0)') < wipe);
     assert.ok(entry.includes("new BundleService(db, cipher, { exportDir: path.join(paths.root, 'exports') })"));
     for (const line of entry.split('\n').filter((l) => /log\.event|postMessage/.test(l))) assert.ok(!/cipher|columnKey/i.test(line), line);
-    // 중계 허용 목록에 더하고, data-service보다 먼저 BundleService로 보낸다
     assert.ok(entry.includes('for (const m of PAYROLL) ALLOWED.add(m);'));
     assert.ok(entry.indexOf('if (PAYROLL.has(method))') < entry.indexOf('return data.handle(method, params);'));
   });
@@ -157,7 +151,6 @@ describe('급여대장 명령', () => {
     await code('payroll.confirm', { profileId, month: '2026-10', revision: 0 }, 'bad_revision');
     await code('payroll.revise', { profileId, month: '2026-09' }, 'not_found');
     await code('payroll.saveDraft', { profileId: otherProfile, month: '2026-10', paidOn: '2026-11-10', noticeDocIds: [noticeDoc] }, 'document_not_found');
-    // 남의 프로필 조회에는 이 프로필 직원이 섞이지 않는다
     const others = await call<Array<{ name: string }>>('db.query.payroll.employees', { profileId: otherProfile, month: '2026-10' });
     assert.deepEqual(others.map((e) => e.name), ['남의직원']);
   });

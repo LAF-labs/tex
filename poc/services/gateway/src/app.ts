@@ -1,7 +1,3 @@
-// 게이트웨이 HTTP. 기기 범위 토큰 + DPoP만 받는다. 계정 세션 토큰은 거부(규칙: X-Device-Id는 토큰에서 유도, N-41).
-// - 데스크톱: gateway 범위. 모든 경로.
-// - 폰(ADR-047, PC가 꺼져 있을 때 폰 대화): chat 범위. 대화 범위 실행 토큰, 폰 대화 툴셋의 respond, 사용량 조회만. 그 밖은 403 account.scope_denied.
-//   역할과 범위는 짝으로 본다(데스크톱+gateway, 폰+chat). 폰 토큰에 gateway가, 데스크톱 토큰에 chat만 있어도 통과하지 않는다.
 import { DailySalt, DeviceAuth, Router, fail, json, validator, type Ctx, type DeviceDirectory, type TokenVerifier } from '@sax/svc-shared';
 import { CodefUnavailable, type CodefTokenSource } from './codef.ts';
 import { AGENT_TOOLSETS } from '@sax/model';
@@ -33,7 +29,6 @@ export interface GatewayAppOpts {
   verifier: TokenVerifier;
   directory: DeviceDirectory;
   publicOrigin: string;
-  /** CODEF 토큰 원천(계좌 자동조회). 없으면 /v1/codef/token은 503 gateway.codef_off */
   codef?: CodefTokenSource | null;
 }
 
@@ -41,21 +36,18 @@ export function gatewayRouter(o: GatewayAppOpts): Router {
   const { svc } = o;
   const r = new Router();
   const auth = new DeviceAuth({ verifier: o.verifier, directory: o.directory, publicOrigin: o.publicOrigin, now: svc.now });
-  // 한도는 서비스와 같은 카운터·솔트(DB면 인스턴스 공유). 로그용 aid 솔트는 메모리만(DB에 둘 이유 없음)
   const idSalt = new DailySalt('aid', svc.now);
   const limitSalt = svc.limits.idSalt('gw-limit');
   const limit = async (prefix: string, id: string, n: number, windowMs: number) => {
     const h = await svc.limits.limiter.hit(`${prefix}:${await limitSalt.hash(id)}`, n, windowMs);
     if (!h.ok) fail('policy.rate_limited', { retryAfterSec: h.retryAfterSec });
   };
-  /** logAid=false: 진위확인 경로는 접근 로그에 계정 식별자도 남기지 않는다(D09 §4.1) */
   const device = async (ctx: Ctx, logAid = true) => {
     const c = await auth.check(ctx, 'gateway', 'gateway.unauthorized', 'gateway.device_suspended');
     if (c.role !== 'desktop') fail('account.scope_denied');
     if (logAid) ctx.logAid = idSalt.hash(c.acc);
     return c;
   };
-  /** 대화 경로(run-tokens·respond·usage): 데스크톱(gateway 범위) 또는 폰(chat 범위). 폰이 무엇을 부를 수 있는지는 경로마다 다시 본다. */
   const chatter = async (ctx: Ctx) => {
     const c = await auth.check(ctx, ['gateway', 'chat'], 'gateway.unauthorized', 'gateway.device_suspended');
     if (!c.scp.includes(c.role === 'desktop' ? 'gateway' : 'chat')) fail('account.scope_denied');
@@ -74,7 +66,6 @@ export function gatewayRouter(o: GatewayAppOpts): Router {
     'POST',
     '/v1/decide',
     async (ctx) => {
-      // 폰은 대화 판정 번들 하나만(ADR-051 대표 결정 2, ADR-057). 한도를 세기 전에 거른다.
       const c = await chatter(ctx);
       if (!decideAllowed(c.role, (ctx.body as { bundleId?: unknown } | null)?.bundleId)) fail('account.scope_denied');
       await limit('l1', c.acc, GATEWAY.l1PerMinute, MIN);
@@ -88,7 +79,6 @@ export function gatewayRouter(o: GatewayAppOpts): Router {
     async (ctx) => {
       const c = await chatter(ctx);
       const toolset = (ctx.body as { toolset?: unknown } | null)?.toolset;
-      // 역할 밖 툴셋은 한도를 세기 전에 거른다(폰이 남의 툴셋 이름으로 계정의 분당 한도를 태우지 못하게)
       if (!toolsetAllowed(c.role, toolset)) fail('account.scope_denied');
       if ((AGENT_TOOLSETS as readonly unknown[]).includes(toolset)) await limit('agent', c.acc, GATEWAY.agentPerMinute, MIN);
       else await limit('l2', c.acc, GATEWAY.l2PerMinute, MIN);
@@ -96,7 +86,6 @@ export function gatewayRouter(o: GatewayAppOpts): Router {
     },
     { maxBodyBytes: 1024 * 1024 },
   );
-  // 오늘 AI 사용 금액과 한도(체험·유료, KST 새벽 4시 초기화). 앱의 사용량 표시
   r.add('GET', '/v1/usage', async (ctx) => json(200, await svc.dailyUsage(await chatter(ctx))));
   r.add('POST', '/v1/biz/status', async (ctx) => {
     const c = await device(ctx, false);
@@ -104,8 +93,6 @@ export function gatewayRouter(o: GatewayAppOpts): Router {
     await limit('biz', c.acc, GATEWAY.bizPerMinute, MIN);
     return json(200, await svc.bizStatus(b.b_no));
   });
-  // CODEF 접근 토큰(계좌 자동조회, 대표 결정 2026-11-12). 시크릿은 서버에만 있고 PC에는 토큰·만료·환경·공개키만 간다.
-  // 계정 식별자도 접근 로그에 남기지 않는다(진위확인과 같다). 토큰은 응답 본문에만 있고 로그·이벤트에 쓰지 않는다.
   r.add('POST', '/v1/codef/token', async (ctx) => {
     const c = await device(ctx, false);
     V.codefToken(ctx.body ?? {});

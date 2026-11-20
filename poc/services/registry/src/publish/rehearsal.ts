@@ -1,8 +1,3 @@
-// 게시 리허설(--dry-run)과 시험용 임시 서명. 운영 키는 여기 없다: 키는 실행마다 메모리에서 만들고 버린다(디스크·출력에 남지 않는다).
-// dry-run은 두 가지를 한다(서명·게시 없음).
-//   1. 실제 레지스트리를 읽기만 해서 prepare(실제 핀): 무엇을 올릴지, 실제 서명 때 화면에 나올 manifest 확인 코드, 엔진 로더 연습.
-//   2. 같은 소스로 처음부터 끝까지: 임시 핀(실제 핀과 같은 keyId·keyEpoch)의 로컬 레지스트리(메모리, 실제 레지스트리의 지금 문서로 채움)에
-//      prepare → 임시 키 서명 → assemble → 서명 → push(관문 PUT·되읽기·로그 증명). 운영 레지스트리에는 PUT을 보내지 않는다.
 import { createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, sign as edSign, type KeyObject } from 'node:crypto';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -29,7 +24,6 @@ export class MemorySigner implements KeyStoreBackend {
   constructor(seeds: ReadonlyMap<string, Buffer> = new Map()) {
     for (const [id, s] of seeds) this.keys.set(id, createPrivateKey({ key: Buffer.concat([PKCS8_ED25519, s]), format: 'der', type: 'pkcs8' }));
   }
-  /** 새 임시 키(시드는 밖으로 내보내지 않는다) */
   add(keyId: string): Buffer {
     const { privateKey } = generateKeyPairSync('ed25519');
     this.keys.set(keyId, privateKey);
@@ -72,7 +66,6 @@ export function ephemeralTrust(like: TrustRoot): { trust: TrustRoot; signer: Mem
   for (const [role, ids] of Object.entries(like.keys) as Array<[Role, Record<string, string>]>) {
     keys[role] = {};
     for (const id of Object.keys(ids)) {
-      // 타임스탬프 키는 로컬 레지스트리의 온라인 키(REGISTRY_LOG_SIGNING_KEY)로 넘긴다. 서명기에는 넣지 않는다
       if (role === 'timestamp') keys[role][id] = raw32(createPublicKey(createPrivateKey({ key: Buffer.concat([PKCS8_ED25519, tsSeed]), format: 'der', type: 'pkcs8' }))).toString('base64');
       else keys[role][id] = signer.add(id).toString('base64');
     }
@@ -148,7 +141,6 @@ export interface DryRunOpts {
   work: Work;
   src: PublishFs;
   sources: string[];
-  /** 실제 레지스트리(읽기만) */
   registry: RegistryClient;
   trust: TrustRoot;
   trustPath: string;
@@ -175,13 +167,11 @@ export async function dryRun(o: DryRunOpts): Promise<DryRunReport> {
   o.out(`dry-run 1/2: 실제 레지스트리 ${o.registry.origin}를 읽어 계획(서명·게시 없음)`);
   const plan = await prepare({ ...o, work: { dir: path.join(o.work.dir, 'plan'), fs: fsys }, rehearsalSign: real.sign, rehearsalTrust: real.trust });
 
-  // 2. 로컬 레지스트리를 실제 레지스트리의 지금 문서로 채운다(같은 monotonic에서 시작). 실제 키로 서명된 기존 패키지는 임시 핀으로 검증할 수 없어 인덱스에 잇지 않는다.
   const seed = new Map<string, Buffer>();
   for (const k of ['registry/revoked_keys.json', 'registry/status.json', `registry/${o.channel}/index.json`, 'policy/current.json']) {
     const b = await o.registry.get(`/${k}`);
     if (b) seed.set(k, b);
   }
-  // 정책 {ver}.json도 같이(관문은 같은 버전 파일이 있으면 같은 내용만 받는다)
   const cur = seed.get('policy/current.json');
   const ver = cur ? (JSON.parse(cur.toString('utf8')) as { version?: unknown }).version : undefined;
   if (typeof ver === 'string' && /^\d{4}\.\d{2}(\.\d+)?$/.test(ver)) {
@@ -198,7 +188,6 @@ export async function dryRun(o: DryRunOpts): Promise<DryRunReport> {
     const trustPath = path.join(w.dir, 'trust.json');
     fsys.mkdir(w.dir);
     fsys.write(trustPath, trustBytes);
-    // 폐기 목록은 실제 루트 서명을 지우고 임시 루트 키로 같은 내용에 다시 서명한다(모양·규칙만 본다)
     const revoked = o.revoked ? ({ ...structuredClone(o.revoked), signatures: [] } as RevokedKeys) : undefined;
     const quiet = () => undefined;
     const rs = rehearsalPackageSigner(eph.trust);

@@ -1,4 +1,3 @@
-// 내부 호출 서명(INTERNAL_CALL_KEY HMAC, 팀장 결정 2026-11-06 #135 (1)): 서명 범위(메서드·경로·본문 해시·시각·nonce), ±60초, 1회용, 상수 시간 비교.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { describe, it } from 'node:test';
@@ -45,12 +44,11 @@ describe('내부 호출 서명', () => {
     assert.equal(await code(auth.check(ctx('GET', p, '', signInternalCall(key, 'GET', p, '', T + INTERNAL_CALL_SKEW_MS + 1)))), '401 account.unauthorized', '미래 ts');
     assert.equal(await code(auth.check(ctx('GET', p, '', signInternalCall(key, 'GET', p, '', T - INTERNAL_CALL_SKEW_MS)))), 'ok', '경계 -60초');
     const sig = signInternalCall(key, 'GET', p, '', T);
-    // 같은 nonce에 다른 서명(위조)은 401이고 nonce를 태우지 않는다 → 진짜 요청은 통과
     const forged = sig.replace(/sig=.*/, `sig=${'A'.repeat(43)}`);
     assert.equal(await code(auth.check(ctx('GET', p, '', forged))), '401 account.unauthorized');
     assert.equal(await code(auth.check(ctx('GET', p, '', sig))), 'ok');
     assert.equal(await code(auth.check(ctx('GET', p, '', sig))), '401 account.unauthorized', '재전송');
-    now = T + INTERNAL_CALL_SKEW_MS + 2; // 창이 지나면 nonce 기록은 지워져도 시각 검사가 막는다
+    now = T + INTERNAL_CALL_SKEW_MS + 2;
     assert.equal(await code(auth.check(ctx('GET', p, '', sig))), '401 account.unauthorized', '창 밖 재전송');
   });
 

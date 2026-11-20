@@ -1,8 +1,3 @@
-// S-06 4대보험 고지내역 → 직원 매칭(데이터 트랙, docparse #78 제안·팀장 전달 2026-11-05).
-// docparse는 읽기만 하고 매칭하지 않는다. 입력·출력 형식은 @sax/docparse의 InsuranceNoticeMatchInput·InsuranceNoticeMatch 그대로다.
-// 타입은 여기서 같은 모양으로 다시 적는다. 엔진이 이 패키지를 가져오는데 docparse가 엔진을 가져와서, 직접 가져오면 의존이 돌기 때문이다.
-// 두 모양이 같은지는 tests/payroll-commands.test.ts가 타입으로 확인한다.
-// 판정이 아니라 후보 제시다: 사장님이 확인 카드에서 고른다. 주민번호는 쓰지 않는다(이름·생년월일만, 직원 주민번호를 복호화하지 않는다).
 import { EmployeeRepo, type ColumnCipher, type Db } from '@sax/db';
 import type { NoticeAmounts } from '@sax/payroll';
 import { BundleError } from './items.ts';
@@ -13,9 +8,7 @@ export type InsuranceKind = 'pension' | 'health' | 'ltc' | 'employment' | 'indus
 /** @sax/docparse InsuranceNoticeMatchInput과 같다(docparse insurance_notice 결과를 담는 S-06 매칭 입력) */
 export interface InsuranceNoticeMatchInput {
   profileId: string;
-  /** 고지 년월. 사장님이 확인 카드에서 고친 값 */
   month: string;
-  /** 고지내역 원본 documents.id(payroll_months.notice_doc_ids_json에 들어갈 값) */
   noticeDocId: string;
   rows: Array<{
     rowId: string;
@@ -33,14 +26,11 @@ export interface InsuranceNoticeMatchInput {
 export interface InsuranceNoticeMatch {
   rowId: string;
   employeeId: string | null;
-  /** name_birth: 이름·생년월일 일치, name_only: 이름만(생년월일 없음), ambiguous: 후보 여럿, none: 없음 */
   basis: 'name_birth' | 'name_only' | 'ambiguous' | 'none';
   candidates?: string[];
 }
 
-/** 이름 비교: 앞뒤·가운데 공백을 지우고 NFC로 맞춘다(고지내역은 '홍 길동'처럼 띄어 쓴 경우가 있다) */
 const normName = (s: string): string => s.normalize('NFC').replace(/\s+/g, '');
-/** 후보 id는 정렬해 늘 같은 순서로 낸다(입사일이 같으면 목록 순서가 정해지지 않는다) */
 const ids = (es: readonly { id: string }[]): string[] => es.map((e) => e.id).sort();
 
 /**
@@ -67,8 +57,6 @@ export function matchInsuranceNotice(db: Db, cipher: ColumnCipher, input: Insura
   });
 }
 
-// ── S-06 확인 카드(데스크톱이 그리는 데이터). 문구는 데스크톱이 갖는다 ──────────────────────────
-
 /** 카드에 보이는 직원 한 명(그 달 재직) */
 export interface NoticeCardEmployee {
   employeeId: string;
@@ -79,21 +67,15 @@ export interface NoticeCardEmployee {
 
 /** 고지내역의 한 사람(같은 이름·생년월일의 보험별 행을 묶음) */
 export interface NoticeCardPerson {
-  /** 묶음 키(정규화한 이름|생년월일). 사장님 선택을 이 키로 돌려받는다 */
   key: string;
   name: string;
   birthDate: string | null;
   rowIds: string[];
-  /** 자동으로 맞은 직원(name_birth·name_only). 아니면 null */
   employeeId: string | null;
   basis: InsuranceNoticeMatch['basis'];
-  /** 고를 후보(ambiguous·none). 없으면 빈 배열이고 화면은 재직 직원 전체(card.employees)에서 고르게 한다 */
   candidates: NoticeCardEmployee[];
-  /** 근로자 부담 고지액(computePayroll의 notices). 산재는 사업주 부담뿐이라 넣지 않는다 */
   notices: Partial<NoticeAmounts>;
-  /** 같은 보험이 두 번 나온 종류(동명이인이 생년월일 없이 섞인 경우). 그 종류 금액은 notices에 넣지 않는다 */
   conflicts: InsuranceKind[];
-  /** 사장님이 골라야 한다: name_birth가 아니거나 conflicts가 있다(name_only도 확인을 받는다) */
   needsChoice: boolean;
 }
 
@@ -101,9 +83,7 @@ export interface NoticeCard {
   month: string;
   noticeDocId: string;
   people: NoticeCardPerson[];
-  /** 그 달 재직 직원 전체(고르기 목록) */
   employees: NoticeCardEmployee[];
-  /** 그 달 재직인데 고지내역에 자동으로 맞은 행이 없는 직원(입사 직후 미가입 등. 판정하지 않고 보여 주기만) */
   notOnNotice: NoticeCardEmployee[];
   needsChoice: number;
 }

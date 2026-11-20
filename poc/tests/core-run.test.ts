@@ -1,5 +1,3 @@
-// M1-4 실행 코어: 게이트 토큰(D03 §3, R-G2·R-G7·R-G8, B-10·B-12), 원장·gate_requests 연결(PK (intent_id, step_id)), 재시작 승격(D-45),
-// 체크포인트 복귀(§5.5), 상태 전이표·정지 분기·Running 진입 확인(§2, ADR-023 결정 5·6).
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -92,7 +90,6 @@ describe('Wmax(X) (D03 §3)', () => {
 
 describe('원장·gate_requests 연결 (R-G7·R-G8, B-33)', () => {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'sax-core-run-'));
-  // 연 DB를 닫은 뒤 지운다(Windows는 열린 파일을 지우지 못해 EPERM).
   const opened: Db[] = [];
   after(() => {
     for (const d of opened) d.close();
@@ -234,8 +231,6 @@ describe('체크포인트 복귀 (D03 §5.5, R-G2)', () => {
   });
   it('reload인데 expect가 거짓이면 핸드오프', async () => assert.equal(await reenterCheckpoint(cp(), probe({ expect: [false] }).p, tokens()), 'handoff'));
 });
-
-// ---- 상태 전이표 ----
 
 const OK: MachineCtx = { allowed: true, ledger: [] };
 const run = (st: RunState, ...evs: Array<[RunEvent, MachineCtx?]>) => {

@@ -1,5 +1,3 @@
-// 카드의 작성일자·수량×단가(ADR-049). 모델은 달·날과 수량·단가를 말한 그대로 넘기고, 날짜와 곱은 여기서 기기가 계산한다.
-// 순수 함수만 둔다(PC main과 폰이 같이 쓴다). 날짜는 KST 'YYYY-MM-DD' 문자열로만 다룬다(시간대 계산 없음).
 
 /** 공급가액 상한(엔진 draft()와 같다) */
 export const LINE_SUPPLY_MAX = 1e15;
@@ -33,7 +31,6 @@ export function issueDateRule(date: string, today: string): IssueDateRule {
   const m = Number(date.slice(5, 7));
   const filing = m <= 6 ? `${y}-07-25` : `${y + 1}-01-25`;
   if (today > filing) return 'past_period';
-  // 발급기한: 공급한 달 다음 달 10일(법 §34③ 특례, 국세청 안내)
   const ny = m === 12 ? y + 1 : y;
   const nm = m === 12 ? 1 : m + 1;
   return today > `${ny}-${pad(nm)}-10` ? 'late' : 'ok';

@@ -1,5 +1,3 @@
-// 시연 전용 채팅 해석(demo-model.ts): 플래그·키 읽기, 응답 검증, 실패 시 null(정규식으로 감)과 잠시 끄기,
-// 시연 목적지(OpenRouter)는 @sax/net/demo의 DemoEgress만 연다(ADR-035 W-5). 모의 OpenRouter는 127.0.0.1 서버다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';

@@ -1,6 +1,3 @@
-// 투명성 로그 확인(ADR-028 결정 2, D09 §8.3, RFC 9162): latest.json 바이트가 서명 헤드 아래 로그에 실린 최신 릴리스 항목인가.
-// 규칙 정본은 services/registry API.md "투명성 로그"와 src/log.ts 참조 검증기다(여기는 서비스에 기대지 않게 따로 둔다).
-// 미러 헤드 교차 확인은 아직 서버에 없다(API.md 범위 밖). 그래서 verified = 핀 키 헤드 서명 + 항목 + 포함 증명이다.
 import { createHash, createPublicKey, verify as edVerify } from 'node:crypto';
 import { jcs } from './jcs.ts';
 import type { Transparency } from './decide.ts';
@@ -20,7 +17,6 @@ export interface LoggedRelease {
 
 const TREE_HEAD_CONTEXT = 'SAX-tree-head-v1';
 const DEFAULT_MAX_SCAN = 256;
-/** 2^53 트리의 포함 경로도 53개를 넘지 않는다 */
 const MAX_PATH = 64;
 
 interface Head {
@@ -64,7 +60,6 @@ function parseHead(v: unknown, trust: TrustRoot): Head | null {
   return edOk(pinned[s.keyId]!, msg, s.sig) ? { treeSize, rootHash, timestamp } : null;
 }
 
-/** entries/{n}.json. 잎 해시는 서버 값을 믿지 않고 항목에서 다시 계산해 맞춘다. */
 function parseRecord(v: unknown, n: number): { entry: Entry; leafHash: string } | null {
   if (!isObj(v) || !exactKeys(v, ['entry', 'index', 'leafHash']) || v.index !== n || typeof v.leafHash !== 'string') return null;
   const e = v.entry;
@@ -74,7 +69,6 @@ function parseRecord(v: unknown, n: number): { entry: Entry; leafHash: string } 
   return leafHash === v.leafHash ? { entry: { path: e.path, sha256: e.sha256 }, leafHash } : null;
 }
 
-/** RFC 9162 §2.1.3.2. 경로가 모자라거나 남으면 null(형식 오류), 다 쓰면 계산한 루트. */
 function inclusionRoot(leafHash: Buffer, index: number, treeSize: number, path: readonly Buffer[]): Buffer | null {
   if (index < 0 || index >= treeSize) return null;
   let fn = index;
@@ -143,7 +137,6 @@ export async function checkReleaseLogged(o: {
     if (!proof) return 'unverified';
     const root = inclusionRoot(Buffer.from(found.leafHash, 'hex'), found.leafIndex, head.treeSize, proof);
     if (!root) return 'unverified';
-    // 형식이 맞는 증명이 서명 헤드와 다른 루트를 낸다: 서버가 자기 헤드와 어긋난 트리를 보인다(보안 이벤트)
     if (root.toString('hex') !== head.rootHash) return 'head_mismatch';
     o.cache?.set(digest, found);
     return 'verified';

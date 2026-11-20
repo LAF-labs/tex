@@ -1,4 +1,3 @@
-// D14 M7-4 전송 + SP-5(릴레이 재전송·드롭): 폰 보관함 → IK 세션 → PC 수신 큐 → 저장(모의 sink) → ack → 폰 삭제.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
@@ -65,7 +64,6 @@ async function world(relay = new MemoryRelay()) {
   const sink = new MemSink();
   const queue = new ReceiveQueue(sink);
   const outbox = new MemOutbox();
-  /** PC가 켜져 있을 때 한 세션: PC는 받은 봉투를 큐에 넘기고, 폰은 보관함을 비운다. */
   const session = async (o: { faults?: MemoryRelay['faults']; ackTimeoutMs?: number; maxRounds?: number } = {}) => {
     const pcLink = await w.relay.joinMailbox(pc.mbxId, { read: pc.tokRead, write: pc.tokWrite }, 'desktop');
     const phLink = await w.relay.joinMailbox(fromB64(phone.mbxId), { read: fromB64(phone.tokRead), write: fromB64(phone.tokWrite) }, 'mobile');
@@ -90,7 +88,6 @@ async function world(relay = new MemoryRelay()) {
     phLink.close();
     return res;
   };
-  /** PC 꺼짐: 폰만 우편함에 들어가 IK msg1을 보내고 응답이 없다. */
   const pcOffline = async () => {
     const phLink = await w.relay.joinMailbox(fromB64(phone.mbxId), { read: fromB64(phone.tokRead), write: fromB64(phone.tokWrite) }, 'mobile');
     const r = await openMobileSession(phLink, { pairId: phone.pairId, noise: w.phone.keys.noise, desktopStatic: phone.desktopStatic, nextTimestamp: clock, responseTimeoutMs: 100, hello: { appVersion: 'm', deviceListVersion: 2, capabilities: [] } });
@@ -122,7 +119,6 @@ describe('사진 전송', () => {
   it('PC가 꺼져 있으면 폰에 남고, 켜진 뒤 세션에서 보낸다', async () => {
     const t = await world();
     const { offer } = await addReceipt(t.outbox, 1000);
-    // PC 꺼짐: 우편함에 PC가 없다 → 세션이 열리지 않는다. 사진은 릴레이에 남기지 않는다(프레임 = 핸드셰이크 1개뿐)
     const before = t.w.relay.observed.length;
     assert.equal(await t.pcOffline(), null);
     assert.equal(t.w.relay.observed.length - before, 1);
@@ -138,7 +134,6 @@ describe('사진 전송', () => {
     const box = t.outbox.photos.get(offer.msgId)!;
     await t.session();
     assert.equal(t.sink.storeCalls, 1);
-    // 폰이 ack를 못 받았다고 가정하고 같은 항목을 다시 보낸다
     t.outbox.items.set(offer.msgId, item);
     t.outbox.photos.set(offer.msgId, box);
     const r = await t.session();
@@ -185,7 +180,6 @@ describe('사진 전송', () => {
     const box = t.outbox.photos.get(offer.msgId)!;
     box[box.length - 1]! ^= 1;
     await assert.rejects(() => t.outbox.readPhoto(offer.msgId));
-    // 손상 항목이 먼저 와도 뒤 항목은 보낸다(flush 전체가 멈추지 않는다)
     const { offer: good } = await addReceipt(t.outbox, 2000, 9);
     await enqueueCash(t.outbox, makeCashEntry('2026-11-05', 50_000, 5000));
     const r = await t.session();
@@ -261,7 +255,6 @@ describe('PC 수신 큐 한도', () => {
     await q.handle(ch, env('receipt.offer', offer));
     await q.handle(ch, env('receipt.chunk', { msgId: offer.msgId, index: 1, data: b64(jpeg.subarray(RECEIPT_CHUNK, RECEIPT_CHUNK + 5)) }));
     assert.equal(q.ignored, 2);
-    // 내용이 바뀐 청크(크기는 같음) → sha 불일치 → 전부 다시 요청
     const bad = jpeg.slice();
     bad[RECEIPT_CHUNK + 1]! ^= 1;
     await q.handle(ch, env('receipt.chunk', { msgId: offer.msgId, index: 0, data: b64(bad.subarray(0, RECEIPT_CHUNK)) }));

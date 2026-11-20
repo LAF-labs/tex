@@ -1,4 +1,3 @@
-// 푸시 디스패처: device_id → 봉인된 푸시 토큰(PUSH_TOKEN_KEY, AES-256-GCM, aad = 기기·플랫폼). 우편함 ID는 이 경로에 없다(D08 §8.1).
 import { fail, openAead, sealAead, type Sql } from '@sax/svc-shared';
 import type { Platform, PushSender, WakeKind } from './senders.ts';
 
@@ -30,12 +29,10 @@ export class PushService {
     await this.d.db.run('INSERT INTO push_tokens (device_id, platform, sealed_token) VALUES ($1, $2, $3) ON CONFLICT (device_id) DO UPDATE SET platform = excluded.platform, sealed_token = excluded.sealed_token', [deviceId, platform, sealed]);
   }
 
-  /** 기기 폐기·긴급 정지·앱의 해제: 즉시 삭제(D08 §8.1) */
   async remove(deviceId: string): Promise<boolean> {
     return (await this.d.db.run('DELETE FROM push_tokens WHERE device_id = $1', [deviceId])) > 0;
   }
 
-  /** 내용 없는 깨우기(종류만, ADR-053 결정 3). 종류는 저장하지 않는다. 공급사가 토큰 무효를 알리면 저장 토큰을 지운다. */
   async wake(deviceId: string, kind: WakeKind = 'update'): Promise<{ sent: boolean }> {
     const r = await this.d.db.one<{ platform: Platform; sealed_token: Buffer }>('SELECT platform, sealed_token FROM push_tokens WHERE device_id = $1', [deviceId]);
     if (!r) return fail('push.token_not_found');

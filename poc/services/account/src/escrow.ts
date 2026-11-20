@@ -1,9 +1,3 @@
-// 계정 열쇠 보관(ADR-050, 대표 결정 2026-11-18): 쓰던 PC 없이 로그인한 새 PC가 이메일 인증만으로 계정 열쇠(RK)를 받게 한다.
-// - 로그인된 PC가 RK를 이 서비스의 보관 키(X25519, KEY_ESCROW_KEY)로 HPKE 봉인해 맡긴다. 저장하는 것은 그 봉인문이다.
-// - 새 PC가 계정 세션으로 받으러 오면 여기서 열어, 그 PC의 넘겨받기 키로 다시 봉인해 준다. 평문 RK는 그 호출 동안만 메모리에 있다.
-// 이 서비스는 RK를 열 수 있다(보관 키와 DB가 함께 새면 계정의 공유 기록을 읽고 기기를 더할 수 있다). 금고 안 자료(인증서·비밀번호)는 RK와 무관하다.
-// HPKE는 금고(packages/vault/src/crypto/ops.ts)와 같은 스위트다: RFC 9180 Base, DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305, seq 0.
-// 글자(info·aad 접두)는 @sax/remote contexts.ts의 rkEscrow·rkEscrowStore·rkEscrowClaim과 같다.
 import { createCipheriv, createDecipheriv, createHash, createHmac, createPrivateKey, createPublicKey, diffieHellman, hkdfSync, randomBytes, timingSafeEqual, type KeyObject } from 'node:crypto';
 import { key32 } from '@sax/svc-shared';
 
@@ -28,7 +22,6 @@ function dh(priv: KeyObject, pub: Uint8Array): Buffer {
   } catch {
     throw new Error('bad_point');
   }
-  // 낮은 차수 점(전부 0 출력)은 거부한다(RFC 7748 §6.1)
   if (out.every((b) => b === 0)) throw new Error('bad_point');
   return out;
 }
@@ -56,7 +49,6 @@ const labeledExtract = (suite: Buffer, salt: Uint8Array, label: string, ikm: Uin
 const labeledExpand = (suite: Buffer, prk: Uint8Array, label: string, info: Uint8Array, len: number) =>
   expand(prk, Buffer.concat([i2osp(len, 2), Buffer.from('HPKE-v1'), suite, Buffer.from(label), info]), len);
 
-/** RFC 9180 §5.1 KeySchedule(Base)에서 seq 0의 키·논스. */
 function hpkeKeys(shared0: Buffer, encap: Uint8Array, pkR: Uint8Array, info: Uint8Array): { key: Buffer; nonce: Buffer } {
   const eaePrk = labeledExtract(KEM_SUITE, EMPTY, 'eae_prk', shared0);
   const shared = labeledExpand(KEM_SUITE, eaePrk, 'shared_secret', Buffer.concat([encap, pkR]), 32);
@@ -119,7 +111,6 @@ export const escrowStoreAad = (aikPub: Uint8Array): Buffer => sha256(Buffer.from
 /** 받을 때의 aad(@sax/remote escrowClaimAad와 같다) */
 export const escrowClaimAad = (aikPub: Uint8Array, deviceId: string, linkPub: Uint8Array): Buffer => sha256(Buffer.from(CLAIM_AAD), aikPub, Buffer.from(deviceId, 'utf8'), linkPub);
 
-/** RK → AIK 공개키: HKDF-SHA256(RK, salt 없음, info "aik") 시드의 Ed25519 공개키(D08 §3, 금고 aikSeedFromRk와 같다). */
 function aikPubOf(rk: Uint8Array): Buffer {
   const seed = Buffer.from(hkdfSync('sha256', rk, EMPTY, 'aik', 32));
   try {
@@ -132,7 +123,6 @@ function aikPubOf(rk: Uint8Array): Buffer {
 export class KeyEscrow {
   private readonly key: KeyObject;
   private readonly pub: Buffer;
-  /** 보관 키의 공개키(표준 base64 32B). PC가 이 키로 봉인한다. 저장한 줄에도 적어 두어 키를 바꾸면 다시 맡기게 한다 */
   readonly publicKey: string;
   constructor(seed: Uint8Array) {
     this.key = x25519Priv(seed);
@@ -160,14 +150,12 @@ export class KeyEscrow {
     return null;
   }
 
-  /** 맡긴 봉인문이 이 계정의 열쇠인가(열어서 나온 AIK 공개키가 계정의 AIK와 같다). */
   holds(enc: Uint8Array, ct: Uint8Array, aikPub: Uint8Array): boolean {
     const rk = this.open(enc, ct, aikPub);
     rk?.fill(0);
     return !!rk;
   }
 
-  /** 맡긴 봉인문을 열어 새 PC의 넘겨받기 키로 다시 봉인한다. 열리지 않으면 null(보관 키가 바뀌었거나 다른 계정의 줄). */
   reseal(enc: Uint8Array, ct: Uint8Array, aikPub: Uint8Array, deviceId: string, linkPub: Uint8Array): { enc: Buffer; ct: Buffer } | null {
     const rk = this.open(enc, ct, aikPub);
     if (!rk) return null;

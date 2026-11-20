@@ -1,5 +1,3 @@
-// 경쟁 회귀(Bugbot 4차): expose()·attachEngine()의 await 사이에 허용 밖 이동(originLeft)이 끼어들어도
-// 거부된 타깃의 attachedToTarget이 엔진에 가지 않아야 한다. 가짜 CDP 연결로 순서를 결정적으로 만든다.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { describe, it } from 'node:test';
@@ -38,7 +36,6 @@ function deferred<T = Json>() {
 }
 const tick = () => new Promise((r) => setTimeout(r, 10));
 
-/** 실행 page(RUN)를 노출하고 엔진 루트 자동 부착까지 마친 Relay. */
 async function setup() {
   const conn = new FakeConn();
   const toEngine: Json[] = [];
@@ -59,7 +56,6 @@ async function setup() {
   await tick();
   const attachedTo = () => toEngine.filter((m) => m.method === 'Target.attachedToTarget').map((m) => ((m.params as Json).targetInfo as Json).targetId);
   assert.deepEqual(attachedTo(), ['RUN']);
-  // 노출 페이지가 연 팝업(목적지 모름)
   conn.emitEvent('Target.attachedToTarget', { sessionId: 'V-POP', targetInfo: { targetId: 'POP', type: 'page', url: '', openerId: 'RUN' }, waitingForDebugger: true });
   await tick();
   return { conn, relay, log, toEngine, attachedTo };
@@ -70,12 +66,10 @@ describe('relay 경쟁: expose 중 originLeft', () => {
     const { conn, relay, log, attachedTo } = await setup();
     const gate = deferred();
     conn.handlers.set('Page.enable', (_p, sid) => (sid === 'V-POP' && relay.targets.get('POP')?.pendingPopup === false ? gate.promise : {}));
-    // 허용 커밋 → confirmPopup → expose(POP) 진입, Page.enable에서 멈춤
     conn.emitEvent('Page.frameNavigated', { frame: { id: 'POP', url: 'http://127.0.0.1:1/ok' } }, 'V-POP');
     await tick();
     assert.equal(relay.targets.get('POP')!.exposing, true, 'expose 진행 중');
     assert.equal(relay.targets.get('POP')!.mainFrameId, undefined, 'mainFrameId가 아직 없다');
-    // 이때 허용 밖 이동 시작(targetId 기준 판정)
     conn.emitEvent('Page.frameStartedNavigating', { frameId: 'POP', url: 'https://evil.example/' }, 'V-POP');
     await tick();
     assert.equal(relay.targets.get('POP')!.revoked, true, '세션이 없어도 상태를 먼저 revoked로 기록');
@@ -111,7 +105,6 @@ describe('relay 경쟁: expose 중 originLeft', () => {
       const attached = conn.sent.filter((m) => m.method === 'Target.attachToTarget' && m.params.targetId === 'POP').length;
       const detached = conn.sent.filter((m) => m.method === 'Target.detachFromTarget' && String(m.params.sessionId).startsWith('E-')).length;
       assert.ok(attached <= 1 && detached >= attached, `${holdOn}: 만든 엔진 세션은 모두 분리(attach ${attached}, detach ${detached})`);
-      // 이후 허용 이동에도 재노출 없음(단조)
       conn.emitEvent('Page.frameNavigated', { frame: { id: 'POP', url: 'http://127.0.0.1:1/again' } }, 'V-POP');
       await tick();
       assert.deepEqual(attachedTo(), ['RUN']);

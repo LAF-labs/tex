@@ -1,16 +1,9 @@
-// 대화 한 턴의 이벤트(ADR-054)와 말풍선 반응(ADR-057). PC 엔진·main과 폰이 같이 쓴다. 순수 함수만 둔다.
-// - 반응은 판정(jev, chat_route_v1)이 고른다. 사용자 문장을 정규식으로 읽어 반응을 정하지 않는다(ADR-051 1절).
-// - 이모지는 허용 목록 넷뿐이다. 판정 값(이름)이 목록에 없으면 반응하지 않는다.
 
 /** 반응 허용 목록(ADR-057 결정 2). 키는 판정 선택지 값, 값은 화면 이모지. */
 export const REACTIONS = {
-  /** 알겠다, 좋다, 확인했다 */
   thumbs_up: '👍',
-  /** 맡긴 일을 보고 있다(접수) */
   eyes: '👀',
-  /** 됐다, 끝났다는 말에 맞장구 */
   check: '✅',
-  /** 고맙다, 수고했다는 인사에 */
   pray: '🙏',
 } as const;
 export type ReactionId = keyof typeof REACTIONS;
@@ -51,7 +44,6 @@ export function routeAck(answers: Record<string, RouteAnswer | undefined> | null
   const react = choice(answers.reaction);
   if (!mode || mode.confidence < REACTION_GTE || !(REPLY_MODES as readonly string[]).includes(mode.value) || mode.value === 'answer') return none;
   const advice = answers.mentions_tax_advice;
-  // 세무 판단을 묻는 말은 반응으로 넘기지 않는다(고정 문구 길). 답이 없으면 묻는 쪽으로 본다(번들 onRefusal assume_true).
   if (!advice || advice.type !== 'predicate' || (advice as { probability: number }).probability >= 0.5) return none;
   if (!react || !isReaction(react.value)) return none;
   return { mode: mode.value as ReplyMode, reaction: react.value };
@@ -91,8 +83,6 @@ export function routeAnswersOf(decisions: unknown): Record<string, RouteAnswer> 
   return out;
 }
 
-// ── 턴 이벤트(ADR-054 결정 2, ADR-057 결정 3) ──
-
 export type TurnEndStatus = 'completed' | 'failed' | 'cancelled';
 /** 확률 구간(값을 그대로 남기지 않는다) */
 export type ProbBand = 'gte90' | 'gte80' | 'lt80';
@@ -103,7 +93,6 @@ export type TurnEvent = Base &
   (
     | { type: 'turn.start'; device: 'pc' | 'phone'; msgId: string }
     | { type: 'route'; act: string | null; domain: string | null; mode: ReplyMode; band: ProbBand; unsure: boolean; failed: boolean }
-    /** 사용자 말풍선에 다는 반응. msgId는 반응을 받는 사용자 메시지다. */
     | { type: 'reaction'; msgId: string; reaction: ReactionId }
     | { type: 'path'; path: 'tools' | 'talk' | 'fixed' | 'reaction'; tools: string[] }
     | { type: 'tool.start'; tool: string; args: Record<string, unknown> }
@@ -172,7 +161,6 @@ export function turnSignal(events: readonly TurnEvent[]): TurnSignal {
         s.ms = start === null ? null : e.at - start;
         break;
       default:
-        // 모르는 종류는 건너뛴다(앞으로 호환)
         break;
     }
   }

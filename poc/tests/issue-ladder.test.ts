@@ -1,5 +1,3 @@
-// 발급 사다리(D03 §4.2): 홈택스 자동 → 홈택스 직접 → API. 칸이 끝나면 같은 발급 키의 원장으로 판정해 다음 길로 갈지 정한다.
-// 홈택스는 가짜 H-01 페이지(h01-engine.test.ts와 같은 픽스처·금고 중계·헤드리스 Chrome), API는 FakeIssueApi(네트워크 없음)다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -29,8 +27,6 @@ async function tempDb(): Promise<Db> {
   return openDatabase(path.join(dir, 'db.sqlite'), new Uint8Array(randomBytes(32)));
 }
 const key = (): IssueKey => parseIssueKey(ulid())!;
-// 발급 안 됨(not_committed)은 클릭 뒤 0건 조회 2번이 verify 상한 안에 끝나야 나온다. fixture 기본 상한 3초는 느린 Windows·macOS
-// 러너에서 조회 두 번을 다 담지 못해 in_doubt(held)로 끝나므로, 이 파일에서만 상한을 늘린다(결과 모름 시험은 그만큼 길어진다).
 const slowRunnerPortal = (origin: string) => ({ ...fixturePortal(origin), verify: { ...fixturePortal(origin).verify, maxMs: 15_000 } });
 const poll = <T>(pred: () => T | undefined, ms = 60_000): Promise<T> =>
   new Promise((resolve, reject) => {
@@ -44,7 +40,6 @@ const poll = <T>(pred: () => T | undefined, ms = 60_000): Promise<T> =>
     tick();
   });
 const settle = () => new Promise((r) => setTimeout(r, 300));
-/** 시험용 조회 하한: 두 번 "없음"이면 발급 안 됨(제품 기본은 API_LOOKUP_POLICY 60초·2번). */
 const FAST_LOOKUP: ApiLookupPolicy = { minElapsedMs: 0, lookups: 2, intervalMs: 0 };
 
 describe('발급 키 원장(v10 issue_key, ux_irr_issue_live)', () => {
@@ -134,7 +129,6 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
   let supply = 100_000;
 
   const sharedPage = async () => (page && !page.isClosed() ? page : (page = (await connectRunBrowser(h.client)).page));
-  /** 제품 실행기(engine 'ir')로 가짜 H-01 패키지를 돌린다(h01-golden.test.ts와 같은 패키지·조회·판정기). */
   const irPackage = (judge?: IrPackage['judge']): IrPackage => {
     const { pkg } = loadH01Fixture(fx.origin);
     const p = fixturePortal(fx.origin);
@@ -150,7 +144,6 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
   const gateCount = () => gateMsgs.filter((m) => m.t === 'gate.request').length;
   const gateAfter = (n: number) => poll(() => (gateMsgs.filter((m) => m.t === 'gate.request')[n] as { req: GateRequest } | undefined)?.req);
 
-  /** DB 하나에 실행 서비스·사다리 하나. 요청률 카운터·쿨다운이 시험끼리 섞이지 않게 시험마다 새로 만든다. */
   async function world(o: { api?: FakeIssueApi | null; page?: () => Promise<Page>; ir?: boolean; judge?: IrPackage['judge']; lookup?: ApiLookupPolicy; clock?: ApiClock } = {}) {
     const db = await tempDb();
     dbs.push(db);
@@ -180,7 +173,6 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
   }
   type World = Awaited<ReturnType<typeof world>>;
 
-  /** 홈택스 칸이 다음 길로 넘어온 뒤: 직접 칸 [못 해요] → 동의 카드 [동의하고 발급]. */
   async function passManualThenConsent(w: World, k: IssueKey) {
     await w.until(k, 'human');
     assert.ok(w.ladder.human(k, 'cannot'));
@@ -389,7 +381,6 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
     assert.deepEqual([absent.api!.calls, absent.api!.lookups], [1, 2], '"없음"은 하한(2번)을 채워야 발급 안 됨');
   });
 
-  /** 가짜 시계: sleep은 시간을 그만큼 바로 넘긴다. at(ms, fn)은 그 시각을 지날 때 한 번 부른다(원천이 늦게 처리하는 순간). */
   const fakeClock = () => {
     const c = { t: 0, sleeps: [] as number[], hooks: [] as Array<{ at: number; fn: () => void }> };
     const clock: ApiClock = {
@@ -412,7 +403,6 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
     w.ladder.consent(k, 'granted');
     const ex = await w.until(k, 'exhausted');
     assert.equal(ex.tried.at(-1)?.code, 'api.not_committed');
-    // 0초: 없음(1) → 30초: 없음(2), 아직 60초 전 → 60초: 없음(3) → 닫음.
     assert.deepEqual([w.api!.calls, w.api!.lookups, f.c.t, f.c.sleeps], [1, 3, 60_000, [30_000, 30_000]]);
   });
 
@@ -490,7 +480,6 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
   });
 
   it('제품 실행기(IR): 무장 전 사람 대기에서 [직접 발급함]을 누르면 발급 단계(s21) 원장 행에 발급 키를 붙여 남기고 held, API 0', async () => {
-    // 판정기(모델)가 응답하지 않으면 s19 decide.unavailable로 게이트 전 사람 대기다. 사장님이 그 사이 홈택스에서 직접 발급했다고 알린다.
     const w = await world({ ir: true, judge: { decide: async () => Promise.reject(new Error('gateway down')) } });
     const posts = fx.posts();
     const g = gateCount();

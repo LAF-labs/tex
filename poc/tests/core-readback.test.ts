@@ -1,6 +1,3 @@
-// M2-3 readback·입력 대조(D02 §2.1 B-06·§4.1·§8 s19a~s19f, D03 §3, D16 assert.*): 세 값 일치로 되읽어 고정하고,
-// 고정한 값으로만 합계 산술(s19d)·입력 대조(s19f)·사업자 대조(s19c)·작성일 대조(s19e)·게이트 카드를 만든다.
-// 리플레이: 골든 H-01(제품 원본 packages/engine/playbooks/hometax.invoice.issue)의 s19a → s20(게이트)을 가짜 페이지로 돌린다. 실제 포털 접속 없음.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { readbackCard } from '@sax/engine';
@@ -11,9 +8,6 @@ import {
 import { FakeAct, FakeClock, FakePage, type FEl } from './core-page-fakes.ts';
 import { bundleOutcomes, h01, lookups } from './core-fixtures.ts';
 
-// ---- 골든 H-01 픽스처로 만든 가짜 화면 ----
-
-/** 사전 항목마다 요소 하나: id = 사전 키, 역할·이름 = 첫 role 후보, 부모 = landmark. */
 function screenOf(dict: SelectorDict): FEl[] {
   return Object.entries(dict.entries).map(([k, e]) => {
     const role = e.candidates.find((c) => c.kind === 'role') as { role: string; name: string } | undefined;
@@ -21,7 +15,6 @@ function screenOf(dict: SelectorDict): FEl[] {
   });
 }
 
-/** 사용자가 정한 실행 입력(H-01 inputs 모양)과 내 사업자 프로필. */
 const INPUTS = {
   counterpart: { bizNo: '2208162517', name: '주식회사 받는곳', email: 'tax@Example.COM' },
   amounts: { supply: 1000000, tax: 100000 },
@@ -31,7 +24,6 @@ const INPUTS = {
 };
 const PROFILE = { bizNo: '1068114550' };
 
-/** 포털 양식에 보이는 값(fieldKey → 화면 문자열). 정상 상태는 입력과 같다(쉼표·하이픈은 포털 표시 형식). */
 const SCREEN: Record<string, string> = {
   supplierBizNo: '106-81-14550',
   supplierName: '주식회사 보내는곳',
@@ -59,7 +51,7 @@ function h01Run(o: { screen?: Partial<Record<string, string>>; a11y?: Partial<Re
     if (!e.fieldKey) continue;
     const el = page.els.get(k)!;
     el.value = screen[e.fieldKey] ?? '';
-    el.text = el.value; // 입력 역할이 아닌 칸(receiptType 라디오)은 보이는 텍스트를 읽는다
+    el.text = el.value;
     el.a11y = o.a11y?.[e.fieldKey] ?? el.value;
   }
   const scope = newScope({ inputs: o.inputs ?? INPUTS, profile: PROFILE, intentId: 'intent-1' });

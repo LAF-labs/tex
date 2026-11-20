@@ -1,5 +1,3 @@
-// 시연용 가상 서류 PDF를 만든다(문서함 [가져오기] 시연용, 오늘 기준 날짜). 실행: pnpm demo:pdfs → ~/Desktop/소버린AX-시연서류/.
-// 데모 사업장(가나다컴퍼니·가상 번호) 서류라 대상 일치로 들어간다. 이미 있으면 덮어쓴다.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app } from 'electron';

@@ -1,7 +1,3 @@
-// 대화 기록의 모양(ADR-047 결정 5·6). 대화는 기기마다 따로 둔다(ADR-046 결정 7): 이 기록은 만든 기기 밖으로 나가지 않는다. 순수 함수만 둔다.
-// - 메시지는 화면 문장(text, 가리지 않은 글)과 컨텍스트용 가린 글(ctx)을 같이 가진다. 둘 다 기기 안(폰은 봉인 저장)에만 있다.
-// - ctx는 "토큰이 든 문장 + 그 토큰의 값"이다. 대화 세션이 바뀌면 값으로 새 토큰을 받아 다시 쓴다(rebind).
-//   규칙으로 다시 가리지 않으므로 처음 보낼 때 가려진 것은 나중에도 똑같이 가려진다(토큰 번호는 세션을 넘어 남지 않는다).
 import { TOKEN_RE, type EntityKind, type Redactor } from '@sax/redaction';
 import type { PhoneReplyKind } from './tables.ts';
 import type { ReactionId } from './turn.ts';
@@ -47,17 +43,11 @@ export function rebind(red: Redactor, m: MaskedText): string {
 }
 
 export interface ChatMessage {
-  /** ULID(만든 기기가 붙인다) */
   id: string;
-  /** 쓴 시각(ms, 만든 기기의 시계) */
   at: number;
   from: 'user' | 'app';
-  /** 화면 문장 */
   text: string;
-  /** 컨텍스트용 가린 글. 없으면 text를 규칙으로 가려 쓴다. */
   ctx?: MaskedText;
-  /** app 메시지의 답 종류. defer는 PC를 켜면 이어서 할 일이다. */
   kind?: PhoneReplyKind;
-  /** user 메시지에 앱이 단 반응(ADR-057). 판정이 고른 허용 목록의 이름이다. */
   reaction?: ReactionId;
 }

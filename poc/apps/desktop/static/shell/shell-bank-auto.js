@@ -1,8 +1,3 @@
-// 계좌 자동조회(CODEF 공동인증서 방식, 대표 결정 2026-11-12) 화면. 내 계좌 → [자동 연결] → 동의 한 화면 → 이 PC의 인증서(이름·용도·만료일만)
-// → 비밀번호(금고 창, 이 화면은 비밀번호를 받지 않는다) → 보유계좌 고르기 → "연결됨" → [최신화]. 오류는 사람 말로, 언제나 [거래내역 파일 올리기] 길.
-// [연결 해제] = CODEF 계정 삭제 + 이 PC에 기억한 비밀번호 삭제. 계좌번호는 끝 4자리만 받는다.
-// 결과·오류는 토스트 대신 이 화면 안 글로 남긴다(대표 2026-11-13). 한 카드의 주요 단추는 하나, 나머지는 조용한 단추(v2.0). 화면 글에 CODEF 코드를 쓰지 않는다.
-// 쓰는 곳(설정 > 계좌 연결, bank-mvp 내 계좌 화면)은 createBankAuto({...}).view()를 그린다.
 import { btn, h, icon, note } from './shell-views.js';
 
 export const BANKS = [
@@ -15,10 +10,8 @@ export const BANKS = [
 ];
 const bankName = (code) => (BANKS.find(([c]) => c === code) || [code, '은행'])[1];
 
-/** 동의 카드 문구 판(main bank-auto.ts CODEF_CONSENT_VERSION과 같다) */
 export const CONSENT_VERSION = 'codef-bank-auto-2026-11-12';
 
-/** 동의 한 화면(09-bank-matching §4.5·§4.6·§9.4). 사장님이 동의하는 것은 우리 회사의 수집·이용과 위탁이다(CODEF 약관 동의가 아니다) */
 export const CONSENT_LINES = [
   '자동 연결은 은행 조회 대행 회사 (주)헥토데이터(CODEF)를 통해 거래내역을 가져와요. 그래서 다른 기능과 달리 PC 밖으로 나가는 정보가 있어요.',
   '나가는 것: 고른 공동인증서 파일과 인증서 비밀번호, 계좌번호. 이 PC에서 CODEF로 바로 가요(비밀번호는 금고가 CODEF 공개키로 감싸요). 우리 서버는 거치지 않아요.',
@@ -26,14 +19,12 @@ export const CONSENT_LINES = [
   '가져온 거래내역은 이 PC에만 암호화해 저장해요. AI 모델로는 아무것도 보내지 않아요.',
   '언제든 [연결 해제]로 그만둘 수 있고, 그러면 파일 올리기로 계속 쓸 수 있어요.',
 ];
-/** 체크 세 개(둘은 필수 동의, 하나는 읽음 확인) */
 export const CONSENT_CHECKS = [
   ['use', '(필수) 은행 자동 연결을 위한 개인정보 수집·이용 동의 — 우리 회사가 계좌번호·공동인증서·인증서 비밀번호·거래내역을 자동 조회와 받을 돈 맞추기에만 써요. 연결을 끊으면 지워요.'],
   ['entrust', '(필수) 개인정보 처리 위탁 안내 — 계좌 거래내역 조회를 (주)헥토데이터(CODEF)에 맡겨요. CODEF는 받은 정보를 암호화해 처리해요.'],
   ['keep', '(읽음) 인증서 보관 고지 — 공동인증서는 은행에서 조회 밖의 일도 할 수 있는 접근매체예요. CODEF에는 조회하는 동안만 등록하고 조회가 끝나면 바로 지워요. [이 PC에 기억]을 고르면 인증서 비밀번호가 이 PC 키체인에 남아요.'],
 ];
 
-/** 받을 돈 계좌 기록 동의(shell-bank.js 계좌 추가 동의와 같은 내용, bank.consent). 자동 연결 중에 없으면 이 카드에서 받는다 */
 export const BANK_CONSENT_LINES = [
   '가져온 거래내역과 계좌번호는 이 PC에 암호화해 저장해요. 우리 서버와 AI 모델로 보내지 않아요.',
   '거래내역에는 입금하신 분의 이름처럼 다른 사람의 정보도 들어 있어요. 사업 거래 확인에만 써 주세요.',
@@ -41,15 +32,10 @@ export const BANK_CONSENT_LINES = [
   '언제든 받을 돈 > 내 계좌에서 계좌와 거래내역을 지울 수 있어요.',
 ];
 
-/** 실패 코드 → 사람 말(엔진 CodefFailure). 표에 없으면 일반 문장. 코드는 화면에 보이지 않는다 */
 export function failText(code, bank, clientType) {
   const b = bankName(bank || '0020');
-  // CF-12805: 인증서가 고른 뱅킹(기업/개인)에 등록돼 있지 않다. 1인 사업자는 개인 인터넷뱅킹에만 인증서를 등록한 경우가 많다(2026-11-18 실기기: 우리은행·사업자로 거절)
-  // 앱이 기업·개인 뱅킹을 둘 다 해 본 뒤에 남는 실패라, 다른 뱅킹으로 바꾸라는 말 대신 그 은행에서 한 번 할 일만 말한다.
-  // CF-12805: 인증서가 그 뱅킹에 등록돼 있지 않다. CF-12831: 그 뱅킹이 본인인증을 먼저 요구한다(2026-11-18·19 실기기: 우리은행)
   const where = clientType === 'P' ? `${b} 개인 인터넷뱅킹` : `${b} 기업 인터넷뱅킹`;
   const notRegistered = `이 인증서가 ${b} 인터넷뱅킹에 등록돼 있지 않아요. ${b} 인터넷뱅킹에서 [인증센터 > 타기관 인증서 등록]을 한 번 하면 다음부터 자동으로 돼요.`;
-  // 사용자가 은행에서 한 번만 하면 되는 일(대표 2026-11-19 "사용자가 직접 은행 웹에 들어가서 연동을 한 번만 하면 되는 거지?"). 앱은 은행 화면을 띄우지 않는다
   const identity = `${where}에 이 인증서로 한 번 로그인해 주세요. 은행이 처음 한 번 요구하는 확인을 마치면 다음부터 자동으로 돼요. 마치면 [다시 연결]을 눌러 주세요.`;
   return (
     {
@@ -85,14 +71,9 @@ export function failText(code, bank, clientType) {
   );
 }
 
-/** 계좌번호는 전체(숫자 10~16자리)만 은행에 간다(main bank-auto.ts가 그 밖은 버린다). 짧으면 보내지 않고 칸에서 바로 알린다 */
 export const WITHDRAW_LEN_TEXT = '계좌번호를 숫자 10~16자리로 모두 넣어 주세요. 하이픈(-)은 넣어도 돼요.';
 export const withdrawOk = (digits) => /^\d{10,16}$/.test(digits);
 
-/**
- * 계좌번호 카드 아래 한 줄: 다른 뱅킹에서 은행에 한 번 할 일이 있으면 그 길도 알린다(엔진 also, 코드만).
- * 2026-11-19 실기기(라프·우리은행): 개인 뱅킹은 계좌번호, 기업 뱅킹은 본인인증(CF-12831)이었는데 화면에는 계좌번호만 보여 은행에서 할 일을 몰랐다.
- */
 export function otherWayText(also, bank) {
   if (!also || typeof also !== 'object') return null;
   const b = bankName(bank || '0020');
@@ -112,30 +93,22 @@ const PHASE_TEXT = {
 
 const won = (n) => (typeof n === 'number' ? `${n.toLocaleString('ko-KR')}원` : '');
 const when = (iso) => (iso ? new Date(iso).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '아직 없음');
-/** 보이는 라벨 + 칸 */
 const field = (label, input) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), input);
-/** 고르기 카드(ChoiceCard): 점 + 이름 + 작은 글. 고른 것은 is-on */
 const choice = (on, disabled, onclick, main, meta) =>
   h('button', { type: 'button', class: `sx-opt${on ? ' is-on' : ''}`, 'aria-pressed': String(on), disabled, onclick }, h('span', { class: 'sx-radio' }), h('span', { class: 'opt-main' }, main, h('span', { class: 'sx-meta' }, meta)));
-/** Escape = 그만두기(한글 조합 중에는 무시) */
 const esc = (fn) => (e) => {
   if (e.isComposing || e.keyCode === 229 || e.key !== 'Escape') return;
   e.preventDefault();
   fn();
 };
 
-/**
- * @param {{ call: (m: string, p?: object) => Promise<any>, rerender: () => void, toast: (t: string) => void, uploadFile?: () => void, openBank?: () => void }} ctx
- */
 export function createBankAuto(ctx) {
-  // certs: null = 불러오는 중. msg = 이 카드에 남기는 알림 한 줄(단계가 바뀌면 지운다)
   const s = { step: 'loading', status: null, checks: {}, certs: null, certId: null, bank: '0020', clientType: null, withdraw: '', also: null, smsCode: '', smsMsg: null, session: null, accounts: [], pick: null, phase: null, error: null, last: null, msg: null };
   const go = (patch) => {
     if ('step' in patch && patch.step !== s.step && !('msg' in patch)) s.msg = null;
     Object.assign(s, patch);
     ctx.rerender();
   };
-  /** 연결된 상태면 연결 카드로 돌아가 알림 한 줄을 남긴다(오류 카드의 [다시 시도]에서 불려도) */
   const tell = (msg) => go({ step: s.status && s.status.connected ? 'connected' : s.step, msg });
   const fail = (r) => go({ step: 'error', error: r, phase: null });
   const ask = async (m, p) => {
@@ -148,7 +121,6 @@ export function createBankAuto(ctx) {
 
   async function load() {
     const r = await ask('bankAuto.status');
-    // 상태를 못 읽었는데 '연결 안 됨'으로 보이면 이미 연결한 사장님이 다시 연결하게 된다. 못 읽었다고 말하고 [다시 시도]를 둔다.
     go({ status: r.ok ? r : null, step: r.ok ? (r.connected ? 'connected' : 'idle') : 'loadfail' });
   }
   async function agree() {
@@ -157,7 +129,6 @@ export function createBankAuto(ctx) {
     if (!r.ok) return fail(r);
     await toCerts();
   }
-  /** 받을 돈 계좌 기록 동의(bank.consent, 받을 돈 화면과 같은 동의)를 남기고 고른 인증서로 이어서 연결한다 */
   async function agreeBank() {
     const r = await ask('bank.consent');
     if (r && r.ok === false) return fail(r);
@@ -167,32 +138,25 @@ export function createBankAuto(ctx) {
     go({ step: 'certs', certs: null, error: null });
     const r = await ask('bankAuto.certs');
     const certs = (r && r.certs) || [];
-    // 홈택스 발급에 쓰는 인증서가 맨 앞에 오고, 쓸 수 있으면 미리 골라 둔다(09 §4.5)
     const pre = certs.find((c) => c.issuance && c.usable);
     go({ certs, certId: s.certId || (pre ? pre.id : null) });
   }
   async function connect() {
     if (!s.certId) return;
     const withdraw = (s.withdraw || '').replace(/\D/g, '');
-    // 덜 넣은 번호는 은행에 가지 않는다: 비밀번호를 묻기 전에 이 칸에서 알린다(2026-11-19 실기기: 4자리로 세 번 실패했는데 화면은 "은행이 받지 않았어요")
     if (s.step === 'withdraw' && withdraw && !withdrawOk(withdraw)) return go({ msg: WITHDRAW_LEN_TEXT });
     go({ step: 'working', phase: 'password', error: null });
-    // 기업·개인 뱅킹은 고르지 않는다: 엔진이 같은 인증서·비밀번호로 차례로 해 본다(대표 2026-11-19)
     const r = await ask('bankAuto.connect', { certId: s.certId, bank: s.bank, ...(s.clientType ? { clientType: s.clientType } : {}), ...(withdrawOk(withdraw) ? { withdrawAccount: withdraw } : {}) });
-    // 은행이 그 은행 계좌번호를 함께 확인하자고 하면(개인 뱅킹 일부) 카드에 계좌번호 칸 하나만. 다른 뱅킹에서 은행에 한 번 할 일이 있으면 그 길도 한 줄로
     if (!r.ok && r.code === 'withdraw_account_required')
       return go({ step: 'withdraw', phase: null, error: null, also: r.also || null, msg: withdrawOk(withdraw) ? `${bankName(s.bank)}이 이 계좌번호를 받지 않았어요. 이 인증서로 쓰는 ${bankName(s.bank)} 계좌번호인지 확인해 주세요.` : null });
-    // 받을 돈의 계좌 기록 동의가 없으면 다른 화면으로 보내지 않고 이 카드에서 받는다(2026-11-18 실기기: [받을 돈 보기]로 가면 [계좌 추가]를 눌러야 동의가 나와 막혔다)
     if (!r.ok && r.code === 'bank_consent_required') return go({ step: 'bankConsent', phase: null, error: null });
     if (!r.ok) return fail(r);
     landed(r);
   }
-  /** 연결 결과: 보유계좌 고르기, 또는 은행이 보낸 SMS 인증번호 칸 */
   function landed(r, smsMsg = null) {
     if (r.step === 'sms') return go({ step: 'sms', session: r.sessionId, smsCode: '', smsMsg, phase: null, error: null });
     go({ step: 'accounts', session: r.sessionId, accounts: r.accounts, pick: (r.accounts.find((a) => a.usable) || {}).key || null, phase: null });
   }
-  /** 은행이 등록된 휴대폰으로 보낸 인증번호로 이어 간다. 번호는 이 화면 상태에만 잠깐 있고 보낸 뒤 지운다 */
   async function sendSms() {
     const code = (s.smsCode || '').replace(/\D/g, '');
     if (code.length < 4) return;
@@ -200,10 +164,8 @@ export function createBankAuto(ctx) {
     go({ step: 'working', phase: 'accounts', smsCode: '' });
     const r = await ask('bankAuto.sms', { sessionId: session, code });
     if (!r.ok) return fail(r);
-    // 다시 sms면 은행이 번호를 받지 않았다(틀림·만료): 같은 칸에 한 줄 남긴다
     landed(r, r.step === 'sms' ? '인증번호가 맞지 않았어요. 휴대폰으로 새로 온 번호를 넣어 주세요.' : null);
   }
-  // 계좌를 고르면 엔진이 받을 돈 계좌로 잇고 첫 최신화를 시작한다(가져오기·맞추기 진행은 받을 돈 화면)
   async function choose() {
     if (!s.pick) return;
     go({ step: 'working', phase: 'connecting' });
@@ -403,9 +365,7 @@ export function createBankAuto(ctx) {
           );
         }
         case 'error': {
-          // 오류 = 확인 필요 알림 한 줄 + [다시 시도]. 그 아래 조용한 단추로 닫기와 파일 길
           const e = s.error || {};
-          // 기업·개인 뱅킹은 엔진이 이미 둘 다 해 봤다. 사람에게는 할 일과 [다시 시도]만
           const retry =
             e.code === 'bank_consent_required'
               ? bankLink()

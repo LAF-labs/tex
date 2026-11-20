@@ -1,10 +1,3 @@
-// 실행 조율(M2-2, D03 §2·§3·§5.5·§8·§11): 실행기(Interpreter)의 멈춤과 사람 차례를 상태 머신(machine.ts)에 잇는다.
-// - 상태의 원천은 이 조율기의 RunState 하나다. 전이는 transition()으로만 하고, 돌려받은 부수효과를 그 순서대로 집행한다.
-//   조율기가 직접 집행하지 않는 효과(ui.*·chrome.close·slot.release·ledger.* 등)는 onEffect로 넘긴다.
-// - 스텝 핸들러 gate·human·checkpoint는 이 조율기에 묶여 있다(사람 차례를 기다리는 동안 실행기는 그 스텝에서 멈춰 있다).
-// - 실행기 멈춤(end·abort·handoff·recover·human_secret·unhandled·falloff)은 전이표의 이벤트로 바꾼다.
-// - 정지 하향·중지는 다음 스텝 경계(beforeStep)에서 적용한다. 게이트 대기 중이면 곧바로, 사람 차례 중이면 차례가 끝난 뒤(machine).
-// - 저널·상태 이벤트에는 코드·스텝 id·해시만 남긴다(⑦). 사람이 입력한 값은 길이만. kind=secret 값은 엔진에 오지 않는다.
 import type { GateRepo, LedgerState } from '@sax/db';
 import { flatten, type StepInfo } from '../core/cfg.ts';
 import { evalCond } from '../core/conds.ts';
@@ -23,7 +16,6 @@ import { savePdf, type PdfPort } from '../core/savepdf.ts';
 import { SECURITY_REJECTIONS } from '../core/token.ts';
 import { buildGateRequest, GATE_CARDS, type GateField, type GateRequest } from '../gate.ts';
 
-/** 공동인증서 비밀번호 차례가 이 코드로 끝나면 onFail 체크포인트(간편인증 등 다른 로그인 길)로 갈 수 있다(IR rev v1.3.7). */
 const CERT_PW_FAILED: ReadonlySet<string> = new Set(['sign.password_wrong', 'sign.password_retry_limit']);
 
 /**
@@ -47,10 +39,6 @@ export const CONTROL_STOPS: ReadonlyMap<string, 'handoff' | 'abort'> = new Map([
  */
 export const NOT_COMMITTED_RETRIES = 1;
 
-/**
- * sign 방식마다 엔진이 할 then[] 동작(null = 엔진 입력 없음). 보안카드는 지원하지 않는다(대표 결정 2026-11-19):
- * IR에 security_card 갈래가 있어도(게시본 H-01 2.3.8) 이 표에 없어 sign.method_unknown으로 사람에게 넘긴다.
- */
 const SIGN_ACTION: Readonly<Record<string, 'human:secret' | null>> = { cert: 'human:secret', simple_auth: null };
 
 /**
@@ -67,14 +55,8 @@ export const CLICK_NOT_SENT: ReadonlySet<string> = new Set([
  * 이 포트는 R-G7 순서에서 결과를 기다려야 하는 두 단계만 맡는다.
  */
 export interface CommitPort {
-  /**
-   * 원장 armed + 게이트 요청 approved → consumed(한 트랜잭션, synchronous=FULL, 하루 비가역 수 증가 포함).
-   * 이미 행이 있거나 요청이 approved가 아니면 거부. 메모리 토큰은 조율기가 이 앞에서 소비했다.
-   */
   arm(a: { stepId: string; reqId: string; actionHash: string }): ActResult | Promise<ActResult>;
-  /** 커밋 가드 무장(토큰당 maxRequests회, armedUntil = 토큰 exp. R-C1 expectedHash는 포트가 고정된 readback으로 만든다). */
   armGuard(a: { stepId: string; armedUntil: number }): Promise<ActResult>;
-  /** 커밋 구간을 나갈 때(verify 결과·누르지 않고 종결). */
   disarmGuard(): Promise<void>;
 }
 
@@ -109,25 +91,14 @@ export interface SignTurnPort {
 export type GateCloseReason = 'approved' | 'denied' | 'edit' | 'expired' | 'aborted' | 'stopped';
 
 export interface GatePort {
-  /** 승인 요청 발행(main 승인 바·폰). */
   publish(req: GateRequest): void;
-  /** 게이트가 끝났다(바를 내린다). */
   closed(reqId: string, why: GateCloseReason): void;
 }
 
 export interface HumanPort {
-  /** 사람 입력 요청(captcha·otp·manual). 값은 answerHuman으로 온다. */
   request(r: { runId: string; stepId: string; reqId: string; kind: 'captcha' | 'otp' | 'manual'; prompt: string; region?: string; ttlMs: number; inputSpec?: { pattern?: string; maxLength?: number } }): void;
-  /**
-   * kind=secret·onFail human:secret·sign cert: 금고 비밀 창(D05 §3.5). 값은 엔진에 오지 않는다. 닫히면 'done', TTL이면 'ttl'.
-   * { code }는 사람 차례가 끝났지만 그 결과로 멈춰야 할 때다(틀린 비밀번호 sign.password_wrong 등). TTL과 같은 쉼(재개하면 마지막 체크포인트)이고 사유만 다르다.
-   */
   secret(r: { runId: string; stepId: string; target?: string; prompt?: string; ttlMs: number }): Promise<'done' | 'ttl' | { code: string }>;
   closed(reqId: string, why: 'answered' | 'ttl' | 'aborted'): void;
-  /**
-   * 발급 서명 [확인]을 누른 뒤(금고가 넣은 인증서 비밀번호): 포털이 틀린 비밀번호 안내를 보였는가(인증서 창 iframe 안 포함).
-   * 'wrong'이면 금고가 확인 대기 값을 버리고 기억값을 지웠다(다음 secret은 대화 카드로 다시 묻는다). 'ok'면 이번에 받은 값을 기억한다.
-   */
   afterSignConfirm?(r: { runId: string; stepId: string }): Promise<'ok' | 'wrong'>;
 }
 
@@ -147,77 +118,43 @@ export interface RunControllerInput {
   intentId: string;
   packageDigest: string;
   ir: PlaybookIR;
-  /** M2-1 기본 핸들러(+ M2-3 비가역). gate·human·checkpoint는 조율기 것으로 덮는다. */
   handlers: Handlers;
   env: StepEnv;
   interp: InterpOptions;
-  /** 정책 집행 지점(RunEnforcer.beforeStep). */
   beforeStep?: InterpHooks['beforeStep'];
   stepEvent?: InterpHooks['event'];
   clock: Clock;
   timers?: Timers;
   gates: Pick<GateRepo, 'open' | 'decide' | 'withdraw'>;
   tokens: GateTokens;
-  /** 이 실행의 원장 행 상태(정지 분기). */
   ledgerStates: () => readonly LedgerState[];
-  /** 원장이 미종결(in_doubt·observed_manual)인 주 비가역 스텝 id(핸드오프 재개 때 그 verify부터). */
   inDoubtStep?: () => string | null;
-  /** 실효 수준·killPlaybooks가 이 플레이북 실행을 허용하는가(Running 진입 확인). */
   allowed?: () => boolean;
-  /** 정지 하향이 postprocess·kill인가(자동화 Chrome을 닫는다). */
   hardStop?: () => boolean;
-  /** 게이트 카드: readback 값 + 예약 키(M2-3 readback이 채운다). null이면 게이트를 열지 않고 핸드오프. */
   card: (g: StepOf<'gate'>) => { readback: ReadbackValues; reserved: GateField[] } | null;
-  /** 게이트 진입 전(W 밖) 사전 안전 판정·verify 기준선·$dup.portalExisting(M2-3). 거부면 그 코드로 실패. */
   preGate?: (g: StepOf<'gate'>) => Promise<ActResult>;
-  /**
-   * 커밋 구간에 들어가기 직전(토큰을 쓰기 전)의 마지막 확인(ADR-048 결정 7: 발급 잠금 갱신). 거부면 누르지 않고 그 코드로 멈춘다.
-   * 토큰은 버린다(다시 가려면 게이트 앞부터). 던지면 거부로 본다.
-   */
   beforeCommit?: (x: string) => Promise<ActResult>;
-  /** 주 비가역 X의 Wmax(token.wmaxMs). */
   wmaxMs: (x: string) => number;
-  /** 정책 commitWindowMs. */
   commitWindowMs: number;
-  /** 거부 우선 창(D03 §2 WaitingGate→Running, R-G8). 기본 GATE_DENY_PRIORITY_MS. */
   denyPriorityMs?: number;
   gate: GatePort;
   human: HumanPort;
-  /** 포털 탭 입력 잠금(R-G6, 금고 중계). 잠그지 못하면 게이트를 열지 않는다. */
   inputLock?: (on: boolean) => Promise<boolean>;
-  /** 커밋 가드 모드(R-C2: HandedOff·WaitingHuman(manual)은 관측만). */
   guardMode?: (m: 'running' | 'observing') => void;
-  /** 커밋 가드가 R-C2 관측을 했는가(재개 때 verify 먼저). */
   observedManual?: () => boolean;
-  /** 체크포인트 복귀 탐침(reenterCheckpoint). */
   reentry: { navigate(url: string): Promise<void>; loggedIn(): Promise<boolean> };
-  /** L1·L2 복구(M2-5)·폴백 사슬(run/fallback.ts). 없거나 false면 핸드오프. true면 그 스텝부터, {from}이면 그 스텝(체크포인트 재진입)부터 다시 돈다. */
   recover?: (stop: Extract<RunStop, { t: 'recover' }>) => Promise<boolean | { from: string }>;
-  /** 주 비가역 X의 verify(조회만, M2-3). 없으면 unknown(InDoubt). */
   verify?: (x: string) => Promise<VerifyResult>;
-  /**
-   * verify 스텝 판정(core/verify.ts judgeVerify, D02 §4.4). 커밋 구간이면 결과를 상태 머신에 넣고(원장 기록·입력 잠금 해제는 그 효과),
-   * Running으로 남을 때만 on[결과]로 간다. 없으면 verify 스텝은 실행하지 않는다(unhandled).
-   */
   verifyStep?: (v: StepOf<'verify'>) => Promise<VerifyJudgement>;
-  /** 커밋 구간 진입(R-G7). 없으면 submit은 실행하지 않는다(step.irreversible_unguarded). */
   commit?: CommitPort;
-  /** save_pdf 포트(금고 pdf.print·download.*, 보관함). 없으면 save_pdf 스텝은 실행하지 않는다(unhandled). */
   pdf?: PdfPort;
-  /** submit이 클릭 시각·클릭 전 실패 신호를 남기는 곳(verify 판정이 읽는다). */
   verifyBook?: VerifyBook;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
-  /** 상태 이벤트(UI·main). ui는 이 전이의 ui.* 효과. */
   onState?: (e: RunStateEvent) => void;
-  /** 조율기가 직접 집행하지 않는 효과. */
   onEffect?: (effect: string, at: string | null) => void;
-  /** 서명 차례(B3). 없으면 기다리기만 하고 알리지 않는다. */
   signTurn?: SignTurnPort;
-  /** 서명 차례 상한(ms). 없으면 SIGN_TURN_MS. IrRun이 실행 수명 상한(2시간)의 남은 시간과 작은 쪽을 준다. */
   signTurnMs?: () => number;
-  /** HandedOff 상한(기본 30분). */
   handoffTimeoutMs?: number;
-  /** onFail human:secret 비밀 창 TTL(기본 120초). */
   secretTtlMs?: number;
 }
 
@@ -234,7 +171,6 @@ export interface RunOutcome {
   state: RunStateName;
   at: string | null;
   code: string | null;
-  /** Paused·HandedOff 재개 지점. */
   resumeAt?: string;
 }
 
@@ -244,20 +180,13 @@ type HumanWait = { kind: 'answer'; a: HumanAnswer } | { kind: 'ttl' } | { kind: 
 const NEXT: Outcome = { t: 'next' };
 const fail = (code: string): Outcome => ({ t: 'fail', code });
 
-/** 전이로 바뀌는 토큰 폐기 사유(D03 §3 R-G3). */
 const DISCARD_BY_STATE: Partial<Record<RunStateName, TokenDiscardTrigger>> = { Recovering: 'Recovering', WaitingHuman: 'WaitingHuman', HandedOff: 'HandedOff', Paused: 'Paused', Interrupted: 'Interrupted' };
-/** 정지 분기에서 미종결로 보는 원장 상태(core machine과 같은 집합). */
 const UNRESOLVED_LEDGER: ReadonlySet<LedgerState> = new Set(['armed', 'dispatched', 'observed_manual', 'in_doubt']);
 const RESTING: ReadonlySet<RunStateName> = new Set(['HandedOff', 'Paused', 'Interrupted', 'InDoubt']);
 
-/**
- * 조율기가 핸들러·루프 안에서 직접 하는 일이라 효과로는 건너뛰는 것.
- * (입력 잠금은 게이트를 열기 전에 건다, 토큰 발급은 decideGate, 되감기·재개 지점은 핸들러가 정한다.)
- */
 const CONTROLLER_EFFECTS: ReadonlySet<string> = new Set([
   'input.lock', 'token.issue', 'rewind.pre_gate', 'rewind.checkpoint', 'checkpoint.restore', 'resume_at', 'step.rerun_failed',
   'pre_safety_check', 'verify.baseline', 'dup.portal_existing', 'card.from_readback', 'gate.request_publish', 'verify.run',
-  // R-G7 진입(enter_commit): submit 핸들러가 이 순서로 직접 한다(토큰 소비·CommitPort.arm·재계산·armGuard·클릭).
   'token.verify', 'ledger.arm+token.consume', 'readback.recompute', 'commit_guard.arm', 'click',
 ]);
 
@@ -267,49 +196,32 @@ export class RunController {
   private st: RunState = initialState();
   private readonly interp: Interpreter;
   private readonly info: Map<string, StepInfo>;
-  /** 게이트 → 주 비가역 X, X → 게이트. */
   private readonly primaryOf = new Map<string, string>();
   private readonly gateOf = new Map<string, string>();
-  /** 게이트가 허가하는 주 비가역 X가 하나뿐이면 그 id. 둘 이상이면 null: 원장 행이 없을 때 [직접 발급함]이 어느 X인지 모른다. */
   private readonly soleX: string | null;
-  /** 문서 순서로 게이트 바로 앞의 체크포인트(정적, 재시작·핸드오프 뒤 되감기). */
   private readonly staticPreGate = new Map<string, string>();
   private readonly visitedCp = new Set<string>();
-  /** 가장 최근에 지난 체크포인트. */
   private lastCp: string | null = null;
-  /** 지금 열린 게이트와 그 앞 체크포인트. */
   private gateReq: GateRequest | null = null;
   private preGateCp: string | null = null;
   private gateWake: ((w: GateWait) => void) | null = null;
   private humanWait: { reqId: string; step: StepOf<'human'>; wake: (w: HumanWait) => void } | null = null;
-  /** 서명 차례를 깨운다(열려 있을 때만). */
   private signWake: ((w: Exclude<SignTurnEnd, 'clicked'>) => void) | null = null;
-  /** 이 무장(submit 한 번)에서 서명 확인 버튼을 이미 눌렀다. 한 무장에 최대 한 번(발급 요청이 두 번 나갈 길을 막는다). */
   private confirmClicked = false;
-  /** 이 무장에서 이미 누른 signFlow 열기·방식 선택 항목(IR rev v1.3.5, 무장 1회당 각 한 번). */
   private readonly signClicked = new Set<string>();
-  /** 이 무장의 승인 토큰 기한(token.exp). 서명 확인 버튼은 이 안에서만 엔진이 누른다(그 뒤는 사람이 누른다). */
   private armedExp = 0;
-  /** 이 무장의 verify 기준(발급 클릭 때). 서명 차례가 끝나면 그 시각으로 다시 적어 verify 시간 예산이 서명 대기에 먹히지 않게 한다. */
   private dispatchMark: { verifyId: string; failBefore: Set<string> } | null = null;
-  /** 다음 핸드오프의 재개 지점(없으면 실행기가 준 지점). */
   private handoffResumeAt: string | null = null;
   private readonly tokensByGate = new Map<string, { token: GateToken; reqId: string }>();
-  /** 승인한 게이트의 readback 값(R-G7 재계산 대조). */
   private readonly approvedReadback = new Map<string, ReadonlyMap<string, string>>();
-  /** 지금 무장된 커밋 항목(GuardedActuator.commitArmed)과 그 submit의 expectConfirm. 커밋 구간 안 클릭 직전부터 그 클릭까지만. */
   private armedKey: string | null = null;
   private armedConfirmRe: RegExp | null = null;
-  /** verify id → 이 실행에서 not_committed가 나온 횟수(NOT_COMMITTED_RETRIES). */
   private readonly notCommitted = new Map<string, number>();
-  /** 커밋 가드가 무장됐는가(구간을 나갈 때 푼다). */
   private guardArmed = false;
   private pending: 'abort' | 'downgrade' | null = null;
   private resumeAt: string | null = null;
   private cancelHandoffTimer: (() => void) | null = null;
-  /** 조율기가 jump:'handoff'로 넘긴 핸드오프의 사유 코드(실행기 handoff 멈춤에는 코드가 없다). */
   private handoffCode: string | null = null;
-  /** 마지막 상태 변화의 코드(결과 보고). */
   private stateCode: string | null = null;
 
   constructor(i: RunControllerInput) {
@@ -330,8 +242,6 @@ export class RunController {
     }
     const xs = new Set(this.primaryOf.values());
     this.soleX = xs.size === 1 ? [...xs][0]! : null;
-    // 비가역 스텝은 언제나 조율기 것이다(넘겨받은 핸들러로 덮을 수 없다). human_commit·send_email은 아직 없어 실행하지 않는다.
-    // sign도 조율기 것이다: 커밋 구간을 알아야 거부할 수 있다.
     const bound = {
       ...i.handlers,
       gate: this.gateStep, human: this.humanStep, checkpoint: this.checkpointStep,
@@ -339,7 +249,6 @@ export class RunController {
       ...(i.verifyStep ? { verify: this.verifyStep } : {}),
       ...(i.pdf ? { save_pdf: this.savePdfStep } : {}),
     } as Handlers;
-    // [중지]는 스텝 경계에서 집행한다(pending). 오래 기다리는 스텝(로그인 대기 s5 wait text 120초 등)은 폴링 때마다 보고 빠진다.
     i.env.stopRequested ??= () => this.pending === 'abort';
     const forcedStops = new Map([...(i.interp.forcedStops ?? []), ...CONTROL_STOPS]);
     this.interp = new Interpreter(i.ir, bound, i.env, { ...i.interp, forcedStops }, { beforeStep: this.beforeStep, event: i.stepEvent });
@@ -349,24 +258,18 @@ export class RunController {
     return this.st;
   }
 
-  /** 게이트가 발급한 토큰(M2-3 submit이 R-G7 순서로 쓴다). 폐기되면 없어진다. */
   tokenFor(gateStepId: string): { token: GateToken; reqId: string } | null {
     return this.tokensByGate.get(gateStepId) ?? null;
   }
 
-  /** GuardedActuator.commitArmed: 이 커밋 항목이 지금 무장돼 있는가(R-G7을 마친 submit의 그 클릭만). */
   commitArmed(key: string): boolean {
     return this.st.commit && this.armedKey === key;
   }
 
-  /** GuardedActuator.armedConfirm: 무장된 submit의 expectConfirm 패턴(V-24). 그 밖은 null. */
   armedConfirm(): RegExp | null {
     return this.st.commit && this.armedKey ? this.armedConfirmRe : null;
   }
 
-  // ---------------- 바깥(RunHandle, D03 §11) ----------------
-
-  /** Loaded → Preparing → Running → 실행. 준비(prepare)는 호출자가 마쳤다. */
   async start(o: { intentReuse?: boolean } = {}): Promise<RunOutcome> {
     if (!this.fire({ t: 'load' }, null, null)) return this.result(null, 'engine.illegal_transition');
     const reuse = !!o.intentReuse;
@@ -377,7 +280,6 @@ export class RunController {
     return this.loop(this.interp.entry, null);
   }
 
-  /** 승인·거부. 먼저 도착한 결정이 이긴다(R-G8). 지금 요청의 reqId·actionHash와 다르면 받지 않는다. */
   answerGate(a: GateAnswer): { ok: boolean; code?: string } {
     const req = this.gateReq;
     if (!this.gateWake || !req || req.reqId !== a.reqId) return { ok: false, code: 'gate.no_request' };
@@ -386,14 +288,12 @@ export class RunController {
     return { ok: true };
   }
 
-  /** "수정하기"(R-G6): 게이트를 닫고 게이트 앞 체크포인트로. */
   cancelGateForEdit(): boolean {
     if (!this.gateWake) return false;
     this.wakeGate({ kind: 'edit' });
     return true;
   }
 
-  /** 사람 입력. captcha·otp는 값 검사(inputSpec) 뒤 target에 채운다. manual은 값 없이 "다 했음". */
   answerHuman(stepId: string, a: HumanAnswer): { ok: boolean; code?: string } {
     const w = this.humanWait;
     if (!w || w.step.id !== stepId || w.reqId !== a.reqId) return { ok: false, code: 'human.no_request' };
@@ -402,10 +302,8 @@ export class RunController {
     return { ok: true };
   }
 
-  /** 중지. 사람 차례면 곧바로 깨운다. 실행 중이면 다음 스텝 경계, 커밋 구간이면 verify 뒤(machine). */
   abort(): void {
     if (this.gateWake) return this.wakeGate({ kind: 'abort' });
-    // 서명 차례(커밋 구간): 멈추지 않고 verify로 간다(눌렀는지 모른다).
     if (this.signWake) return this.signWake('abort');
     if (this.humanWait) return this.humanWait.wake({ kind: 'abort' });
     if (RESTING.has(this.name())) {
@@ -420,24 +318,20 @@ export class RunController {
     this.pending = 'abort';
   }
 
-  /** 끝난 실행 정리(E2): HandedOff 상한 타이머를 끈다. 실행기(IrRun)가 실행을 끝낼 때 부른다. */
   dispose(): void {
     this.stopHandoffTimer();
   }
 
-  /** 서명 차례가 열려 있는가(RunService [중지]·재개가 본다). */
   get signTurnOpen(): boolean {
     return this.signWake !== null;
   }
 
-  /** 서명 차례 [다 했어요]: 사람이 홈택스 창에서 서명을 마쳤다. 엔진은 아무 버튼도 누르지 않고 verify로 간다. 열려 있지 않으면 false. */
   finishSignTurn(): boolean {
     if (!this.signWake) return false;
     this.signWake('done');
     return true;
   }
 
-  /** 정지 하향(ADR-023 결정 5·6). */
   downgrade(): void {
     if (this.gateWake) return this.wakeGate({ kind: 'downgrade' });
     const n = this.name();
@@ -445,16 +339,13 @@ export class RunController {
       this.pending = 'downgrade';
       return;
     }
-    // WaitingHuman·HandedOff·커밋 구간은 machine이 미뤄 둔다. 쉬는 상태는 기록만.
     this.fire({ t: 'downgrade' }, null, null);
   }
 
-  /** R-C2: 핸드오프 중 커밋 가드가 커밋 요청을 관측했다(원장 기록은 가드가 했다). */
   observedCommit(): void {
     if (this.name() === 'HandedOff') this.fire({ t: 'observed_commit' }, null, null);
   }
 
-  /** HandedOff·Paused·Interrupted 재개. HandedOff에서 원장이 미종결(또는 R-C2 관측)이면 resumeAt 대신 그 X의 verify부터. */
   async resume(o: { samePackageDigest?: boolean } = {}): Promise<RunOutcome> {
     const n = this.name();
     if (n === 'HandedOff') {
@@ -476,10 +367,6 @@ export class RunController {
     return this.result(null, 'engine.illegal_transition');
   }
 
-  /**
-   * "직접 발급함"(HandedOff): 원장 observed_manual(onEffect가 그 X에 기록) → 그 X의 verify.
-   * 무장 전이면 원장 행이 없으니 X는 게이트가 허가한 주 비가역 하나다. 그것도 모르면 X 없이(행 없음) verify unknown → InDoubt.
-   */
   async attestManualCommit(): Promise<RunOutcome> {
     if (this.name() !== 'HandedOff') return this.result(null, 'engine.illegal_transition');
     this.leaveHandoff();
@@ -488,8 +375,6 @@ export class RunController {
     if (this.name() !== 'Running' || !this.st.reverify) return this.result(null, null);
     return this.reverify(x);
   }
-
-  // ---------------- 실행 루프 ----------------
 
   private name(): RunStateName {
     return this.st.name;
@@ -507,7 +392,6 @@ export class RunController {
     }
   }
 
-  /** 실행기 멈춤 → 전이. 이어서 돌 곳이 있으면 {from, prev}. */
   private async onStop(s: RunStop): Promise<{ from: string; prev: string | null } | null> {
     switch (s.t) {
       case 'end':
@@ -516,7 +400,7 @@ export class RunController {
         else this.fail(s.at, null);
         return null;
       case 'abort':
-        if (s.code && CONTROL_STOPS.get(s.code) === 'abort') return null; // 상태는 조율기가 이미 바꿨다
+        if (s.code && CONTROL_STOPS.get(s.code) === 'abort') return null;
         if (s.code === 'run.stopped' && this.pending === 'abort') {
           this.pending = null;
           this.fire({ t: 'abort' }, s.at, 'run.aborted');
@@ -566,7 +450,6 @@ export class RunController {
     }
   }
 
-  /** 핸드오프 멈춤: Running → Recovering → HandedOff(전이표의 길). 비가역 실패면 resumeAt은 그 verify(실행기). */
   private handoff(at: string, resumeAt: string, code: string | null): void {
     if (this.name() !== 'Running') return;
     this.fire({ t: 'step_failed' }, at, code);
@@ -580,7 +463,6 @@ export class RunController {
     this.handedOff(at);
   }
 
-  /** HandedOff에 들어온 뒤: 가드는 관측(R-C2), 핸드오프 상한 타이머. */
   private handedOff(at: string): void {
     if (this.name() !== 'HandedOff') return;
     this.i.guardMode?.('observing');
@@ -607,7 +489,6 @@ export class RunController {
     if (this.name() === 'Recovering') this.fire({ t: 'recovery_failed', then: 'fail' }, at, code);
   }
 
-  /** 복구 동안 미뤄 둔 중지·하향을 지금 적용한다. 적용했으면 true(실행 멈춤). */
   private takePending(at: string): boolean {
     const p = this.pending;
     if (!p) return false;
@@ -620,7 +501,6 @@ export class RunController {
     return true;
   }
 
-  /** 루프가 끝났다. 쉬는 상태로 들어가는 사이에 온 중지는 여기서 적용한다. */
   private settle(s: RunStop): RunOutcome {
     if (this.pending === 'abort' && RESTING.has(this.name())) {
       this.pending = null;
@@ -631,7 +511,6 @@ export class RunController {
     return this.result(s.at, this.stateCode ?? ('code' in s ? s.code : null));
   }
 
-  /** 핸드오프 재개·"직접 발급함" 뒤 그 X의 verify(조회만). committed → X 다음(사후 스텝), not_committed → 게이트 앞. */
   private async reverify(x: string | null): Promise<RunOutcome> {
     const r: VerifyResult = x && this.i.verify ? await this.i.verify(x).catch(() => 'unknown' as const) : 'unknown';
     this.i.journal('verify.after_handoff', { ...(x ? { stepId: x } : {}), result: r });
@@ -646,9 +525,6 @@ export class RunController {
     return this.loop((g && this.staticPreGate.get(g)) ?? g ?? x, null);
   }
 
-  // ---------------- 핸들러 ----------------
-
-  /** 스텝 경계: 정책 집행(지연·걸쇠) 뒤 미뤄 둔 중지·하향. */
   private readonly beforeStep = async (s: Step): Promise<void | ActResult> => {
     const p = await this.i.beforeStep?.(s);
     if (p && !p.ok) return p;
@@ -662,12 +538,10 @@ export class RunController {
     return undefined;
   };
 
-  /** 첫 통과는 expect 확인. 다시 오면 복귀 절차(D03 §5.5): 토큰 폐기, reuse·reload, sessionRequired면 session 체크포인트로. */
   private readonly checkpointStep: Handler<'checkpoint'> = async (cp) => {
     if (!this.visitedCp.has(cp.id)) {
       let r = await evalCond(cp.expect, this.i.env);
       if (!r.ok) return fail(r.code);
-      // 실행 첫 스텝이 체크포인트면(H-01 s0) 새 실행 탭은 빈 페이지다(금고가 about:blank로 연다). 첫 통과 때 한 번 cp.url로 간 뒤 다시 본다(D03 §5.5).
       if (!r.value && cp.url && this.i.ir.steps[0]?.id === cp.id) {
         try {
           await this.i.reentry.navigate(cp.url);
@@ -699,10 +573,6 @@ export class RunController {
     return this.handoffWith('portal.unexpected_page');
   };
 
-  /**
-   * 이동한 뒤의 체크포인트 expect: 화면이 로드 뒤 늦게 그려지는 포털(홈택스 WebSquare, 로드 뒤 약 5초)을 위해 참이 될 때까지
-   * cp.timeoutMs(기본 CHECKPOINT_SETTLE_MS) 동안 다시 본다. 평가 오류(모호·동일성)는 기다리지 않고 그대로 돌려준다.
-   */
   private async expectSettled(cp: StepOf<'checkpoint'>): Promise<{ ok: true; value: boolean } | { ok: false; code: string }> {
     const env = this.i.env;
     const deadline = this.i.clock.now() + (cp.timeoutMs ?? CHECKPOINT_SETTLE_MS);
@@ -713,7 +583,6 @@ export class RunController {
     }
   }
 
-  /** 핸드오프로 멈춘다(재개 지점 = 이 스텝). 사유 코드는 D16 기존 코드라 FORCED_STOPS에 넣지 않고 따로 넘긴다. */
   private handoffWith(code: string): Outcome {
     this.handoffCode = code;
     return { t: 'jump', to: 'handoff' };
@@ -721,14 +590,11 @@ export class RunController {
 
   private readonly gateStep: Handler<'gate'> = async (g) => {
     const x = this.primaryOf.get(g.id);
-    // 승인 카드 id가 앱 내장 표(GATE_CARDS)에 없으면 게이트를 열지 않는다(로더 LOADER-8이 먼저 거른다).
     const card = x && GATE_CARDS.has(g.card) ? this.i.card(g) : null;
     if (!x || !card) return fail('gate.unavailable');
-    // 진입 전(W 밖): 사전 안전 판정·기준선
     const pre = this.i.preGate ? await this.i.preGate(g) : { ok: true as const };
     if (!pre.ok) return fail(pre.code);
     const req = buildGateRequest({ runId: this.i.runId, gateStepId: g.id, card: g.card, readback: card.readback, reserved: card.reserved, packageDigest: this.i.packageDigest, authorizes: g.authorizes, intentId: this.i.intentId, waitMs: g.waitMs ?? 600_000 });
-    // 입력 잠금(R-G6)을 먼저 건다. 걸리지 않으면 게이트를 열지 않는다.
     if (this.i.inputLock && !(await this.i.inputLock(true).catch(() => false))) return fail('gate.unavailable');
     this.preGateCp = this.lastCp ?? this.staticPreGate.get(g.id) ?? null;
     if (!this.fire({ t: 'gate_reached' }, g.id, null)) return fail('run.state_stop');
@@ -746,7 +612,6 @@ export class RunController {
       case 'answer': {
         const a = w.a;
         if (a.decision === 'approved' && !this.ctx().allowed) {
-          // Running 진입 확인에 걸린다: 토큰을 만들지 않고 게이트를 닫는다(gate.cancel → 정지 분기).
           this.resumeAt = this.preGateCp ?? g.id;
           this.fire({ t: 'gate_approved' }, g.id, null);
           done('stopped');
@@ -757,7 +622,6 @@ export class RunController {
           approvedAt: this.i.clock.now(), commitWindowMs: this.i.commitWindowMs, wmaxMs: this.i.wmaxMs(x),
         });
         if (!d.won) {
-          // 게이트 행이 이미 open이 아니다(재시작 만료 등). 결정은 무효이고 만료처럼 쉰다.
           this.i.journal('gate.decision_lost', { stepId: g.id, decision: a.decision });
           return this.gateExpired(g, done);
         }
@@ -767,7 +631,6 @@ export class RunController {
           done('denied');
           return fail('gate.denied');
         }
-        // 거부 우선 창: 승인 뒤 짧은 시간 안에 온 [중지]가 이긴다. 토큰을 쓰지 않고 게이트 행을 거부로 돌린다(R-G8).
         if (await this.denyWindowLost()) {
           this.closeGateRow('cancel');
           this.i.journal('gate.withdrawn', { stepId: g.id, cause: 'deny_priority' });
@@ -778,7 +641,6 @@ export class RunController {
         }
         this.fire({ t: 'gate_approved' }, g.id, null);
         this.tokensByGate.set(g.id, { token: d.token, reqId: req.reqId });
-        // 선택 readback 칸(IR rev v1.3.8 optional)은 커밋 직전 다시 읽어 맞추는 대상이 아니다(못 읽어도 되는 칸이라 대조하지 않는다)
         const optional = new Set(this.i.ir.steps.flatMap((x) => (x.type === 'readback' ? (x.optional ?? []) : [])));
         this.approvedReadback.set(g.id, new Map([...this.i.env.scope.readback].filter(([k]) => !optional.has(k))));
         done('approved');
@@ -805,11 +667,6 @@ export class RunController {
     }
   };
 
-  /**
-   * verify(D02 §4.4, D03 §5.3·§5.6): 판정은 조회만이다. 커밋 구간(토큰 소비 ~ verify 완료)이면 결과로 구간을 나간다:
-   * committed → 원장 committed{verify_ref}·사후 스텝, not_committed → 원장 not_committed·게이트 앞, unknown → InDoubt(멈춤).
-   * 구간 안에서 온 중지·하향은 machine이 이때 적용한다. 구간 밖(사후 부수효과 확인, 예: 메일 발송)은 on[결과]로만 간다.
-   */
   private readonly verifyStep: Handler<'verify'> = async (v) => {
     const j = await this.i.verifyStep!(v).catch((): VerifyJudgement => ({ result: 'unknown' }));
     this.i.journal('verify.result', { stepId: v.id, result: j.result });
@@ -829,11 +686,6 @@ export class RunController {
     return { t: 'jump', to: v.on[j.result] };
   };
 
-  /**
-   * save_pdf(D02 §4 표, D05 §3.3): 금고가 인쇄해 staging에 둔 PDF를 보관함으로 옮기고 $artifacts.pdf에 문서 id를 둔다.
-   * 같은 실행에 committed가 있으면(사후 스텝) 실패는 재시도·핸드오프 없이 CompletedWithIssues다(D03 §2 "비가역 커밋 뒤 후속(PDF) 실패",
-   * 고정 문구 "재실행하지 마세요. 발급은 완료되었습니다"). 커밋 전이면 보통 스텝 실패(재시도·onFail)다.
-   */
   private readonly savePdfStep: Handler<'save_pdf'> = async (s) => {
     const r = await savePdf({ pdf: this.i.pdf!, runId: this.i.runId, artifacts: this.i.env.scope.artifacts, journal: (t, p) => this.i.journal(t, p) }, s);
     if (r.ok) return NEXT;
@@ -844,20 +696,11 @@ export class RunController {
     return fail(r.code);
   };
 
-  /** 아직 핸들러가 없는 비가역(human_commit·send_email): 실행하지 않는다. 재시도·onFail 없이 중단(FORCED_STOPS). */
   private readonly refuseIrreversible: Handler<'human_commit' | 'send_email'> = async (s) => {
     this.i.journal('step.irreversible_unguarded', { stepId: s.id, type: s.type });
     return fail('step.irreversible_unguarded');
   };
 
-  /**
-   * submit(D03 §3 R-G7·§5.3, D02 §4·§4.5). 이 순서가 아니면 누르지 않는다:
-   *   ① 이 X의 게이트가 발급한 토큰 검증·소비(메모리) → ② 원장 armed + 게이트 요청 consumed(포트, 한 트랜잭션) → 커밋 구간 진입
-   *   → ③ readback 재계산(승인한 값과 다르면 not_committed(pre_dispatch_mismatch), 게이트 앞으로) → ④ 커밋 가드 무장
-   *   → R-A1로 버튼 확인 → 클릭(GuardedActuator는 이 항목이 무장됐을 때만 누른다) → dispatched → signFlow → verify.
-   * 진입 뒤 누르기 전에 막히면 not_committed(identity_mismatch) + HandedOff(재개는 게이트 앞). 누른 뒤의 실패는 곧바로 verify(§5.3).
-   * 재계산과 클릭 사이에는 디스크 I/O가 없다(원장 dispatched는 클릭 뒤).
-   */
   private readonly submitStep: Handler<'submit'> = async (s) => {
     const g = this.gateOf.get(s.id);
     const held = g ? this.tokensByGate.get(g) : undefined;
@@ -866,26 +709,22 @@ export class RunController {
       this.i.journal('step.irreversible_unguarded', { stepId: s.id, type: s.type, ...(this.i.commit ? {} : { cause: 'no_commit_port' }) });
       return fail('step.irreversible_unguarded');
     }
-    // ⓪ 진입 전 확인(발급 잠금 갱신 등). 거부면 원장에 아무것도 쓰지 않고 멈춘다. 토큰은 이 실행에서 다시 쓰지 못하게 치운다(상태 전이가 폐기한다).
     if (this.i.beforeCommit) {
       const pre = await this.i.beforeCommit(s.id).catch((): ActResult => ({ ok: false, code: 'commit.precheck_failed' }));
       if (!pre.ok) {
         this.tokensByGate.delete(g);
         this.approvedReadback.delete(g);
         this.i.journal('submit.not_entered', { stepId: s.id, cause: pre.code });
-        // 핸드오프로 멈추면 재개 지점은 이 스텝이 아니라 게이트 앞이다(토큰이 없으니 다시 승인받는다)
         this.handoffResumeAt = this.preGateCp ?? this.staticPreGate.get(g) ?? g;
         return fail(pre.code);
       }
     }
-    // ① 토큰: 이 게이트·이 actionHash·이 X, 기한 안. 실패면 누르지 않는다(위조·다른 실행·재사용은 보안 이벤트).
     this.tokensByGate.delete(g);
     const rej = this.i.tokens.consume(held.token, { gateStepId: g, actionHash: held.token.actionHash, stepId: s.id }, this.i.clock.now());
     if (rej) {
       this.i.journal(SECURITY_REJECTIONS.has(rej) ? 'security.gate_token_rejected' : 'gate.token_rejected', { stepId: s.id, reason: rej, ...(SECURITY_REJECTIONS.has(rej) ? { security: true } : {}) });
       return fail('gate.token_invalid');
     }
-    // ② 원장 armed + 요청 consumed
     const armed = await Promise.resolve()
       .then(() => this.i.commit!.arm({ stepId: s.id, reqId: held.reqId, actionHash: held.token.actionHash }))
       .catch((): ActResult => ({ ok: false, code: 'ledger.error' }));
@@ -898,7 +737,6 @@ export class RunController {
     try {
       return await this.commitSection(s, g, held.token, approved);
     } catch {
-      // 구간 안 예외: 눌렀는지 모른다. 곧바로 verify(§5.3).
       this.armedKey = null;
       this.fire({ t: 'step_failed' }, s.id, 'step.port_error');
       return { t: 'jump', to: s.verify };
@@ -910,7 +748,6 @@ export class RunController {
     this.confirmClicked = false;
     this.signClicked.clear();
     this.armedExp = token.exp;
-    // ③ readback 재계산: 승인한 값을 화면에서 다시 읽어 같아야 한다.
     for (const [f, v] of approved) {
       const r = await readField(env.page, env.dict, f).catch(() => null);
       if (!r?.ok || r.value !== v) {
@@ -922,11 +759,9 @@ export class RunController {
         return cp ? { t: 'jump', to: cp } : this.handoffWith('portal.unexpected_page');
       }
     }
-    // ④ 커밋 가드 무장
     const ga = await this.i.commit!.armGuard({ stepId: s.id, armedUntil: token.exp }).catch((): ActResult => ({ ok: false, code: 'commit_guard.arm_refused' }));
     if (!ga.ok) return this.notSent(s, g, ga.code);
     this.guardArmed = true;
-    // R-A1: 버튼 동일성. 확인한 그 요소를 누른다.
     const t = await waitTarget(env, s.target, s.timeoutMs ?? env.defaultTimeoutMs, { allowCommit: true });
     if (!t.ok) return this.notSent(s, g, t.code);
     const v = verifyOfIrreversible(this.i.ir, s.id);
@@ -944,28 +779,20 @@ export class RunController {
     return { t: 'jump', to: s.verify };
   }
 
-  /**
-   * submit.signFlow(D02 §4.5): 클릭 뒤 서명. 무장된 커밋 구간 안에서만. 실패·maxWaitMs 초과는 곧바로 verify(결과는 verify가 판정).
-   * 실제 순서(클릭 → confirm → 서명 → 서버 요청)는 S1 확인 전이다.
-   */
   private async signFlow(s: StepOf<'submit'>, f: NonNullable<StepOf<'submit'>['signFlow']>): Promise<void> {
     const env = this.i.env;
     const deadline = this.i.clock.now() + f.maxWaitMs;
     const left = () => Math.max(0, deadline - this.i.clock.now());
     const m: unknown = f.method === '$profile.signMethod' ? env.scope.profile.signMethod : f.method;
-    // 엔진이 아는 방식만 고른다(SIGN_ACTION). 보안카드처럼 지원하지 않는 방식은 방식 선택을 누르지 않고 사람 차례로 간다.
     const method = typeof m === 'string' && Object.hasOwn(SIGN_ACTION, m) ? m : null;
-    // IR rev v1.3.5 앞머리: 열기(openTargets) → 방식 선택(methodTargets) → 서명 화면 표지(readyTarget). 실패하면 verify, 방식을 못 고르면 사람 차례.
     const head = await this.signOpen(s, f, method, left);
     if (head === 'verify') return;
     if (head === 'human') return void (await this.signTurnWait(s, f, 'secret'));
-    // steps를 선언했으면 그 방식의 동작이 있어야 한다. 모르는 방식은 서명하지 않고(확인 버튼도 누르지 않고) verify로.
     const actions = method === null ? null : f.steps ? f.steps[method as keyof typeof f.steps] : [];
     if (!actions) return this.i.journal('signflow.method_unknown', { stepId: s.id });
     const readyKey = f.readyTarget;
     const ready = readyKey ? (await waitTarget(env, readyKey, Math.min(left(), SIGN_READY_WAIT_MS))).ok : false;
     if (readyKey && !ready) this.i.journal('signflow.ready_missing', { stepId: s.id });
-    // IR rev v1.3.6: 인증서 창의 인증서 고르기(하나면 그것, 여럿이면 프로필 이름). 못 고르면 추측하지 않고 서명 차례(사람이 고르고 넣는다).
     if (f.certPick && method === 'cert') {
       const p = await pickRow(env, f.certPick.target, { by: f.certPick.by }, Math.min(left(), SIGN_READY_WAIT_MS));
       if (!p.ok) {
@@ -976,42 +803,31 @@ export class RunController {
     let doneSeen = false;
     for (const a of actions) {
       if (a === 'human:secret') {
-        // 금고 비밀 창이 서명 대화상자에 직접 넣는다(D05 §3.5). 상태 머신 사람 차례가 아니다(구간 안).
-        // TTL이면 서명 창을 연 채 verify로 넘기지 않는다: 서명 차례로 사람을 기다린다(B3). 그 뒤 엔진은 버튼을 누르지 않는다.
         const r = await this.i.human.secret({ runId: this.i.runId, stepId: s.id, ttlMs: left() }).catch(() => 'ttl' as const);
         if (r !== 'done') {
           this.i.journal('signflow.timeout', { stepId: s.id, action: a });
           return void (await this.signTurnWait(s, f, 'secret'));
         }
       } else if (a === 'wait:push') {
-        // 간편인증 PUSH: 사용자가 폰에서 승인하면 확인 버튼이 뜨거나 화면이 넘어간다. maxWaitMs를 넘기면 서명 차례로 더 기다린다(B3).
         const ok = f.confirmTarget ? (await waitTarget(env, f.confirmTarget, left(), { allowCommit: true })).ok : f.doneTarget ? (doneSeen = (await waitTarget(env, f.doneTarget, left())).ok) : await env.page.waitNavigation(left());
         if (!ok) {
           this.i.journal('signflow.timeout', { stepId: s.id, action: a });
           return void (await this.signTurnWait(s, f, 'push'));
         }
       } else {
-        // 엔진이 하지 않는 동작(secret_fill:security_card, 대표 결정 2026-11-19 지원 안 함)은 치지 않고 verify로.
         return this.i.journal('signflow.unsupported', { stepId: s.id, action: a });
       }
     }
     if (!f.confirmTarget) {
-      // 끝 표지(IR rev v1.3.5): 사람이 홈택스 서명 창에 직접 넣는 길이 기본이다. 표지가 보이면 [다 했어요] 없이 verify로 간다.
       if (f.doneTarget && !doneSeen && (await this.signDoneWait(s, f, ready, left)) === 'timeout') await this.signTurnWait(s, f, 'secret');
       return;
     }
-    // 서명 동작을 했으면(비밀 창 done·PUSH 승인) 확인 버튼은 짧게만 찾는다. 없으면(이미 완료 창) 누르지 않고 verify.
     const t = await waitTarget(env, f.confirmTarget, actions.length > 0 ? Math.min(left(), CONFIRM_GRACE_MS) : left(), { allowCommit: true });
     if (!t.ok) return this.i.journal('signflow.confirm_missing', { stepId: s.id, code: t.code });
     await this.clickConfirm(s, f.confirmTarget, t.t);
     if (actions.includes('human:secret')) await this.signWrongRetry(s, f, left);
   }
 
-  /**
-   * 서명 [확인] 뒤 틀린 비밀번호(인증서 갱신 등으로 기억값이 틀림, 부장 지시 2026-11-14). 같은 값으로 다시 누르지 않는다:
-   * 금고가 기억값을 지우고 대화 카드로 다시 묻고, 새 값이 들어가면 [확인]을 한 번 더 누른다. 포털이 틀림 안내를 보였다는 것이
-   * 앞 클릭이 서명하지 않았다는 근거다. 횟수는 CertSecretPort MAX_WRONG(넘으면 서명 차례로 사람). 발급 여부는 그 뒤 verify(조회)가 정한다.
-   */
   private async signWrongRetry(s: StepOf<'submit'>, f: NonNullable<StepOf<'submit'>['signFlow']>, left: () => number): Promise<void> {
     const check = this.i.human.afterSignConfirm?.bind(this.i.human);
     if (!check || !f.confirmTarget) return;
@@ -1025,19 +841,12 @@ export class RunController {
       }
       const t = await waitTarget(this.i.env, f.confirmTarget, Math.min(left(), CONFIRM_GRACE_MS), { allowCommit: true });
       if (!t.ok) return this.i.journal('signflow.confirm_missing', { stepId: s.id, code: t.code });
-      // 앞 클릭은 포털이 틀린 비밀번호로 거절했다(서명 없음): 이 무장에서 한 번 더 누를 수 있다
       this.confirmClicked = false;
       this.i.journal('signflow.confirm_retry', { stepId: s.id });
       await this.clickConfirm(s, f.confirmTarget, t.t);
     }
   }
 
-  /**
-   * signFlow 앞머리(IR rev v1.3.5, 팀장 결정 2026-11-12). 항목은 모두 commits:true라 무장된 그 순간에만 누를 수 있다.
-   * - openTargets: 차례로, 무장 1회당 각 한 번(이미 눌렀으면 건너뜀). 못 찾거나 못 누르면 'verify'(submit은 이미 눌렸다).
-   * - methodTargets: 프로필 발급 인증 값의 항목을 한 번. 값이 없거나 그 항목이 안 보이면 추측해서 다른 것을 누르지 않고 'human'(서명 차례).
-   *   홈택스는 이 클릭 때 첫 커밋 요청(ATEETBAA002C04)이 나간다.
-   */
   private async signOpen(s: StepOf<'submit'>, f: NonNullable<StepOf<'submit'>['signFlow']>, method: string | null, left: () => number): Promise<'ok' | 'verify' | 'human'> {
     for (const k of f.openTargets ?? []) {
       const r = await this.clickSignOnce(s, k, left());
@@ -1058,7 +867,6 @@ export class RunController {
     return 'human';
   }
 
-  /** signFlow 열기·방식 선택 항목 하나를 이 무장에서 한 번만 누른다. 'clicked'·'already' 또는 실패 코드. */
   private async clickSignOnce(s: StepOf<'submit'>, key: string, waitMs: number): Promise<string> {
     if (this.signClicked.has(key)) return 'already';
     const t = await waitTarget(this.i.env, key, waitMs, { allowCommit: true });
@@ -1073,10 +881,6 @@ export class RunController {
     return 'clicked';
   }
 
-  /**
-   * 끝 표지(doneTarget)를 기다린다. 'done': 보였다. 'cancelled': 서명 화면 표지(readyTarget)가 보였다가 사라졌는데 끝 표지가 없다
-   * (인증서 창 [취소]·닫기로 본다. 커밋 요청이 일부 나갔을 수 있어 verify가 판정). 'stopped': [중지]. 'timeout': maxWaitMs 안에 아무것도 없음.
-   */
   private async signDoneWait(s: StepOf<'submit'>, f: NonNullable<StepOf<'submit'>['signFlow']>, readySeen: boolean, left: () => number): Promise<'done' | 'cancelled' | 'stopped' | 'timeout'> {
     const env = this.i.env;
     let goneAt: number | null = null;
@@ -1091,7 +895,6 @@ export class RunController {
         if (up) goneAt = null;
         else {
           goneAt ??= this.i.clock.now();
-          // 완료 때도 서명 창은 접힌다(홈택스 iframe 0x0). 끝 표지가 늦게 그려질 틈을 준다.
           if (this.i.clock.now() - goneAt >= SIGN_CANCEL_GRACE_MS) {
             this.i.journal('signflow.window_closed', { stepId: s.id });
             return 'cancelled';
@@ -1104,10 +907,8 @@ export class RunController {
     }
   }
 
-  /** 서명 확인 버튼: 한 무장에 최대 한 번. */
   private async clickConfirm(s: StepOf<'submit'>, key: string, t: Resolved): Promise<void> {
     if (this.confirmClicked) return this.i.journal('signflow.confirm_once', { stepId: s.id });
-    // 승인 토큰 기한이 지났으면 엔진은 누르지 않는다(사람이 홈택스 창에서 누르고 [다 했어요]).
     if (this.i.clock.now() > this.armedExp) return this.i.journal('signflow.confirm_expired', { stepId: s.id });
     this.confirmClicked = true;
     this.armedKey = key;
@@ -1115,11 +916,6 @@ export class RunController {
     if (!c.ok) this.i.journal('signflow.confirm_failed', { stepId: s.id, code: c.code });
   }
 
-  /**
-   * 서명 차례(B3, 커밋 구간 안 사람 대기). 끝나면 호출한 쪽이 verify로 간다(결과는 verify가 판정).
-   * - push: 기다리는 동안 확인 버튼이 뜨면 (이 무장에서 아직 안 눌렀을 때만) 한 번 누르고 끝낸다.
-   * - [다 했어요](finishSignTurn)·[중지](abort)·상한(cap): 아무 버튼도 누르지 않고 끝낸다. 무장 토큰은 새로 만들지 않는다.
-   */
   private async signTurnWait(s: StepOf<'submit'>, f: NonNullable<StepOf<'submit'>['signFlow']>, kind: 'push' | 'secret'): Promise<SignTurnEnd> {
     const env = this.i.env;
     let woke: Exclude<SignTurnEnd, 'clicked'> | null = null;
@@ -1137,9 +933,7 @@ export class RunController {
     this.i.signTurn?.opened({ runId: this.i.runId, stepId: s.id, kind });
     let clicked = false;
     let doneSeen = false;
-    // 끝 표지(sign.waiting 중 주기적으로 본다): 보이면 사람이 [다 했어요]를 누르지 않아도 verify로 간다. 필드가 없으면 지금처럼 명령·상한만 기다린다.
     const done = f.doneTarget && env.dict.entries[f.doneTarget] ? f.doneTarget : null;
-    // 확인 버튼(push)은 승인 토큰 기한 안에서만, 이 무장에서 아직 안 눌렀을 때만 기다려 누른다.
     const confirm = kind === 'push' && f.confirmTarget && !this.confirmClicked ? f.confirmTarget : null;
     try {
       while (!woke) {
@@ -1158,7 +952,6 @@ export class RunController {
           const t = await waitTarget(env, confirm, 0, { allowCommit: true });
           if (woke) break;
           if (t.ok) {
-            // 버튼이 떴다: 이제 깨울 수 없다(누르는 중에 [다 했어요]가 와도 같은 verify로 간다).
             this.signWake = null;
             clicked = true;
             await this.clickConfirm(s, confirm, t.t);
@@ -1166,7 +959,6 @@ export class RunController {
           }
         }
         await Promise.race([env.clock.sleep(env.pollMs), woken]);
-        // 가짜 시계(즉시 끝나는 sleep)에서도 타이머·명령이 끼어들 틈을 준다.
         await new Promise<void>((r) => setImmediate(r));
       }
     } finally {
@@ -1174,14 +966,12 @@ export class RunController {
       this.signWake = null;
     }
     const why: SignTurnEnd = clicked ? 'clicked' : doneSeen ? 'done_seen' : (woke ?? 'cap');
-    // 실제 발급 요청은 서명을 마친 뒤 나간다. verify의 대기·부재 판정 시각을 지금으로 미룬다(더 오래 기다릴 뿐 더 일찍 '안 됨'이라 하지 않는다).
     if (this.dispatchMark) this.i.verifyBook?.markDispatched(this.dispatchMark.verifyId, this.i.clock.now(), this.dispatchMark.failBefore);
     this.i.journal('sign.turn_closed', { stepId: s.id, why });
     this.i.signTurn?.closed({ runId: this.i.runId, stepId: s.id, why });
     return why;
   }
 
-  /** 진입 뒤 누르기 전에 막혔다: 원장 not_committed(identity_mismatch), HandedOff, 재개는 게이트 앞(재게이트). */
   private async notSent(s: StepOf<'submit'>, g: string, code: string): Promise<Outcome> {
     this.armedKey = null;
     this.i.journal('submit.not_sent', { stepId: s.id, cause: code });
@@ -1200,8 +990,6 @@ export class RunController {
     await this.i.commit?.disarmGuard().catch(() => {});
   }
 
-  /** waitMs 초과: Paused, 재개하면 게이트 앞 체크포인트부터(재게이트). */
-  /** 거부 우선 창 동안 [중지](pending abort)가 오면 true. */
   private async denyWindowLost(): Promise<boolean> {
     const ms = this.i.denyPriorityMs ?? GATE_DENY_PRIORITY_MS;
     const until = this.i.clock.now() + ms;
@@ -1217,16 +1005,6 @@ export class RunController {
     return fail('gate.expired');
   }
 
-  /**
-   * sign(D02 §4 표): 로그인 등 **커밋 구간 밖** 포털 서명 흐름. 발급 때 전자서명은 submit.signFlow다.
-   * - 커밋 구간 W(X) 안(승인한 토큰을 들고 X를 기다리는 동안, 토큰 소비 ~ verify)이면 아무것도 하지 않고 거부한다(V-03c의 실행 시 방어).
-   *   토큰을 든 동안이면 중단(sign.refused_in_commit). 토큰을 쓴 뒤(눌렀을 수 있음)면 판정할 verify가 없으니 InDoubt(사람 확인).
-   * - 방식(method, $profile.signMethod)마다 포털 서명 모듈이 하는 일이 다르다. 엔진은 then[] 가운데 그 방식의 동작만 한다:
-   *   cert → human:secret(인증서 암호는 사용자가 금고 비밀 창에 직접, ADR-020 결정 2),
-   *   simple_auth → 입력 없음(PUSH 승인 대기는 뒤따르는 결정적 wait 스텝, D02 §8 예 s5).
-   * - 그 방식의 동작이 then[]에 없으면 sign.no_path, 모르는 방식(지원하지 않는 보안카드 포함)이면 sign.method_unknown.
-   *   둘 다 재시도 없이 핸드오프다(사람이 로그인을 마저 한다).
-   */
   private readonly signStep: Handler<'sign'> = async (s) => {
     if (this.st.commit || this.tokensByGate.size > 0) {
       this.i.journal('sign.refused_in_commit', { stepId: s.id, consumed: this.st.commit });
@@ -1252,13 +1030,10 @@ export class RunController {
     return this.secretTurn(s.id, { ttlMs: this.i.secretTtlMs ?? 120_000 });
   };
 
-  /** 금고 비밀 창 사람 차례(D05 §3.5): 값은 금고가 포털 칸에 직접 넣는다. 엔진은 끝났는지만 안다. */
   private async secretTurn(at: string, r: { target?: string; prompt?: string; ttlMs: number }, onFailThen?: string): Promise<Outcome> {
     const out = await this.i.human.secret({ runId: this.i.runId, stepId: at, ...r }).catch(() => 'ttl' as const);
     if (this.pending === 'abort') return this.abortInTurn(at);
     if (out === 'done') return this.afterHuman(at);
-    // IR rev v1.3.7(대표 "공동인증서 아니면 간편인증", 2026-11-13): 틀린 비밀번호로 끝난 차례는 스텝 onFail이 체크포인트(다른 로그인 길)면
-    // 쉬지 않고 그 스텝의 실패로 돌려 onFail로 간다. 금고는 이미 다시 치지 않는다(인증서 잠김 방지).
     if (out !== 'ttl' && CERT_PW_FAILED.has(out.code) && onFailThen?.startsWith('checkpoint:')) {
       this.i.journal('human.secret_fallback', { stepId: at, code: out.code });
       const n = this.afterHuman(at);
@@ -1268,9 +1043,6 @@ export class RunController {
   }
 
   private readonly humanStep: Handler<'human'> = async (h) => {
-    // 캡차는 사람에게 넘기기만 한다(핸드오프, 팀장 결정 2026-11-09 절대 규칙, ADR-004). 받은 정책의 캡차 중계 값이 allowed여도
-    // 값 입력을 받아 엔진이 채우는 중계는 하지 않는다. 자동 풀이·탐지 회피 코드는 없다. 사람이 브라우저에서 직접 풀고 재개한다.
-    // 재개는 마지막 체크포인트부터(사람이 브라우저에서 풀고 로그인까지 마쳤는지 화면을 다시 본다). 같은 스텝이면 다시 핸드오프만 된다.
     if (h.kind === 'captcha') {
       this.handoffResumeAt = this.lastCp;
       return this.handoffWith('portal.captcha');
@@ -1296,14 +1068,12 @@ export class RunController {
     this.i.journal('human.answered', { stepId: h.id, kind: h.kind, ...(h.kind === 'manual' ? {} : { length: value.length }) });
     const out = this.afterHuman(h.id);
     if (out.t !== 'next' || h.kind === 'manual' || !h.target) return out;
-    // Running으로 돌아온 뒤에 채운다(미뤄 둔 하향으로 멈췄으면 채우지 않는다).
     const t = await waitTarget(this.i.env, h.target, h.timeoutMs ?? this.i.env.defaultTimeoutMs);
     if (!t.ok) return fail(t.code);
     const f = await this.i.env.act.fill(t.t, value, { keyEvents: true });
     return f.ok ? NEXT : fail(f.code);
   };
 
-  /** 사람 차례 끝 → Running 진입 확인(미뤄 둔 하향이면 정지 분기, 재개는 마지막 체크포인트부터). */
   private afterHuman(at: string): Outcome {
     if (this.st.pendingDowngrade) this.resumeAt = this.lastCp ?? at;
     this.fire({ t: 'human_input' }, at, null);
@@ -1316,14 +1086,11 @@ export class RunController {
     return fail('run.aborted');
   }
 
-  /** 사람 TTL: Paused, 재개하면 마지막 체크포인트부터. code는 쉼의 사유(기본 human.ttl_expired, 틀린 비밀번호면 sign.password_wrong 등). */
   private ttl(at: string, code = 'human.ttl_expired'): Outcome {
     this.resumeAt = this.lastCp ?? at;
     this.fire({ t: 'human_ttl' }, at, code);
     return fail('human.ttl_expired');
   }
-
-  // ---------------- 대기 ----------------
 
   private wakeGate(w: GateWait): void {
     const f = this.gateWake;
@@ -1355,16 +1122,8 @@ export class RunController {
     });
   }
 
-  // ---------------- 전이·효과 ----------------
-
-  /**
-   * 전이의 문맥. MachineCtx.ledger는 "이 전이가 기록하는 결과를 먼저 반영한 값"이다. 원장 쓰기는 전이 뒤의 효과(ledger.*)라,
-   * verify·InDoubt 해소 결과(committed·not_committed) 전이에서는 그 X의 미종결 행을 결과로 바꿔 넘긴다. 그러지 않으면 커밋 구간에서 미룬
-   * 정지 하향이 verify committed 뒤에도 InDoubt로 간다(ADR-023 결정 6: committed → CompletedWithIssues).
-   */
   private ctx(ev?: RunEvent): MachineCtx {
     let ledger = this.i.ledgerStates();
-    // [직접 발급함]은 이 전이의 효과로 observed_manual을 적는다. 정지 분기가 그 행을 보아야 Paused(재게이트)로 가지 않는다.
     if (ev?.t === 'attest_manual_commit') ledger = [...ledger, 'observed_manual'];
     const result = ev?.t === 'verify' || ev?.t === 'indoubt_resolved' ? ev.result : 'unknown';
     if (result !== 'unknown') {
@@ -1374,7 +1133,6 @@ export class RunController {
     return { allowed: this.i.allowed?.() ?? true, ledger, hardStop: this.i.hardStop?.() ?? false };
   }
 
-  /** 전이 하나. 불법이면 기록하고 false(상태는 그대로). */
   private fire(ev: RunEvent, at: string | null, code: string | null): boolean {
     const t = transition(this.st, ev, this.ctx(ev));
     if (!t.ok) {
@@ -1409,7 +1167,6 @@ export class RunController {
     }
   }
 
-  /** 열린 게이트 행을 닫는다. 이미 승인됐으면 거부로 돌린다(거부 우선 창, R-G8). */
   private closeGateRow(why: 'cancel' | 'expire'): void {
     const req = this.gateReq;
     if (!req) return;

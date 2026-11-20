@@ -1,6 +1,3 @@
-// 데스크톱 클라우드 포트(apps/desktop/src/remote-cloud.ts)와 egress 계정·릴레이 목적지(@sax/net cloud.ts, 팀장 결정 2026-11-06).
-// 실제 계정·릴레이 서비스를 한 앞단 origin(개발 스택과 같은 모양)에 붙여 이메일 코드 로그인 → 첫 PC 등록 → 기기 토큰 → acct-claim·
-// 기기 목록·룸·우편함 → 룸 WSS를 egress만으로 지난다. 운영 origin 판정은 허용 목록 함수와 testOrigins로 본다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import http from 'node:http';
@@ -61,7 +58,6 @@ import { ed25519Private, ed25519RawPublic } from '../services/shared/src/index.t
 
 const hex = () => randomBytes(32).toString('hex');
 
-/** 개발 스택 모양의 앞단(scripts/phone-stack/stack.ts와 같은 갈래): /v1/mailboxes·/v1/rooms(WSS 포함) → 릴레이, 나머지 → 계정 */
 async function stack() {
   const front = http.createServer();
   await new Promise<void>((r) => front.listen(0, '127.0.0.1', r));
@@ -71,7 +67,6 @@ async function stack() {
   const acctClaimSeed = hex();
   const internal = hex();
   const mail = new MockMailSender();
-  // 내부 키 이름은 #135 전후 둘 다 넣는다(INTERNAL_TOKEN → INTERNAL_CALL_KEY)
   const common = { INTERNAL_TOKEN: internal, INTERNAL_CALL_KEY: internal, SAX_SQLITE_FILE: ':memory:', LIMIT_ID_KEY: hex(), HOST: '127.0.0.1', PORT: '0' };
   const account = await startAccount(
     {
@@ -86,7 +81,6 @@ async function stack() {
       BILLING_RETURN_URL: `${origin}/done`,
       PG_PROVIDER: 'mock',
       MAIL_PROVIDER: 'mock',
-      // 비밀번호 경로(ADR-038): argon2id가 있는 런타임에서만 켠다(없으면 404, 그 시험은 건너뛴다)
       ...(argon2Available() ? { PASSWORD_PEPPER_KEYS: `k1:${hex()}` } : {}),
     },
     { mail },
@@ -134,14 +128,14 @@ describe('egress 계정·릴레이 목적지(cloud.ts): 메서드·경로 정확
     assert.deepEqual(cloudRequestCheck('DELETE', `${CLOUD_ORIGIN}/v1/mailboxes/${'a'.repeat(43)}`), { route: 'mailboxes.delete', kind: 'prod' });
     assert.deepEqual(cloudRequestCheck('GET', 'http://localhost:8787/v1/device-list'), { route: 'deviceList.get', kind: 'dev' });
     for (const [m, u] of [
-      ['GET', `${CLOUD_ORIGIN}/v1/auth/code`], // 메서드
-      ['POST', `${CLOUD_ORIGIN}/v1/auth/code/`], // 끝 슬래시
-      ['POST', `${CLOUD_ORIGIN}/v1/auth/code?x=1`], // 쿼리
+      ['GET', `${CLOUD_ORIGIN}/v1/auth/code`],
+      ['POST', `${CLOUD_ORIGIN}/v1/auth/code/`],
+      ['POST', `${CLOUD_ORIGIN}/v1/auth/code?x=1`],
       ['POST', `${CLOUD_ORIGIN}/v1/auth/code#f`],
-      ['POST', `${CLOUD_ORIGIN}/v1/x/../auth/code`], // 점 구간
-      ['POST', `${CLOUD_ORIGIN}/v1/auth/%63ode`], // 인코딩
+      ['POST', `${CLOUD_ORIGIN}/v1/x/../auth/code`],
+      ['POST', `${CLOUD_ORIGIN}/v1/auth/%63ode`],
       ['POST', `${CLOUD_ORIGIN}//v1/auth/code`],
-      ['POST', `${CLOUD_ORIGIN}/v1/me`], // 메서드(GET만)
+      ['POST', `${CLOUD_ORIGIN}/v1/me`],
       ['GET', `${CLOUD_ORIGIN}/internal/v1/devices/x`],
       ['DELETE', `${CLOUD_ORIGIN}/v1/mailboxes/${'a'.repeat(42)}`],
     ]) assert.equal(cloudRequestCheck(m!, u!), 'path', `${m} ${u}`);
@@ -210,7 +204,6 @@ describe('계정 화면 경로(#224 비밀번호 로그인이 실제 앱에서 n
       assert.deepEqual(cloudRequestCheck(m, CLOUD_ORIGIN + p), { route: name, kind: 'prod' }, `${m} ${p}`);
       assert.deepEqual(cloudRequestCheck(m, `http://localhost:8787${p}`), { route: name, kind: 'dev' }, `${m} ${p}`);
     }
-    // 경로 정규식은 모두 ^…$ 고정이다(접두·와일드카드 없음). ID 칸이 있는 경로는 길이가 정해진 문자 묶음뿐이다.
     for (const r of CLOUD_ROUTES) assert.ok(r.path.source.startsWith('^') && r.path.source.endsWith('$') && !/\.\*|\.\+|\[\^/.test(r.path.source), r.name);
   });
 
@@ -232,10 +225,9 @@ describe('계정 화면 경로(#224 비밀번호 로그인이 실제 앱에서 n
       ['GET', '/v1/password'],
       ['POST', '/v1/password'],
       ['PATCH', '/v1/password'],
-      ['POST', '/v1/passkeys/options'], // 패스키는 G7 결정 뒤
+      ['POST', '/v1/passkeys/options'],
       ['POST', '/v1/passkeys'],
       ['POST', '/v1/auth/passkey/options'],
-      // 구독은 화면이 부르는 넷만. 웹훅·카드 창(기본 브라우저)·권리 단독 조회는 이 egress로 나가지 않는다
       ['POST', '/v1/billing/webhook'],
       ['GET', '/v1/billing/card'],
       ['GET', '/v1/billing/entitlement'],
@@ -248,7 +240,6 @@ describe('계정 화면 경로(#224 비밀번호 로그인이 실제 앱에서 n
       await assert.rejects(eg.cloud({ method: m as never, url: CLOUD_ORIGIN + p, body: m === 'POST' || m === 'PUT' ? '{}' : undefined }), { code: 'path_not_allowed' }, `${m} ${p}`);
     }
     const ports = cloudPorts({ egress: eg, env: 'prod' });
-    // 운영 origin으로 진짜 나가지 않게 fetch를 막는다(2026-11-17: 이 줄이 CI·PC 시험마다 운영 /v1/auth/password에 401을 하루 수백 번 남겼다).
     const realFetch = globalThis.fetch;
     const hit: string[] = [];
     globalThis.fetch = (async (url: string | URL) => {
@@ -351,7 +342,6 @@ describe('계정 화면 경로(#224 비밀번호 로그인이 실제 앱에서 n
     const relayArgs: Record<string, unknown[]> = { createRoom: [auth, randomBytes(16)], registerMailbox: [auth, randomBytes(32), randomBytes(32), randomBytes(32)], deleteMailbox: [auth, randomBytes(32), randomBytes(32)] };
     assert.deepEqual(Object.keys(ports.relay).filter((m) => !(m in relayArgs)), []);
     for (const m of Object.keys(ports.relay)) await (ports.relay as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[m]!(...relayArgs[m]!).catch(() => {});
-    // 연결된 폰 수신(phone-link.ts)이 부르는 큐 경로: 쪽 읽기·ACK·번들 올리기
     const q = ports.mailboxQueue!(randomBytes(32), { read: randomBytes(32), write: randomBytes(32) }, auth);
     const before = seen.length;
     await q.listPage().catch(() => {});
@@ -407,15 +397,12 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
     const cert = await issueCert(keys.aik, { device_id: deviceId, role: 'desktop', Sx: keys.noise.publicKey, Vx: keys.vd.publicKey, not_after: certNotAfter() });
     const tok = await account.deviceToken(cert, keys.vd);
     assert.match(tok.token, /^sxd1\./);
-    // 다른 Vx로 증명하면 서버 코드 그대로
     await assert.rejects(account.deviceToken(cert, softSigner(ed25519Keygen().secretKey, VD_PURPOSES)), (e: Error & { code: string }) => /^account\./.test(e.code));
     const auth: DeviceAuth = async (htm, htu) => deviceAuthHeaders(tok.token, keys.vd, htm, htu);
 
     const claim = await account.acctClaim(auth);
-    // 데스크톱 헤더도 egress 허용 목록을 지난다(쿠키 등은 보내지 않는다)
     await assert.rejects(account.acctClaim(async (htm, htu) => ({ ...(await auth(htm, htu)), cookie: 'x' })), { code: 'net.header_not_allowed' });
     assert.equal(claim.claim.email, email);
-    // 폰과 같은 검증: PAIR_OK 필드 = b64(JCS(응답 그대로)), 앱 고정 공개키, AIK 일치
     const v = verifyAcctClaim(b64(jcsBytes(claim)), { accountKeys: [s.acctClaimPub], aikPub: keys.aik.publicKey });
     assert.equal(v.ok, true, JSON.stringify(v));
     await account.putDeviceList(auth, { ...list, listVersion: 1 }).then(
@@ -426,10 +413,8 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
     const roomId = randomBytes(16);
     const room = await relay.createRoom(auth, roomId);
     assert.ok(room.expiresAt > Date.now());
-    // 폰이 붙지 않은 룸으로 대리 등록: 404 relay.room_unavailable(서버 코드)
     const ph = { deviceId: uuid4(), role: 'mobile' as const, platform: 'ios' as const, name: '폰', Sx: b64(x25519Keygen().publicKey), Vx: b64(ed25519Keygen().publicKey), roomId: Buffer.from(roomId).toString('base64url') };
     await assert.rejects(account.enrollPhone(auth, ph), { code: 'relay.room_unavailable' });
-    // 룸 WSS: egress 소켓으로 데스크톱이 룸에 들어간다(wsRelayClient)
     const client = wsRelayClient({ host: ports.relayHost, insecureLocal: ports.insecureLocal, open: ports.openSocket });
     const link = await client.joinRoom(roomId, 'desktop');
     link.close();
@@ -446,7 +431,6 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
 
     await account.logout(session);
     await assert.rejects(account.deviceList(session), { code: 'account.unauthorized' });
-    // 송신은 모두 egress 감사 기록에 경로 이름으로만 남고, 이메일·토큰·우편함 ID는 없다
     const audit = JSON.stringify(egress.audit);
     for (const secret of [email, session, tok.token, Buffer.from(mbx).toString('base64url')]) assert.ok(!audit.includes(secret));
     assert.ok(egress.audit.some((a) => a.dest === 'cloud.ws' && a.path === 'rooms.join'));
@@ -463,7 +447,6 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
     await account.pinFirstDesktop(session, { aikPub: b64(keys.aik.publicKey), deviceList: list, platform: 'macos', name: '사무실 PC' });
     const tok = await account.deviceToken(await issueCert(keys.aik, { device_id: pcId, role: 'desktop', Sx: keys.noise.publicKey, Vx: keys.vd.publicKey, not_after: certNotAfter() }), keys.vd);
     const auth: DeviceAuth = async (htm, htu) => deviceAuthHeaders(tok.token, keys.vd, htm, htu);
-    // 폰: 계정 세션으로 신청하고 PC가 AIK 목록에 올려 활성으로 만든다
     const phone = async (name: string) => {
       const p = { id: uuid4(), noise: x25519Keygen(), vd: softSigner(ed25519Keygen().secretKey, VD_PURPOSES) };
       const r = await fetch(`${s.origin}/v1/devices/enroll`, { method: 'POST', headers: { authorization: `Bearer ${session}`, 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: p.id, role: 'mobile', platform: 'ios', name, Sx: b64(p.noise.publicKey), Vx: b64(p.vd.publicKey) }) });
@@ -490,7 +473,6 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
     assert.deepEqual(all.map((d) => [d.name, d.role, d.state, d.self, d.listed]), [['사무실 PC', 'desktop', 'active', true, true], ['폰 하나', 'mobile', 'active', false, true], ['폰 둘', 'mobile', 'active', false, true]]);
     assert.ok(!JSON.stringify(all).includes(b64(p1.vd.publicKey)), '키는 렌더러로 가지 않는다');
 
-    // 폰 끊기: 목록에서 빠지고 폐기 레코드가 생기며, 서버는 그 폰의 토큰을 바로 주지 않는다
     const after = await mgr.unlink(p1.id);
     assert.deepEqual(after.map((d) => d.name), ['사무실 PC', '폰 둘']);
     assert.deepEqual(dropped, [p1.id]);
@@ -498,18 +480,15 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
     assert.ok(verifyDeviceList(list, keys.aik.publicKey).ok);
     const c1 = await issueCert(keys.aik, { device_id: p1.id, role: 'mobile', Sx: p1.noise.publicKey, Vx: p1.vd.publicKey, not_after: certNotAfter() });
     await assert.rejects(account.deviceToken(c1, p1.vd), (e: Error & { code: string }) => /^account\./.test(e.code));
-    // 이미 끊긴 기기를 다시 눌러도 그대로다. 자기 자신은 leave로만
     assert.deepEqual((await mgr.unlink(p1.id)).map((d) => d.name), ['사무실 PC', '폰 둘']);
     await assert.rejects(mgr.unlink(pcId), { code: 'account.use_leave' });
 
-    // 폰이 스스로 나감(폰 기기 토큰, devices 범위): 서버는 바로 폐기하지만 AIK 목록에는 아직 남아 있다
     const c2 = await issueCert(keys.aik, { device_id: p2.id, role: 'mobile', Sx: p2.noise.publicKey, Vx: p2.vd.publicKey, not_after: certNotAfter() });
     const t2 = await account.deviceToken(c2, p2.vd);
     assert.ok(t2.scopes.includes('devices'));
     const leaveUrl = `${s.origin}/v1/devices/self/leave`;
     assert.equal((await fetch(leaveUrl, { method: 'POST', headers: await deviceAuthHeaders(t2.token, p2.vd, 'POST', leaveUrl) })).status, 204);
     assert.ok(list.entries.some((e) => e.entry.device_id === p2.id));
-    // 맞추기 전에는 새 목록(새 폰 올리기)을 서버가 받지 않는다
     const stale = list;
     assert.equal(await mgr.reconcile(), 1);
     assert.ok(!list.entries.some((e) => e.entry.device_id === p2.id));
@@ -521,7 +500,6 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
     assert.deepEqual((await mgr.list()).map((d) => d.name), ['사무실 PC', '새 폰']);
     assert.ok(p3.id);
 
-    // 계정에 남은 마지막 PC는 나갈 수 없다(로그아웃만)
     await assert.rejects(mgr.leave(), { code: 'account.last_desktop' });
     assert.equal((await mgr.list()).find((d) => d.self)?.state, 'active');
   });
@@ -530,7 +508,6 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
     const { account } = ports;
     const email = 'pclink@example.com';
     const dirs: string[] = [];
-    // PC 한 대: 금고(장기 키 연산) + 계정 로그인 + 기기 관리 + 새 PC 승인. 금고는 control 포트 대신 VaultCrypto를 바로 부른다
     const pc = async (name: string) => {
       const ks = new MemoryKeyStore();
       const vlog = new FileEventLog(null, 'vault');
@@ -553,7 +530,6 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       const dir = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-pclink-'));
       dirs.push(dir);
       const events: string[] = [];
-      // 이 시험은 쓰던 PC의 승인 길을 본다: 계정 열쇠 보관이 꺼진 서버처럼 답하게 한다(켜진 서버에서는 이 길로 오지 않는다, ADR-050 개정 1)
       const off = () => Promise.reject(Object.assign(new Error('off'), { code: 'request.not_found' }));
       const acct = new DesktopAccount({
         client: { ...account, keyEscrowPub: off, claimKeyEscrow: off },
@@ -571,7 +547,6 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
         return acct.verify(s.mail.lastCode(email)!);
       };
       const mgr = () => new DeviceManager({ client: account, session: () => acct.device(), aik: async () => (await keys()).aik, dropPhone: async () => {} });
-      // 계정 공유 기록: 장부 대신 메모리 저장소
       const out: ShareOutItem[] = [];
       const got = new Map<string, ShareRowCore>();
       let cursor = 0;
@@ -595,7 +570,6 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       const host = new PcLinkHost({ client: account, exclusive: (f) => aMgr.exclusive(f), aik: async () => (await a.keys()).aik, vault: async () => (await a.keys()).link });
       assert.deepEqual(await host.list(), []);
 
-      // 새 PC가 같은 계정으로 로그인하면 연결을 기다린다(전에는 account.aik_already_pinned로 끝났다)
       const b = await pc('집 PC');
       const bAikBefore = b64((await b.keys()).aik.publicKey);
       const v1 = await b.login();
@@ -603,7 +577,6 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       assert.equal(await b.acct.linkPoll(), false, '쓰던 PC가 답하기 전');
       await assert.rejects(b.acct.sendCode(email), /account_linking/);
 
-      // 쓰던 PC: 신청이 보이고, [연결]을 누르면 새 PC에 6자리가 뜬다
       const [req] = await host.list();
       assert.deepEqual([req!.name, req!.platform, req!.stage, req!.triesLeft], ['집 PC', 'macos', 'new', null]);
       assert.ok(!JSON.stringify(req).includes('commit'), '키·약속은 렌더러로 가지 않는다');
@@ -618,7 +591,6 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       const code = v2.linkCode!;
       assert.deepEqual((await host.list()).map((x) => [x.stage, x.triesLeft]), [['code', 3]]);
 
-      // 틀린 6자리는 횟수만 줄고, 맞으면 목록에 새 PC가 올라가고 쓰던 PC에 "연결됐어요"가 남는다
       const wrong = code === '000000' ? '000001' : '000000';
       const bad = await host.confirm(req!.deviceId, wrong);
       assert.deepEqual([bad.ok, bad.requests[0]!.triesLeft], [false, 2]);
@@ -628,7 +600,6 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       assert.ok(a.vlog.lines.some((l) => l.includes('vault.rk_sealed')));
       assert.equal(a.acct.identity!.deviceList.entries.filter((e) => e.entry.role === 'desktop').length, 2);
 
-      // 새 PC: 열쇠가 왔다. 사용자가 확인한 뒤에만 금고에 넣는다
       assert.equal(await b.acct.linkPoll(), true);
       assert.equal(b.acct.view().step, 'link_confirm');
       assert.equal(b64((await b.keys()).aik.publicKey), bAikBefore, '확인 전에는 금고가 그대로다');
@@ -638,16 +609,13 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       assert.equal(b64((await b.keys()).aik.publicKey), a.acct.identity!.aikPub, '새 PC 금고의 AIK = 계정 AIK');
       assert.ok(b.vlog.lines.some((l) => l.includes('vault.rk_imported')));
       assert.ok(b.events.includes('main.account_link:ok'));
-      // 계정 열쇠는 로그·신원 파일에 없다
       const rk = Buffer.from((await b.ks.get(CRYPTO_KEY_ITEMS.rk, 32))!);
       const idFile = await fs.readFile(path.join(b.dir, 'remote-identity.json'), 'utf8');
       for (const text of [idFile, ...a.vlog.lines, ...b.vlog.lines, ...a.events, ...b.events]) assert.ok(!text.includes(rk.toString('base64')) && !text.includes(rk.toString('hex')) && !text.includes(code));
-      // 우편함은 비었고, 앱을 다시 켜도 신원이 맞다
       assert.deepEqual((await host.list()).map((x) => x.stage), ['done']);
       const again = new DesktopAccount({ client: account, keys: b.keys, identity: new RemoteIdentityFile(b.dir), platform: 'macos', deviceName: '집 PC' });
       assert.equal((await again.init()).step, 'signed_in');
 
-      // 두 PC 모두 기기 토큰으로 같은 목록을 보고, 한 PC가 바꾼 목록을 다른 PC가 받아들인다
       const bMgr = b.mgr();
       assert.deepEqual((await bMgr.list()).map((d) => [d.name, d.state, d.self, d.listed]), [['사무실 PC', 'active', false, true], ['집 PC', 'active', true, true]]);
       const start = await account.startEmailCode(email);
@@ -662,12 +630,10 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       const before = a.acct.identity!.deviceList.listVersion;
       assert.deepEqual((await aMgr.list()).map((d) => [d.name, d.listed]), [['사무실 PC', true], ['집 PC', true], ['폰', true]]);
       assert.equal(a.acct.identity!.deviceList.listVersion, before + 1, '쓰던 PC가 새 PC가 올린 목록을 받아들였다');
-      // 쓰던 PC가 폰을 끊으면(최신 목록 위에서) 새 PC도 다음에 그 목록을 받는다
       await aMgr.unlink(ph.id);
       assert.deepEqual((await bMgr.list()).map((d) => d.name), ['사무실 PC', '집 PC']);
       assert.deepEqual(b.acct.identity!.deviceList.revoked.map((x) => x.device_id), [ph.id]);
 
-      // 세 번째 PC: 쓰던 PC가 거절하면 로그인 화면으로 돌아가고 자리가 빈다. 새 PC가 승인해도 된다(모든 PC가 같은 열쇠)
       const c3 = await pc('매장 PC');
       assert.equal((await c3.login()).step, 'link_wait');
       const cReq = (await host.list()).find((x) => x.stage === 'new')!;
@@ -688,7 +654,6 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       assert.equal(c3.acct.identity!.aikPub, a.acct.identity!.aikPub);
       assert.deepEqual((await aMgr.list()).map((d) => d.name), ['사무실 PC', '집 PC', '매장 PC']);
 
-      // 계정 공유 기록(ADR-048 결정 5): 한 PC가 올린 줄을 다른 PC들이 같은 계정 열쇠로 열고 금고 서명(Ws)을 확인한다
       const issueBody = { doc: 'tax_invoice' as const, approvalNo: '202611174100000012345678', writtenOn: '2026-11-17', buyerBizNo: '1234567890', buyerName: '가나다상사', supply: 1_000_000, tax: 100_000, how: 'app' as const };
       const issueRow = newShareRowId();
       a.out.push({ rowId: issueRow, kind: 'issue', at: Date.now(), body: issueBody });
@@ -700,12 +665,10 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
         const row = other.got.get(issueRow)!;
         assert.deepEqual([row.kind, row.by, row.dev, row.epoch, row.body], ['issue', 'desktop', a.acct.identity!.deviceId, 1, issueBody], '세대는 폐기 레코드 수(폰 하나를 끊었다)');
       }
-      // 서버에는 암호문만 있다
       const bAuth = b.acct.device()!.auth;
       const page = await account.shareRows(bAuth, 0);
       assert.deepEqual([page.rows.length, page.head, page.epoch, page.rows[0]!.kind, page.rows[0]!.deviceId], [1, 1, 1, 'issue', a.acct.identity!.deviceId]);
       assert.ok(!JSON.stringify(page).includes('1234567890') && !Buffer.from(fromB64url(page.rows[0]!.body)).includes('가나다상사'));
-      // 폰: 새 PC가 붙인 폰이 일을 맡긴다(폰의 Vm 서명). 쓰던 PC는 그 폰을 아직 모르지만 목록을 다시 받아 확인한다
       const ph2 = { id: uuid4(), noise: x25519Keygen(), key: ed25519Keygen() };
       const ph2Vd = softSigner(ph2.key.secretKey, VD_PURPOSES);
       const ph2Vm = softSigner(ph2.key.secretKey, VM_PURPOSES);
@@ -718,7 +681,6 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       const phTok = await account.deviceToken(await issueCert((await b.keys()).aik, { device_id: ph2.id, role: 'mobile', Sx: ph2.noise.publicKey, Vx: ph2.key.publicKey, not_after: certNotAfter() }), ph2Vd);
       assert.ok(phTok.scopes.includes('share'));
       const phAuth: DeviceAuth = async (htm, htu) => deviceAuthHeaders(phTok.token, ph2Vd, htm, htu);
-      // PC가 종단간 통로로 준 것: 지금 세대의 K_share와 Ws 공개키
       const fromPc = await b.c.shareKey({ epoch: shareEpoch(list2) });
       const seen = await account.shareRows(phAuth, 0);
       const phOpen = openShareRow(fromPc.key, seen.rows[0]!, { sharePub: fromPc.signPub, mobileSignPub: () => null });
@@ -731,7 +693,6 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       assert.deepEqual([aPull.state, aPull.pulled, aPull.applied, aPull.rejected], ['ok', 2, 2, {}], '자기가 올린 줄과 폰이 맡긴 일');
       assert.deepEqual(a.got.get(task.row_id), task);
       assert.ok(a.acct.identity!.deviceList.entries.some((e) => e.entry.device_id === ph2.id), '모르는 폰의 줄을 보고 목록을 다시 받았다');
-      // 일은 PC 한 대만 맡는다
       const tasks = await account.shareTasks(bAuth);
       assert.deepEqual(tasks.map((t) => [t.taskId, t.state, t.createdBy]), [[task.row_id, 'open', ph2.id]]);
       assert.ok((await account.claimShareTask(bAuth, task.row_id)).claimExpiresAt > Date.now());
@@ -739,11 +700,9 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       await account.releaseShareTask(bAuth, task.row_id);
       await account.cancelShareTask(phAuth, task.row_id);
       assert.deepEqual((await account.shareTasks(bAuth)).map((t) => t.state), ['cancelled']);
-      // 금고·동기화 기록에 줄의 내용이 없다
       for (const text of [...a.vlog.lines, ...b.vlog.lines, ...a.events, ...b.events]) assert.ok(!text.includes('1234567890') && !text.includes(issueRow));
       assert.ok(a.events.includes('main.share_sync:ok'));
 
-      // 네 번째 PC는 한도에 걸린다(PC 3대). 로그인 코드 한도(이메일당 5회/시) 때문에 앞에서 받은 세션으로 신청만 해 본다
       const d4 = await pc('네 번째');
       await assert.rejects(PcLinkJoin.start({ client: account, session, aikPub: a.acct.identity!.aikPub, keys: await d4.keys(), vault: (await d4.keys()).link, platform: 'windows', name: '네 번째' }), { code: 'account.device_limit' });
     } finally {
@@ -754,7 +713,6 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
   it('계정 열쇠 맡기기(ADR-050): 쓰던 PC가 열쇠를 맡겨 두면 새 PC는 이메일 인증만으로 바로 붙고, 맡긴 것이 없으면 쓰던 PC의 승인을 기다린다', async () => {
     const { account } = ports;
     const dirs: string[] = [];
-    // legacy: 열쇠 맡기기 이전 버전으로 등록한 PC처럼, 첫 등록 때 맡기지 않는다
     const pc = async (name: string, email: string, legacy = false) => {
       const ks = new MemoryKeyStore();
       const vlog = new FileEventLog(null, 'vault');
@@ -793,11 +751,9 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       const a = await pc('사무실 PC', email);
       assert.equal(await a.acct.depositKey(), 'skipped', '로그인 전에는 맡기지 않는다');
       assert.equal((await a.login()).step, 'signed_in');
-      // 첫 PC는 등록과 같은 요청으로 계정 열쇠를 맡긴다(개정 1). 켤 때는 이미 맡겨져 있어 금고를 다시 부르지 않는다
       assert.equal(await a.acct.depositKey(), 'already');
       assert.equal(a.vlog.lines.filter((l) => l.includes('vault.rk_sealed')).length, 1);
 
-      // 새 PC: 쓰던 PC가 꺼져 있어도(아무 것도 하지 않는다) 이메일 인증만으로 로그인된다
       const b = await pc('집 PC', email);
       const v = await b.login();
       assert.deepEqual([v.step, v.email, v.linkCode], ['signed_in', email, undefined]);
@@ -806,23 +762,19 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       assert.ok(b.vlog.lines.some((l) => l.includes('vault.rk_imported')));
       assert.ok(b.events.includes('main.account_escrow:joined'));
       assert.equal(b.acct.identity!.deviceList.entries.filter((e) => e.entry.role === 'desktop').length, 2);
-      // 기기 토큰이 나오고(서버가 활성화했다) 두 PC가 같은 목록을 본다. 쓰던 PC는 새 PC가 올린 목록을 받아들인다
       assert.deepEqual((await b.mgr().list()).map((d) => [d.name, d.state, d.self, d.listed]), [['사무실 PC', 'active', false, true], ['집 PC', 'active', true, true]]);
       assert.deepEqual((await a.mgr().list()).map((d) => [d.name, d.state, d.listed]), [['사무실 PC', 'active', true], ['집 PC', 'active', true]]);
       assert.equal(await b.acct.depositKey(), 'already', '같은 열쇠라 다시 맡기지 않는다');
-      // 계정 열쇠는 로그·신원 파일에 없다
       const rk = Buffer.from((await b.ks.get(CRYPTO_KEY_ITEMS.rk, 32))!);
       assert.deepEqual(rk, Buffer.from((await a.ks.get(CRYPTO_KEY_ITEMS.rk, 32))!));
       const idFile = await fs.readFile(path.join(b.dir, 'remote-identity.json'), 'utf8');
       for (const text of [idFile, ...a.vlog.lines, ...b.vlog.lines, ...a.events, ...b.events]) assert.ok(!text.includes(rk.toString('base64')) && !text.includes(rk.toString('hex')));
-      // 앱을 다시 켜도 신원이 맞고, 로그아웃한 뒤 다시 로그인하면 열쇠를 다시 받지 않고 되살린다
       const again = new DesktopAccount({ client: account, keys: b.keys, identity: new RemoteIdentityFile(b.dir), platform: 'macos', deviceName: '집 PC' });
       assert.equal((await again.init()).step, 'signed_in');
       await b.acct.signOut();
       assert.equal((await b.login()).step, 'signed_in');
       assert.equal(b.vlog.lines.filter((l) => l.includes('vault.rk_imported')).length, 1);
 
-      // 서버는 다른 열쇠·다른 계정의 봉인문을 받지 않고, 이 길로는 남을 끊지 못한다
       const aDev = a.acct.device()!;
       const st = await account.keyEscrowState(aDev.auth);
       const other = await pc('남의 PC', 'escrow-other@example.com');
@@ -836,19 +788,16 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       await assert.rejects(account.joinByKeyEscrow(session, bDev.deviceId, kicked), { code: 'request.param_rejected' });
       await assert.rejects(account.claimKeyEscrow(session, { deviceId: uuid4(), Hx: b64(x25519Keygen().publicKey) }), { code: 'account.device_not_found' });
 
-      // 맡긴 열쇠가 있는 계정에는 열쇠를 새로 걸 수 없다(받아서 붙어야 한다)
       const oKeys = await other.keys();
       const mineSealed = await oKeys.link.sealRk(fromB64(st.pub), utf8(CTX.rkEscrow), escrowStoreAad(oKeys.aik.publicKey));
       const oList = await rekeyedDeviceList(oKeys.aik, bDev.deviceList.listVersion + 1, [{ deviceId: bDev.deviceId, role: 'desktop', noisePub: oKeys.noise.publicKey, signPub: oKeys.vd.publicKey, registeredAt: Date.now() }]);
       await assert.rejects(account.resetByKeyEscrow(session, { deviceId: bDev.deviceId, aikPub: b64(oKeys.aik.publicKey), deviceList: oList, enc: b64(mineSealed.enc), ct: b64(mineSealed.ct) }), { code: 'account.aik_already_pinned' });
 
-      // 맡긴 열쇠가 없는 계정(열쇠를 가진 PC가 이 기능 이전 버전이고 꺼져 있다): 새 PC는 승인 화면 없이 자기 열쇠를 계정에 새로 걸고 바로 로그인된다(개정 1)
       const lmail = 'escrow-legacy@example.com';
       const old = await pc('옛 PC', lmail, true);
       assert.equal((await old.login()).step, 'signed_in');
       const oldAik = old.acct.identity!.aikPub;
       const oldId = old.acct.identity!.deviceId;
-      // 옛 PC에 폰이 하나 붙어 있다
       const lstart = await account.startEmailCode(lmail);
       const ls = (await account.verifyEmailCode(lstart.loginId, s.mail.lastCode(lmail)!)).session;
       const ph = { id: uuid4(), noise: x25519Keygen(), key: ed25519Keygen() };
@@ -858,12 +807,10 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       const withPhone = await addDevice((await old.keys()).aik, oldDev.deviceList, { deviceId: ph.id, role: 'mobile', noisePub: ph.noise.publicKey, signPub: ph.key.publicKey, registeredAt: Date.now() });
       await account.putDeviceList(oldDev.auth, withPhone);
       await oldDev.setDeviceList(withPhone);
-      // 옛 열쇠로 봉인한 공유 기록이 서버에 한 줄 있다(서버는 내용을 보지 않는다)
       const oldRow: ShareRowCore<'issue'> = { v: 1, row_id: newShareRowId(), kind: 'issue', epoch: 0, at: Date.now(), dev: oldId, by: 'desktop', body: { doc: 'tax_invoice', approvalNo: '202611184100000012345678', writtenOn: '2026-11-18', buyerBizNo: '1234567890', buyerName: '가나다상사', supply: 1000, tax: 100, how: 'app' } };
       assert.deepEqual(await account.putShareRow(oldDev.auth, await sealShareRow(new Uint8Array(randomBytes(32)), oldRow, async () => new Uint8Array(64))), { seq: 1 });
 
       const n = await pc('새 PC', lmail);
-      // 서버는 새로 거는 목록을 본다: 쓰던 PC를 빼거나 폰을 담은 목록, 다른 열쇠의 봉인문은 받지 않는다
       {
         const nk = await n.keys();
         const nid = uuid4();
@@ -877,7 +824,6 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
         const oldEntry = withPhone.entries.find((e) => e.entry.device_id === oldId)!.entry;
         const oldInfo = { deviceId: oldId, role: 'desktop' as const, noisePub: fromB64(oldEntry.Sx), signPub: fromB64(oldEntry.Vx), registeredAt: oldEntry.registered_at };
         await assert.rejects(account.resetByKeyEscrow(ls, body(await rekeyedDeviceList(nk.aik, v + 1, [oldInfo, me]))), { code: 'request.param_rejected' }, '버전은 하나만 오른다');
-        // 금고의 봉인은 하루 3번까지라 새 금고로 만든다
         const foreignSeal = await (await (await pc('다른 금고', lmail)).keys()).link.sealRk(pub, utf8(CTX.rkEscrow), escrowStoreAad(nk.aik.publicKey));
         await assert.rejects(account.resetByKeyEscrow(ls, body(await rekeyedDeviceList(nk.aik, v, [oldInfo, me]), foreignSeal)), { code: 'request.param_rejected' }, '맡기는 열쇠의 AIK가 새 AIK여야 한다');
         assert.equal((await account.deviceList(ls)).aikPub, oldAik);
@@ -895,15 +841,12 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
       assert.deepEqual((await n.mgr().list()).filter((d) => d.state !== 'revoked').map((d) => [d.name, d.state, d.self, d.listed]), [['옛 PC', 'active', false, true], ['새 PC', 'active', true, true]]);
       assert.equal((await account.devicesBySession(ls)).find((d) => d.deviceId === ph.id)!.state, 'revoked', '폰은 옛 열쇠를 기억하므로 다시 연결해야 한다');
       assert.equal(await n.acct.depositKey(), 'already', '새로 건 열쇠는 같은 요청으로 맡겨졌다');
-      // 옛 열쇠로 봉인한 서버 사본은 지워지고, 순번은 이어 간다(쓰던 PC의 받은 자리가 뒤로 가지 않는다)
       const wiped = await account.shareRows(n.acct.device()!.auth, 0);
       assert.deepEqual([wiped.rows.length, wiped.head, wiped.epoch], [0, 1, 0]);
-      // 로그아웃 뒤 다시 로그인하면 되살린다(다시 걸지 않는다)
       await n.acct.signOut();
       assert.equal((await n.login()).step, 'signed_in');
       assert.equal(n.events.filter((e) => e === 'main.account_escrow:reset').length, 1);
 
-      // 옛 PC를 다시 켠다: 옛 열쇠의 인증서가 통하지 않아 로그인 화면으로 돌아가고, 이메일 로그인 한 번으로 새 열쇠를 받아 같은 기기로 이어 쓴다
       const old2 = new DesktopAccount({
         client: account, keys: old.keys, identity: new RemoteIdentityFile(old.dir), platform: 'macos', deviceName: '옛 PC',
         linkVault: async () => (await old.keys()).link, resetKeys: () => void 0, log: (nm, d) => void old.events.push(`${nm}:${String(d.result ?? '')}`),
@@ -968,7 +911,6 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
     await account.logoutAll(after.session);
     await assert.rejects(account.me(after.session), { code: 'account.unauthorized' });
     await assert.rejects(account.refresh(after.refreshToken!), { code: 'account.unauthorized' });
-    // 모두 운영 허용 목록 이름으로 egress 감사 기록에 남고, 비밀번호·토큰·이메일은 없다
     const names = new Set(egress.audit.map((a) => a.path));
     for (const n of ['auth.password', 'me.get', 'password.put', 'password.delete', 'auth.refresh', 'auth.refreshRevoke', 'auth.reauth', 'auth.reauthVerify', 'auth.reset', 'auth.resetVerify', 'auth.logoutAll']) assert.ok(names.has(n), n);
     const audit = JSON.stringify(egress.audit);

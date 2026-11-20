@@ -1,7 +1,3 @@
-// 우편함 번들(D08 §7): PC가 큐 수신 키 Q_D를 7일마다 갈고 `{Qx, valid_from, valid_to, seq}`를 Vd로 서명(SAX-qbundle-v1)해
-// 릴레이 번들 슬롯(PUT /v1/mailboxes/:id/bundle, ≤ 2KB)에 둔다. 폰은 Vd(AIK 서명 기기 목록·pair.ok)로 확인하고,
-// seq 최고값보다 낮은 번들과 valid_to가 지난 번들로는 봉인하지 않는다.
-// 형식: 슬롯 값 = b64(JCS({bundle:{Qx, seq, valid_from, valid_to}, sig})), 서명 입력 = purpose ‖ JCS(bundle)(기기 키 규칙).
 
 import { b64, fromB64 } from './bytes.ts';
 import { CTX } from './contexts.ts';

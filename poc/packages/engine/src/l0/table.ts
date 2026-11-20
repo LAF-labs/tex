@@ -1,5 +1,3 @@
-// S-L0 규칙 대체 표(번들 질문 전수). 보고서 reports/S-L0.md의 원천이고, 번들 질문과 1:1인지 테스트가 확인한다.
-// r8: R8 §5.3 추정. mode: both = 규칙이 양쪽 값을 낼 수 있음, stop = 중단 쪽 값만(비가역 직전·직후·보안·안전 번들, judge가 강제), none = 규칙 없음.
 
 export interface L0Row {
   bundle: string;
@@ -7,7 +5,6 @@ export interface L0Row {
   r8: '높음' | '중간' | '낮음' | '삭제됨';
   mode: 'both' | 'stop' | 'none';
   signal: string;
-  /** 승격 시 호출 절감. 규칙 전용 결정은 매핑이 참조하는 모든 질문에 규칙 답이 있을 때만(judge.ts requiredForRulesOnly) */
   callSaving: string;
 }
 

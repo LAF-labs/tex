@@ -1,6 +1,3 @@
-// AUDIT-D 패키지 D(데스크톱·시험 하네스): 하드닝 진입점, 자식 env, 금고가 부르는 비밀 창, 사용자 동작 결속, 활성화 예외,
-// 중복 경고 상태별 표시, 작성일 조각, 바 팔레트, 스모크 임시 루트, 단일 인스턴스, docparse 대화상자, PDF 암호 재시도, 셸 문구.
-// Electron을 import하는 모듈은 불러오지 않는다(판정 모듈만 시험하고 Electron 쪽은 소스로 확인한다).
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
@@ -68,7 +65,6 @@ describe('audit-d: D1 하드닝 진입점(N-24·N-68)', () => {
       assert.match(src(f), /hardenApp\(app,/, f);
     }
     assert.match(src('approval-bar.ts'), /constructor\([^)]*\) \{\s*(\/\/[^\n]*\n\s*)*assertNoDebugSwitches\(app\);/);
-    // 개발 콘솔(main.ts·app.html·app.js·app.css·vault-panel.js·preload-app.cjs)을 지웠고, 패키지 main은 제품 셸이다.
     for (const f of ['src/main.ts', 'static/app.html', 'static/app.js', 'static/app.css', 'static/vault-panel.js', 'static/preload-app.cjs']) assert.ok(!fs.existsSync(path.join(root, 'apps/desktop', f)), f);
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'apps/desktop/package.json'), 'utf8')).main, 'dist/shell.js');
   });
@@ -84,7 +80,6 @@ describe('audit-d: D1 하드닝 진입점(N-24·N-68)', () => {
   it('pnpm start:hometax = shell.js, 제품 진입점 shell.ts는 hometax 엔진만 띄운다(fixture·시연 연결 없음, ADR-035 W-7)', () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
     assert.equal(pkg.scripts['start:hometax'], 'pnpm build && electron apps/desktop/dist/shell.js --portal=hometax');
-    // 가짜 홈택스·시연은 demo-shell.ts(pnpm demo)에만 있다. 제품 진입점에는 그 길이 없다.
     assert.ok(!/dev:|DEMO_DEV|demo-|fixture/.test(src('shell.ts').replace(/^\/\/.*$/gm, '')));
     assert.equal(pkg.scripts.demo, 'pnpm build && electron apps/desktop/dist/demo-shell.js');
     assert.match(src('shell.ts'), /engine: \{ portal: \{ kind: 'hometax' \} \}/);
@@ -99,7 +94,6 @@ describe('audit-d: D2 자식 env(N-23)', () => {
       NODE_TLS_REJECT_UNAUTHORIZED: '0', NODE_EXTRA_CA_CERTS: '/ca', PWDEBUG: '1', ELECTRON_RUN_AS_NODE: '1',
     });
     assert.deepEqual(env, { PATH: '/bin', LOCALAPPDATA: 'C:\\L' });
-    // Linux X11·xvfb 화면 인증은 넘긴다(금고가 띄우는 Chrome이 DISPLAY에 붙으려면 필요하다).
     assert.deepEqual(childEnv({ DISPLAY: ':99', XAUTHORITY: '/tmp/xvfb-run.x/Xauthority', DEBUG: '1' }), { DISPLAY: ':99', XAUTHORITY: '/tmp/xvfb-run.x/Xauthority' });
   });
 
@@ -137,7 +131,6 @@ describe('audit-d: D3 금고가 부르는 비밀 창(N-44·N-11)', () => {
 
   it('secret.html is served only by the shell protocol', () => {
     assert.ok(!fs.existsSync(path.join(root, 'apps/desktop/static/secret.html')), '개발 콘솔 정적 비밀 창 없음');
-    // 렌더러 IPC에 비밀 창 명령이 없다. 창은 금고 secret.needed로만 열린다.
     assert.ok(!src('shell-app.ts').includes("'secret.openInput'"));
     assert.match(src('shell-app.ts'), /name === 'secret\.needed'/);
     assert.match(src('secret-window.ts'), /modal: true/);
@@ -157,7 +150,6 @@ describe('audit-d: D4 사용자 동작 결속(N-27)', () => {
     assert.equal(isGestureKey({ type: 'keyDown', key: 'Enter' }), true);
     assert.equal(isGestureKey({ type: 'keyDown', key: ' ', control: true }), false);
     assert.equal(isGestureKey({ type: 'keyDown', key: 'a' }), false);
-    // 코드 칸(account.verify만): 아무 keyDown(숫자·⌘V). keyUp·char는 세지 않는다
     assert.equal(isTypingKey({ type: 'keyDown' }), true);
     assert.equal(isTypingKey({ type: 'keyUp' }), false);
     assert.equal(isTypingKey({ type: 'char' }), false);
@@ -205,7 +197,7 @@ describe('audit-d: D5 창 활성화(N-48, ADR-021 개정 2026-11-09)', () => {
     const g = mk();
     g.reset();
     assert.equal(g.mouse({ type: 'mouseDown', ...at, button: 'left' }), null, '눌림');
-    g.reset(); // 창 활성화(바는 win focus를 reset으로 받는다)
+    g.reset();
     assert.equal(g.mouse({ type: 'mouseUp', ...at, button: 'left' }), null, '활성화 사이에 걸친 클릭은 승인이 아니다');
     assert.equal(g.mouse({ type: 'mouseDown', ...at, button: 'left' }), null);
     assert.deepEqual(g.mouse({ type: 'mouseUp', ...at, button: 'left' }), { kind: 'approve' }, '활성화 뒤 다음 클릭은 기다리지 않고 승인');
@@ -386,7 +378,6 @@ describe('audit-d: D13 셸 문구·이벤트 연결', () => {
     const dir = new URL('../packages/engine/playbooks/', import.meta.url);
     const codes = new Set<string>();
     for (const id of fs.readdirSync(dir).filter((n) => fs.existsSync(new URL(`${n}/playbook.json`, dir)))) {
-      // handoff 스텝의 code는 멈춤이 아니라 사람 차례의 까닭이다(셸 HANDOFF_BY_CODE가 안내한다, 예: s4e cert.pick_needed)
       const walk = (v: unknown): void => {
         if (Array.isArray(v)) return v.forEach(walk);
         if (!v || typeof v !== 'object') return;
@@ -412,9 +403,7 @@ describe('audit-d: D13 셸 문구·이벤트 연결', () => {
     assert.equal(r.notices!.length, 1);
     assert.ok(r.notices![0]!.startsWith('홈택스 안내: “<b>세션이 만료</b>되었습니다'), r.notices![0]);
     assert.ok(r.notices![0]!.length <= '홈택스 안내: “”'.length + 200);
-    // 렌더러는 notices를 텍스트 노드로만 넣는다: 주의 면 하나(noteGroup)에 모으고, noteGroup은 줄마다 h('p', 속성, 글)이다(h는 문자열을 텍스트 노드로 붙인다). innerHTML은 쓰지 않는다.
     const views = fs.readFileSync(path.join(root, 'apps/desktop/static/shell/shell-views.js'), 'utf8');
-    // 주의 문구는 noteGroup 한 면, 정정·대기 알림(INFO_NOTICE)은 h('p', …, t) 한 줄. 둘 다 텍스트 노드다.
     assert.match(views, /if \(warnNotices\.length\) card\.append\(noteGroup\(warnNotices\)\);/);
     assert.match(views, /h\('p', \{ class: 'sx-run-info', 'data-run-info': '' \}, t\)/);
     const group = views.slice(views.indexOf('export function noteGroup('), views.indexOf('\n}\n', views.indexOf('export function noteGroup(')));
@@ -435,7 +424,6 @@ describe('audit-d: D13 셸 문구·이벤트 연결', () => {
     assert.match(fatalText('vault: vault.keystore_mismatch')!, /앱 열쇠를 찾지 못했어요/);
     assert.equal(fatalText('engine.env_tampered:NODE_OPTIONS'), '개발용 환경 변수가 켜져 있어 앱을 열지 않았어요.');
     assert.equal(fatalText('engine_exit'), null);
-    // 금고 알림은 진행 중인 실행 카드에 붙는다.
     const host = new FakeHost();
     const runs = new ShellRuns(host, { counterparties: () => CPS, auth: () => '' });
     const d = interpret('A상사에 10만원 세금계산서', null, 'business', runs);
@@ -445,7 +433,6 @@ describe('audit-d: D13 셸 문구·이벤트 연결', () => {
     runs.notice(undefined, 'x');
     assert.deepEqual(runs.get(d.run.id)!.notices, ['x']);
     assert.equal(runs.isActive(d.run.id), true);
-    // 끝났거나 모르는 실행의 알림도 진행 중인 실행 카드에 붙는다(끝난 카드에 묻히지 않게).
     runs.notice('run-gone', 'y');
     assert.deepEqual(runs.get(d.run.id)!.notices, ['x', 'y']);
     assert.equal(runs.get(d.run.id)!.retry, undefined);
@@ -461,14 +448,11 @@ describe('audit-d: D13 셸 문구·이벤트 연결', () => {
     runs.notice(n.runId, n.text, n.retry);
     const r = runs.get(d.run.id)!;
     assert.deepEqual([r.notices, r.retry], [['Chrome 확장이 감지돼 안전을 위해 멈췄어요. 다시 시도해 주세요.'], 'extension']);
-    // 화면 문장에는 확장 ID·개수·경로가 없다
     assert.ok(!/ext0|3개|\/|\\/.test(r.notices!.join()));
     const views = fs.readFileSync(path.join(root, 'apps/desktop/static/shell/shell-views.js'), 'utf8');
     assert.ok(views.includes("if (run.retry && !run.result && !run.inDoubt && (st === 'stopped' || st === 'attention')) {"));
     assert.ok(views.includes("btn('다시 시도', () => act.again(run), 'sx-btn-primary', { 'data-act': 'retry' })"));
-    // [다시 시도]는 main을 부르지 않는다(새 IPC 없음): 같은 요청을 입력창에 채우기만 한다.
     const shell = fs.readFileSync(path.join(root, 'apps/desktop/static/shell/shell.js'), 'utf8');
-    // 세금계산서는 입력창 채우기만(발급은 사람이 다시 보낸다). 민원증명(PR #272)은 같은 서류·값으로 새 카드를 바로 준비하고 승인 카드가 다시 뜬다
     assert.match(shell, /again: \(run\) => \{\n(?:\s+\/\/[^\n]*\n)?\s+if \(run\.cert\) return act\.restart\(run\.id\);\n\s+state\.vat = run\.vat;[^\n]*\n\s+fillComposer\(/);
   });
 });

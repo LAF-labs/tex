@@ -1,11 +1,3 @@
-// 레지스트리 함수 배포(Vercel, tax.laf-co.com, 팀장 결정 2026-11-06). 계정·게이트웨이 함수와 실패 영역을 나눈다:
-// 레지스트리 구성이 없거나 틀려도 로그인·게이트웨이는 그대로 돈다.
-// - 공개 정적 GET(/registry/*·/policy/*·/packages/*·/releases/*)은 이 함수를 거치지 않는다: Vercel 외부 재작성이 공개 버킷으로 보낸다.
-// - 이 함수(api/registry)는 투명성 로그 GET(/registry/log/*), 처음 설치 직접 링크 GET /download/mac과 게시 PUT(/admin/v1/*)만 받는다. 그 밖은 404.
-// - 정리 함수(api/registry-cron)는 타임스탬프 자동 재서명(resign.ts)을 한다.
-// - 서명 의식 전이라 TRUST_ROOT_JSON이 없으면 두 함수 모두 503 registry.unavailable이다. 타임스탬프 키의 공개키가 핀 고정 timestamp 키와 다르거나
-//   다른 역할 키와 같으면 기동을 거부한다(logSigningKey, config_REGISTRY_LOG_SIGNING_KEY → 503, 로그에는 설정 이름만).
-// - 함수는 DDL을 하지 않는다(Supabase 마이그레이션은 배포 절차가 적용한다). 개발·시험의 메모리 저장소만 기동 때 마이그레이션한다.
 import type http from 'node:http';
 import { Logger, openFromEnv, openSqlite, requestListener, restorePath, safeEqual, serviceEnv } from '@sax/svc-shared';
 import { registryRouter } from './app.ts';
@@ -58,7 +50,6 @@ const startError = (e: unknown) => {
   return /^config_[A-Z0-9_]+$/.test(m) ? m : 'error';
 };
 
-/** 한 번 조립(실패하면 다음 요청에서 다시). TRUST_ROOT_JSON이 없으면(서명 의식 전) 조립하지 않는다 */
 function lazy(env: NodeJS.ProcessEnv, logger: Logger, deps: Parameters<typeof buildRegistryDeploy>[1]) {
   let built: Promise<Built> | null = null;
   return async (): Promise<Built | null> => {
@@ -102,7 +93,6 @@ export function registryCronFunction(rawEnv: NodeJS.ProcessEnv = process.env, de
     if (req.method !== 'GET' || !secret || secret.length < 32 || !safeEqual(auth, `Bearer ${secret}`)) return reply(res, 401, { error: 'account.unauthorized' });
     const b = await get();
     if (!b) return reply(res, 503, { error: 'registry.unavailable' });
-    // 결과는 대상별 상태 이름만(resigned·fresh·missing·changed·rejected:<코드>)
     return reply(res, 200, { ok: true, ...(await b.resign()) });
   };
 }

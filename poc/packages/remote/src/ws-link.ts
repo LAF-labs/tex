@@ -1,15 +1,3 @@
-// 릴레이 WSS 클라이언트. 서버 정본은 services/relay/API.md(D14 M7-3, 팀장 결정):
-//  - 페어링 룸  GET /v1/rooms/:roomId(22자 b64url)          인증 없음(Noise XX가 지킨다). PC가 먼저 POST /v1/rooms로 만든다.
-//  - 라이브 우편함 GET /v1/mailboxes/:mbxId(43자)/live       헤더 Authorization: DPoP <기기 토큰> + DPoP(GET, htu = https://host + 경로)
-//                                                           + X-Mbx-Read + X-Mbx-Write(각 32B b64url). 틀리면 업그레이드 전에 거절.
-//  - 바이너리 메시지 하나 = D08 §6 바깥 프레임 하나(ver=1, kind HS=1·DATA=2, ≤ 65,535B). ENV(3)는 HTTPS 큐 경로라 여기로 보내지 않는다.
-//  - 서버 → 클라이언트 텍스트(우편함만): {"t":"peer","online":bool}, {"t":"env"}(PC에게: 큐에 봉투가 있다).
-//  - close 4001 = 기기 토큰 만료(다시 인증해 재연결), 4002 = 같은 쪽 새 연결이 대신함, 1008·1009 = 형식·크기 위반.
-//  - 120초 무통신이면 서버가 끊는다. 우편함은 30초마다 텍스트 {"t":"ping"}을 보내고 서버가 {"t":"pong"}으로 답한다
-//    (PC의 Node·Electron 내장 WebSocket에는 ping()이 없다). 2.5배 간격 동안 아무것도 못 받으면 죽은 연결로 보고 끊는다
-//    (잠자기·와이파이 전환 뒤 반쯤 열린 TCP를 몇 분씩 붙잡지 않게). 룸은 ping()을 지원할 때만 프레임 ping을 보낸다.
-// 전송은 주입한 WebSocket 생성자로만 한다: 폰은 RN 내장 WebSocket(헤더는 세 번째 인자), PC는 @sax/net egress가 만든 것을 넘긴다.
-// 토큰은 URL에 넣지 않는다(접근 로그 노출 방지).
 
 import { isDevPlainHost } from './devhosts.ts';
 import { b64url } from './bytes.ts';
@@ -30,17 +18,10 @@ export interface WebSocketLike {
 
 export interface WsRelayOptions {
   host: string;
-  /** 소켓을 연다. headers는 우편함 라이브에만 있다(RN: new WebSocket(url, undefined, { headers })). */
   open: (url: string, headers?: Record<string, string>) => WebSocketLike;
-  /**
-   * 우편함 라이브의 기기 범위 토큰 헤더(Authorization + DPoP). 보통
-   * `deviceAuthHeaders(await cache.token(), key, htm, htu)`(devauth.ts). 없으면 우편함에 들어가지 않는다.
-   */
   deviceAuth?: (htm: 'GET', htu: string) => Promise<Record<string, string>>;
-  /** 개발용 로컬 릴레이(ws://, localhost만. 개발 빌드가 allowDevLanHosts(true)를 켰으면 같은 LAN의 mDNS `<이름>.local`도). */
   insecureLocal?: boolean;
   joinTimeoutMs?: number;
-  /** ping 간격(기본 30초, 0이면 끈다). */
   pingMs?: number;
   now?: () => number;
 }
@@ -79,9 +60,7 @@ export function relayUrl(host: string, path: string, insecureLocal = false): str
 
 /** ws-link가 돌려주는 링크. Link에 더해 서버 제어 메시지와 닫힘 코드를 준다. */
 export interface RelayLink extends Link {
-  /** PC에게: 큐에 봉투가 있다({"t":"env"}) → HTTPS GET /v1/mailboxes/:id/envelopes로 꺼낸다. */
   onEnv(cb: () => void): void;
-  /** 서버가 보낸 close 코드(RELAY_CLOSE). 닫히기 전이나 모르면 null. */
   readonly closeCode: number | null;
 }
 
@@ -111,7 +90,6 @@ class WsLink implements RelayLink {
     for (const cb of this.#frame) cb(f);
   }
   _peer(online: boolean) {
-    // 상대가 나갔다 다시 오면 onPeer를 다시 부른다(폰은 그때 IK를 새로 연다).
     if (!online) {
       const was = this.#hasPeer;
       this.#hasPeer = false;
@@ -177,10 +155,6 @@ const codeOf = (ev: unknown): number | null => {
   return typeof c === 'number' ? c : null;
 };
 
-/**
- * room: 열리면 바로 링크(서버가 상대 알림을 보내지 않는다. PC가 먼저 들어가 있으므로 폰은 상대가 있다고 보고,
- *       PC는 폰의 msg1을 기다린다). mailbox: 첫 {"t":"peer"}를 받으면 링크.
- */
 function join(o: WsRelayOptions, url: string, headers: Record<string, string> | undefined, kind: 'room' | 'mailbox', role: 'desktop' | 'mobile'): Promise<RelayLink> {
   return new Promise((resolve, reject) => {
     let ws: WebSocketLike;
@@ -191,7 +165,6 @@ function join(o: WsRelayOptions, url: string, headers: Record<string, string> | 
     }
     ws.binaryType = 'arraybuffer';
     let link: WsLink | null = null;
-    // Blob으로 오는 환경에서도 프레임 순서를 지킨다.
     let chain: Promise<void> = Promise.resolve();
     let ping: ReturnType<typeof setInterval> | null = null;
     const t = setTimeout(() => fail('relay: join timeout', null), o.joinTimeoutMs ?? 10_000);
@@ -244,7 +217,6 @@ function join(o: WsRelayOptions, url: string, headers: Record<string, string> | 
     ws.onopen = () => {
       if (kind === 'room') ready(role === 'mobile');
     };
-    // 업그레이드 전 거절(404 relay.room_unavailable·relay.mailbox_not_found, 401·403 기기 토큰)은 브라우저·RN에서 코드 없이 닫힌다.
     ws.onerror = () => fail(link ? 'relay: socket error' : 'relay: rejected', null);
     ws.onclose = (ev) => fail(link ? 'relay: closed' : 'relay: rejected', codeOf(ev));
     ws.onmessage = (ev) => {
@@ -254,7 +226,7 @@ function join(o: WsRelayOptions, url: string, headers: Record<string, string> | 
         try {
           m = JSON.parse(ev.data) as typeof m;
         } catch {
-          return; // 알 수 없는 제어 메시지는 무시한다
+          return;
         }
         if (kind !== 'mailbox') return;
         if (m.t === 'peer') {

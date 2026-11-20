@@ -1,4 +1,3 @@
-// 엔진 종료 때 원장 DB 닫기(D07 §1.3): SIGTERM(main의 utilityProcess.kill)·exit에서 한 번만 닫고, SIGTERM이면 0으로 나간다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';

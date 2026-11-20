@@ -1,10 +1,3 @@
-// D08 §4.1·§9.2: AIK 서명 기기 목록, 기기 인증서 Cert_X, 폐기 레코드, Kv 배포 서명.
-//
-// 해석(PR에 명시, 팀장 확인 요청): 목록이 바뀔 때마다 PC는 남은 모든 항목을 새 list_version으로 다시 서명한다.
-// 그래서 검증기는 "모든 항목의 list_version == listVersion"을 요구한다. 서버가 옛 목록의 항목과 새 목록의 항목을
-// 섞어 폐기를 숨기는 것을 막는다. 옛 목록 통째 재생은 "이미 본 listVersion보다 낮으면 거부"로 막는다.
-
-// 서명 입력: utf8(ctx) ‖ utf8(JCS(객체)) — 클라우드 services/shared/CONTRACT.md §1(팀장 결정 2026-11-05). 서버가 같은 바이트로 검증한다.
 
 import { b64, fromB64 } from './bytes.ts';
 import { CTX } from './contexts.ts';
@@ -30,9 +23,7 @@ const revokeInput = (r: Omit<RevokedJson, 'aikSig'>) => jcsBytes({ device_id: r.
 export interface DeviceInfo {
   deviceId: string;
   role: Role;
-  /** Noise 정적 공개키 Sx */
   noisePub: Uint8Array;
-  /** Ed25519 서명 공개키 Vx */
   signPub: Uint8Array;
   registeredAt: number;
 }
@@ -43,7 +34,6 @@ export type ListCheck =
 
 /** 받은 기기 목록을 계정 AIK_pub로 검증한다. reason은 로컬 UI 전용(C/X-12). */
 export function verifyDeviceList(list: DeviceListJson, aikPub: Uint8Array, minVersion = 0): ListCheck {
-  // 서버가 준 신뢰할 수 없는 입력이다. 어떤 모양이 와도 던지지 않고 shape로 끝낸다.
   try {
     return checkDeviceList(list, aikPub, minVersion);
   } catch {
@@ -136,7 +126,6 @@ function toEntry(d: DeviceInfo, v: number): DeviceListEntryJson['entry'] {
 /** [PC] 기기 추가(페어링 7단계). list_version + 1, 모든 항목 재서명. */
 export async function addDevice(aik: AikSigner, prev: DeviceListJson, d: DeviceInfo): Promise<DeviceListJson> {
   if (prev.entries.length >= MAX_DEVICES) throw new Error('devlist: too many devices');
-  // 역할별 한도(PC 3·폰 3). 넘으면 끊을 기기를 사용자가 고른다. 여기서 다른 항목을 빼지 않는다(ADR-048 결정 2)
   if (prev.entries.filter((x) => x.entry.role === d.role).length >= (d.role === 'desktop' ? MAX_DESKTOPS : MAX_MOBILES)) throw new Error('devlist: too many devices');
   if (prev.entries.some((x) => x.entry.device_id === d.deviceId) || prev.revoked.some((r) => r.device_id === d.deviceId)) {
     throw new Error('devlist: device id already used');
@@ -170,9 +159,6 @@ export async function revokeDevice(aik: AikSigner, prev: DeviceListJson, deviceI
   return { listVersion: v, entries: await signEntries(aik, rest, v), revoked };
 }
 
-// ---- 기기 인증서 Cert_X (§4.2 7단계) ----
-// 형식은 계정 서비스 POST /v1/device-tokens의 `cert`와 같다: {cert:{device_id, role, Sx, Vx, Kx?, Px?, not_after}, aikSig}.
-// pair.ok의 `cert` 필드에는 b64(JCS(SignedCert))를 싣는다(스키마 v1.4 $comment).
 
 /** 서명되는 인증서 객체(공개키는 표준 base64). */
 export interface CertJson {
@@ -180,9 +166,7 @@ export interface CertJson {
   role: Role;
   Sx: string;
   Vx: string;
-  /** 금고 비밀 봉인 수신 키(폰 Km). */
   Kx?: string;
-  /** 하드웨어 승인 키(M7-7, 제안). Phase 1은 넣지 않는다. */
   Px?: string;
   not_after: number;
 }
@@ -269,8 +253,6 @@ export function verifyCert(input: SignedCert | string, aikPub: Uint8Array, now =
     return null;
   }
 }
-
-// ---- Kv 배포(D05 §5, SAX-kv-v1) ----
 
 export async function signKv(vd: VdSigner, kvPub: Uint8Array): Promise<string> {
   return b64(await vd.sign(CTX.kv, kvPub));

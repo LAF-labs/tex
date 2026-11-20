@@ -1,15 +1,3 @@
-// 세무사 꾸러미 엑셀 내보내기(D14 M6-6, ADR-032 결정 8, ADR-034 결정 7, 08 D-05·D-07).
-// - 우리 표준 서식: 첫 시트 '표지'(범위 표지, R15) + 시트 9종(매출, 매입, 사업용 카드, 종이 증빙, 정산·현금매출(켜진 업종만), 급여대장, 원천세 요약, 추가 항목, 빠진 것).
-//   다음 단계의 세무 프로그램 서식 맞춤을 생각해 사업자번호·거래일·공급가액·세액을 따로 둔 열로 둔다(02 §17).
-// - 엑셀 파일 자체에 ECMA-376 Agile 암호(AES-256, SHA-512)를 건다(officecrypto-tool). 시트 보호가 아니라 "열기 암호"다.
-// - 사진·PDF는 엑셀에 넣을 수 없어(순수 JS 라이브러리로 OLE 개체를 못 넣는다) 같은 암호의 AES-256 ZIP(WinZip AE-2) 하나로 따로 낸다
-//   (팀장 결정 2026-11-05: 파일 둘. 엑셀은 엑셀에서 바로 열린다). 암호 밖에 남는 첨부는 없다. ZIP 안 파일 이름은 D07 §4 규칙
-//   ({docType}_{yyyyMMdd}_{shortId})이라 개인정보가 없다. ZIP은 운영체제 기본 압축 해제로 못 열 수 있어 ZIP_OPEN_GUIDE를 함께 보여 준다.
-// - 급여 시트의 주민번호는 기본 가림(뒷자리 마스킹, R13 D-L3). 사장님이 설정 bundle.includeRrn을 켜면 넣는다. 포함 여부는 내보내기 기록에 남긴다.
-//   급여 기록 내보내기(사장님 보관용)에는 늘 넣지 않는다(D07 §2 끝).
-// - 범위 표지·중복 제거·합계 차이 메모(R15 P1-2, 팀장 승인)는 내보내기 안에서 자동으로 한다. 사장님에게 묻지 않고 막지 않는다(yulmu 2026-11-05).
-// - 내보내기 기록(bundle_exports) 한 행에 엑셀·ZIP의 sha256·경로·시각을 남긴다. 암호는 어디에도 저장하지 않는다.
-// - 모델을 부르지 않는다. 네트워크를 쓰지 않는다(파일만 쓴다). 보내기(메일 프로그램 열기)는 main이 한다(M6-13).
 import { createHash, randomInt } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -33,7 +21,6 @@ export const ZIP_OPEN_GUIDE = 'ZIP은 반디집·7-Zip 등으로 열어 주세�
 /** 주민번호를 가렸을 때 급여 시트 끝과 안내에 쓰는 문구 */
 export const RRN_HIDDEN_NOTE = '주민번호는 설정에서 켜면 포함됩니다';
 
-/** full = 전체, masked = 뒷자리 가림(꾸러미 기본), omit = 열 없음(급여 기록 기본) */
 type RrnMode = 'full' | 'masked' | 'omit';
 
 const STATUS_KO = { missing: '없음', partial: '일부', ready: '준비됨', not_applicable: '이번 달 해당 없음' } as const;
@@ -60,7 +47,6 @@ const header = (labels: string[]): Row => labels.map((l) => ({ value: l, fontWei
  */
 export const escapeFormulaText = (s: string): string => (/^[=+\-@\t\r\n＝＋－＠]/u.test(s) ? `'${s}` : s);
 
-/** 모든 시트의 글자 칸을 이스케이프한다(숫자 칸·서식은 그대로) */
 function escapeSheets<T>(sheets: Sheet<T>[]): Sheet<T>[] {
   const cell = (c: unknown): unknown => {
     if (typeof c === 'string') return escapeFormulaText(c);
@@ -71,7 +57,6 @@ function escapeSheets<T>(sheets: Sheet<T>[]): Sheet<T>[] {
   return sheets.map((s) => ({ ...s, data: (s.data as unknown[][]).map((r) => r.map(cell)) as Row[] }) as Sheet<T>);
 }
 const text = (v: string | null | undefined): string => v ?? '';
-/** 정수 금액 칸(천 단위 구분) */
 const num = (v: number | null | undefined) => (v === null || v === undefined ? null : { value: v, type: Number, format: '#,##0' });
 const fmtBizNo = (b: string | null | undefined) => (b && /^\d{10}$/.test(b) ? `${b.slice(0, 3)}-${b.slice(3, 5)}-${b.slice(5)}` : text(b));
 const hours = (m: number | null) => (m === null ? '' : `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`);
@@ -84,28 +69,21 @@ export function attachmentName(d: Pick<DocumentRow, 'id' | 'docType' | 'issuedAt
 }
 
 export interface BundleExportInput extends MonthContext {
-  /** 결과 파일을 둘 폴더(앱이 정한 내보내기 폴더) */
   outDir: string;
   password: string;
-  /** 급여대장 시트에 주민번호 전체를 넣는가. 빼면 설정 bundle.includeRrn(기본 false = 뒷자리 가림)을 따른다 */
   includeRrn?: boolean;
   now?: () => Date;
 }
 
 export interface BundleExportResult {
   record: BundleExport;
-  /** 암호 엑셀 */
   file: string;
-  /** 사진·PDF를 담은 같은 암호의 AES-256 ZIP. 첨부가 없으면 null */
   zipFile: string | null;
-  /** 사장님·세무사에게 같이 보여 줄 안내(ZIP_OPEN_GUIDE, RRN_HIDDEN_NOTE) */
   guide: string[];
   rrnIncluded: boolean;
   sheets: string[];
   attachments: number;
-  /** 보관함 파일이 DB의 sha256과 달라 넣지 않은 문서 수(빠진 것 시트에도 적는다) */
   skippedChanged: number;
-  /** 매출·매입에서 같은 승인번호라 뺀 행 수 */
   duplicateInvoicesDropped: number;
 }
 
@@ -178,7 +156,6 @@ export async function exportBundle(input: BundleExportInput): Promise<BundleExpo
   const tidy = tidyInvoices(input.taxInvoices ?? []);
   const docIds: string[] = status.flatMap((s) => s.docIds);
   const sheets: Sheet<Buffer>[] = [];
-  /** 표지에 적을 시트별 행 수·합계(R15 P1-2 ①) */
   const tally: Array<{ sheet: string; rows: number; supply?: number; vat?: number; total?: number }> = [];
   const sumOf = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
@@ -225,7 +202,6 @@ export async function exportBundle(input: BundleExportInput): Promise<BundleExpo
 
   const tier2 = status.filter((s) => s.item.tier === 2);
   if (tier2.length) {
-    // 정산 파일은 docparse가 읽은 요약(플랫폼·기간·합계)을 한 줄씩 적는다. 파일에서 읽은 값일 뿐 판정·신고 금액이 아니다(M6-5)
     const rows: Row[] = [header(['구분', '일자·기간', '금액', '상태', '파일', '수수료', '입금액', '비고'])];
     const docs = new DocumentRepo(db);
     for (const s of tier2) {
@@ -288,7 +264,6 @@ export async function exportBundle(input: BundleExportInput): Promise<BundleExpo
   sheets.push({ sheet: '빠진 것', data: miss });
   tally.push({ sheet: '빠진 것', rows: miss.length - 1 });
 
-  // 첫 시트: 범위 표지(R15 P1-2 ①). 세무사가 받은 파일만 보고 어느 사업자의 어느 기간인지, 시트마다 몇 행·얼마인지 대조한다
   const prof = new ProfileRepo(db).get(profileId);
   sheets.unshift({
     sheet: '표지',
@@ -330,7 +305,6 @@ export async function exportBundle(input: BundleExportInput): Promise<BundleExpo
   };
 }
 
-/** 이름 줄기 하나를 고른다: 붙일 끝말(.xlsx, _첨부.zip) 중 어느 것도 없는 첫 줄기(없으면 _2, _3…). 엑셀과 ZIP이 같은 번호를 쓴다 */
 function freeStem(dir: string, base: string, suffixes: readonly string[]): string {
   fs.mkdirSync(dir, { recursive: true });
   for (let i = 1; ; i++) {
@@ -339,7 +313,6 @@ function freeStem(dir: string, base: string, suffixes: readonly string[]): strin
   }
 }
 
-/** 새 파일로만 쓴다(덮어쓰지 않음). 임시 파일에 쓴 뒤 옮기고 소유자 전용 권한 */
 function writeNew(file: string, data: Buffer): string {
   const tmp = `${file}.part`;
   fs.writeFileSync(tmp, data, { mode: 0o600, flag: 'wx' });
@@ -348,7 +321,6 @@ function writeNew(file: string, data: Buffer): string {
   return file;
 }
 
-/** 같은 이름이 있으면 _2, _3…을 붙인다. 임시 파일에 쓴 뒤 옮기고 소유자 전용 권한 */
 function writeExclusive(file: string, data: Buffer): string {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const ext = path.extname(file);
@@ -367,7 +339,6 @@ export interface PayrollRecordExportInput {
   profileId: string;
   outDir: string;
   password: string;
-  /** 포함 범위('YYYY-MM'). 없으면 전부 */
   fromMonth?: string;
   toMonth?: string;
   now?: () => Date;

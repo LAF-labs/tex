@@ -1,7 +1,5 @@
-// 암호 도우미. 서명 입력 규칙(CONTRACT.md §1): utf8(context) ‖ utf8(JCS(object)). context는 D08 §2.1 표의 고정 문자열이다.
 import { createCipheriv, createDecipheriv, createHash, createHmac, createPrivateKey, createPublicKey, randomBytes, sign as edSign, timingSafeEqual, verify as edVerify, type KeyObject } from 'node:crypto';
 
-/** RFC 8785 JCS(정수·문자열·불리언·null·배열·객체만). 엔진 gate.ts의 jcs와 같은 규칙이다. */
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
 /**
@@ -44,7 +42,6 @@ export function fromB64(s: unknown, len?: number): Buffer | null {
   if (typeof s !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(s)) return null;
   const b = Buffer.from(s, 'base64');
   if (len !== undefined && b.length !== len) return null;
-  // 왕복이 같아야 한다(비정규 인코딩 거부).
   if (b.toString('base64').replace(/=+$/, '') !== s.replace(/=+$/, '')) return null;
   return b;
 }
@@ -118,7 +115,6 @@ export class DailySalt {
     this.label = label;
     this.now = now;
   }
-  /** hex 앞 32자(128비트). */
   hash(value: string): string {
     const d = kstDay(this.now());
     if (d !== this.day) {

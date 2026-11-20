@@ -1,4 +1,3 @@
-// 계좌 자동조회(CODEF) main 쪽: 비밀번호 창 결속 검사·창 페이지·화면 요청 → 엔진 codef.* (Electron 없이)
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { CODEF_CONSENT_VERSION, bankAutoHandlers, codefPageHtml, parseCodefNeeded } from '../apps/desktop/src/bank-auto.ts';
@@ -21,7 +20,6 @@ describe('계좌 자동조회 main', () => {
 
   it('화면 요청 표: 비밀번호 칸이 없고, 연결·고르기·최신화·해제는 실제 입력 뒤에만', () => {
     for (const m of ['bankAuto.connect', 'bankAuto.choose', 'bankAuto.sms', 'bankAuto.refresh', 'bankAuto.disconnect'] as const) assert.equal(USER_ACTION_METHODS[m], 3_000);
-    // SMS 인증번호 칸은 숫자 몇 자리만(긴 글·다른 칸은 거부)
     assert.throws(() => parseRendererRequest(SHELL_METHODS, { method: 'bankAuto.sms', params: { sessionId: 's', code: '123456789' } }), /bad_request/);
     assert.throws(() => parseRendererRequest(SHELL_METHODS, { method: 'bankAuto.connect', params: { certId: 'x', password: 'p' } }), /bad_request/);
     assert.throws(() => parseRendererRequest(SHELL_METHODS, { method: 'bankAuto.connect', params: { certId: 'x', bank: '9999' } }), /bad_request/);
@@ -90,7 +88,6 @@ describe('계좌 자동조회 main', () => {
       ['main.bank_auto', { step: 'codef.refresh', result: 'bank_error', cf: 'CF-12345' }],
       ['main.bank_auto', { step: 'connect', result: 'cert_missing', certs: 0 }],
       ['main.bank_auto', { step: 'codef.cancel', result: 'threw', why: 'engine_down' }],
-      // 메시지 문자열은 값이 섞일 수 있어 남기지 않는다
       ['main.bank_auto', { step: 'codef.disconnect', result: 'threw', why: 'other' }],
     ]);
   });

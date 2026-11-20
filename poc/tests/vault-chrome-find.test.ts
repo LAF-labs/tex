@@ -1,5 +1,3 @@
-// 전용 Chrome 찾기(고객 PoC, sovereign-ax/install-guide/CUSTOMER-DIST.md §1.2): 내장 후보만, Mac은 ~/Applications도,
-// 없으면 금고는 고정 코드 chrome.not_installed를 던지고 엔진은 그 코드로 실행을 끝낸다(engine.error가 아니다, 데스크톱 사람 말 표의 키).
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -22,7 +20,6 @@ describe('전용 Chrome 찾기', () => {
       const exe = path.join(home, 'Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
       fs.mkdirSync(path.dirname(exe), { recursive: true });
       fs.writeFileSync(exe, '');
-      // 이 기기의 /Applications에 Chrome이 있으면 그쪽이 먼저다
       const system = fs.existsSync(SYSTEM_MAC_CHROME) ? SYSTEM_MAC_CHROME : null;
       assert.equal(findInstalledChrome('darwin', home), system ?? exe);
       assert.equal(findInstalledChrome('darwin', ''), system);

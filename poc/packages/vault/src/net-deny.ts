@@ -1,6 +1,3 @@
-// 금고 런타임 송신 모듈 차단(N-32). entry.ts가 맨 먼저 불러온다.
-// 정적 import는 링크 단계에서 이미 풀리므로 이 훅은 동적 로드(import()·require) 방어다. 1차 방어는 린트다.
-// child_process는 Chrome 기동에 필요해 허용한다(Node 내부 모듈끼리의 require는 훅을 지나지 않는다).
 import module from 'node:module';
 
 const DENIED = new Set(['net', 'http', 'https', 'tls', 'dgram', 'dns', 'http2', 'electron']);

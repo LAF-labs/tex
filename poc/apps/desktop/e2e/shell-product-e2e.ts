@@ -1,15 +1,4 @@
-// 제품 경로 기동 e2e(수동 실행, CI 아님): 제품 진입점과 같은 엔진 모드(utilityProcess 금고·OS 키체인·실제 엔진) + 운영 클라우드(tax.laf-co.com)로
-// 임시 앱 폴더에서 셸을 띄워, 설치본이 홈 화면까지 가는 길을 본다(팀장 지시 2026-11-10 ③).
-// - 운영 레지스트리 동기화(인덱스·정책·H-01 패키지) → 레지스트리 상태 fresh·홈택스 상한
-// - 견본 데이터 없음(대화·표시·사업장), 온보딩부터
-// - 로그인이 먼저(사용자 결정 2026-11-10): 약관 동의 뒤 닫을 수 없는 로그인 화면, 그 전에는 대화를 받지 않는다(account_required)
-// - 계정 비밀번호 로그인이 제품 Egress로 운영 계정 서비스에 닿는다(없는 계정 → 같은 안내)
-// SAX_E2E_PRODUCT=login이면 계정 서비스만 localhost 메모리 가짜(e2e/fake-account.ts)로 바꿔 로그인까지 하고, 그 뒤 온보딩 O-02와
-// 오프라인 해석 없음(게이트웨이에 닿지 못하면 정규식 카드 대신 연결 안 됨 + [다시 시도])을 본다(셸은 프로세스에 하나라 따로 띄운다).
-// 홈택스·정부24에는 접속하지 않는다(실행 시작 전에서 멈춘다). 비밀을 저장하지 않는다.
-// 키체인: 금고는 기존 db-key를 읽기만 한다(없으면 새로 만들지만, 이미 DB가 있는 앱 폴더의 키를 덮지 않는다, 금고 N-30). 임시 앱 폴더는 끝나면 지운다.
-// 실행: electron apps/desktop/e2e-dist/shell-product-e2e.js → 요약을 표준 출력에.
-import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
+import './os-guard.js';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,7 +13,6 @@ import { fakeAccount, PASSWORD, softKeys } from './fake-account.js';
 import { registerShellSchemes, startShell, type Shell } from '../dist/shell-app.js';
 
 registerShellSchemes();
-// macOS의 tmpdir는 링크(/var → /private/var)라 앱 폴더 검사가 거부한다. 실제 경로로 만든다.
 const ROOT = mkdtempSync(path.join(realpathSync(os.tmpdir()), 'sax-product-e2e-'));
 process.once('exit', () => rmSync(ROOT, { recursive: true, force: true, maxRetries: 2 }));
 app.on('window-all-closed', () => {});
@@ -76,7 +64,6 @@ async function main() {
         return { cloud: cloudPorts({ egress: new Egress({ cloudDevLocal: true }), env: 'dev', dev: { accountOrigin: front.origin, relayHost: '127.0.0.1:9' } }), keys: async () => keys };
       })()
     : productRemote({ isPackaged: false, env: {} });
-  // (login) 의도 해석: 처음에는 실제 엔진(게이트웨이에 닿지 못해 연결 안 됨), 뒤에는 세금계산서로 고르는 대역(발급 등록 검사를 보려고)
   let routeInvoice = false;
   const intent: IntentResolver = {
     resolve: (t) => (routeInvoice ? Promise.resolve({ route: { outcome: 'route', playbook: 'hometax.invoice.issue', adviceMentioned: false, via: 'model' }, fallback: null }) : engineIntentResolver((m, p) => S!.host.rpc(m, p)).resolve(t)),
@@ -97,7 +84,6 @@ async function main() {
   check('사업자 프로필이 없으면 온보딩부터', await until('onboarding', async () => js<boolean>(`!!document.querySelector('[data-onboarding]')`)));
   check('개발용 코드·미서명 배지는 개발 실행에서 없음(설치본 자기 점검만)', (await js<number>(`document.querySelectorAll('[data-build-badge]').length`)) === 0);
 
-  // 로그인이 먼저다(사용자 결정 2026-11-10): 약관 동의 → 닫을 수 없는 로그인 화면. 그 전에는 대화를 받지 않는다.
   const onbStep = () => js<string | null>(`[...document.querySelectorAll('[data-onb-step]')].pop()?.dataset.onbStep ?? null`);
   const acctScreen = () => js<string | null>(`document.querySelector('[data-acct-screen]')?.dataset.acctScreen ?? null`);
   check('약관 동의 전에는 로그인 화면이 없다(약관이 먼저)', (await js<boolean>(`!document.querySelector('[data-acct-screen]')`)));
@@ -110,11 +96,9 @@ async function main() {
   check('로그인 전 오프라인 해석 길로 가지 않았다(main.interpret 없음)', !/main\.interpret/.test(mainLog()));
 
   if (!loginMode) {
-    // 레지스트리: 기동 때 기다리지 않고 동기화한다. 결과는 main 로그(결과 코드만)와 엔진 상태로 본다.
     check('기동 동기화가 운영 레지스트리에서 H-01 패키지를 받았다(main.registry_sync h01=accepted)', await until('registry sync', async () => /main\.registry_sync.*"why":"boot".*"h01":"accepted"/.test(mainLog()), 60_000), mainLog().split('\n').filter((l) => l.includes('registry')).slice(-3));
     const st = (await S.host.rpc('db.query.registry.status', {})) as { freshness?: string; portalModeCeiling?: Record<string, string>; killPlaybooks?: string[] };
     check('레지스트리 상태 fresh, 홈택스 상한 auto, 정지 목록 없음', st.freshness === 'fresh' && st.portalModeCeiling?.hometax === 'auto' && (st.killPlaybooks ?? []).length === 0, st);
-    // 계정: 제품 클라이언트·Egress로 운영 계정 서비스에 닿는다. 없는 계정이면 같은 안내(만들지 않는다).
     await type('.acct-email', `nobody-${Date.now()}@example.com`);
     await press('[data-act=account-next]');
     await until('pw', async () => (await acctScreen()) === 'password');
@@ -126,7 +110,6 @@ async function main() {
     return;
   }
 
-  // (login) 가짜 계정 서비스로 비밀번호 로그인 → 첫 PC 등록 → 화면이 걷히고 온보딩이 이어진다
   await type('.acct-email', 'owner@gyeonbon-test.example');
   await press('[data-act=account-next]');
   await until('pw', async () => (await acctScreen()) === 'password');
@@ -134,12 +117,10 @@ async function main() {
   await press('[data-act=account-password]');
   check('로그인·PC 등록 → 로그인 화면이 걷히고 O-01 환영', await until('signed in', async () => (await acctScreen()) === null && (await onbStep()) === 'welcome' && !(await js<boolean>(`document.querySelector('#app').inert`)), 30_000));
 
-  // 온보딩 O-02: 제품은 상태조회가 없어 확인 불가다. 그 사실을 보이고 [맞습니다]로만 확정한다(팀장 결정 2026-11-10).
   await press('[data-onb=number]');
   await until('biz-number', async () => (await onbStep()) === 'biz-number');
   await js(`(() => { const i = document.querySelector('[data-onb-step=biz-number] input'); i.value = '123-45-67891'; })()`);
   await press('[data-onb=submit]');
-  // 번호로 등록하면 상호가 비어 있다: 확정 버튼 대신 [고칠게요]로 상호부터(0.1.6 실사용: 상호 없이 확정되어 제목줄에 번호가 보였다)
   check(
     'O-02 상호가 비면 "상호를 넣어 주세요" + [맞습니다] 없이 [고칠게요]',
     await until('name first', async () => (await onbStep()) === 'biz-confirm' && js<boolean>(`(() => { const c = [...document.querySelectorAll('[data-onb-step=biz-confirm]')].pop(); return c.textContent.includes('상호가 비어 있어요') && !c.querySelector('[data-onb=confirm-unverified]') && !!c.querySelector('[data-onb=edit]'); })()`)),
@@ -164,7 +145,6 @@ async function main() {
   await press('[data-onb=agree]');
   await until('telemetry', async () => (await onbStep()) === 'telemetry');
 
-  // 오프라인 해석 없음: 이 e2e는 게이트웨이 기기 토큰을 받지 못한다(가짜 계정) → 엔진 decide.unavailable → 정규식 카드 대신 연결 안 됨 + [다시 시도]
   await say('세금계산서 1000원 인스피릿에 끊자');
   check(
     '모델에 닿지 못하면 카드 없이 "연결하지 못했어요" + [다시 시도]',
@@ -173,7 +153,6 @@ async function main() {
   check('main 로그: 오프라인 경로가 아니라 unavailable', /main\.interpret.*"path":"unavailable\./.test(mainLog()) && !/offline/.test(mainLog().split('\n').filter((l) => l.includes('main.interpret')).join('\n')), mainLog().split('\n').filter((l) => l.includes('main.interpret')).slice(-2));
   check('제목줄에 해석 경로 표시가 없다', !(await js<string>(`document.querySelector('#titlebar').textContent`)).includes('해석'));
 
-  // 발급에 필요한 등록(0.1.5 실사용: 사업자를 건너뛰면 카드가 profile_missing으로 멈췄다): 온보딩을 마친 뒤(사업자는 확인 불가로 확정, 인증은 나중에)
   setRoute(true);
   for (const [st, sel] of [['telemetry', '[data-onb=off]'], ['tasks', '[data-onb=later]'], ['summary', '[data-onb=ok]'], ['first', '[data-onb=later]']] as const) {
     await until(st, async () => (await onbStep()) === st);
@@ -195,12 +174,9 @@ async function main() {
   await press('[data-onb=ok]');
   await until('redo done', async () => js<boolean>(`!document.querySelector('[data-onb-step]')`));
   await say('세금계산서 1000원 인스피릿에 끊자');
-  // 장부가 비어 있으면 거래처를 묻는 대신 추가부터(F-02): "먼저 거래처를 추가해 주세요" + [거래처 추가]
   check('등록을 마치면 같은 요청이 검사를 지나 다음 질문(거래처)으로 간다(장부가 비면 [거래처 추가])', await until('ask cp', async () => js<boolean>(`(() => { const a = [...document.querySelectorAll('.sx-thread .sx-app')].pop(); return !!a && (a.textContent.includes('어느 거래처에 발급할까요') || (a.textContent.includes('먼저 거래처를 추가해 주세요') && !!a.querySelector('[data-act=ask-cp-add]'))); })()`)));
   check('그 사이 실행은 시작되지 않았다(카드는 [홈택스에서 준비]를 눌러야 시작)', (await runCount()) === 0 && !/main\.run_end/.test(mainLog()));
 
-  // 저장 품목이 없는 거래처(등록증·직접 입력 모두 품목 칸이 선택): 카드 전에 품목을 묻고, 모델이 답을 세금계산서로 골라도 이어 간다. 준비는 누르지 않는다(홈택스 접속 없음).
-  // 되묻기의 [거래처 추가](F-02): 거래처 화면의 추가 폼 → [추가] → 대화로 돌아와 입력창에 그 이름(보내지 않음)
   await press('[data-act=ask-cp-add]');
   const formOpen = await until('ask cp form', async () => js<boolean>(`!!document.querySelector('section[data-view=cps]') && !!document.querySelector('[data-panel-cp-edit=new] form')`), 5_000);
   await js(`(() => { const f = document.querySelector('[data-panel-cp-edit=new] form'); f.querySelector('[name=name]').value = '견본무품목상사'; f.querySelector('[name=bizNo]').value = '101-01-11113'; f.querySelector('[name=email]').value = 'noitem@gyeonbon-test.example'; })()`);
@@ -215,7 +191,6 @@ async function main() {
   await js(`[...document.querySelectorAll('[data-run]')].pop().querySelector('[data-act=cancel]').click()`);
   await until('cancel', async () => js<boolean>(`[...document.querySelectorAll('[data-run]')].pop()?.dataset.status === 'stopped'`), 5_000);
 
-  // 내 사업장(D-03) 고치기(사용자 요구 2026-11-10): [수정] → 칸 편집 → [저장], 번호를 바꾸면 조회 불가 → [맞습니다], [바꾸기]는 O-03을 다시 연다
   const business = async () => ((await S!.host.rpc('db.query.profiles.list')) as Array<{ kind: string; displayName: string; bizNo: string; repName: string | null; bizType: string | null; address: string | null; signMethod: string | null }>).find((x) => x.kind === 'business')!;
   await js(`(document.querySelector('#rail [data-view="settings"]')?.click(), setTimeout(() => document.querySelector('[data-set-tab="biz"]')?.click(), 50))`);
   check('내 사업장: 저장된 개인 프로필이 없으면 "개인 · 개인" 카드가 없다', await until('no personal', async () => js<boolean>(`!!document.querySelector('section[data-view=biz]') && !document.querySelector('[data-personal-card]') && !document.querySelector('section[data-view=biz]').textContent.includes('개인 · 개인')`), 5_000));
@@ -234,7 +209,6 @@ async function main() {
   check('[저장] → 보기 카드에 고친 값, DB에도(발급 인증 그대로)', await until('saved', async () => js<boolean>(`!!document.querySelector('[data-biz-card=view]') && document.querySelector('section[data-view=biz]').textContent.includes('박다라') && document.querySelector('section[data-view=biz]').textContent.includes('서울시 가상구 견본로 1')`), 5_000) && (await business()).repName === '박다라' && (await business()).signMethod === 'simple_auth', { db: await business(), view: await js(`document.querySelector('#center')?.innerText`) });
   check('고친 상호가 제목줄에 바로 보인다', (await js<string>(`document.querySelector('.tb-co').textContent`)).includes('견본고침상사'), await js<string>(`document.querySelector('.tb-co').textContent`));
   check('main 로그에는 고친 칸 이름만(값 없음)', /main\.profile_edit.*"fields":"name\.rep\.bizType\.address"/.test(mainLog()) && !/박다라|견본로/.test(mainLog()));
-  // 번호 바꾸기: 제품은 상태조회가 없어 조회 불가 → [맞습니다]로만 저장
   await press('[data-act=biz-edit]');
   await until('form 2', async () => js<boolean>(`!!document.querySelector('[data-biz-form]')`), 5_000);
   await type('[data-biz-form] [name=bizNo]', '220-81-62517');
@@ -243,12 +217,10 @@ async function main() {
   check('조회하지 못하면 저장하지 않고 [맞습니다]·[다시 조회]', await until('confirm', async () => js<boolean>(`!!document.querySelector('[data-biz-confirm=unknown] [data-act=biz-confirm-unverified]') && !!document.querySelector('[data-act=biz-recheck]')`), 5_000) && (await business()).bizNo === '1234567891');
   await press('[data-act=biz-confirm-unverified]');
   check('[맞습니다] → 새 번호로 저장', await until('saved no', async () => (await business()).bizNo === '2208162517' && js<boolean>(`!!document.querySelector('[data-biz-card=view]')`), 5_000), await business());
-  // 활동 기록: 고친 칸만
   await js(`document.querySelector('#rail [data-view="activity"], #rail button[aria-label="활동 기록"]')?.click()`);
   check('활동 기록에 "내 사업장 수정 · 사업자번호", "… 상호·대표자·업태·주소"', await until('activity', async () => js<boolean>(`(() => { const t = document.querySelector('section[data-view=activity]')?.textContent ?? ''; return t.includes('내 사업장 수정 · 사업자번호') && t.includes('내 사업장 수정 · 상호·대표자·업태·주소'); })()`), 5_000), await js(`document.querySelector('#center')?.innerText`));
   const edits = readFileSync(path.join(paths.userData, 'profile-edits.json'), 'utf8');
   check('고친 기록 파일에 값이 없다', !/박다라|견본|2208162517|서울/.test(edits) && edits.includes('"bizNo"'), edits);
-  // [바꾸기]: O-03만 다시 묻고, [나중에]면 그 전 인증 그대로
   await js(`(document.querySelector('#rail [data-view="settings"]')?.click(), setTimeout(() => document.querySelector('[data-set-tab="biz"]')?.click(), 50))`);
   await until('biz view 2', async () => js<boolean>(`!!document.querySelector('[data-biz-card=view]')`), 5_000);
   S!.win.webContents.sendInputEvent({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 });
@@ -259,7 +231,6 @@ async function main() {
   await until('redo done 2', async () => js<boolean>(`!document.querySelector('[data-onb-step]')`) );
   check('[나중에] → 그 전 인증 그대로(간편인증), 할 일 없음', (await business()).signMethod === 'simple_auth' && (await business()).bizNo === '2208162517' && !(await js<boolean>(`!!document.querySelector('[data-setup-needed]:last-of-type [data-act=setup-auth]')`)));
 
-  // 설정 > 기기 연결의 계정: 로그인한 이메일과 [로그아웃] → 로그인 화면이 다시 막는다(받아 둔 코드·신원 파일 정리)
   await js(`document.querySelector('#rail [data-view="settings"]')?.click()`);
   await until('settings', async () => js<boolean>(`!!document.querySelector('[data-set-tab=devices]')`), 5_000);
   await js(`document.querySelector('[data-set-tab=devices]').click()`);

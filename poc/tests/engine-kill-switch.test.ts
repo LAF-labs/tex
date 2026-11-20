@@ -1,6 +1,3 @@
-// 서버 긴급 정지(레지스트리 status의 killPlaybooks·portalModeCeiling)를 실행에 반영한다(팀장 결정 2026-11-09 ④).
-// D03 §2(Running 진입 확인·정지 하향 행), §3.1(status 소비), §7.1(조회와 적용: 커밋 구간 안에서는 새 값을 적용하지 않는다), §12(실효 수준), ADR-023 결정 5·6.
-// 실제 포털 접속 없음: 금고는 프로세스 안(시험 정책 127.0.0.1)·헤드리스 Chrome, 가짜 H-01 페이지, 모델 없음.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -88,9 +85,7 @@ describe('긴급 정지 배선: RunService(H01·IR) 시작 거부·실행 중 �
     events: RunEvent[];
     gateMsgs: GatePortMessage[];
     steps: Map<string, string[]>;
-    /** 이 값으로 허가를 계산한다(시험이 바꾼다). */
     status: PermitStatus;
-    /** 스텝이 시작될 때 부른다(시험이 status를 바꾸는 자리). */
     onStep: ((stepId: string) => void) | null;
     pages: number;
     closes: number;
@@ -115,7 +110,6 @@ describe('긴급 정지 배선: RunService(H01·IR) 시작 거부·실행 중 �
     v: 2, runId: req.runId, gateStepId: req.gateStepId, reqId: req.reqId, approvalNonce: req.approvalNonce, actionHash: req.actionHash, exp: Date.now() + 120_000, presence: 'click', mac: 'not-verified-in-phase1',
   });
 
-  // 병렬로 도는 느린 CI(Windows)에서 3초 조회 상한이 목록 반영보다 먼저 끝나 in_doubt가 된 일이 있다. 상한만 넉넉히 둔다(조회 횟수·간격은 그대로).
   const slowRunnerPortal = (origin: string) => {
     const p = fixturePortal(origin);
     return { ...p, verify: { ...p.verify, maxMs: 20_000 } };
@@ -135,7 +129,6 @@ describe('긴급 정지 배선: RunService(H01·IR) 시작 거부·실행 중 �
       },
       postGate: (m) => s.gateMsgs.push(m),
       ...(engine === 'ir' ? { engine: 'ir' as const, ir } : { engine: 'h01' as const }),
-      // 제품 entry와 같이 fixture 포털에도 홈택스 상한을 적용한다.
       permit: (id) => runPermit(s.status, 'hometax', id),
       closeBrowser: async () => void s.closes++,
       trace: (runId, e) => {
@@ -190,7 +183,6 @@ describe('긴급 정지 배선: RunService(H01·IR) 시작 거부·실행 중 �
     }
   });
 
-  /** 실행을 시작하고 끝까지 본다. drive는 게이트 요청을 받아 승인·하향 등을 한다(null이면 게이트를 기다리지 않는다). */
   async function scenario(e: Engine, drive: ((req: GateRequest, runId: string, s: Side) => Promise<void>) | null, prep: (s: Side) => void = () => {}) {
     const s = sides[e];
     s.status = CLEAR;
@@ -256,7 +248,6 @@ describe('긴급 정지 배선: RunService(H01·IR) 시작 거부·실행 중 �
       assert.equal(o.posts, 0);
       assert.equal(o.ledger, null);
       assert.equal(o.closes, 1);
-      // 실기기 디버깅(PR-D2): IR은 멈춘 스텝을 종료 이벤트에 싣는다(H01Runner에는 IR 스텝이 없다)
       if (e === 'ir') assert.ok(o.end.stoppedAt?.stepId && o.end.stoppedAt.type, JSON.stringify(o.end.stoppedAt));
       else assert.equal(o.end.stoppedAt, undefined);
     });
@@ -315,10 +306,8 @@ describe('긴급 정지 배선: RunService(H01·IR) 시작 거부·실행 중 �
 describe('제품 entry 배선(서버 긴급 정지)', () => {
   it('RunService에 레지스트리 status 허가·Chrome 닫기를 주고, 레지스트리 명령(동기화) 뒤 진행 중 실행을 다시 본다', async () => {
     const src = await fs.readFile(new URL('../packages/engine/src/entry.ts', import.meta.url), 'utf8');
-    // 홈택스는 정책을 함께 본다(없으면 none = postprocess, ⑤). fixture는 정책을 보지 않는다.
     assert.match(src, /permit: \(id\) => runPermit\(registry\?\.status\(\) \?\? null, 'hometax', id, portal\.kind === 'hometax' \? \(registry\?\.policy\(\) \?\? \{ freshness: 'none', policy: null \}\) : undefined\)/);
     assert.match(src, /closeBrowser: \(\) => slot\.close\(\)/);
-    // 정책 동기화(③): 받은 서명 정책을 RateGuard에 준다(내장 값과 더 엄격한 쪽만).
     assert.match(src, /receivedPolicy: \(\) => registry\?\.policy\(\)\.policy \?\? null/);
     assert.match(src, /const r = await registry\.handle\(method\);\s*\/\/[^\n]*\n\s*runs\?\.recheckPermit\(\);/);
   });

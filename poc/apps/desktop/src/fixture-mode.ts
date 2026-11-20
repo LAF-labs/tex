@@ -1,6 +1,3 @@
-// fixture 모드(시연·e2e 전용): 홈택스 대신 가짜 H-01 페이지(127.0.0.1)에 붙는다. 실제 앱 폴더·OS 키체인을 쓰지 않는다.
-// 금고는 main 프로세스 안에서 시험 정책(127.0.0.1만)·메모리 키·시험용 Chrome 인자로 돈다. 엔진은 진짜 utilityProcess다.
-// 앱 금고 entry(@sax/vault/entry)는 지금처럼 설정을 받지 않는다. 이 파일은 demo-dev.ts(시연 진입점·e2e)만 쓴다.
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,7 +7,6 @@ import type { EnginePortal } from '@sax/engine/protocol';
 import type { EngineHost, InlineVault } from './engine-host.ts';
 import { startH01Fixture, type H01Fixture } from './h01-fixture.ts';
 
-/** 시연용 가상 사업자·거래처(PoC-9 목업과 같은 값). 사업자번호는 체크섬만 맞는 가상 값이다. */
 export const DEMO_PROFILE = { kind: 'business', displayName: '가나다컴퍼니', bizNo: '1234567891', repName: '김가나', email: 'office@ganada.example', signMethod: 'simple_auth' } as const;
 export const DEMO_COUNTERPARTIES = [
   { bizNo: '2148651233', name: 'A상사', repName: '이에이', email: 'tax@asangsa.example', item: '경영 컨설팅' },
@@ -23,9 +19,7 @@ export interface FixtureMode {
   vault: InlineVault;
   portal: EnginePortal;
   fixture: H01Fixture;
-  /** 거래처별 지난 품목(DB에 품목 열이 없어 시연 값으로 둔다). */
   itemHints: Record<string, string>;
-  /** 빈 DB에 가상 사업자·거래처를 넣는다(엔진 명령으로). */
   seed(host: EngineHost): Promise<void>;
   close(): Promise<void>;
 }

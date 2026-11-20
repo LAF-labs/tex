@@ -1,6 +1,3 @@
-// 게이트웨이 경로(D04 §7, 기본 경로): 요청 본문 4필드·DPoP 헤더·questionsDigest 대조·오류 코드 매핑,
-// 로컬 트립와이어·발급 영수증(as never 우회) 차단과 보안 이벤트, 판정 캐시, Responses 게이트웨이 태그.
-// 게이트웨이는 tests/fixtures/gateway-mock.ts의 합성이고 와이어는 services/gateway/API.md(M4-6)를 따른다.
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { after, before, beforeEach, describe, it } from 'node:test';
@@ -74,7 +71,6 @@ describe('게이트웨이 decide: 요청·응답', () => {
     const bb = b('screen_state_v2');
     assert.equal(questionsDigest(bb), sha(canonicalJson(bb.def.questions)));
     assert.notEqual(questionsDigest(bb), questionsDigest(b('popup_class_v1')));
-    // 공급사 와이어(onRefusal 없음)가 아니라 정의를 해시한다(게이트웨이 service.ts와 같은 정의).
     assert.ok(bb.def.questions.every((q) => q.onRefusal !== undefined));
     const wire = bb.def.questions.map(({ onRefusal: _r, ...q }) => q);
     assert.notEqual(questionsDigest(bb), sha(canonicalJson(wire)));

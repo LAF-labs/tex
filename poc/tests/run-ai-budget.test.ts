@@ -1,5 +1,3 @@
-// 계정 AI 한도(PR #384 gateway.daily_limit 등)와 사다리 칸 비용: 한 칸이 한도에 걸리면 같은 실행의 다른 유료 칸(위치 찾기·판정·에이전트·화면 보기)은
-// 부르지 않는다. 칸 표는 무료 칸이 유료 칸보다 앞이고, 예행 보고서는 칸 단가로 추정 금액을 낸다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { GatewayJudgeModel, GatewayLocateModel, GatewayVisionModel, RehearsalReport, type LocateResponder } from '@sax/engine';

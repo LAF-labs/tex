@@ -1,9 +1,3 @@
-// 서명 배포 시행일 표 → 표 저장소(D14 M6-10, SIGNING.md §6 kind:"data"). 순수 TS: DB·엔진을 가져오지 않고 모양(구조 타입)만 맞춘다.
-// 흐름(부르는 쪽, 업데이트 채널):
-//   const installed = repo.installedPackage(RATE_TABLES_PACKAGE_ID);
-//   const r = core.loadDataPackage(raw, { roots, revoked, now, hold, schemas: RATE_TABLE_SCHEMAS, installed });   // 서명 2-of-3·다이제스트·validatePackage·버전
-//   const u = applyRateTableUpdate(repo, r);   // 실패면 저장소는 그대로, 계산은 기존 표로 계속(rate_table_missing으로 바뀌지 않는다)
-//   const tables = availableTables(repo.list(), loadBundledPackage());   // pickTables에 넘긴다
 import { tableSpansOverlap, validatePackage, type RateTable, type RateTablePackage, type TableMeta } from './tables.ts';
 
 export const RATE_TABLES_SCHEMA = 'sax.rate-tables/v1';
@@ -37,7 +31,6 @@ export type DataLoadResultLike =
 
 export type RateTableUpdate =
   | { ok: true; packageVersion: string; added: string[]; closed: string[]; unchanged: string[] }
-  /** 기존 표·설치 기록은 그대로다. kept = 계속 쓰는 설치본(없으면 null, 기본 표만 씀) */
   | { ok: false; code: string; kept: { version: string; digest: string } | null };
 
 /**

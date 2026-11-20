@@ -1,5 +1,3 @@
-// 데몬 스케줄러(D10 §3): 주입 시계, 실행 창·지터, 기동 유예, 같은 알림 하루 1회, 하루 상한, 실패 1회 재시도·백오프,
-// 시계 역행 가드, 스냅숏 재조회 간격(ADR-023), 정책·status 신선도 판정(D12 §4), notify만(run 항상 false).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { POLICY_POLL_MIN } from '@sax/engine/core';
@@ -46,7 +44,6 @@ const profile = (o: Partial<ProfileSnapshot> = {}): ProfileSnapshot => ({
   validityRules: [],
   schedules: [],
   settings: { reminderDay: 5, halfYearWithholding: false },
-  // 꾸러미는 보냈고 카드도 최신화했다: 이 파일은 서류 알림 하나로 스케줄러 규칙을 본다
   bundleSentPeriods: ['2026-10'],
   missing: null,
   cardFetchedOn: '2026-11-02',
@@ -78,12 +75,12 @@ function rig(opts: { at: string; snap?: () => DaemonSnapshot; deliver?: (n: Daem
 describe('실행 창과 지터', () => {
   it('창: 요일·시작 포함·끝 제외(한국 시간)', () => {
     const w = parseWindow('{"days":[1,2,3,4,5],"from":"09:00","to":"18:00"}')!;
-    assert.equal(inWindow(w, kst('2026-11-23T09:00:00')), true); // 월요일
+    assert.equal(inWindow(w, kst('2026-11-23T09:00:00')), true);
     assert.equal(inWindow(w, kst('2026-11-23T08:59:59')), false);
     assert.equal(inWindow(w, kst('2026-11-23T17:59:59')), true);
     assert.equal(inWindow(w, kst('2026-11-23T18:00:00')), false);
-    assert.equal(inWindow(w, kst('2026-11-22T10:00:00')), false); // 일요일
-    assert.equal(inWindow(DEFAULT_WINDOW, kst('2026-11-22T10:00:00')), true); // 기본 창은 매일
+    assert.equal(inWindow(w, kst('2026-11-22T10:00:00')), false);
+    assert.equal(inWindow(DEFAULT_WINDOW, kst('2026-11-22T10:00:00')), true);
   });
   it('창 형식 검사: 끝 ≤ 시작, 요일 범위 밖, 깨진 JSON은 null. 24:00 허용', () => {
     assert.equal(parseWindow('{"days":[1],"from":"18:00","to":"09:00"}'), null);
@@ -99,7 +96,7 @@ describe('실행 창과 지터', () => {
       const m = fireMinute(w, `k${i}`, '2026-11-23', 30);
       assert.ok(m >= 540 && m <= 600, String(m));
       seen.add(m);
-      assert.equal(fireMinute(w, `k${i}`, '2026-11-23', 30), m); // 같은 키·날이면 같은 값
+      assert.equal(fireMinute(w, `k${i}`, '2026-11-23', 30), m);
     }
     assert.ok(seen.size > 20, '키마다 퍼진다');
     assert.equal(fireMinute(w, 'k', '2026-11-23', 0), 540);
@@ -222,7 +219,7 @@ describe('실패 처리', () => {
     r.clock.add(DAEMON_SNAPSHOT_REFRESH_MIN * MIN);
     let t = await r.s.tick();
     assert.equal(r.loads(), 2);
-    assert.equal(t.status, 'ok'); // 마지막 스냅숏으로 계속
+    assert.equal(t.status, 'ok');
     assert.equal(t.cause, null);
     r.clock.add(29 * MIN);
     await r.s.tick();
@@ -274,11 +271,11 @@ describe('시계 가드와 재조회 간격', () => {
     const r = rig({ at: '2026-11-23T10:00:00' });
     r.clock.add(10 * MIN);
     await r.s.tick();
-    r.clock.set('2026-11-22T10:20:00'); // 하루 뒤로
+    r.clock.set('2026-11-22T10:20:00');
     assert.equal((await r.s.tick()).status, 'clock_rollback');
     assert.equal(r.out.length, 1);
     r.clock.set('2026-11-23T10:10:00');
-    r.clock.add(-CLOCK_ROLLBACK_TOLERANCE_MS + 1000); // 허용 폭 안
+    r.clock.add(-CLOCK_ROLLBACK_TOLERANCE_MS + 1000);
     assert.notEqual((await r.s.tick()).status, 'clock_rollback');
   });
   it('시계 역행으로 하루 1회 억제를 되감을 수 없다(저장된 lastSeenAt 기준)', async () => {
@@ -303,7 +300,7 @@ describe('시계 가드와 재조회 간격', () => {
     r.clock.add(DAEMON_TICK_MS);
     await r.s.tick();
     assert.equal(r.loads(), 2);
-    r.clock.add(4 * MIN); // 절전 복귀
+    r.clock.add(4 * MIN);
     await r.s.tick();
     assert.equal(r.loads(), 3);
     r.clock.add(DAEMON_TICK_MS);

@@ -1,5 +1,3 @@
-// 거래처 장부 쓰기(counterparty-book.ts, M4-3 거래처 OCR 입력, 08 O-05): 폼 → 엔진 counterparty.create/update, [등록증으로 채우기] 후보.
-// 실제 엔진 data-service·암호화 DB에 붙여 돌린다(Electron 없이). 등록증 읽기 자체는 shell-bizcert.test.ts가 본다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -59,7 +57,6 @@ describe('거래처 장부: 엔진 명령으로 DB에', () => {
     const items = () => svc.handle('counterparty.getItems', { id: cp.id }) as Promise<Array<{ name: string; unitPrice: number | null; unit: string | null }>>;
     await b.setFirstItem(cp.id, '  사무용품  ');
     assert.deepEqual(await items(), [{ name: '사무용품', unitPrice: null, unit: null }]);
-    // 다른 화면(나중)에서 단가·단위를 넣은 둘째 품목이 있다고 하자
     await svc.handle('counterparty.setItems', { id: cp.id, items: [{ name: '사무용품', unitPrice: 1000, unit: '개' }, { name: '복사지', unitPrice: 5000, unit: '박스' }] });
     calls = [];
     await b.setFirstItem(cp.id, '사무용품');
@@ -74,7 +71,6 @@ describe('거래처 장부: 엔진 명령으로 DB에', () => {
     await b.setFirstItem(cp.id, null);
     await b.setFirstItem(cp.id, undefined);
     assert.deepEqual(calls, [], '칸을 보내지 않으면 건드리지 않는다');
-    // 칸 상한(CP_FIELD_MAX.item = DB 저장 품목 상한)에서 자르고, 엔진 검사 오류는 그대로 올라간다
     await b.setFirstItem(cp.id, '가'.repeat(CP_FIELD_MAX.item + 20));
     assert.equal((await items())[0]!.name.length, CP_FIELD_MAX.item);
     await assert.rejects(b.setFirstItem(cp.id, 'a\u0000b'), /bad_item_name/);
@@ -105,18 +101,15 @@ describe('거래처 장부: 엔진 명령으로 DB에', () => {
   it('번호를 잘못 읽어 비운 칸에 사용자가 번호를 넣어 저장하면, 같은 읽기의 표가 있을 때만 주소를 붙인다(한 번만, 30분 안)', async () => {
     const misread = { ...MOCK_CP_CERT, bizNo: '3148601238' };
     const b = book([{ ...misread }, { ...misread }, { ...misread }]);
-    // 표 없이(다른 폼에서 손으로 넣은 거래처) 저장하면 붙이지 않는다
     await b.readCert();
     const other = await b.save({ id: null, name: '다른상사', bizNo: '2158701238' });
     assert.deepEqual([other.source, other.address], ['manual', null]);
-    // 다른 읽기의 표도 통하지 않는다
     const r1 = await b.readCert();
     const r2 = await b.readCert();
     assert.ok(r1.found && r2.found);
     const stale = await b.save({ id: null, name: '견본상사', bizNo: '314-86-01237', certHold: r1.found ? r1.hold : '' });
     assert.deepEqual([stale.source, stale.address], ['manual', null]);
     await svc.handle('counterparty.delete', { id: stale.id });
-    // 같은 읽기의 표 → 주소·ocr, 한 번 쓰면 버린다
     const ok = await b.save({ id: null, name: '견본상사', bizNo: '314-86-01237', certHold: r2.found ? r2.hold : '' });
     assert.deepEqual([ok.source, ok.address], ['ocr', MOCK_CP_CERT.address]);
     await svc.handle('counterparty.delete', { id: ok.id });
@@ -202,7 +195,6 @@ describe('셸 배선(소스 검사)', () => {
     assert.doesNotMatch(panel, /innerHTML|insertAdjacentHTML/);
     assert.match(panel, /item: textInput\(\{ name: 'item', value: c\?\.item, max: LIMITS\.item/);
     assert.match(panel, /field\(\{ label: '저장 품목', input: inputs\.item/);
-    // 폼 칸 상한은 main이 자르는 상한과 같다(fields.js LIMITS = CP_FIELD_MAX). 렌더러가 받은 글을 main이 몰래 자르지 않는다.
     const { LIMITS } = (await import('../apps/desktop/static/shell/fields.js')) as unknown as { LIMITS: Record<string, number> };
     for (const k of ['name', 'rep', 'email', 'item'] as const) assert.equal(LIMITS[k], CP_FIELD_MAX[k], k);
     assert.match(panel, /item: f\.get\('item'\), certHold \}\)/);

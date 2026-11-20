@@ -1,6 +1,3 @@
-// H-01 사람 속도 리허설(2026-11-11, reports/H01-rehearsal-2026-11-11.md)에서 찾은 문제의 재현. Electron 없이 판정 모듈과 렌더러 소스로 본다.
-// 고쳐야 할 모습을 단언하고 todo로 둔다: 지금은 실패(=문제가 남아 있음)로 todo에 찍히고 스위트를 깨지 않는다. 고치면 통과로 바뀐다(그때 todo를 뗀다).
-// 사람 속도에서만 드러나는 흐름(재시작·보관함·온보딩 순서)은 apps/desktop/e2e/shell-rehearsal-e2e.ts가 재현한다.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
@@ -12,7 +9,6 @@ import { NOTE, ShellRuns } from '../apps/desktop/src/shell-runs.ts';
 const root = path.resolve(import.meta.dirname, '..');
 const read = (f: string) => fs.readFileSync(path.join(root, 'apps/desktop', f), 'utf8');
 
-/** 등록증으로 채우거나 직접 넣을 때 [저장 품목]을 비운 거래처(칸이 선택이다). */
 const NO_ITEM: Counterparty = { id: 'cp-x', name: '견본상사', bizNo: '3148601237', rep: '이견본', email: '', item: '', status: '계속사업자', checkedOn: '', lastIssuedOn: null };
 class FakeHost extends EventEmitter {
   async control(): Promise<unknown> {
@@ -41,10 +37,8 @@ describe('H-01 리허설: 지금 동작(사실 고정)', () => {
 describe('H-01 리허설: 고쳐야 했던 모습(고친 뒤 통과, todo 뗌)', () => {
   it('F-01 품목이 빈 초안은 [홈택스에서 준비] 전에 품목을 고칠 수 있다(카드에 품목 칸 또는 초안 수정)', async () => {
     const runs = new ShellRuns(new FakeHost(), { counterparties: () => [NO_ITEM], auth: () => '' });
-    // 품목이 문장에도 저장 품목에도 없으면 카드 전에 묻는다
     const ask = interpret('견본상사에 55만원 세금계산서', null, 'business', runs);
     assert.ok(ask.kind === 'say' && ask.text === ASK_ITEM_TEXT('견본상사'));
-    // 그래도 빈 초안이 생기면(직접 만든 초안) 준비를 받지 않고 카드에서 넣는다
     const d = runs.createDraft(NO_ITEM, 550_000, null);
     await assert.rejects(runs.prepare(d.id), /item_required/);
     const u = runs.updateDraft(d.id, { item: '사무용품' });

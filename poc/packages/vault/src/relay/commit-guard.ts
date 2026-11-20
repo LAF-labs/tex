@@ -1,10 +1,3 @@
-// R-C1 커밋 본문 대조(D05 §3.3, D03 §5.4, ADR-005 v3 결정 10, B-03·E-02).
-// 엔진은 커밋 엔드포인트를 Fetch로 가로채고(요청 단계), 무장할 때 commitGuard.arm으로 기대 해시를 보낸다.
-// 금고는 엔진행 Fetch.requestPaused를 줄(순서 큐)에서 잡아 그 요청 본문을 같은 규칙으로 해시해 비교한다.
-// - 일치: 본문을 지운 이벤트를 엔진에 넘긴다(엔진이 이어서 continueRequest).
-// - 불일치: 금고가 Fetch.failRequest로 막고 이벤트는 넘기지 않는다.
-// - opaque(평문 형식 아님·본문 없음): 이벤트를 그대로(본문은 지우고) 넘긴다. 대조 못 함(D03 §5.4 잔여 위험).
-// 결과는 엔진 이벤트 commit.body_compared{intentId, stepId, match}로만 알린다. 본문·값은 로그·이벤트에 남기지 않는다.
 import type { EventLog } from '@sax/platform';
 import { COMMIT_ARM_TTL_MS, commitExpectedHash, type CommitArmParams, type CommitArmResult, type CommitBodyComparedEvent, type CommitMatch } from '../protocol.ts';
 import { urlAllowed } from './policy.ts';
@@ -33,11 +26,8 @@ interface Arm {
 export interface CommitGuardOptions {
   log: EventLog;
   allowedHosts: string[];
-  /** 결과 이벤트(엔진 포트). */
   emit: (data: CommitBodyComparedEvent) => void;
-  /** 금고 연결로 보내는 CDP 명령(엔진 세션 ID 그대로). */
   send: (method: string, params: Json, sessionId: string) => Promise<Json>;
-  /** 노출된 타깃인가. */
   exposed: (targetId: string) => boolean;
   ttlMs?: number;
 }
@@ -79,13 +69,10 @@ export function checkArmParams(x: unknown, allowedHosts: string[]): CommitArmRes
     if (!FIELD_KEY_RE.test(k) || typeof v !== 'string' || v.length === 0 || v.length > PATH_MAX) return 'bad_params';
   }
   if (typeof p.endpoint !== 'string' || p.endpoint.length === 0 || p.endpoint.length > ENDPOINT_MAX) return 'bad_params';
-  // 패턴의 스킴·호스트는 와일드카드 없이 고정이어야 한다(호스트 와일드카드로 허용 목록을 넘지 못하게).
   const m = /^(https?):\/\/([^/*?\\]+)\//.exec(p.endpoint);
   if (!m || !urlAllowed(`${m[1]}://${m[2]}/`, allowedHosts)) return 'endpoint_not_allowed';
   return null;
 }
-
-// ───────────────────────── 본문 해석 ─────────────────────────
 
 export type BodyValues = { kind: 'values'; values: Record<string, string> } | { kind: 'opaque' } | { kind: 'mismatch'; why: 'parse' | 'missing' };
 
@@ -187,7 +174,6 @@ interface XmlNode {
 
 const XML_ENTITIES: Record<string, string> = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
 
-/** 텍스트의 엔티티를 푼다(기본 5개·숫자 참조만). 맨 & 나 모르는 엔티티는 형식 오류(null). */
 function decodeXml(s: string): string | null {
   let bad = false;
   const out = s.replace(/&([^;&\s]*);?/g, (all, ent: string) => {
@@ -222,7 +208,7 @@ export function parseXml(src: string): XmlNode | null {
       const raw = src.slice(i, textEnd);
       const top = stack[stack.length - 1]!;
       if (top === root) {
-        if (raw.trim()) return null; // 루트 밖 텍스트
+        if (raw.trim()) return null;
       } else {
         const t = decodeXml(raw);
         if (t === null) return null;
@@ -244,7 +230,7 @@ export function parseXml(src: string): XmlNode | null {
       if (e === -1) return null;
       i = e + 2;
     } else if (src.startsWith('<!', lt)) {
-      return null; // DOCTYPE 등
+      return null;
     } else {
       const e = findTagEnd(src, lt + 1);
       if (e === -1) return null;
@@ -260,7 +246,7 @@ export function parseXml(src: string): XmlNode | null {
       const m = /^([A-Za-z_][\w.:-]*)(\s[\s\S]*)?$/.exec(selfClose ? inner.slice(0, -1) : inner);
       if (!m) return null;
       const parent = stack[stack.length - 1]!;
-      if (parent === root && root.children.length) return null; // 루트 요소는 하나
+      if (parent === root && root.children.length) return null;
       const node: XmlNode = { name: m[1]!, children: [], text: [] };
       parent.children.push(node);
       if (!selfClose) stack.push(node);
@@ -296,16 +282,12 @@ export function xmlAt(doc: XmlNode, segs: string[]): string | undefined {
     hit = found[0]!;
     level = hit.children;
   }
-  // 대조 필드는 잎 요소만(자식 요소가 섞인 요소는 텍스트 순서가 모호하다).
   if (!hit || hit.children.length) return undefined;
   return hit.text.join('');
 }
 
-// ───────────────────────── 무장·대조 ─────────────────────────
-
 export class CommitGuard {
   private readonly arms = new Map<string, Arm>();
-  /** 금고가 막은 요청(Fetch requestId). 엔진이 이어서 continue·fulfill하지 못하게 한다. */
   readonly blocked = new Set<string>();
   private readonly o: CommitGuardOptions;
 
@@ -340,7 +322,6 @@ export class CommitGuard {
     this.arms.delete(key);
   }
 
-  /** run.end: 그 run의 무장을 알림 없이 푼다. */
   clearRun(runId: string): void {
     for (const [k, a] of this.arms) {
       if (a.p.runId !== runId) continue;
@@ -359,7 +340,6 @@ export class CommitGuard {
     return this.arms.size;
   }
 
-  /** 이 타깃의 이 요청이 무장 대상인가(Network.requestWillBeSent 본문 지우기에도 쓴다). */
   armedFor(targetId: string, url: string, method: string): boolean {
     return !!this.find(targetId, url, method);
   }
@@ -369,17 +349,12 @@ export class CommitGuard {
     return undefined;
   }
 
-  /**
-   * 엔진행 Fetch.requestPaused(요청 단계). 무장 대상이 아니면 pass. 대상이면 비교해
-   * 일치·opaque는 hide(본문 지우고 넘김), 불일치는 금고가 failRequest로 막고 drop.
-   */
   async onPaused(targetId: string, sessionId: string, p: Json): Promise<PausedDecision> {
     if (p.responseStatusCode !== undefined || p.responseErrorReason !== undefined) return 'pass';
     const req = (p.request ?? {}) as Json;
     const hit = this.find(targetId, String(req.url ?? ''), String(req.method ?? ''));
     if (!hit) return 'pass';
     const [key, a] = hit;
-    // 한 무장에 한 요청. 비교 전에 지워 같은 무장으로 두 번 대조하지 않는다.
     clearTimeout(a.timer);
     this.arms.delete(key);
     const body = await this.bodyOf(req, p, sessionId);
@@ -412,7 +387,6 @@ export class CommitGuard {
     this.o.emit({ intentId: a.p.intentId, stepId: a.p.stepId, match });
   }
 
-  /** 요청 본문(UTF-8). postDataEntries → postData → (너무 커서 빠졌으면) Network.getRequestPostData. 못 읽거나 이진이면 null. */
   private async bodyOf(req: Json, p: Json, sessionId: string): Promise<string | null> {
     const entries = req.postDataEntries as Array<{ bytes?: unknown }> | undefined;
     if (Array.isArray(entries) && entries.length) {

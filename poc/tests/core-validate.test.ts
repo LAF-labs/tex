@@ -1,5 +1,3 @@
-// D02 §6.1 정적 검증 V-01~V-24(V-03a~l·V-03c′·V-03j′·V-03j″)와 반례 회귀 CE-1~CE-14·CE-17·CE-18(D02 §6.2, D13 §7).
-// 골든 H-01 v2.1(제품 원본 packages/engine/playbooks)을 복제해 한 군데만 바꾸고, 기대한 규칙 번호로 거부되는지 본다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { buildCfg, commitWindow, fixtureUrlProblem, hostAllowed, lookupViolations, nameTemplateProblem, re2Problem, urlProblem, validatePackage, looksLikeUserData, type PackageFiles, type Step } from '@sax/engine/core';
@@ -22,12 +20,10 @@ const expectRule = (rule: string, f: Mut) => {
   assert.ok(got.has(rule), `${rule} 기대, 실제 ${[...got].join(',') || '없음'}`);
 };
 
-/** H-01 + 후속 비가역 send_email(Phase 2 재발송 모양, V-03c′ 양성 기준). */
 const withFollowUp: Mut = (p, s, steps) => {
   p.manifest.effects = ['issue_document', 'send'];
   (s('s20') as { authorizes: string[] }).authorizes = ['s21', 's36'];
   (s('s32b') as { cases: Record<string, string> }).cases = { true: 's32c' };
-  // W(Y)에 낀 스텝(주 verify·사후 스텝)도 V-03f: {retry:0, then:handoff}
   for (const id of ['s30', 's32', 's32b']) s(id).onFail = { retry: 0, then: 'handoff' };
   insertAfter(steps, 's32b',
     { id: 's32c', type: 'readback', fields: ['counterpartEmail'], onFail: { retry: 0, then: 'handoff' } },
@@ -329,7 +325,6 @@ describe('V-04~V-24', () => {
   });
 });
 
-/** 골든을 fixture 포털(ADR-039)로: portal 셋 다 fixture, domains 127.0.0.1, URL은 http://127.0.0.1:PORT. */
 const asFixture: Mut = (p) => {
   p.manifest.portal = 'fixture';
   p.playbook.portal = 'fixture';

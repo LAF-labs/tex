@@ -1,5 +1,3 @@
-// 사업자등록증 OCR 입력(PoC-5): tesseract.js kor(로컬 언어 데이터, 네트워크 없음) → parseBizCert.
-// 앱에서는 같은 tesseract.js가 docparse 샌드박스 렌더러(ADR-014)에서 돈다. 여기서는 Node로 인식 품질과 파서를 본다.
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import fs from 'node:fs/promises';
@@ -18,7 +16,6 @@ const kor = require('@tesseract.js-data/kor') as { langPath: string; gzip: boole
 
 function certHtml(f: { bizNo: string; name: string; rep: string; open: string; addr: string; type: string; item: string; corpNo?: string }): string {
   const row = (k: string, v: string) => `<tr><th>${k}</th><td>: ${v}</td></tr>`;
-  // 글꼴은 저장소에 넣은 Noto Sans KR 부분 집합 하나(tests/kor-font.ts). OS 글꼴을 쓰면 Linux 컨테이너(WenQuanYi 등)에서 "월드컵로"를 "월드컴로"로 읽었다.
   return `<!doctype html><meta charset="utf-8"><style>${KOR_FONT_CSS}</style><body style="font-size:22px;padding:40px;width:900px;background:#fff">
 <h1 style="text-align:center;letter-spacing:12px">사업자등록증</h1>
 <p style="text-align:center">(${f.corpNo ? '법인사업자' : '일반과세자'})</p>
@@ -34,14 +31,8 @@ ${row('교 부 사 유', '신규')}
 </table></body>`;
 }
 
-// 품질 하한: 세 OS 녹색 기록에서 두 표본 신뢰도는 86~87로 고정이었다(tesseract.js 7.0.0·kor 1.0.0 잠금, 결정적). 67은 한 번 본 깨진 입력(2026-11-07 #215 macOS).
-// 시험 글꼴 고정(2026-11-16) 뒤 Linux 컨테이너에서 두 표본 모두 같은 값으로 되풀이됐다(PR 본문의 실측).
 const OCR_CONFIDENCE_FLOOR = 80;
 
-/**
- * 시험 입력 이미지를 안정된 상태로 찍는다(금고 경로 아님). 시험 글꼴 적재·글자 범위 확인(assertKorFont)과 두 프레임을 기다린 뒤,
- * 연속 두 장이 바이트까지 같을 때의 이미지를 쓴다. 다섯 번 안에 안 같아지면 실패한다(입력이 흔들리면 OCR 결과로 판정하지 않는다).
- */
 async function renderStable(browser: Browser, html: string): Promise<Buffer> {
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 }, deviceScaleFactor: 2 });
   try {
@@ -69,7 +60,6 @@ describe('사업자등록증 OCR', () => {
   let cache: string;
 
   before(async () => {
-    // 테스트 이미지 생성용 렌더러(금고 경로 아님).
     browser = await chromium.launch({ channel: 'chrome', headless: true });
     cache = await fs.mkdtemp(path.join(os.tmpdir(), 'sax-ocr-'));
     worker = await createWorker('kor', 1, { langPath: kor.langPath, gzip: kor.gzip, cachePath: cache });
@@ -109,18 +99,14 @@ describe('사업자등록증 OCR', () => {
       const ms = Date.now() - started;
       const r = parseBizCert(data.text);
       await appendMeasure('ocr-samples.jsonl', { sample: sample.name, ms, confidence: data.confidence, fields: r.fields, missing: r.missing });
-      // 실패하면 입력 이미지와 OCR 원문을 측정 폴더에 남긴다(CI macOS는 test-summary-macos 아티팩트로 올라간다). 흔들림을 다음에 바로 볼 수 있게.
       const keep = async () => {
         const txt = await writeMeasure(`ocr-fail/${sample.bizNo}.txt`, `confidence ${data.confidence}\n${data.text}`);
         await fs.writeFile(measurePath(`ocr-fail/${sample.bizNo}.png`), png);
         console.error(`OCR 실패 입력·원문: ${path.dirname(txt)}`);
       };
       try {
-        // 제품 판정(항상 성립): 틀리게 읽은 등록번호는 체크섬을 통과하지 않는다. 못 읽은 필수 필드는 missing에 나온다(조용히 비우지 않는다).
         if (r.fields.bizNo !== sample.bizNo) assert.equal(r.bizNoChecksumOk, false, `wrong bizNo passed checksum:\n${data.text}`);
         for (const k of ['bizNo', 'name', 'repName', 'openDate'] as const) if (r.fields[k] === null) assert.ok(r.missing.includes(k), `${k} 못 읽었는데 missing에 없음`);
-        // OCR 품질 하한(이 깨끗한 합성 이미지에서): 신뢰도 ≥ OCR_CONFIDENCE_FLOOR, 등록번호는 그대로 읽거나 후보에 정답이 있다(사용자 확인 후 저장), 나머지 필드는 정답.
-        // 이 하한 아래면 파서가 아니라 입력·인식 쪽 문제다. 메시지가 그 둘을 가른다.
         assert.ok(data.confidence >= OCR_CONFIDENCE_FLOOR, `OCR 품질 하한 미달: 신뢰도 ${data.confidence} < ${OCR_CONFIDENCE_FLOOR}(입력 이미지·인식 문제, 원문은 measure/ocr-fail)\n${data.text}`);
         if (r.fields.bizNo !== sample.bizNo) assert.ok(r.bizNoSuggestions.includes(sample.bizNo), `suggestions ${r.bizNoSuggestions} lack ${sample.bizNo}`);
         assert.equal(r.fields.repName, sample.rep);

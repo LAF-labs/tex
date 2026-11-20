@@ -1,5 +1,3 @@
-// 모의 OpenAI(Decisions·Responses). 응답 모양은 SDK 7.45.1 타입·R1 §A.5 예시를 따른 합성 녹화다(실측값 아님).
-// 쓰는 곳: 어댑터·egress 테스트, scripts/s9-decisions.ts 모의 모드(키 없을 때).
 import { createHash } from 'node:crypto';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -11,11 +9,8 @@ interface MockCall {
 }
 
 interface MockOptions {
-  /** 경로별 앞쪽 N개 요청에 돌려줄 오류(재시도 정책 테스트) */
   failures?: Array<{ status: number; code?: string; retryAfter?: string }>;
-  /** Decisions answers를 바꿔치기(이름 조인·비신뢰 응답 테스트) */
   tamper?: (answers: Array<Record<string, unknown>>) => Array<Record<string, unknown>>;
-  /** choice probabilities를 전체 분포로 줄지(기본: top-1만, R1 예시처럼) */
   fullDistribution?: boolean;
   model?: string;
 }
@@ -28,7 +23,6 @@ export interface OpenAIMock {
 
 const tokens = (s: string) => Math.ceil(Buffer.byteLength(s, 'utf8') / 3);
 
-// 합성 판정: 키워드로 그럴듯한 확률을 만든다. 실제 모델 동작을 흉내 내는 것이 아니라 파이프라인 검증용이다.
 const KW: Record<string, RegExp> = {
   security_warning: /비정상|이용이\s*제한|접근이\s*제한|매크로|자동화/,
   logged_out_by_other_session: /다른\s*(PC|기기|브라우저)에서/,

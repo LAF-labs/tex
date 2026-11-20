@@ -1,9 +1,3 @@
-// 폰 대화(ADR-047 결정 5·6): 폰이 게이트웨이의 chat_phone을 직접 부르는 한 사용자 턴의 전부. 대화는 이 폰의 것이다(기기마다 따로, ADR-046 결정 7).
-// PC에서는 엔진(토큰 공간)과 main(값 공간)이 나눠 하던 일을 폰에서는 이 클래스 하나가 한다. 규칙은 PC와 같은 코드(rules·reply-check·tables)다.
-// - 모델에 가는 것: 가린 글(토큰·슬롯)과 도구 결과의 ref·status·fields·needs뿐이다. 값·행·개수·이름은 가지 않는다(C-10).
-// - 컨텍스트: [요약] → [앞 대화] → [사실] → [지금]. 덜 바뀌는 것이 앞이다(공급사 접두 캐시). 상한을 넘으면 사실 → 오래된 턴 순으로 줄인다.
-// - 발급·전송은 없다. 카드를 만들고 고치고 취소하고, 사장님이 카드에서 맡기면 PC가 켜진 뒤에 시작한다.
-// - 저장은 포트(store)로만 한다. 폰 앱이 기기 키로 봉인한다. 문장·토큰·값을 로그에 남기지 않는다.
 import { CHAT_MAP_IDLE_MS, Redactor, TOKEN_RE, detokenize, type RedactedText } from '@sax/redaction';
 import { capture, rebind, type ChatMessage, type MaskedText } from './chat-log.ts';
 import { cleanItem, fillWithJosa, finalOf, fixJosa, koDate, kstDate, splitVat, validAmount, won } from './fill.ts';
@@ -33,8 +27,6 @@ import {
 import { estimateTokens } from './tokens.ts';
 import { ACK_REPLY_HINT, REACTIONS, TurnRecorder, capStreak, isReaction, reactedLine, routeAck, type ReactionId, type RouteAck, type TurnEvent } from './turn.ts';
 
-// ── 상한 ──
-
 /** 한 번 부를 때의 입력 상한(추정 토큰, 머리말·도구 정의 포함). 하루 한도(체험 50원·구독 300원) 안에서 대화 횟수를 지키는 값이다. */
 export const PHONE_CONTEXT_MAX_TOKENS = 8000;
 /** chat_phone 머리말 + 도구 정의 + 출력 스키마의 추정 토큰(넉넉하게). 시험이 실제 머리말의 추정값이 이보다 작은지 본다. */
@@ -47,22 +39,16 @@ export const PHONE_FACT_COUNTERPARTIES_MAX = 5;
 export const PHONE_TEXT_MAX = 2000;
 /** 판정 입력 상한(바이트, chat_route_v1 maxInputBytes와 같다). 넘으면 판정 없이 돈다. */
 export const PHONE_ROUTE_MAX_BYTES = 4096;
-/** 게이트웨이 respond 스키마의 replay maxItems */
 const REPLAY_MAX = 12;
 /** 대화 세션 하나(실행 토큰 하나)로 여는 사용자 턴 수. 게이트웨이 대화 예산(l2PerChat 20)에 닿기 전에 새 세션을 연다. */
 export const PHONE_SESSION_TURNS = 16;
 /** 사본이 이보다 오래되면 stale */
 export const PHONE_COPY_FRESH_MS = 24 * 3600_000;
-/** 화면 프레임에 싣는 열린 카드 수 */
 const FRAME_MAX = 12;
 const CHIP_CP_MAX = 8;
-/** 메모리에 두는 조회 결과 수 */
 const RESULTS_MAX = 40;
-/** 합쳐지지 않은 폰 메시지 보관 상한(넘으면 오래된 것부터 버린다) */
 const PHONE_LOG_MAX = 600;
 const NAME_MAX = 40;
-
-// ── 고정 문구 ──
 
 export const PHONE_FALLBACK_TEXT = '네, 말씀해 주세요. 필요한 일을 편하게 말씀해 주시면 바로 해 드릴게요.';
 export const PHONE_NUMBER_TEXT = '결과를 아래에 보여 드렸어요. 금액과 날짜는 표와 카드에 있어요.';
@@ -98,15 +84,12 @@ export const PHONE_ERROR_TEXT: Record<PhoneChatErrorCode, { text: string; retry:
   bad_text: { text: '문장이 길어요. 두세 번에 나눠서 말해 주세요.', retry: false },
 };
 
-// ── 폰 사본(PC가 마지막으로 넘긴 것) ──
-
 export interface CopyCounterparty {
   id: string;
   name: string;
   repName?: string | null;
   email?: string | null;
   bizNo?: string | null;
-  /** 거래처 저장 품목(없으면 최근 발급 품목). 품목 없는 카드를 만들지 않는 데 쓴다. */
   item?: string | null;
 }
 
@@ -114,67 +97,41 @@ export interface CopyCounterparty {
 export interface CopyRow {
   counterpartyId: string | null;
   counterparty: string;
-  /** KST YYYY-MM-DD */
   date: string;
   total: number | null;
   approvalNo?: string | null;
 }
 
 export interface PhoneCopy {
-  /** PC가 이 사본을 만든 시각(ms) */
   asOf: number;
-  /** 내 사업장(가림 사전에 올린다) */
   profile: { id: string; name: string; repName?: string | null; bizNo?: string | null } | null;
   counterparties: CopyCounterparty[];
-  /** 최근 발급(거래처마다 최근 몇 건). null이면 사본에 없다(not_on_phone). */
   issued: CopyRow[] | null;
-  /** 입금 확인 전. null이면 사본에 없다(계좌 연결 전 포함). */
   receivables: CopyRow[] | null;
 }
 
-// ── 카드(폰에서 만든 초안) ──
-
 export interface PhoneDraft {
-  /** ULID */
   id: string;
-  /** 대화에서 가리키는 이름(d#). 세션이 바뀌어도 그대로다. */
   ref: string;
   counterpartyId: string;
-  /** 말한 금액(원). vat가 included면 합계, 아니면 공급가다. */
   amount: number;
-  /** 정하지 않았으면 null(PC가 준비할 때 별도로 본다) */
   vat: Vat | null;
   item: string | null;
-  /** open: 고치고 취소할 수 있다. entrusted: 사장님이 맡겼다(PC가 켜지면 시작). discarded: 취소. */
   state: 'open' | 'entrusted' | 'discarded';
   at: number;
 }
 
-// ── 포트 ──
-
 export interface PhoneChatPorts {
   model: PhoneModel;
-  /** 봉인 저장(폰 앱이 기기 키로 암호화한다). 값은 JSON 문자열 하나다. */
   store: { load(): Promise<string | null>; save(data: string): Promise<void> };
-  /** 폰 사본. 아직 받은 적 없으면 null */
   copy(): PhoneCopy | null;
   now(): number;
-  /** 메시지·카드 id(ULID) */
   newId(): string;
-  /** 대화 세션 id에 넣을 난수(16진 32자 이상) */
   randomHex(): string;
-  /**
-   * 지금 PC가 켜져 있는지(라이브 연결). 켜져 있으면 맡긴 카드를 PC가 바로 시작한다. 없으면 꺼짐으로 본다(옛 앱).
-   * 폰 대화는 PC가 켜져 있을 때도 이 폰이 직접 부른다(ADR-047 결정 6: 기기마다 따로).
-   */
   pcOnline?(): boolean;
-  /** 판정이 고른 반응을 이 턴의 사용자 말풍선에 단다(ADR-057). 일을 맡긴 말이면 답보다 먼저 온다. */
   onReaction?(reaction: ReactionId): void;
-  /** 턴 이벤트(ADR-054). 기기 밖으로 내보내지 않는다. */
   onEvent?(e: TurnEvent): void;
 }
-
-// ── 화면에 주는 결과 ──
 
 export interface PhoneTableRow {
   date: string;
@@ -187,31 +144,22 @@ export type PhoneShow = { type: 'card'; draft: PhoneDraft; counterparty: string 
 export type PhoneTurnResult =
   | {
       kind: 'reply';
-      /** 이 답 메시지의 id */
       id: string;
       text: string;
       show: PhoneShow[];
       ask: null | { kind: AgentAsk; chips: Array<{ label: string; text: string }> };
       reply: PhoneReplyKind;
       filtered: ReplyFilter;
-      /** 사장님이 쓴 거래처 이름이 폰 사본에 없다 */
       unknown?: { name: string; text: string };
-      /** 이 턴의 사용자 메시지 id와 거기 단 반응(일을 맡긴 말의 접수 표시, ADR-057) */
       user: { id: string; reaction: ReactionId | null };
     }
-  /** 판정이 반응만 하라고 했다(ADR-057). 답 말이 없다. id는 반응이 붙은 사용자 메시지다. */
   | { kind: 'reaction'; id: string; reaction: ReactionId }
   | { kind: 'unavailable'; code: PhoneChatErrorCode; text: string; retry: boolean };
 
-// ── 내부 ──
-
 interface State {
   v: 1;
-  /** ref 번호(r#·d#). 세션이 바뀌어도 이어 간다: 옛 ref가 새 결과를 가리키지 않게. */
   seq: number;
-  /** 이 폰에서 나눈 대화(오래된 것부터, PHONE_LOG_MAX개까지) */
   phone: ChatMessage[];
-  /** 접은 구간의 요약과 접힌 마지막 메시지 id */
   fold: { summary: MaskedText | null; upto: string } | null;
   drafts: PhoneDraft[];
 }
@@ -229,7 +177,6 @@ interface Session {
   token: string | null;
   lastAt: number;
   turns: number;
-  /** [사실] 재사용: `${tool}:${cpId}:${asOf}` → ref. 같은 조회는 같은 ref라 접두가 바뀌지 않는다. */
   facts: Map<string, string>;
 }
 
@@ -251,23 +198,15 @@ type DomainCall =
 interface Turn {
   user: RedactedText;
   replay: ReplayItem[];
-  /** 이번 턴에 끝난 도구 호출(도구 이름 + 인자) → 결과. 같은 호출을 또 하면 실행하지 않고 이 결과로 답한다. */
   done: Map<string, ToolOutput>;
-  /** 이번 턴 도구 결과로 나온 ref(나온 순서) */
   made: string[];
-  /** 이번 턴에 만든 카드 ref */
   created: string[];
   frameRefs: Set<string>;
   unknownName?: string;
-  /** 이번 문장의 발급 의도(가린 글에서 읽음). 모델이 놓치면 되묻기로 잇는다. */
   intent: IssueIntent;
-  /** 이번 턴에 모델이 연 화면(단추로 붙는다) */
   screens: PhoneScreen[];
-  /** 발급 의도를 놓친 첫 답 뒤에 한 번 더 부르는 중 */
   retry?: boolean;
-  /** 이번 사용자 말에 단 반응(판정, ADR-057) */
   reaction: ReactionId | null;
-  /** 맞장구가 이어져 반응만으로 닫지 않았다: 짧게 답하라는 한 줄을 싣는다 */
   ackReply: boolean;
 }
 
@@ -276,7 +215,6 @@ const KINDS: ReadonlySet<PhoneReplyKind> = new Set(PHONE_REPLY_KINDS);
 /** PC가 켜져 있을 때 맡긴 한 줄: PC가 바로 홈택스에서 준비하고, 발급은 PC 승인으로만 된다. */
 export const PHONE_ENTRUST_ONLINE_TEXT = (name: string): string => `${name} 세금계산서를 PC에 맡겼어요. PC가 홈택스에서 준비하고, 발급 전에 한 번 더 확인을 받아요.`;
 
-/** 발급 의도가 분명한데 모델이 아무 도구도 부르지 않고 넘긴 답(인사·일반 답·못 함) */
 const INTENT_MISSED: ReadonlySet<PhoneReplyKind> = new Set(['smalltalk', 'answer', 'cannot']);
 
 /**
@@ -298,7 +236,6 @@ function tally(rows: ReadonlyArray<{ total: number | null }>): string {
   return `${rows.length}건 · 공급가 ${won(sumOf(known, 'supply')!)} · 합계 ${won(sumOf(known, 'total')!)}${gap ? `(금액 모르는 ${gap}건 빼고)` : ''}`;
 }
 const newestFirst = <T extends { date: string }>(rows: readonly T[]) => [...rows].sort((a, b) => b.date.localeCompare(a.date));
-/** 저장해 둔 메시지 하나(이 기기가 쓴 것). 아는 칸만 옮긴다: 옛 판이 넣던 칸(origin·base·synced)은 버린다. */
 function messageOf(v: unknown): ChatMessage | null {
   const m = v as Partial<ChatMessage> | null;
   if (!m || typeof m !== 'object' || typeof m.id !== 'string' || typeof m.at !== 'number' || (m.from !== 'user' && m.from !== 'app') || typeof m.text !== 'string') return null;
@@ -328,28 +265,21 @@ export class PhoneChat {
     this.ports = ports;
   }
 
-  // ── 바깥 접점 ──
-
-  /** 한 문장을 보낸다. 던지지 않는다. 호출은 차례로 처리된다. */
   send(text: string): Promise<PhoneTurnResult> {
     return this.queue(async () => {
       const r = await this.turn(text).catch(async (e: unknown) => {
-        // 답 없이 끝났어도 이번 턴에 만든 카드·바꾼 카드는 남는다(카드가 사실이다). 저장해 두면 다음 문장의 화면 줄에 실린다.
         if (this.state) await this.save(this.state).catch(() => undefined);
         return this.unavailable(e instanceof PhoneChatError ? e.code : 'chat.unavailable');
       });
-      // 답을 돌려준 뒤 오래된 턴을 접는다. 다음 send는 이것이 끝난 뒤에 돈다(queue).
       if (r.kind === 'reply') void this.queue(() => this.foldIfNeeded()).catch(() => undefined);
       return r;
     });
   }
 
-  /** 이 폰의 대화 목록(오래된 것부터) */
   messages(): Promise<ChatMessage[]> {
     return this.queue(async () => (await this.load()).phone.map((m) => ({ ...m })));
   }
 
-  /** 목록·카드가 바뀌면 부른다 */
   subscribe(f: () => void): () => void {
     this.listeners.add(f);
     return () => void this.listeners.delete(f);
@@ -359,7 +289,6 @@ export class PhoneChat {
     return this.queue(async () => (await this.load()).drafts.filter((d) => d.state !== 'discarded').map((d) => ({ ...d })));
   }
 
-  /** 사장님이 카드의 버튼으로 맡긴다(모델 출력으로는 맡길 수 없다). 열린 카드만. 맡긴 사실은 대화 기록에 한 줄 남는다. */
   entrust(draftId: string): Promise<PhoneDraft | null> {
     return this.queue(async () => {
       const st = await this.load();
@@ -369,7 +298,6 @@ export class PhoneChat {
       const name = this.ports.copy()?.counterparties.find((c) => c.id === d.counterpartyId)?.name ?? '거래처';
       const line = this.ports.pcOnline?.() ? PHONE_ENTRUST_ONLINE_TEXT : PHONE_ENTRUST_TEXT;
       const text = line(name);
-      // 컨텍스트에는 이름 대신 토큰으로 남긴다(이름은 값으로만 들고 있다)
       const tok = '[NAME_1]';
       this.push(st, { from: 'app', text, kind: 'did', ctx: { t: line(tok), e: { [tok]: { k: 'NAME', v: name, r: `cp:${d.counterpartyId}` } } } });
       await this.save(st);
@@ -377,7 +305,6 @@ export class PhoneChat {
     });
   }
 
-  /** 사장님이 카드에서 직접 취소한다(열린 카드만) */
   discard(draftId: string): Promise<boolean> {
     return this.queue(async () => {
       const st = await this.load();
@@ -388,8 +315,6 @@ export class PhoneChat {
       return true;
     });
   }
-
-  // ── 상태 ──
 
   private queue<T>(f: () => Promise<T>): Promise<T> {
     const p = this.tail.then(f, f);
@@ -434,7 +359,6 @@ export class PhoneChat {
     return { kind: 'unavailable', code, ...PHONE_ERROR_TEXT[code] };
   }
 
-  /** 대화 세션: CHAT_MAP_IDLE_MS 쉬었거나 턴을 많이 썼으면 토큰 맵을 버리고 새 세션(새 chatSessionId·실행 토큰)을 연다. 기록은 값으로 들고 있어 이어진다. */
   private open(now: number): Session {
     let s = this.session;
     if (s && (now - s.lastAt > CHAT_MAP_IDLE_MS || s.turns >= PHONE_SESSION_TURNS)) {
@@ -458,8 +382,6 @@ export class PhoneChat {
     return !copy ? 'none' : now - copy.asOf <= PHONE_COPY_FRESH_MS ? 'fresh' : 'stale';
   }
 
-  // ── 한 턴 ──
-
   private async turn(text: string): Promise<PhoneTurnResult> {
     const rec = new TurnRecorder(this.ports.newId(), () => this.ports.now(), this.ports.onEvent);
     rec.emit({ type: 'turn.start', device: 'phone', msgId: '' });
@@ -473,11 +395,6 @@ export class PhoneChat {
     }
   }
 
-  /**
-   * 판정(ADR-057): 받는 방식과 반응만 고른다. 실패하면 null(판정 없이 늘 하던 대로, 막는 문이 아니다).
-   * 입력은 PC 엔진 chat.route와 같은 꼴(기기·오늘·화면·진행 중인 발급·되물은 칸·앞 대화 두 턴·이번 문장)이다.
-   */
-  /** 기록 끝에서 반응만으로 닫은 사용자 말(뒤에 앱 답이 없는 것)이 몇 번 이어졌나 */
   private streak(st: State): number {
     let n = 0;
     for (let i = st.phone.length - 1; i >= 0; i--) {
@@ -506,7 +423,6 @@ export class PhoneChat {
     if (new TextEncoder().encode(input).length > PHONE_ROUTE_MAX_BYTES) return null;
     try {
       s.token ??= await this.ports.model.runToken(s.id);
-      // 메서드로 부른다(PhoneGateway는 클래스라 떼어 부르면 this를 잃는다)
       const answers = await model.route!({ text: input, runToken: s.token });
       return answers ? capStreak(routeAck(answers), this.streak(st)) : null;
     } catch {
@@ -535,7 +451,6 @@ export class PhoneChat {
     let reaction: ReactionId | null = null;
     if (ack) {
       rec.emit({ type: 'route', act: null, domain: null, mode: ack.mode, band: ack.reaction ? 'gte80' : 'lt80', unsure: !ack.reaction, failed: false });
-      // 반응: 반응만·일 맡기기, 그리고 맞장구가 이어져 짧게 답하는 턴(capped)
       if (ack.reaction && (ack.mode !== 'answer' || ack.capped)) {
         reaction = ack.reaction;
         rec.emit({ type: 'reaction', msgId: '', reaction });
@@ -546,7 +461,6 @@ export class PhoneChat {
         }
       }
       if (ack.mode === 'reaction_only' && reaction) {
-        // 반응 하나로 닫는다: 대화 모델을 부르지 않는다. 사용자 말에 반응을 붙여 남긴다(다음 턴 [앞 대화]가 반응을 안다).
         rec.emit({ type: 'path', path: 'reaction', tools: [] });
         const msg = this.push(st, { from: 'user', text, ctx: capture(s.red, user) ?? undefined, reaction });
         await this.save(st);
@@ -559,8 +473,6 @@ export class PhoneChat {
     const message = this.compose(st, s, copy, now, turn, facts, cards);
     s.turns++;
     let reply = await this.advance(st, s, copy, now, turn, message);
-    // 발급 안전망: 발급을 시켰는데 모델이 도구 없이 넘겼으면 고정 답을 내지 않고 모델을 한 번 더 부른다(짚는 줄을 더 분명히 해서).
-    // 그래도 넘기면 그 답을 그대로 둔다. 말은 언제나 모델이 한다.
     if (intentMissed(turn, reply)) {
       turn.retry = true;
       turn.replay.length = 0;
@@ -578,7 +490,6 @@ export class PhoneChat {
       .map((d) => ({ ...d, name: names.get(d.counterpartyId)! }));
   }
 
-  /** 이번 문장에 나온 거래처(없으면 직전 폰 턴의 거래처)를 사본에서 미리 조회한다. 도구 결과와 같은 꼴로 [사실]에 싣는다. */
   private facts(st: State, s: Session, copy: PhoneCopy | null, now: number, user: RedactedText): Array<{ cpId: string; lines: Array<{ tool: 'invoice_history' | 'receivables'; output: ToolOutput }> }> {
     if (!copy) return [];
     const ids = (masked: string): string[] => {
@@ -591,7 +502,6 @@ export class PhoneChat {
     };
     let cps = ids(user);
     if (!cps.length) {
-      // "그거 얼마였어?"처럼 거래처 없이 이어 묻는 말: 직전 사용자 턴에 나온 거래처를 쓴다
       const last = [...st.phone].reverse().find((m) => m.from === 'user' && m.ctx);
       if (last?.ctx) cps = ids(rebind(s.red, last.ctx));
     }
@@ -612,7 +522,6 @@ export class PhoneChat {
       }));
   }
 
-  /** 가린 문장 한 줄(이전 메시지). ctx가 있으면 값으로 새 토큰을 받아 다시 쓰고, 없으면 규칙으로 가린다. */
   private line(s: Session, recs: readonly ChatRecord[], m: ChatMessage): string {
     if (m.ctx) return rebind(s.red, m.ctx);
     const said = chatInput(m.text);
@@ -620,16 +529,11 @@ export class PhoneChat {
     return s.red.apply(said, { frame: 'none' }).redacted;
   }
 
-  /** [앞 대화]에 들어갈 메시지(접힌 것 뒤부터) */
   private window(st: State): ChatMessage[] {
     const at = st.fold ? st.phone.findIndex((m) => m.id === st.fold!.upto) : -1;
     return st.phone.slice(at + 1);
   }
 
-  /**
-   * 이번 턴 user 메시지 하나: [요약] → [앞 대화] → [사실] → [지금]. 상한을 넘으면 사실 → 오래된 턴 순으로 줄인다(요약과 이번 문장은 줄이지 않는다).
-   * 조각마다 따로 가린 뒤 이어 붙이고, 같은 세션 Redactor로 한 번 더 지나 발급한다(PC 엔진 compose와 같다).
-   */
   private compose(st: State, s: Session, copy: PhoneCopy | null, now: number, turn: Turn, facts: ReturnType<PhoneChat['facts']>, cards: Array<PhoneDraft & { name: string }>): RedactedText {
     const recs = copyRecords(copy);
     const mask = (v: string) => s.red.apply(v, { frame: 'none' }).redacted;
@@ -638,7 +542,6 @@ export class PhoneChat {
       const win = this.window(st);
       const past = win.flatMap((m, i) => {
         const line = { user: m.from === 'user', text: `${m.from === 'user' ? '사용자' : '앱'}: ${this.line(s, recs, m)}` };
-        // 반응만 하고 닫은 말(뒤에 앱 답이 없다): 모델이 그 말에 답하지 않은 것을 알게 한 줄 둔다
         return m.from === 'user' && m.reaction && win[i + 1]?.from !== 'app' ? [line, { user: false, text: `앱: (반응 ${REACTIONS[m.reaction]})` }] : [line];
       });
       const cpName = new Map((copy?.counterparties ?? []).map((c) => [c.id, c.name]));
@@ -646,7 +549,6 @@ export class PhoneChat {
       const frame = cards.length
         ? `화면: ${cards.map((c) => `카드 ${c.ref}(세금계산서, 거래처 ${mask(c.name)}, 금액 있음, 부가세 ${c.vat ? VAT_LABEL[c.vat] : '미정'}, 품목 ${c.item ? '있음' : '없음'})`).join('; ')}`
         : '화면: 열린 카드 없음';
-      // 앱이 읽은 발급 의도: "세금계산서"라는 말이 없어도("[AMT_1] 끊어줘") 모델이 카드 만들기로 읽게 한 줄 짚어 준다
       const hint = !turn.intent.issue ? '' : turn.retry ? '\n앱 판단: 세금계산서 발급 요청(앞 답이 발급으로 잇지 않았다. 카드를 만들거나 빈 칸 하나를 되묻는다)' : '\n앱 판단: 세금계산서 발급 요청';
       const nowBlock = `[지금]\n${frame}${hint}${turn.ackReply ? `\n${ACK_REPLY_HINT}` : ''}\n사용자: ${turn.user}`;
       const copyLine = `PC: ${this.ports.pcOnline?.() ? '켜짐' : '꺼짐'}\n사본: ${this.copyState(copy, now)}`;
@@ -664,7 +566,6 @@ export class PhoneChat {
         if (PHONE_PREFIX_EST_TOKENS + estimateTokens(text) <= PHONE_CONTEXT_MAX_TOKENS) return text;
         if (nFacts > 0) nFacts--;
         else if (from < past.length) {
-          // 한 턴(사용자 줄과 그 뒤 앱 줄)씩 버린다
           from++;
           while (from < past.length && !past[from]!.user) from++;
         } else throw new PhoneChatError('chat.input_too_large');
@@ -688,23 +589,19 @@ export class PhoneChat {
       if (r.status === 'refusal') return { kind: 'cannot', text: PHONE_FALLBACK_TEXT, show: [], ask: null, filtered: 'refusal' };
       if (r.status === 'error') {
         if (r.tokenInvalid || r.code === 'chat.unavailable') s.token = null;
-        // 예산을 다 쓴 세션은 닫는다(다음 문장은 새 세션으로 간다)
         if (r.code === 'chat.budget_exceeded') s.turns = PHONE_SESSION_TURNS;
         throw new PhoneChatError(r.code);
       }
       turn.replay.push(...r.replay);
       if (!r.toolCalls.length) return this.checkReply(st, s, turn, r.output);
-      // 다음 호출이 툴셋 턴 상한·replay 상한을 넘으면 도구를 실행하지 않는다(결과를 모델에 돌려줄 수 없다).
       const turns = turn.replay.filter((x) => 'item' in x && x.item.type !== 'reasoning').length;
       if (turns >= CHAT_PHONE_MAX_TURNS || turn.replay.length + r.toolCalls.length > REPLAY_MAX) {
-        // 이번 턴에 이미 결과(표·카드)를 냈으면 끊지 않고 그 결과를 보인다. 모델이 답 대신 같은 도구를 거듭 부르다 상한에 닿는 일이 있다(PC chat-eval 2026-11-16).
         const show = [...new Set(turn.made)].slice(-AGENT_SHOW_MAX);
         if (show.length) return { kind: 'did', text: PHONE_NUMBER_TEXT, show, ask: null, filtered: 'number' };
         throw new PhoneChatError('chat.turn_limit');
       }
       for (const c of r.toolCalls) {
         const key = `${c.name}:${JSON.stringify(c.arguments)}`;
-        // 같은 턴에 같은 도구를 같은 인자로 또 부르면 실행하지 않는다: 카드가 두 장 생기거나 같은 조회를 되풀이하지 않게.
         let o = turn.done.get(key);
         if (!o) {
           const p = this.parseCall(st, s, turn, c);
@@ -721,9 +618,7 @@ export class PhoneChat {
     }
   }
 
-  /** 도구 인자 역치환(PC 엔진 parseCall과 같다). 거래처가 레코드 하나로 풀리지 않거나 모르는 카드면 실행하지 않고 결과를 답한다. */
   private parseCall(st: State, s: Session, turn: Turn, c: PhoneToolCall): DomainCall | ToolOutput {
-    // 토큰을 중괄호로 쓴 인자("{AMT_1}")는 대괄호 토큰으로 받는다(PC 엔진과 같다, chat-eval 2026-11-16)
     const a = braceTokens(c.arguments);
     const bad = () => new PhoneChatError('chat.bad_response');
     const cp = (v: unknown): string | null => {
@@ -749,7 +644,6 @@ export class PhoneChat {
       }
       const raw = /^\[AMT_\d+\]$/.test(t) ? s.red.map.valueOf(t) : undefined;
       if (raw === undefined) throw bad();
-      // 원 단위 양수로 읽히지 않으면("0원") 금액이 빈 것으로 본다: needs_input(amount)로 답해 모델이 다시 묻는다.
       const n = parseKrw(raw);
       return n === null ? null : { value: n };
     };
@@ -771,7 +665,6 @@ export class PhoneChat {
         return a.counterparty !== null && !id ? unknown(a.counterparty) : { tool: 'receivables', counterpartyId: id };
       },
       invoice_draft: () => {
-        // 작성일자·수량·단가(ADR-049)는 1단계에서 PC만 계산한다. 폰은 카드를 만들지 않고 not_on_phone으로 답해 모델이 PC로 미룬다(defer).
         if (pcOnly()) return out('not_on_phone');
         const id = cp(a.counterparty);
         return id ? { tool: 'invoice_draft', counterpartyId: id, amount: amount(a.amount), vat: vat(a.vat), item: item(a.item) } : unknown(a.counterparty);
@@ -791,7 +684,6 @@ export class PhoneChat {
     return parse[c.name]();
   }
 
-  /** 풀리지 않은 거래처 인자가 사장님 이번 문장의 낱말인가(PC 엔진 typedName과 같다). 모델이 지어낸 이름은 싣지 않는다. */
   private typedName(s: Session, turn: Turn, v: unknown): string | null {
     if (typeof v !== 'string') return null;
     const t = v.trim();
@@ -802,14 +694,12 @@ export class PhoneChat {
     return t && !/[[\]]/.test(t) && [...t].length <= NAME_MAX && turn.user.includes(t) ? t : null;
   }
 
-  /** 사본 조회(발급 기록·받을 돈). 결과는 메모리에만 두고 ref로 가리킨다. */
   private lookup(st: State, copy: PhoneCopy | null, now: number, tool: 'invoice_history' | 'receivables', cpId: string | null): ToolOutput {
     if (!copy) return out('not_on_phone');
     const cp = cpId === null ? null : copy.counterparties.find((c) => c.id === cpId);
     if (cp === undefined) return out('unknown_counterparty');
     const all = tool === 'receivables' ? copy.receivables : copy.issued;
     if (!all) return out('not_on_phone');
-    // 이름만 아는 옛 행(counterpartyId null)은 지금 사본 이름으로 맞춘다.
     const rows = newestFirst(cp ? all.filter((x) => x.counterpartyId === cp.id || (x.counterpartyId === null && x.counterparty === cp.name)) : all);
     if (!rows.length) return out('empty');
     const name = cp ? `${cp.name} ` : '';
@@ -832,7 +722,6 @@ export class PhoneChat {
         if (!cp) return out('unknown_counterparty');
         const amount = this.amount(call.amount);
         const item = (call.item === null ? null : cleanItem(call.item)) ?? cleanItem(cp.item ?? '');
-        // 품목이 문장에도 거래처 저장 품목에도 없으면 만들지 않는다(PC와 같은 규칙).
         const needs: ToolNeed[] = [...(amount ? [] : ['amount' as const]), ...(item ? [] : ['item' as const])];
         if (needs.length) return out('needs_input', null, needs);
         const d: PhoneDraft = { id: this.ports.newId(), ref: this.ref(st, 'd'), counterpartyId: cp.id, amount: amount!.value, vat: call.vat ?? amount!.vat, item, state: 'open', at: now };
@@ -871,7 +760,6 @@ export class PhoneChat {
     }
   }
 
-  /** 금액 인자 → 원 단위 값. 합계 슬롯이면 그 금액은 부가세 포함이다. 채울 수 없으면 null. */
   private amount(a: DraftAmount): { value: number; vat: Vat | null } | null {
     if (a === null) return null;
     if ('value' in a) return validAmount(a.value) ? { value: a.value, vat: null } : null;
@@ -882,7 +770,6 @@ export class PhoneChat {
     return typeof v === 'number' && validAmount(v) ? { value: v, vat: field === 'total' ? 'included' : null } : null;
   }
 
-  /** 슬롯 경로의 값. 집계(sum)는 금액 모르는 행이 하나라도 있으면 null이다(일부만 더한 값을 합계라고 말하지 않는다). */
   private slotValue(ref: string, path: string): number | string | null {
     const rows = this.results.get(ref)?.rows;
     if (!rows) return null;
@@ -908,13 +795,8 @@ export class PhoneChat {
         canShow: (ref) => this.results.has(ref) || turn.frameRefs.has(ref) || st.drafts.some((d) => d.ref === ref && d.state !== 'discarded'),
         fallbackText: PHONE_FALLBACK_TEXT,
         numberText: PHONE_NUMBER_TEXT,
-        // 아래 셋은 PC 대화에서 실제 모델로 찾은 실패를 고친 것과 같은 규칙이다(chat-eval 2026-11-16, PC 엔진 chat-agent.ts).
-        // 사장님이 이번에 쓴 달·날짜는 따라 써도 거르지 않는다.
         userText: turn.user,
-        // 되묻는 문장에 숫자가 섞이면 되묻기는 살리고 문장만 고정 문장으로 바꾼다.
         askText: (a) => PHONE_ASK_TEXT[a],
-        // 틀린 슬롯("{d2.first.supply}")은 지어낸 값이 아니라 카드·표를 가리킨 것이다. 턴을 버리지 않고 이번 턴 결과를 고정 문장과 같이 보인다.
-        // 카드를 만든 턴의 부가세는 묻지 않는다(기본값 별도, 카드에서 고친다).
         badSlot: (k, a, refs) => {
           const show = refs.length ? refs : [...new Set(turn.made)].slice(-AGENT_SHOW_MAX);
           if (a && !(a === 'vat' && turn.created.length > 0)) return { kind: k, text: PHONE_ASK_TEXT[a], show, ask: a, filtered: 'slot' };
@@ -926,7 +808,6 @@ export class PhoneChat {
     }
   }
 
-  /** 턴을 닫는다: 토큰·슬롯을 값으로 채워 화면 문장을 만들고, 사용자 말과 답을 폰 구간에 적는다. */
   private async finish(st: State, s: Session, copy: PhoneCopy | null, now: number, said: string, turn: Turn, reply: CheckedReply<PhoneReplyKind, AgentAsk>): Promise<PhoneTurnResult> {
     const today = kstDate(now);
     const cpName = new Map((copy?.counterparties ?? []).map((c) => [c.id, c.name]));
@@ -936,10 +817,8 @@ export class PhoneChat {
       return name ?? s.red.map.valueOf(tok) ?? null;
     };
     const fillRe = new RegExp(`${TOKEN_RE.source}|${slotAnywhere().source}`, 'g');
-    // TOKEN_RE의 묶음 둘(종류·번호) 뒤에 슬롯 묶음(ref·경로)이 온다
     let missing = false;
     let text = reply.text;
-    // 컨텍스트용 문장: 토큰은 그대로, 슬롯은 금액이면 금액 토큰으로, 거래처면 이름 토큰으로, 날짜·건수·승인번호는 자리표시로 바꾼다(값이 모델에 가지 않게).
     let ctxText = reply.text;
     if (!reply.filtered) {
       text = fillWithJosa(reply.text, fillRe, (m) => {
@@ -963,7 +842,6 @@ export class PhoneChat {
             return typeof v === 'string' && v ? s.red.map.token('NAME', v) : '(값)';
           });
     }
-    // 문장 슬롯이 가리키는 결과는 모델이 show에 넣지 않아도 보인다: 답 문장의 값이 늘 같이 보이는 표에 있다.
     const slotRefs = reply.filtered ? [] : [...reply.text.matchAll(slotAnywhere())].map((m) => m[1]!);
     const show: PhoneShow[] = [];
     const shownCards = new Set<string>();
@@ -978,9 +856,7 @@ export class PhoneChat {
       if (res) show.push({ type: 'table', table: res.kind, title: res.title, rows: res.rows.map((x) => ({ date: x.date, counterparty: x.counterparty, total: x.total, approvalNo: x.approvalNo ?? null })), copy: res.copy });
       else card(ref);
     }
-    // 이번 턴에 만든 카드는 모델이 show에 넣지 않아도 보인다(카드가 사실이다).
     for (const ref of turn.created) card(ref);
-    // 모델이 연 화면은 사장님이 누를 단추로 붙는다(화면은 사장님이 눌러야 열린다)
     for (const screen of turn.screens) show.push({ type: 'screen', screen });
     const name = reply.filtered ? undefined : turn.unknownName?.trim();
     const unknown = name && !copy?.counterparties.some((c) => c.name === name) ? { name, text: `${name}${finalOf(name) ? fixJosa(name, '은 폰에 받아 둔 거래처 목록에 없어요.') : '은(는) 폰에 받아 둔 거래처 목록에 없어요.'}` } : undefined;
@@ -992,7 +868,6 @@ export class PhoneChat {
       id: app.id,
       text,
       show,
-      // 이번 턴에 카드를 만들었으면 부가세는 묻지 않는다(PC와 같다: 기본값으로 두고 승인 때 다시 본다).
       ask: reply.ask && !(reply.ask === 'vat' && turn.created.length > 0) ? { kind: reply.ask, chips: this.chips(st, copy, reply.ask) } : null,
       reply: reply.kind,
       filtered: reply.filtered,
@@ -1013,12 +888,6 @@ export class PhoneChat {
     return [];
   }
 
-  // ── 접기 ──
-
-  /**
-   * [앞 대화]의 사용자 턴이 PHONE_TURNS_MAX를 넘으면 오래된 절반을 한꺼번에 요약으로 접는다(한 턴씩 밀면 매번 접두가 바뀌어 캐시를 못 쓴다).
-   * 요약 호출이 실패하면 요약 없이 접기만 한다(앞 요약은 그대로 둔다).
-   */
   private async foldIfNeeded(): Promise<void> {
     const st = await this.load();
     const win = this.window(st);
@@ -1052,15 +921,12 @@ export class PhoneChat {
     }
     const o = r.output as { summary?: unknown } | null;
     if (!o || typeof o !== 'object' || typeof o.summary !== 'string') throw new PhoneChatError('chat.bad_response');
-    // 슬롯은 옮기지 않는다(ref는 세션이 끝나면 뜻이 없다). 길면 문장 끝에서 자른다.
     let sum = o.summary.replace(/\{[^{}]*\}/g, ' ').replace(/\s+/g, ' ').trim();
     if ([...sum].length > CHAT_DIGEST_MAX_CHARS) {
       const head = [...sum].slice(0, CHAT_DIGEST_MAX_CHARS).join('');
       const end = head.lastIndexOf('. ');
-      // 잘린 토큰 조각("[NAME_")이 끝에 남지 않게 한다
       sum = (end > CHAT_DIGEST_MAX_CHARS / 2 ? head.slice(0, end + 1) : head).replace(/\[[A-Z]*(?:_\d*)?$/, '').trim();
     }
-    // 요약은 보이지 않지만 다음 호출마다 다시 나간다. 식별자·링크·비밀 유도 말이 섞인 요약은 쓰지 않는다.
     if (!sum || unsafeText(sum.replace(TOKEN_RE, ' '))) throw new PhoneChatError('chat.bad_response');
     const m = capture(s.red, sum);
     if (!m) throw new PhoneChatError('chat.bad_response');

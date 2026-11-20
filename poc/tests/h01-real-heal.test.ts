@@ -1,5 +1,3 @@
-// 발급 사다리 0원 칸 예행(가짜 홈택스 + 제품 H-01 패키지): 패키지 선택자 하나가 화면과 어긋났을 때(홈택스가 칸 id를 바꾼 꼴)
-// 1회차는 AI 위치 찾기(모델 1번)로 고쳐 끝까지 가고 그 선택자를 PC에 남긴다. 2회차는 같은 어긋남에 모델·재시도 없이 처음부터 맞힌다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { LocateResponder } from '@sax/engine';
@@ -11,12 +9,10 @@ const KEY = 'hometax.invoice.form.item1.name';
 const REAL_ID = 'mf_txppWframe_genEtxivLsatTop_0_edtLsatNmTop';
 const show = (o: Outcome) => `${o.end?.status}/${o.end?.code} steps=${o.steps.join(',')} journal=${o.journal.join(',')}`;
 
-/** 패키지가 옛 id를 들고 있다(화면은 그대로). */
 const drift = (files: PackageFiles) => {
   files.selectors.entries[KEY]!.candidates = [{ kind: 'css', value: '#mf_txppWframe_genEtxivLsatTop_0_edtLsatNmTopOld' }];
 };
 
-/** 게이트웨이 대역: selector_repair만 답한다(목록에서 품목명 칸 줄의 id). 다른 툴셋은 응답 없음. */
 function fakeGateway(): LocateResponder & { calls: string[] } {
   const calls: string[] = [];
   return {

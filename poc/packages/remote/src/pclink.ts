@@ -1,19 +1,3 @@
-// 새 PC 연결(ADR-048 결정 3, D08 §4.3). 켜져 있는 기존 PC가 6자리 확인으로 새 PC를 승인하고 계정 열쇠(RK)를 넘긴다.
-// [검토] 암호 리뷰(SP-5) 대상이다.
-//
-// 통로는 계정 서비스의 연결 우편함이다(서버가 메시지를 본다·바꿀 수 있다고 가정한다). 메시지 넷:
-//   m1 hello     새 PC → 기존 PC   {device_id, Sx, Vx, Hx, commit}   commit = SHA-256(ctx ‖ nonce_n ‖ JCS(키들))
-//   m2 challenge 기존 PC → 새 PC   {device_id, aik_pub, nonce}        commit을 본 뒤에 뽑은 난수
-//   m3 reveal    새 PC → 기존 PC   {nonce}                            nonce_n 공개
-//   m4 grant     기존 PC → 새 PC   {cert, deviceList, enc, ct}        6자리가 맞은 뒤에만
-//
-// 6자리 = HKDF(SHA-256(ctx ‖ JCS({hello, challenge, nonce_n})), "SAX-pclink-sas-v1") mod 10^6. 새 PC가 보이고 사용자가 기존 PC에 넣는다.
-// - 서버가 새 PC의 키를 자기 키로 바꾸려면 기존 PC의 난수를 보기 전에 commit을 내야 한다. 그 뒤 6자리는 기존 PC의 난수에 달려 있어
-//   고를 수 없다(맞을 확률 10^-6, 3번 틀리면 신청을 버린다).
-// - 새 PC는 기존 PC를 따로 확인하지 못한다(6자리를 넣는 쪽은 기존 PC뿐). 그래서 새 PC는 받은 RK를 사용자가 "기존 PC에 '연결됐어요'가
-//   떴어요"를 누른 뒤에만 금고에 넣는다(화면 규칙). 서버가 기존 PC인 척하면 진짜 기존 PC에는 그 말이 뜨지 않는다.
-// - RK는 새 PC가 이 연결에만 쓰는 키 Hx로 HPKE 봉인한다. aad는 위 해시라서 다른 신청의 봉인문을 끼워 넣을 수 없다.
-//   새 PC 금고는 연 RK에서 나온 AIK 공개키가 challenge.aik_pub와 같을 때만 받는다(금고 쪽 규칙, 이 모듈 밖).
 import { b64, concat, equal, fromB64, readU64be, utf8 } from './bytes.ts';
 import { CTX } from './contexts.ts';
 import { hkdfSha256, randomBytes, sha256Hash } from './crypto.ts';
@@ -28,17 +12,14 @@ export const PCLINK_STEP_MS = 10 * 60_000;
 
 export interface PcLinkHello {
   v: 1;
-  /** 새 PC의 기기 ID(서버에 pending으로 신청한 것) */
   device_id: string;
   Sx: string;
   Vx: string;
-  /** 이 연결에만 쓰는 HPKE 수신 공개키(X25519). 개인키는 새 PC 금고 메모리에만 있다 */
   Hx: string;
   commit: string;
 }
 export interface PcLinkChallenge {
   v: 1;
-  /** 승인하는 기존 PC의 기기 ID */
   device_id: string;
   aik_pub: string;
   nonce: string;
@@ -51,7 +32,6 @@ export interface PcLinkGrant {
   v: 1;
   cert: SignedCert;
   deviceList: DeviceListJson;
-  /** HPKE 봉인한 RK: info = "SAX-pclink-rk-v1", aad = pcLinkTranscript */
   enc: string;
   ct: string;
 }
@@ -152,7 +132,6 @@ export class PcLinkApprover {
     return PCLINK_SAS_MAX_TRIES - this.#tries;
   }
 
-  /** m3를 받는다. commit과 맞지 않으면 실패(새 PC의 키가 중간에 바뀌었다). */
   reveal(m: unknown): boolean {
     if (this.#state !== 'awaiting_reveal') throw new Error('pclink: not awaiting reveal');
     const r = parsePcLinkReveal(m);
@@ -166,11 +145,6 @@ export class PcLinkApprover {
     return true;
   }
 
-  /**
-   * 사용자가 넣은 6자리. 틀리면 남은 횟수가 줄고, 다 쓰면 실패.
-   * 이미 맞힌 뒤(approved)에도 다시 부를 수 있다: 승인 뒤 단계(봉인·보내기)가 실패해 사용자가 같은 6자리로 다시 할 때다.
-   * 그때 틀리면 승인을 거두고(awaiting_sas) 횟수를 센다.
-   */
   confirm(code: string): boolean {
     if ((this.#state !== 'awaiting_sas' && this.#state !== 'approved') || !this.#transcript) throw new Error('pclink: not awaiting sas');
     if (this.#now() > this.#deadline) {
@@ -187,19 +161,11 @@ export class PcLinkApprover {
     return false;
   }
 
-  /**
-   * 승인 뒤 1: 새 PC를 넣은 목록(AIK 서명). 호출자가 서버에 올린다(서버가 한도를 보고 새 PC를 활성화한다).
-   * 한도(PC 3대)를 넘으면 여기서 던진다. RK는 아직 봉인하지 않는다.
-   */
   async listWithNew(aik: AikSigner, deviceList: DeviceListJson, now: number = this.#now()): Promise<DeviceListJson> {
     this.#needApproved(aik);
     return addDevice(aik, deviceList, { deviceId: this.hello.device_id, role: 'desktop', noisePub: fromB64(this.hello.Sx), signPub: fromB64(this.hello.Vx), registeredAt: now });
   }
 
-  /**
-   * 승인 뒤 2: 서버에 올라간 목록(새 PC가 같은 키로 들어 있어야 한다)으로 새 PC 인증서를 서명하고 RK를 봉인한다.
-   * sealRk는 금고가 한다(RK는 금고 밖으로 나오지 않는다). 목록이 올라가기 전에는 부르지 않는다(서버가 거절하면 RK를 봉인하지 않는다).
-   */
   async grant(o: { aik: AikSigner; deviceList: DeviceListJson; sealRk: (recipient: Uint8Array, info: Uint8Array, aad: Uint8Array) => Promise<{ enc: Uint8Array; ct: Uint8Array }>; now?: number }): Promise<PcLinkGrant> {
     const transcript = this.#needApproved(o.aik);
     const h = this.hello;
@@ -234,7 +200,6 @@ export function checkPcLinkGrant(hello: PcLinkHello, challenge: PcLinkChallenge,
   } catch {
     return { ok: false, reason: 'shape' };
   }
-  // RK 32B + AEAD 태그 16B
   if (!enc || ct.length !== 48) return { ok: false, reason: 'shape' };
   const aikPub = fromB64(challenge.aik_pub);
   const l = verifyDeviceList(grant.deviceList as DeviceListJson, aikPub);

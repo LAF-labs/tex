@@ -1,5 +1,3 @@
-// 엔진 data-service의 온보딩 저장소 명령(db #53 ConsentRepo·OnboardingRepo·ProfileRepo.setPortalLoginId, 데스크톱 요청 2026-11-05).
-// 모두 main 전용(MAIN_ONLY): 렌더러에 열지 않는다. 저장소 검증 오류는 DataError(code)로 나간다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fsp from 'node:fs/promises';
@@ -103,7 +101,6 @@ describe('data-service 온보딩 명령', () => {
     assert.equal(await code('profile.setPortalLoginId', { id: p.id, loginId: 12 }), 'bad_login_id');
     assert.equal(await code('profile.setPortalLoginId', { id: p.id }), 'bad_login_id', '빠진 loginId는 지움이 아니다');
     assert.equal(await code('profile.setPortalLoginId', { id: 'nope', loginId: 'x' }), 'profile_not_found');
-    // [홈택스 인증서]에서 고른 인증서 이름(CN, 공개 정보, B4): 공백 접기, 지우기는 null, 문자열 아닌 값 거부
     assert.equal((await call<Profile>('profile.setCertName', { id: p.id, name: ' 가나다컴퍼니()0001234567891 ' })).certName, '가나다컴퍼니()0001234567891');
     assert.equal((await call<Profile>('profile.setCertName', { id: p.id, name: null })).certName, null);
     assert.equal(await code('profile.setCertName', { id: p.id, name: 3 }), 'bad_cert_name');
@@ -120,10 +117,8 @@ describe('data-service 온보딩 명령', () => {
     const after = (await call<Profile[]>('db.query.profiles.list')).find((x) => x.id === p.id)!;
     assert.equal(after.signMethod, null, '화면은 "발급 인증을 아직 고르지 않았어요"로 다시 고르게 한다');
     assert.equal(after.bizNo, p.bizNo, '다른 칸은 그대로');
-    // 다음 기동: 바꿀 것이 없고 로그도 없다
     assert.equal(resetRetiredAuth(svc.profiles, log), 0);
     assert.equal(lines.length, 1);
-    // 엔진 기동(entry.ts)이 DB를 연 뒤 바로 부른다
     const entry = await fsp.readFile(path.resolve(import.meta.dirname, '../packages/engine/src/entry.ts'), 'utf8');
     assert.match(entry, /data = new DataService\([^\n]*\);\n\s*resetRetiredAuth\(data\.profiles, log\);/);
   });

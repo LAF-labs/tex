@@ -1,7 +1,3 @@
-// .sxp 컨테이너 v1(design/schemas/SIGNING.md §6): 레지스트리 `/packages/{id}@{version}.sxp`의 바이트 형식.
-// .sxp = utf8(JCS(객체)). 패키지는 {format, kind:"package", manifest, playbook, selectors, strings}(각 값 = 원시 파일 바이트의 표준 base64),
-// 핫픽스는 {format, kind:"hotfix", hotfix}, 데이터 패키지는 {format, kind:"data", descriptor, body}. 컨테이너 자체는 서명하지 않는다: 인덱스의 sxpDigest가 바이트를, manifest·hotfix·데이터 기술자 서명(2-of-3)이 내용을 묶는다.
-// 파서는 정규형만 받는다(같은 내용의 다른 바이트 = 다른 sxpDigest가 생기지 않게).
 import { canonicalJson, canonicalizable } from './canon.ts';
 import type { RawPackage } from './loader.ts';
 import type { Hotfix } from './types.ts';

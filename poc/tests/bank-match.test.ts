@@ -1,5 +1,3 @@
-// 돈 맞추기 1단계(09): 은행 거래내역·홈택스 발급 목록 읽기(docparse), 저장(v9, 계좌번호 봉인·HMAC), 맞추기 규칙(§6), 수동 체크·되돌리기(§7), 대화 답(로컬).
-// 모든 값은 가짜다(합성 사업자번호, 가짜 계좌번호·이름).
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -249,7 +247,6 @@ describe('BankService(엔진, 실제 DB)', () => {
     assert.equal(o.received[0]!.via, 'manual');
     assert.equal(o.summary.latestDay, '2026-11-05');
     assert.equal(o.summary.stale, false);
-    // 다음 달 건과 입금: 별칭 + 사람이 확정한 적 있음 → 자동
     await call('bank.importInvoices', { rows: [{ approvalNo: approval(4), writtenOn: '2026-11-06', supplierBizNo: me, buyerBizNo: aBiz, buyerName: '(주)에이상사', total: 2_200_000 }] });
     const r2 = await call<{ match: { auto: number } }>('bank.importTxns', { accountId: acct, rows: [{ occurredAt: '2026-11-10', day: '2026-11-10', direction: 'in', amount: 2_200_000, balance: null, payer: '김 철수', memo: null }] });
     assert.equal(r2.match.auto, 1);
@@ -455,7 +452,6 @@ describe('거래내역 원천: 파일 | 자동 연결(가짜 원천)', () => {
   const call = <T>(m: string, p: Record<string, unknown> = {}) => svc.handle(m, { profileId: pid, ...p }) as Promise<T>;
   const code = (p: Promise<unknown>, c: string) => assert.rejects(p, (e: Error & { code?: string }) => e.code === c, c);
   const txnCount = () => Number(db.prepare('SELECT count(*) FROM bank_txns WHERE account_id = ?').pluck().get(acct));
-  /** 가짜 원천: 다음 fetch가 돌려줄 행·실패·멈춤을 고른다 */
   const fake = { rows: [] as SourceRow[], fail: null as string | null, gate: null as Promise<void> | null, calls: [] as Array<{ number: string; from: string; to: string }> };
   const source: TxnSource = {
     kind: 'auto',
@@ -538,14 +534,12 @@ describe('거래내역 원천: 파일 | 자동 연결(가짜 원천)', () => {
     assert.equal(txnCount(), 3);
     assert.equal(fake.calls[0]!.number, '1002000111222', '원천은 계좌번호 전체를 받는다');
     assert.ok(!JSON.stringify(j).includes('1002000111222'), '진행 상태에 계좌번호 없음');
-    // 같은 원천 id를 다시 받아도(시각이 달라도) 한 줄
     fake.rows = [{ ...fake.rows[2]!, occurredAt: '2026-11-11 10:00:01' }];
     await call('bank.refresh', { accountId: acct });
     assert.equal((await settle()).result!.newCount, 0);
     assert.equal(txnCount(), 3);
     const imp = db.prepare("SELECT source, provider FROM bank_imports WHERE source = 'auto' LIMIT 1").get() as { source: string; provider: string };
     assert.deepEqual({ ...imp }, { source: 'auto', provider: 'fakesrc' });
-    // 반대로, 자동으로 받은 줄을 파일로 다시 올려도 두 번 들어가지 않는다
     const back = await call<{ newCount: number }>('bank.importTxns', { accountId: acct, rows: [{ occurredAt: '2026-11-11', day: '2026-11-11', direction: 'in', amount: 770_000, balance: 6_058_000, payer: '이에이', memo: null }] });
     assert.equal(back.newCount, 0);
   });

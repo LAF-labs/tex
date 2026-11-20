@@ -1,5 +1,3 @@
-// 어댑터 정규화(이름 조인·refusal·임계값 매핑), 재시도 정책, egress BYOK 로컬 검사 4종, Responses store:false 재생.
-// 공급사 응답은 tests/fixtures/openai-mock.ts의 합성 녹화(실제 SDK·fetch·egress 경로를 그대로 탄다).
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
@@ -258,9 +256,9 @@ describe('egress BYOK 로컬 검사 4종(D04 §8)', () => {
     const req = (runToken: typeof t1) => ({ bundleId: 'recovery_v1', bundleDigest: b('recovery_v1').digest, input: screen('heading "발급"'), runToken });
     for (let i = 0; i < 12; i++) assert.notEqual((await layer.decide(req(t1))).reason, 'guard:budget_exceeded');
     egress.guard!.endRun(scope);
-    assert.equal((await layer.decide(req(t1))).reason, 'guard:run_token_unknown'); // 종료된 토큰
+    assert.equal((await layer.decide(req(t1))).reason, 'guard:run_token_unknown');
     const t2 = localRunToken(egress, scope);
-    assert.equal((await layer.decide(req(t2))).reason, 'guard:budget_exceeded'); // 13번째: 같은 runId 예산
+    assert.equal((await layer.decide(req(t2))).reason, 'guard:budget_exceeded');
     assert.equal((await layer.decide(req('local.forged-token-not-issued-by-guard' as never))).reason, 'guard:run_token_unknown');
     const chat = localRunToken(egress, { chatSessionId: 'c1' });
     assert.throws(() => localRunToken(egress, { chatSessionId: 'c1' }), { code: 'run_token_reissue' });
@@ -280,15 +278,13 @@ describe('egress BYOK 로컬 검사 4종(D04 §8)', () => {
   it('(4) 2차 PII 트립와이어: 마스킹을 빠져나간 사업자번호·주민번호·카드·계좌 모양이면 호출 안 함(카운트만)', async () => {
     assert.equal(piiTripwire('[BIZNO_1] 거래처'), false);
     for (const s of ['123-45-67890', '900101-1234567', '1234 5678 9012 3456', '110123456789', '010-12-345678']) assert.equal(piiTripwire(s), true, s);
-    // M1-5: 공백·점 구분과 한글 숫자도 마스킹하고, 마스킹을 비켜 간 원값은 트립와이어가 잡는다(PoC-7이 남긴 공백 분절 사례).
     const spaced = apply('등록번호 123 45 67890', { runId: 'r' }).redacted;
     assert.match(spaced, /\[BIZNO_1\]/);
     assert.equal(piiTripwire(spaced), false);
     for (const s of ['123 45 67890', '123.45.67890', '일이삼 사오 육칠팔구공', '900101 1234567']) assert.equal(piiTripwire(s), true, s);
-    // 날짜·시각은 계좌로 보지 않는다(숫자 10자리 미만 또는 날짜로 시작)
     for (const s of ['2026-11-05', '2026.11.05 14:32:10', '조회기간 2026-10-01 ~ 2026-10-31']) assert.equal(piiTripwire(s), false, s);
     const leaked2 = apply('등록번호 1234567890123', { runId: 'r' }, { needsAmounts: true }).redacted;
-    assert.doesNotMatch(leaked2, /\d{10}/); // 13자리는 주민번호 모양으로 먼저 치환된다
+    assert.doesNotMatch(leaked2, /\d{10}/);
     const { decider, egress, tok } = setup(mock);
     const n = mock.calls.length;
     const sneaky = apply('계좌 110-123-456789', { runId: 'r' }).redacted.replace('[ACCT_1]', '110-123-456789');
@@ -303,10 +299,10 @@ describe('egress BYOK 로컬 검사 4종(D04 §8)', () => {
     const msg = [{ role: 'user' as const, content: [{ type: 'input_text' as const, text: apply('x', { runId: 'r' }, { frame: 'none' }).redacted }] }];
     const fresh = () => g.check('respond', { toolset: 'selector_repair', messages: msg, runToken }, {});
     const turn = () => g.check('respond', { toolset: 'selector_repair', messages: msg, replay: [{ item: { type: 'function_call' }, tag: 'a'.repeat(64) }], runToken }, {});
-    assert.throws(turn, { code: 'budget_exceeded' }); // 열린 L2 없이 이어지는 턴
+    assert.throws(turn, { code: 'budget_exceeded' });
     fresh();
-    for (let i = 0; i < 4; i++) turn(); // L2 2 × (3 − 1) = 4턴을 첫 세션이 다 씀
-    fresh(); // 두 번째 새 L2는 호출 예산(2)으로만 판단
+    for (let i = 0; i < 4; i++) turn();
+    fresh();
     assert.deepEqual(g.usage(runToken), { l1: 0, l2Calls: 2, l2Turns: 4, agent: 0 });
     assert.throws(turn, { code: 'budget_exceeded' });
     assert.throws(fresh, { code: 'budget_exceeded' });

@@ -1,12 +1,3 @@
-// 패키지 게시 도구(PUBLISH-H01.md "H-01 게시 — 사용자 단계", 팀장 지시 2026-11-09, D09 §8, ADR-013·023·028).
-// 흐름: 패키지·정책 묶기(prepare) → package 키·policy 키 서명(사용자, ceremony sign, Touch ID) → .sxp·인덱스 묶기(assemble)
-//       → 인덱스 서명(사용자) → 게시 관문 PUT(push) → 되읽기·투명성 로그 포함 증명 → 기록(record.json).
-// 정책·status·폐기 목록·인덱스의 신선도(timestamp)는 서버가 올릴 때 붙이고 cron이 다시 서명한다(ADR-043).
-// 서명 단계 앞뒤(prepare·assemble·push)는 사람 없이 돈다. 이 모듈은 개인 키를 갖지 않는다: 서명은 ceremony sign이 도우미(Secure Enclave)로 하고,
-// 여기서는 서명 기록을 모아(collectSignatures) 같은 규칙으로 센다. 시험·리허설(rehearsal.ts)만 메모리 안 임시 키로 서명한다.
-// 형식은 지금 main 그대로다: .sxp v1(SIGNING.md §6, encodeSxp), 인덱스(API.md "인덱스"), 엔진 로더 loadPackage가 받는 모양.
-// 게시 전에 관문 규칙(verifySxp·verifyIndex)과 엔진 로더(loadPackage, 앱 내장 번들 허용 목록·조회 설치본)를 함께 돌린다:
-// 엔진이 받지 않을 패키지는 올리지 않는다.
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import {
@@ -50,7 +41,6 @@ import { CeremonyError, confirmCode, prepare as prepareDoc, type DocKind } from 
 export const PLAN_TOOL = 'sax-publish/1';
 /** 게시 관문 함수 본문 상한(Vercel 함수 4.5MB, JSON base64 포함)보다 낮게 */
 export const PUT_BODY_MAX = 4_000_000;
-/** 정책 초안에서 도구·서버가 정하는 필드(초안에 있으면 버린다) */
 const POLICY_ASSIGNED = ['monotonic', 'keyEpoch', 'issuedAt', 'expiresAt', 'timestamp', 'signatures'];
 const SIG_PROBE = { keyId: 'probe', alg: 'ed25519', sig: 'A'.repeat(86) };
 const without = (o: object, keys: readonly string[]): Record<string, unknown> => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
@@ -67,13 +57,9 @@ const sha = (b: Uint8Array | string) => createHash('sha256').update(b).digest('h
 const iso = (ms: number) => new Date(Math.floor(ms / 1000) * 1000).toISOString().replace('.000Z', 'Z');
 const pretty = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
 
-// ───────────────────────── 레지스트리 접근 ─────────────────────────
-
 export interface RegistryClient {
   readonly origin: string;
-  /** 공개 GET. 없으면 null(404, 또는 Storage 공개 URL의 NoSuchKey). 그 밖의 오류는 publish.fetch_failed */
   get(p: string): Promise<Buffer | null>;
-  /** 게시 PUT(`Authorization: Admin <token>`). 응답 본문은 오류 코드만 꺼낸다(입력을 되풀이하지 않는다) */
   put(p: string, body: unknown, token: string): Promise<{ status: number; body: Record<string, unknown> }>;
 }
 
@@ -116,7 +102,6 @@ export function httpRegistry(origin: string, fetchFn: typeof fetch = fetch, time
       if (r.status === 200) return read(r, SXP_MAX + 1024);
       const body = await read(r, 64 * 1024).catch(() => Buffer.alloc(0));
       if (r.status === 404) return null;
-      // Supabase Storage 공개 URL은 없는 객체를 400 {"statusCode":"404","code":"NoSuchKey"}로 답한다(운영 확인 2026-11-09)
       if (r.status === 400 && /"(NoSuchKey|not_found)"|"statusCode"\s*:\s*"404"/.test(body.toString('utf8'))) return null;
       return err('publish.fetch_failed', `${p} ${r.status}`);
     },
@@ -146,28 +131,22 @@ const parseJson = <T>(b: Buffer | null, what: string): T | null => {
   }
 };
 
-// ───────────────────────── 작업 폴더 ─────────────────────────
-
 export interface PublishFs {
   read(p: string): Buffer;
   exists(p: string): boolean;
-  /** 새 파일만 쓴다(덮지 않는다). 작업 폴더의 단계 산출물은 한 번 쓰면 바뀌지 않는다 */
   write(p: string, d: string | Buffer): void;
   mkdir(p: string): void;
   list(dir: string): string[];
 }
 
 export interface PlanPackage {
-  /** `<id>@<version>` */
   name: string;
   id: string;
   version: string;
   kind: 'playbook' | 'lookup';
   portal: string;
-  /** SHA-256(서명 입력 = JCS(manifest − signatures)) = manifest 다이제스트 */
   manifestDigest: string;
   confirm: string;
-  /** 레지스트리에 같은 manifest 다이제스트의 같은 이름이 이미 있다(서명·업로드 없이 인덱스에만 넣는다) */
   published: boolean;
 }
 
@@ -176,7 +155,6 @@ export interface PlanDoc {
   file: string;
   monotonic: number;
   confirm: string;
-  /** 이미 정족수 서명이 들어 있다(폐기 목록: 서명 의식에서 루트 2개로 서명한 문서) */
   signed: boolean;
 }
 
@@ -189,9 +167,7 @@ export interface Plan {
   keyEpoch: number;
   trustSha256: string;
   rolloutPercent: number;
-  /** 이번에 새로 올리는 패키지 항목의 최소 앱 판(인덱스 항목 minAppVersion). 없으면 넣지 않는다(어느 앱이든 받는다) */
   minAppVersion?: string;
-  /** 준비할 때 본 레지스트리 인덱스(assemble·push가 그사이 바뀌지 않았는지 본다). 바이트가 아니라 내용으로 본다: cron 신선도 재서명은 바이트만 바꾼다(ADR-043) */
   baseIndex: { monotonic: number; contentDigest: string } | null;
   packages: PlanPackage[];
   docs: PlanDoc[];
@@ -207,7 +183,6 @@ export const W = {
   assembled: 'assembled.json',
   doc: (kind: string) => `docs/${kind}.json`,
   record: 'record.json',
-  /** push가 첫 PUT 직전에 남기는 이전 로그 헤드(verify의 일관성 증명 기준) */
   pushStarted: 'push-started.json',
 } as const;
 
@@ -247,8 +222,6 @@ export const shq = (s: string, platform: NodeJS.Platform = process.platform): st
   return /^[A-Za-z0-9_@%+=:,./~-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 };
 
-// ───────────────────────── 엔진 로더 연습(임시 키) ─────────────────────────
-
 let catalog: Map<string, BundleOutcomes> | null = null;
 /** 앱 내장 번들 결과(V-07). 앱에 들어간 번들 정의 그대로다 */
 export function appBundles(): Map<string, BundleOutcomes> {
@@ -282,8 +255,6 @@ export function engineLoadAll(pkgs: ReadonlyArray<{ name: string; raw: RawPackag
   return installed;
 }
 
-// ───────────────────────── 1. prepare: 패키지 묶기 ─────────────────────────
-
 interface Source {
   dir: string;
   manifest: Manifest;
@@ -305,7 +276,6 @@ function readSource(fsys: PublishFs, dir: string): Source {
     if (e instanceof CeremonyError) throw e;
     return err('publish.source_invalid', `${dir} manifest`);
   }
-  // 원시 바이트 그대로 서명·묶는다(저장소에서 검토한 바이트 = 서명한 바이트). JSON이어야 엔진이 읽는다.
   const raw = { playbook: read(SOURCE_FILES.playbook), selectors: read(SOURCE_FILES.selectors), strings: read(SOURCE_FILES.strings) };
   for (const [k, b] of Object.entries(raw)) {
     try {
@@ -320,7 +290,6 @@ function readSource(fsys: PublishFs, dir: string): Source {
   return { dir, manifest, raw };
 }
 
-/** 의존 순서: lookupsUsed가 가리키는 같은 계획의 패키지를 먼저 */
 function order(srcs: Source[]): Source[] {
   const byId = new Map(srcs.map((s) => [s.manifest.id, s]));
   if (byId.size !== srcs.length) err('publish.source_duplicate');
@@ -344,35 +313,24 @@ function order(srcs: Source[]): Source[] {
 
 export interface PrepareOpts {
   work: Work;
-  /** 소스 파일 시스템(패키지 폴더 읽기) */
   src: PublishFs;
   sources: string[];
   registry: RegistryClient;
   trust: TrustRoot;
-  /** 화면에 보일 핀 파일 경로(서명 명령에 넣는다) */
   trustPath: string;
   trustBytes: Buffer;
   channel: Channel;
   rolloutPercent: number;
-  /** 새로 올리는 패키지의 최소 앱 판(semver). 이미 게시된 항목에는 붙이지 않는다 */
   minAppVersion?: string;
-  /** status 초안 {portalModeCeiling, killPlaybooks}(정책 키 2-of-3으로 서명한다) */
   status?: { portalModeCeiling: Record<string, string>; killPlaybooks: string[] };
-  /** 서명 의식에서 루트 2개로 서명한 폐기 목록(신선도 필드는 버리고 서버가 도장을 찍는다) */
   revoked?: RevokedKeys;
-  /**
-   * 정책 초안(services/registry/policy/<ver>.json 모양: monotonic·keyEpoch·신선도·서명 없음). 정책 키 2-of-3으로 서명하고 서버가 타임스탬프를 붙인다.
-   * 레지스트리의 지금 정책과 내용이 같으면 그대로 쓴다(서명·게시 없음)
-   */
   policy?: Record<string, unknown>;
   now: number;
-  /** 엔진 로더 연습용 임시 서명(rehearsal.ts ephemeralPackageSigner) */
   rehearsalSign: (manifest: Manifest) => Manifest;
   rehearsalTrust: TrustRoot;
   out: (line: string) => void;
 }
 
-/** 인덱스 항목의 minAppVersion: 이미 게시된 항목은 지금 인덱스의 값을 그대로, 새 항목은 계획의 값 */
 const minAppOf = (v: string | undefined) => (v !== undefined ? { minAppVersion: v } : {});
 
 /** 패키지 묶기 → 서명할 manifest·문서와 확인 코드, 사용자 서명 명령. 레지스트리는 읽기만 한다 */
@@ -392,7 +350,6 @@ export async function prepare(o: PrepareOpts): Promise<Plan> {
   if (index && index.keyEpoch !== o.trust.keyEpoch) err('registry.key_epoch_mismatch', 'index');
 
   const srcs = order(o.sources.map((d) => readSource(o.src, d)));
-  // 이미 게시된 조회 패키지의 manifest 다이제스트(인덱스 항목 → .sxp)
   const publishedDigest = async (id: string, version: string): Promise<string | null> => {
     const b = await o.registry.get(`/packages/${id}@${version}.sxp`);
     if (!b) return null;
@@ -425,7 +382,6 @@ export async function prepare(o: PrepareOpts): Promise<Plan> {
     built.push({ src: s, manifest: m, pkg: { name, id: m.id, version: m.version, kind: m.kind as 'playbook' | 'lookup', portal: m.portal, manifestDigest: md, confirm: confirmCode(p.sha256), published: existing === md } });
   }
 
-  // 엔진 로더 연습: 실제 핀과 같은 keyEpoch의 임시 키로 서명해 loadPackage·관문 verifySxp까지 돌린다(서명 키만 다르다)
   const rehearsal = built.map((b) => {
     const signed = o.rehearsalSign(b.manifest);
     const raw: RawPackage = { manifest: Buffer.from(JSON.stringify(signed)), playbook: b.src.raw.playbook, selectors: b.src.raw.selectors, strings: b.src.raw.strings };
@@ -457,7 +413,6 @@ export async function prepare(o: PrepareOpts): Promise<Plan> {
     wwrite(work, W.doc('revoked_keys'), pretty(r));
     docs.push({ kind: 'revoked_keys', file: W.doc('revoked_keys'), monotonic: r.monotonic!, confirm: confirmCode(content.sha256), signed });
   }
-  // 정책(D03 §7.1: 엔진은 정책이 없거나 낡으면 포털을 postprocess로 둔다). 폐기 목록 다음, status 앞에 올린다
   let policyNote = '';
   if (o.policy) {
     const draft = structuredClone(o.policy);
@@ -466,10 +421,8 @@ export async function prepare(o: PrepareOpts): Promise<Plan> {
     const same = !!policyStored && policyStored.keyEpoch === o.trust.keyEpoch && canonicalJson(without(policyStored, POLICY_ASSIGNED)) === canonicalJson(draft);
     if (same) policyNote = `  정책 ${policyStored.version} monotonic ${policyStored.monotonic}: 레지스트리에 같은 내용이 있다(서명·게시 없음, 신선도는 cron이 다시 서명한다)`;
     else {
-      // {ver}.json은 같은 내용으로만 다시 쓸 수 있다(관문 규칙). 내용을 바꾸면 version을 올린다
       if (policyStored && policyStored.version === draft.version) err('publish.policy_version_exists', `${String(draft.version)}: 내용을 바꾸면 version을 올린다`);
       const doc = { ...draft, monotonic: (policyStored?.monotonic ?? 0) + 1, keyEpoch: o.trust.keyEpoch, signatures: [] };
-      // 스키마(엔진 policy.schema.json)는 서명 전에 본다. 신선도·서명 자리는 모양만 맞춘 값으로 채워 본다
       const probe = { ...doc, issuedAt: iso(o.now), expiresAt: iso(o.now + 48 * 3_600_000), timestamp: SIG_PROBE, signatures: [SIG_PROBE, SIG_PROBE] };
       const v = schemaViolations('policy', probe);
       if (v.length) err('publish.policy_invalid', v.map((x) => x.message).join('; ').slice(0, 300));
@@ -500,7 +453,6 @@ export async function prepare(o: PrepareOpts): Promise<Plan> {
     docs,
   };
   wwrite(work, W.plan, pretty(plan));
-  // ceremony sign은 출력 파일만 새로 쓴다(폴더를 만들지 않는다)
   work.fs.mkdir(wp(work, 'sig'));
 
   o.out(`계획 ${work.dir}: 레지스트리 ${plan.registry}, 채널 ${plan.channel}, keyEpoch ${plan.keyEpoch}, 지금 인덱스 monotonic ${index?.monotonic ?? '없음'}`);
@@ -528,8 +480,6 @@ export async function prepare(o: PrepareOpts): Promise<Plan> {
   o.out(`그다음: assemble --work ${work.dir}`);
   return plan;
 }
-
-// ───────────────────────── 2. assemble: .sxp·인덱스 ─────────────────────────
 
 function sigRecords(w: Work, doc: string): SignatureRecord[] {
   const dir = wp(w, 'sig');
@@ -559,7 +509,6 @@ export interface AssembleOpts {
   trustPath: string;
   trustBytes: Buffer;
   now: number;
-  /** 지금 인덱스의 다른 항목을 새 인덱스에 이어 둔다(기본). 리허설은 실제 키로 서명된 기존 패키지를 임시 핀으로 검증할 수 없어 끈다 */
   carry?: boolean;
   out: (line: string) => void;
 }
@@ -570,13 +519,11 @@ export async function assemble(o: AssembleOpts): Promise<RegistryIndex> {
   if (w.fs.exists(wp(w, W.index))) err('publish.work_exists', W.index);
   const current = await checkBase(plan, o.registry);
   const revokedStored = parseJson<RevokedKeys>(await o.registry.get('/registry/revoked_keys.json'), 'revoked_keys');
-  // 이번에 올릴 폐기 목록이 있으면 그 목록으로 센다(관문은 폐기 목록을 먼저 올린 뒤 패키지·인덱스를 본다)
   const pending = plan.docs.find((d) => d.kind === 'revoked_keys');
   const revoked = new Set([...(revokedStored?.revoked.map((r) => r.keyId) ?? []), ...(pending ? wjson<RevokedKeys>(w, pending.file).revoked.map((r) => r.keyId) : [])]);
 
   const raws: Array<{ name: string; raw: RawPackage }> = [];
   const entries: IndexEntry[] = [];
-  // 검사를 모두 마친 뒤에만 쓴다(중간에 실패하면 작업 폴더가 그대로라 서명을 고쳐 다시 돌릴 수 있다)
   const toWrite: Array<{ name: string; sxp: Buffer }> = [];
   for (const p of plan.packages) {
     let sxp: Buffer;
@@ -596,10 +543,8 @@ export async function assemble(o: AssembleOpts): Promise<RegistryIndex> {
     raws.push({ name: p.name, raw: d.sxp.raw });
     entries.push({ id: p.id, version: p.version, kind: info.kind, portal: info.portal, sxpDigest: sha(sxp), size: sxp.length, rolloutPercent: plan.rolloutPercent, ...minAppOf(p.published ? current?.entries.find((e) => e.id === p.id && e.version === p.version)?.minAppVersion : plan.minAppVersion) });
   }
-  // 실제 서명으로 엔진 로더 전체(서명 2-of-3·번들·조회 다이제스트·정적 검증·승인 바 요약)
   engineLoadAll(raws, o.trust, revoked, o.now);
 
-  // 지금 인덱스의 다른 패키지는 그대로 잇는다(같은 id는 새 판으로 바꾼다). 이어 둘 항목도 실제 핀으로 다시 본다
   const newIds = new Set(entries.map((e) => e.id));
   const carried = o.carry === false ? [] : (current?.entries ?? []).filter((e) => !newIds.has(e.id));
   for (const e of carried) {
@@ -607,7 +552,6 @@ export async function assemble(o: AssembleOpts): Promise<RegistryIndex> {
     verifyPackageBytes(b, e);
     verifySxp(b, e, o.trust, revoked, o.now);
   }
-  // 초안에는 신선도 필드(issuedAt·expiresAt·timestamp)가 없다. 게시 관문이 올릴 때 타임스탬프 키로 붙이고, 그 뒤로는 cron이 다시 서명한다(ADR-043)
   const index = {
     channel: plan.channel,
     monotonic: (current?.monotonic ?? 0) + 1,
@@ -617,7 +561,6 @@ export async function assemble(o: AssembleOpts): Promise<RegistryIndex> {
   } as unknown as RegistryIndex;
   if (Buffer.byteLength(JSON.stringify(index)) > DOC_MAX) err('publish.body_too_large', 'index');
   for (const t of toWrite) {
-    // 서명이 결정적(Ed25519)이라 다시 돌리면 같은 바이트다. 다르면 작업 폴더가 섞인 것이다
     if (w.fs.exists(wp(w, W.sxp(t.name)))) {
       if (!wread(w, W.sxp(t.name)).equals(t.sxp)) err('publish.work_invalid', W.sxp(t.name));
     } else wwrite(w, W.sxp(t.name), t.sxp);
@@ -637,8 +580,6 @@ export async function assemble(o: AssembleOpts): Promise<RegistryIndex> {
   return index;
 }
 
-// ───────────────────────── 3. push: 게시 관문 PUT → 되읽기 → 로그 ─────────────────────────
-
 export interface PushOpts {
   work: Work;
   registry: RegistryClient;
@@ -647,9 +588,7 @@ export interface PushOpts {
   token: string;
   now: number;
   out: (line: string) => void;
-  /** 사후 확인 다시 읽기 사이 대기(시험은 바로 돌려준다) */
   sleep?: (ms: number) => Promise<void>;
-  /** 사후 확인을 기다리는 최대 시간(기본 90초). 공개 GET은 CDN이 60초까지 캐시한다(head·status·인덱스·정책 max-age=60) */
   settleMs?: number;
 }
 
@@ -663,7 +602,6 @@ export interface PublishRecord {
   publishedAt: string;
   published: Array<{ kind: string; path: string; sha256: string; logIndex: number }>;
   index: { monotonic: number; expiresAt: string };
-  /** before는 push 직전 헤드 크기. verify가 push-started.json 없이 확인했으면 null(일관성 증명 없음) */
   logHead: { before: number | null; after: number; rootHash: string };
 }
 
@@ -684,7 +622,6 @@ function checkHead(h: SignedTreeHead | null, trust: TrustRoot): SignedTreeHead {
 
 const logHead = async (registry: RegistryClient, trust: TrustRoot): Promise<SignedTreeHead> => checkHead(parseJson<SignedTreeHead>(await registry.get('/registry/log/head.json'), 'log head'), trust);
 
-/** 올릴 것(push)·올린 것(verify). 서명을 모두 모으고 관문 규칙으로 먼저 본다 */
 interface Outgoing {
   plan: Plan;
   revoked: Set<string>;
@@ -693,7 +630,6 @@ interface Outgoing {
   statusOut: RegistryStatus | null;
   index: RegistryIndex | null;
   sxps: Map<string, Buffer>;
-  /** 공개 경로마다 되읽기 때 기대하는 것. bytes가 있으면 바이트 그대로, 없으면 내용 다이제스트 */
   published: Array<{ kind: string; path: string; bytes?: Buffer; digest?: string }>;
 }
 
@@ -728,10 +664,8 @@ async function outgoing(o: VerifyOpts, stored: { revoked: RevokedKeys | null; cu
       sxps.set(p.name, b);
     }
   }
-  // 올리는 순서: 폐기 목록 → 정책 → status → 패키지(조회 먼저, 계획 순서) → 인덱스. 관문이 같은 규칙으로 다시 보고, 공개 전에 로그를 쓴다
   const published: Outgoing['published'] = [];
   if (revokedOut) published.push({ kind: 'revoked_keys', path: 'registry/revoked_keys.json', digest: contentDigest(revokedOut) });
-  // 관문은 정책 {ver}.json과 current.json을 같은 바이트로 쓴다(ADR-023), 로그 항목도 둘
   if (policyOut) for (const path of [`policy/${policyOut.version}.json`, 'policy/current.json']) published.push({ kind: 'policy', path, digest: contentDigest(policyOut) });
   if (statusOut) published.push({ kind: 'status', path: 'registry/status.json', digest: contentDigest(statusOut) });
   for (const [name, b] of sxps) published.push({ kind: 'package', path: `packages/${name}.sxp`, bytes: b });
@@ -749,9 +683,7 @@ export async function push(o: PushOpts): Promise<PublishRecord> {
   const revokedStored = parseJson<RevokedKeys>(await o.registry.get('/registry/revoked_keys.json'), 'revoked_keys');
   const statusStored = parseJson<RegistryStatus>(await o.registry.get('/registry/status.json'), 'status');
   const policyStored = parseJson<SignedPolicy>(await o.registry.get('/policy/current.json'), 'policy');
-  // 서명이 모두 갖춰졌는지 올리기 전에 먼저 본다(중간에 멈추지 않게)
   const out = await outgoing(o, { revoked: revokedStored, current });
-  // 이전 헤드: 같은 폴더로 다시 push하면 처음 남긴 것을 쓴다(그때부터의 항목을 모두 증명한다)
   const before = w.fs.exists(wp(w, W.pushStarted)) ? checkHead(wjson<SignedTreeHead>(w, W.pushStarted), o.trust) : fresh;
   if (!w.fs.exists(wp(w, W.pushStarted))) wwrite(w, W.pushStarted, pretty(before));
 
@@ -795,7 +727,6 @@ export async function verifyPublished(o: VerifyOpts): Promise<PublishRecord> {
   return confirm(o, out, { before, current: null, revokedStored: null, statusStored: null, policyStored: null });
 }
 
-/** 되읽기·투명성 로그 포함 증명 → record.json. 공개 GET은 CDN 캐시(≤ 60초)라 맞을 때까지 다시 읽는다(최대 settleMs) */
 async function confirm(
   o: VerifyOpts,
   out: Outgoing,
@@ -804,7 +735,6 @@ async function confirm(
   const w = o.work;
   const { plan, revoked } = out;
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  // 기다림은 되읽기·로그 확인 전체에 한 번(기본 90초 = 5초 × 18): 캐시 만료(60초)는 경로마다가 아니라 한꺼번에 온다
   let waits = Math.max(0, Math.ceil((o.settleMs ?? SETTLE_MS) / POLL_MS));
   const until = async <T>(attempt: () => Promise<T | null>, fail: () => never): Promise<T> => {
     for (;;) {
@@ -815,7 +745,6 @@ async function confirm(
     }
   };
 
-  // 되읽기: 공개 경로가 올린 것과 같은가(관문이 쓴 그 바이트를 공개 GET으로). 옛 판이 캐시에 남아 있으면 다시 읽는다
   const got = new Map<string, Buffer>();
   for (const p of out.published) {
     const b = await until(
@@ -830,7 +759,6 @@ async function confirm(
     );
     got.set(p.path, b);
   }
-  // 인덱스: 서명한 내용 그대로이고(서버는 신선도 필드만 붙인다), 붙인 신선도까지 관문 규칙을 통과해야 한다
   let indexOut: RegistryIndex | null = null;
   if (out.index) {
     indexOut = parseJson<RegistryIndex>(got.get(`registry/${plan.channel}/index.json`)!, 'index')!;
@@ -845,13 +773,11 @@ async function confirm(
   }
   if (out.statusOut) verifyStatus(parseJson<RegistryStatus>(got.get('registry/status.json')!, 'status')!, o.trust, revoked, base.statusStored, o.now);
 
-  // 투명성 로그: 새 헤드(핀 고정 타임스탬프 키)가 올린 경로를 모두 담을 때까지 다시 읽는다. 이전 헤드와의 일관성, 경로마다 항목·포함 증명
   const entries = new Map<number, LogEntryRecord | null>();
   const entryAt = async (i: number) => {
     if (!entries.has(i)) entries.set(i, parseJson<LogEntryRecord>(await o.registry.get(`/registry/log/entries/${i}.json`), 'log entry'));
     return entries.get(i)!;
   };
-  // 같은 바이트의 패키지 재게시(중간 실패 뒤 다시 push)는 로그에 다시 쓰지 않으므로 새 항목부터 거꾸로, 없으면 그 앞을 찾는다
   const find = async (size: number, path: string, sha256: string) => {
     for (let i = size - 1; i >= 0; i--) {
       const e = await entryAt(i);

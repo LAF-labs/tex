@@ -1,5 +1,3 @@
-// 폰 대화 코어(@sax/chat-core PhoneChat, ADR-047 결정 5·6). 모델은 대본대로 답하는 가짜다(모의 기준).
-// 보는 것: 모델에 값이 가지 않는다, 컨텍스트 순서와 상한, 사본으로 답하는 도구와 슬롯 채우기, 되풀이 호출 안전망, 접기, 이 폰에만 두는 기록.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
@@ -25,7 +23,7 @@ import {
 } from '@sax/chat-core';
 import { CHAT_MAP_IDLE_MS, Redactor, wasMinted } from '@sax/redaction';
 
-const T0 = Date.UTC(2026, 10, 16, 3, 0); // 2026-11-16 12:00 KST
+const T0 = Date.UTC(2026, 10, 16, 3, 0);
 const ULID = (n: number) => `01KA${String(n).padStart(22, '0')}`;
 
 const COPY: PhoneCopy = {
@@ -106,7 +104,6 @@ const reply = (r: PhoneTurnResult) => {
   assert.equal(r.kind, 'reply', JSON.stringify(r));
   return r as Extract<PhoneTurnResult, { kind: 'reply' }>;
 };
-/** 모델에 나간 글 전부(문장 + 도구 결과)에 원값이 없다 */
 function assertNoRaw(reqs: readonly PhoneRespondRequest[], extra: readonly string[] = []) {
   for (const r of reqs) {
     const sent = [r.text, ...r.replay.map((x) => ('output' in x ? x.output : JSON.stringify(x.item)))].join('\n');
@@ -141,7 +138,6 @@ describe('폰 대화: 컨텍스트와 가림', () => {
     const text = t.reqs[1]!.text;
     const order = ['[앞 대화]', '[사실]', '[지금]'].map((x) => text.indexOf(x));
     assert.ok(order[0] === 0 && order[0]! < order[1]! && order[1]! < order[2]!, text);
-    // 앞 답의 날짜는 자리표시, 금액은 금액 토큰으로 남는다(값은 모델에 가지 않는다)
     assert.match(text, /\[앞 대화\]\n사용자: \[NAME_\d+\] 발급 기록 보여줘\n앱: 최근 발급은 \(날짜\), 합계 \[AMT_\d+\]이에요\.\n\[사실\]/);
     assert.match(text, /invoice_history\(\[NAME_\d+\]\) = \{"ref":"r1"/, '같은 조회는 같은 ref(접두가 바뀌지 않는다)');
     assertNoRaw(t.reqs, ['11월 3일', '1,000,000']);
@@ -192,7 +188,6 @@ describe('폰 대화: 컨텍스트와 가림', () => {
     assert.notEqual(t.sessions[0], t.sessions[1]);
     assert.match(t.reqs[1]!.text, /\[앞 대화\]\n사용자: \[NAME_\d+\] 건 확인\n앱: \[NAME_\d+\] 건을 확인했어요\./);
     assertNoRaw(t.reqs);
-    // 사본의 첫 거래처는 어느 세션에서나 같은 토큰이라(등재 순서) 답의 [NAME_1]은 한빛전자다
     assert.equal(b.text, '한빛전자 건을 확인했어요.');
   });
 
@@ -234,18 +229,15 @@ describe('폰 대화: 도구와 카드', () => {
     assert.ok(card && card.type === 'card');
     assert.deepEqual([card.counterparty, card.draft.amount, card.draft.vat, card.draft.item, card.draft.state, card.draft.ref], ['한빛전자', 550000, null, '컨설팅', 'open', 'd3']);
     assertNoRaw(t.reqs);
-    // 다음 턴의 화면 줄에 열린 카드가 실린다
     t.setScript((_r, n) => say(n, 'smalltalk', '네.'));
     await t.chat.send('고마워');
     assert.match(t.reqs[2]!.text, /화면: 카드 d3\(세금계산서, 거래처 \[NAME_\d+\], 금액 있음, 부가세 미정, 품목 있음\)/);
-    // 맡기기는 메서드로만
     const d = await t.chat.entrust(card.draft.id);
     assert.equal(d?.state, 'entrusted');
     assert.equal(await t.chat.entrust(card.draft.id), null, '두 번 맡길 수 없다');
     const log = await t.chat.messages();
     assert.equal(log.at(-1)!.text, '한빛전자 세금계산서를 맡겼어요. PC가 켜지면 시작하고, 발급 전에 한 번 더 확인을 받아요.');
     assert.ok(!log.at(-1)!.ctx!.t.includes('한빛전자'));
-    // 맡긴 카드는 고칠 수 없다
     t.setScript((req, n) => (req.replay.length ? say(n, 'cannot', '이미 맡긴 카드라 고칠 수 없어요.') : call(n, 'draft_edit', { draft: 'd3', amount: null, vat: 'included', item: null })));
     await t.chat.send('그 카드 부가세 포함으로');
     assert.equal((t.reqs.at(-1)!.replay[1] as { output: string }).output, '{"ref":"d3","status":"not_editable","fields":null,"needs":null}');
@@ -261,7 +253,6 @@ describe('폰 대화: 도구와 카드', () => {
     const a = reply(await t.chat.send('서울상사에 끊어줘'));
     assert.equal((t.reqs[1]!.replay[1] as { output: string }).output, '{"ref":null,"status":"needs_input","fields":null,"needs":["amount","item"]}');
     assert.deepEqual([a.ask?.kind, a.show.length], ['amount', 0]);
-    // [사실]에 실린 한빛전자 발급 기록의 ref를 그대로 금액 슬롯에 쓴다(도구를 다시 부르지 않는다)
     t.setScript((r, n) => (r.replay.length ? say(n, 'did', '같은 금액으로 카드를 만들었어요.') : call(n, 'invoice_draft', { counterparty: '[NAME_1]', amount: `{${/invoice_history\(\[NAME_1\]\) = \{"ref":"(r\d+)"/.exec(r.text)![1]}.first.total}`, vat: null, item: null })));
     const b = reply(await t.chat.send('한빛전자에 지난번이랑 같은 금액으로'));
     const card = b.show.find((x) => x.type === 'card');
@@ -312,19 +303,15 @@ describe('폰 대화: 도구와 카드', () => {
     const t = rig({ script: (_r, n) => say(n, 'answer', '9월 기록을 표로 보여 드릴게요.', ['r1']) });
     const a = reply(await t.chat.send('한빛전자 9월 발급 기록'));
     assert.deepEqual([a.text, a.filtered, a.show.length], ['9월 기록을 표로 보여 드릴게요.', null, 1]);
-    // 사장님이 쓰지 않은 달은 지어낸 값일 수 있다: 문장만 버린다
     t.setScript((_r, n) => say(n, 'answer', '10월 기록을 표로 보여 드릴게요.', ['r1']));
     assert.deepEqual([reply(await t.chat.send('한빛전자 9월 발급 기록')).filtered], ['number']);
-    // 되묻는 문장에 숫자가 섞였다: 되묻기와 선택지는 살리고 문장은 고정 문장
     t.setScript((_r, n) => say(n, 'ask', '금액은 550000원이 맞나요, 아니면 다른 금액인가요?', [], 'amount'));
     const b = reply(await t.chat.send('서울상사에 끊어줘'));
     assert.deepEqual([b.text, b.filtered, b.ask?.kind], [PHONE_ASK_TEXT.amount, 'number', 'amount']);
-    // 모르는 결과를 가리킨 슬롯: 보일 것이 없으면 고정 안내, 턴은 버리지 않는다
     t.setScript((_r, n) => say(n, 'answer', '{r77.count}건이에요.'));
     const c = reply(await t.chat.send('안녕'));
     assert.deepEqual([c.text, c.filtered, c.show.length], [PHONE_FALLBACK_TEXT, 'slot', 0]);
 
-    // 카드 ref에 슬롯을 붙이고 인자에 중괄호 토큰을 쓴 턴: 카드는 만들어지고, 문장만 고정 문장으로 바뀐다. 카드를 만든 턴의 부가세는 묻지 않는다.
     const u = rig({
       script: (r, n) => {
         if (!r.replay.length) return call(n, 'invoice_draft', { counterparty: '{NAME_1}', amount: '{AMT_1}', vat: null, item: null });
@@ -337,7 +324,6 @@ describe('폰 대화: 도구와 카드', () => {
     assert.ok(card && card.type === 'card', JSON.stringify(d));
     assert.deepEqual([card.draft.amount, d.text, d.filtered, d.ask], [550000, PHONE_NUMBER_TEXT, 'slot', null]);
     assertNoRaw(u.reqs);
-    // 카드가 없는 턴의 틀린 슬롯 되묻기는 그 칸의 고정 문장으로 되묻는다
     u.setScript((_r, n) => say(n, 'ask', '{d9.first.item} 품목이 맞나요?', [], 'item'));
     const e = reply(await u.chat.send('품목은 뭐였지'));
     assert.deepEqual([e.text, e.filtered, e.ask?.kind], [PHONE_ASK_TEXT.item, 'slot', 'item']);
@@ -393,7 +379,6 @@ describe('폰 대화: 접기와 PC로 되돌리기', () => {
     const text = t.reqs.at(-1)!.text;
     assert.match(text, /^\[요약\]\n\[NAME_\d+\]와 인사를 나눴다\. 아직 끝나지 않은 일은 없다\.\n\[앞 대화\]\n사용자: \[NAME_\d+\] 가{12}\n/, '슬롯은 요약에 옮기지 않는다');
     assert.equal(text.split('\n').filter((l) => l.startsWith('사용자:')).length, PHONE_TURNS_MAX / 2 + 1);
-    // 접은 메시지도 화면 목록에는 그대로 남는다
     assert.equal((await t.chat.messages()).length, (PHONE_TURNS_MAX + 2) * 2);
   });
 
@@ -415,9 +400,7 @@ describe('폰 대화: 접기와 PC로 되돌리기', () => {
     const before = await t.chat.messages();
     assert.deepEqual(before.map((m) => [m.from, m.text]), [['user', '한빛전자 건 메모'], ['app', '한빛전자 건을 적어 뒀어요.'], ['user', '서울상사도'], ['app', '한빛전자 건을 적어 뒀어요.']]);
     assert.ok(before.every((m) => !('origin' in m) && !('base' in m) && !('synced' in m)));
-    // 다른 기기로 내보내는 길이 없다(ADR-046 결정 7: 대화는 기기마다 따로)
     for (const gone of ['pendingSync', 'acked', 'applyContext']) assert.equal((t.chat as unknown as Record<string, unknown>)[gone], undefined, gone);
-    // 다시 연 앱: 저장된 것으로 이어진다
     const again = rig({ stored: t.saved(), script: (_r, n) => say(n, 'smalltalk', '네.') });
     assert.deepEqual(await again.chat.messages(), before);
     reply(await again.chat.send('고마워'));

@@ -1,5 +1,3 @@
-// D08 §5 상시 세션: Noise_IK(개시자 폰), prologue = "SAX-session-v1" ‖ pair_id, msg1 페이로드 = 단조 타임스탬프 8B.
-// PC는 Sm 미폐기·타임스탬프 단조성을 확인하고 아니면 무응답으로 버린다(오라클 방지). 최고값은 pair별로 영속한다.
 
 import { concat, equal, readU64be, u64be, utf8 } from './bytes.ts';
 import { Channel } from './channel.ts';
@@ -12,10 +10,6 @@ import { attachQueue, nextFrame, type Link } from './relay.ts';
 
 export const PROTOCOL_VERSION = 1;
 export const SUITES: HelloBody['suites'] = ['noise-25519-chachapoly-blake2b'];
-/** Phase 1 폰 기능 표시(hello.capabilities). receiptV2 = receipt.offer의 paperInvoice(종이 세금계산서, v1.7)를 받는다. */
-/** v1.8: issue = 폰 발급 명령(cmd.run hometax.invoice.issue)·cmd.ack·run.event 진행 칸, copy = phone.copy(ADR-046 결정 2·5). */
-/** v1.9: share = 계정 공유 기록 열쇠(share.key, ADR-048 결정 5)를 받는다(폰) / 준다(PC). */
-/** v1.10: approve = 폰 승인(px.enroll·px.ack·gate.request·gate.response·gate.refresh, ADR-052). 폰은 승인 키로 서명할 수 있을 때, PC는 중계·검증할 수 있을 때 알린다. */
 /** v1.11: sync = run.event.rev와 gate.resolved(폰과 PC 연결 끊김에 강하게)를 받는다(폰) / 보낸다(PC). */
 export const CAP = { receipt: 'receipt.v1', receiptV2: 'receipt.v2', cash: 'cash.v1', issue: 'issue.v1', copy: 'copy.v1', share: 'share.v1', approve: 'approve.v1', sync: 'sync.v1' } as const;
 const ZERO_HASH = '0'.repeat(64);
@@ -33,9 +27,7 @@ export interface HelloInfo {
 export interface SessionInfo {
   channel: Channel;
   peerHello: HelloBody;
-  /** deviceListVersion이 다르면 비가역 승인·비밀 요청을 보류하고 devlist.push를 주고받는다(C-20). */
   deviceListMismatch: boolean;
-  /** registryHeadHash가 다르면 경고(C-26). */
   registryMismatch: boolean;
 }
 
@@ -54,7 +46,6 @@ function helloBody(h: HelloInfo): HelloBody {
 async function exchangeHello(ch: Channel, mine: HelloInfo, minProtocol: number, first: 'send' | 'recv', timeoutMs = 10_000): Promise<SessionInfo | null> {
   if (first === 'send') ch.send('hello', helloBody(mine));
   const e = await ch.recv(timeoutMs);
-  // hello가 없으면 전송 키와 우편함 자리를 놓는다(다시 시도할 때 자리가 비어 있게).
   if (!e || e.type !== 'hello') {
     ch.close();
     return null;
@@ -73,20 +64,15 @@ async function exchangeHello(ch: Channel, mine: HelloInfo, minProtocol: number, 
   };
 }
 
-// ---- 폰 ----
-
 export interface MobileSessionOptions {
   pairId: string;
   noise: NoiseStatic;
   desktopStatic: Uint8Array;
   hello: HelloInfo;
-  /** 단조 타임스탬프. 기본은 ms 시각이며 직전 값 이하이면 +1 한다(앱이 영속). */
   nextTimestamp: () => number;
   now?: () => number;
   minProtocol?: number;
-  /** PC 응답 대기(기본 15초). 없으면 꺼져 있는 것으로 본다. */
   responseTimeoutMs?: number;
-  /** IK 뒤 hello 대기(기본 10초). */
   helloTimeoutMs?: number;
 }
 
@@ -107,31 +93,21 @@ export async function openMobileSession(link: Link, o: MobileSessionOptions): Pr
   }
 }
 
-// ---- PC ----
-
 export interface PairRecord {
   pairId: string;
   phoneStatic: Uint8Array;
   revoked: boolean;
-  /** remote_pair_state.ik_ts_max */
   ikTsMax: number;
 }
 
 export interface DesktopSessionOptions {
   noise: NoiseStatic;
-  /** 우편함이 정하는 pair(우편함은 pair마다 하나). */
   pair: PairRecord;
   hello: HelloInfo;
-  /** ik_ts_max 영속(통과한 뒤에만 부른다). */
   persistTs: (pairId: string, ts: number) => Promise<void>;
   now?: () => number;
   minProtocol?: number;
-  /** IK 뒤 hello 대기(기본 10초). */
   helloTimeoutMs?: number;
-  /**
-   * 이미 받은 msg1 프레임. 앞 세션의 수신 루프가 폰이 다시 접속해 보낸 새 IK를 받았으면 그것을 넘긴다
-   * (같은 우편함 연결 위에서 폰은 세션마다 새로 IK를 연다. 앞 세션이 그 프레임을 삼키면 폰은 응답을 받지 못한다).
-   */
   first?: Uint8Array;
 }
 

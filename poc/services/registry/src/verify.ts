@@ -1,7 +1,3 @@
-// 레지스트리 게시 관문 검증(D09 §8, ADR-013·023·028, D03 §3.1). 서버는 서명하지 않는다: 서명은 CI 밖 하드웨어 의식이고
-// 여기에는 공개키만 있다. 서명 바이트·수용 규칙의 정본은 엔진 트랙의 design/schemas/SIGNING.md와 엔진 로더(packages/engine/src/core)다.
-// 관문은 엔진이 받지 않을 것을 올리지 않으려고 같은 규칙을 먼저 적용한다. 스키마 검사·.sxp 해석·보수성 판정은 엔진 함수를 그대로 쓰고,
-// 서명 세기·버전·신선도는 SIGNING.md §1~§7을 따라 여기서 센다(오류 코드도 엔진과 같다, D16).
 import { verify as edVerify } from 'node:crypto';
 import {
   HOTFIX_MAX_VALIDITY_D,
@@ -40,9 +36,7 @@ export interface Sig {
 
 const HOUR = 3_600_000;
 export const LIMITS = {
-  /** 새 단조 값 ≤ 저장값 + 1000(같은 keyEpoch, SIGNING.md §7) */
   versionJumpMax: 1000,
-  /** issuedAt이 현재 + 5분보다 미래면 거부 */
   futureSkewMs: 5 * 60_000,
   indexMaxValidityMs: 14 * 24 * HOUR,
   hotfixMaxValidityMs: HOTFIX_MAX_VALIDITY_D * 24 * HOUR,
@@ -52,9 +46,7 @@ export const LIMITS = {
   releaseMaxValidityMs: 14 * 24 * HOUR,
 } as const;
 
-/** 정책·status·폐기 목록·인덱스의 내용 서명에서 빼는 필드(SIGNING.md §2, ADR-043) */
 const FRESHNESS_FIELDS = ['signatures', 'issuedAt', 'expiresAt', 'timestamp'];
-/** manifest·hotfix·인덱스·패키지 id(manifest.schema.json id 패턴: 점 필수) */
 /** 인덱스 항목 id. 플레이북 manifest는 `-`를 받지 않지만 데이터 기술자(data_descriptor)는 받는다. 종류별 규칙은 .sxp 안 스키마가 본다. */
 export const ID_RE = /^[a-z0-9]+(\.[a-z0-9_-]+)+$/;
 const SEMVER_RE = /^\d+\.\d+\.\d+$/;
@@ -107,12 +99,10 @@ function quorum(data: Buffer, sigs: unknown, role: Role, trust: TrustRoot, revok
   if (q.valid.length < need) fail('registry.signature_insufficient');
 }
 
-/** 1인 긴급 키 서명본인가(서명이 정확히 1개, 그것이 핀 고정 긴급 키의 유효 서명) */
 function emergencyOnly(data: Buffer, sigs: unknown, trust: TrustRoot, revoked: ReadonlySet<string>): boolean {
   return Array.isArray(sigs) && sigs.length === 1 && countSignatures(data, sigs, 'emergency', trust, revoked).valid.length === 1;
 }
 
-/** 2-of-3 또는 긴급 키 1개. 반환 true = 긴급 키 단독. */
 function quorumOrEmergency(data: Buffer, sigs: unknown, role: 'policy', trust: TrustRoot, revoked: ReadonlySet<string>, v: Verdict): boolean {
   const q = countSignatures(data, sigs, role, trust, revoked);
   if (q.revoked.length) v.events.push('registry.key_revoked');
@@ -121,12 +111,10 @@ function quorumOrEmergency(data: Buffer, sigs: unknown, role: 'policy', trust: T
   return fail('registry.signature_insufficient');
 }
 
-/** 아티팩트의 keyEpoch는 핀 고정 세대와 같아야 한다(SIGNING.md §3) */
 function epoch(doc: { keyEpoch?: unknown }, trust: TrustRoot): void {
   if (doc.keyEpoch !== trust.keyEpoch) fail('registry.key_epoch_mismatch');
 }
 
-/** 타임스탬프(신선도) 서명 = 온라인 타임스탬프 키 1개가 JCS({contentDigest, monotonic, issuedAt, expiresAt})에(SIGNING.md §4) */
 function timestamp(digest: string, doc: { timestamp?: unknown; monotonic: number; issuedAt: string; expiresAt: string }, trust: TrustRoot, revoked: ReadonlySet<string>): void {
   const ts = doc.timestamp as Sig | undefined;
   const body = Buffer.from(canonicalJson({ contentDigest: digest, monotonic: doc.monotonic, issuedAt: doc.issuedAt, expiresAt: doc.expiresAt }), 'utf8');
@@ -173,8 +161,6 @@ function schema(name: Parameters<typeof schemaViolations>[0], doc: unknown): voi
   if (!doc || typeof doc !== 'object' || Array.isArray(doc) || schemaViolations(name, doc).length || !canonicalizable(doc)) fail('registry.schema_invalid');
 }
 
-// ---------- 폐기 목록 /registry/revoked_keys.json ----------
-
 export interface RevokedKeys {
   monotonic: number;
   keyEpoch: number;
@@ -205,8 +191,6 @@ export function verifyRevoked(doc: RevokedKeys, trust: TrustRoot, stored: Revoke
   return { ...v, keyIds: nextIds };
 }
 
-// ---------- 긴급 채널 /registry/status.json ----------
-
 export interface RegistryStatus {
   monotonic: number;
   keyEpoch: number;
@@ -236,8 +220,6 @@ export function verifyStatus(doc: RegistryStatus, trust: TrustRoot, revoked: Rea
   return { ...v, emergency };
 }
 
-// ---------- 정책 /policy/{ver}.json, /policy/current.json ----------
-
 export interface SignedPolicy {
   version: string;
   monotonic: number;
@@ -266,11 +248,8 @@ export function verifyPolicy(doc: SignedPolicy, trust: TrustRoot, revoked: Reado
   return { ...v, emergency };
 }
 
-// ---------- 패키지·핫픽스 .sxp /packages/{id}@{version}.sxp ----------
-
 export interface SxpInfo extends Verdict {
   kind: 'playbook' | 'lookup' | 'hotfix' | 'data';
-  /** 패키지 manifest의 portal(핫픽스는 대상 패키지 id의 첫 마디). 데이터 패키지에는 없다 */
   portal?: string;
 }
 
@@ -288,11 +267,6 @@ const parse = (b: Uint8Array): unknown => {
   }
 };
 
-/**
- * .sxp v1(SIGNING.md §6)을 풀어 안의 서명까지 본다. 패키지: manifest 스키마, 패키지 키 2-of-3(JCS(manifest − signatures)),
- * contentDigests = 원시 파일 바이트, 파일 이름 = manifest id·version. 핫픽스: hotfix 스키마, 패키지 키 2-of-3(JCS(hotfix − signatures)),
- * keyEpoch, ≤ 14일, 파일 이름 = <appliesTo.id>.hotfix@<keyEpoch>.<monotonic>.0. 데이터 패키지(kind data)의 컨테이너는 SIGNING.md 범위 밖이라 아직 받지 않는다.
- */
 /** 데이터 패키지 본문 검증기(schema 이름 → 앱 패키지의 검증 함수). 규칙은 그 패키지가 정본이고 관문은 그대로 부른다. */
 export const DATA_SCHEMAS: ReadonlyMap<string, (body: unknown) => string[]> = new Map([['sax.rate-tables/v1', validatePackage]]);
 
@@ -306,7 +280,6 @@ export function engineRoots(trust: TrustRoot): TrustRoots {
   return { keyEpoch: trust.keyEpoch, rootKeys: m('root'), packageKeys: m('package'), policyKeys: m('policy'), emergencyKey: one('emergency'), timestampKey: one('timestamp') };
 }
 
-/** 엔진 데이터 로더 코드 → 관문 오류 코드(D16 목록 안) */
 const DATA_CODE: Record<string, ErrorCode> = {
   'loader.content_digest_mismatch': 'registry.content_digest_mismatch',
   'registry.signature_insufficient': 'registry.signature_insufficient',
@@ -318,8 +291,6 @@ export function verifySxp(bytes: Buffer, name: { id: string; version: string }, 
   const d = decodeSxp(bytes);
   if (!d.ok) return fail(d.code);
   if (d.sxp.kind === 'data') {
-    // SIGNING.md §6: 기술자 스키마·패키지 키 2-of-3·keyEpoch·bodyDigest·본문 검증기(급여 validatePackage)는 엔진 loadDataPackage가 본다.
-    // 버전 내림은 인덱스 단조성으로 막으므로 여기서는 설치본이 없는 것으로 본다.
     const r = loadDataPackage(d.sxp.raw, { roots: engineRoots(trust), revoked, schemas: DATA_SCHEMAS, installed: null, hold: false, now });
     v.events.push(...r.events);
     if (!r.ok) return fail(DATA_CODE[r.code] ?? 'registry.schema_invalid');
@@ -348,8 +319,6 @@ export function verifySxp(bytes: Buffer, name: { id: string; version: string }, 
   return { ...v, kind: 'hotfix', portal };
 }
 
-// ---------- 인덱스 /registry/{channel}/index.json ----------
-
 export type Channel = 'stable' | 'beta' | 'hotfix';
 export const CHANNELS: readonly Channel[] = ['stable', 'beta', 'hotfix'];
 
@@ -358,10 +327,8 @@ export interface IndexEntry {
   version: string;
   kind: 'playbook' | 'lookup' | 'hotfix' | 'data';
   portal?: string;
-  /** SHA-256(.sxp 파일 바이트), SIGNING.md §5 */
   sxpDigest: string;
   size: number;
-  /** 단계적 롤아웃 1 → 10 → 100 */
   rolloutPercent: number;
   minAppVersion?: string;
 }
@@ -374,7 +341,6 @@ export interface RegistryIndex {
   expiresAt: string;
   entries: IndexEntry[];
   signatures: Sig[];
-  /** 신선도 서명(ADR-043): 온라인 타임스탬프 키가 JCS({contentDigest, monotonic, issuedAt, expiresAt})에 */
   timestamp: Sig;
 }
 
@@ -396,7 +362,6 @@ export function verifyIndex(doc: RegistryIndex, channel: Channel, trust: TrustRo
     if (!Number.isInteger(e.rolloutPercent) || e.rolloutPercent < 0 || e.rolloutPercent > 100) fail('registry.schema_invalid');
     if (e.portal !== undefined && (typeof e.portal !== 'string' || !/^[a-z0-9_]{1,32}$/.test(e.portal))) fail('registry.schema_invalid');
     if (e.minAppVersion !== undefined && (typeof e.minAppVersion !== 'string' || !SEMVER_RE.test(e.minAppVersion))) fail('registry.schema_invalid');
-    // 핫픽스 이름 규칙(SIGNING.md §6): id = <appliesTo.id>.hotfix, version = <keyEpoch>.<monotonic>.0. 패키지 id는 .hotfix로 끝날 수 없다.
     const hot = e.kind === 'hotfix';
     if (hot !== e.id.endsWith('.hotfix') || hot !== (channel === 'hotfix')) fail('registry.schema_invalid');
     if (hot && !new RegExp(`^${trust.keyEpoch}\\.\\d+\\.0$`).test(e.version)) fail('registry.schema_invalid');
@@ -429,21 +394,15 @@ export function rolloutBucket(packageId: string, deviceId: string): number {
 
 export const inRollout = (e: Pick<IndexEntry, 'id' | 'rolloutPercent'>, deviceId: string): boolean => rolloutBucket(e.id, deviceId) < e.rolloutPercent;
 
-// ---------- 앱 업데이트 /releases/{channel}/latest.json (+ latest.yml) ----------
-// 릴리스 매니페스트 형식은 이 서비스가 정한다(SIGNING.md §9). 서명 바이트 규약(JCS, 맥락 없음, base64url)은 §1과 같다.
 
 export interface ReleaseManifest {
   channel: Channel;
   version: string;
-  /** 사람이 서명한 시각(내용) */
   releaseDate: string;
   rolloutPercent: number;
-  /** url: 파일 이름(/releases/{channel}/ 아래) 또는 https 절대 주소(Vercel Blob 공개 주소) */
   files: Array<{ url: string; sha512: string; size: number }>;
   signature: Sig;
-  /** 뿌리 변경 릴리스(ADR-028 결정 3, @sax/updater #76 제안): 루트 2-of-3 서명 */
   rootChange?: RootChange;
-  /** 신선도(내용 서명 밖, 인덱스 ADR-043과 같은 구조): 게시 관문이 붙이고 재서명 cron이 기간만 다시 붙인다 */
   issuedAt: string;
   expiresAt: string;
   timestamp: Sig;
@@ -451,14 +410,12 @@ export interface ReleaseManifest {
 
 export const ROOT_CHANGES = ['keyEpoch', 'allowlist', 'ceiling'] as const;
 export interface RootChange {
-  /** 새 앱이 핀 고정할 keyEpoch. changes에 'keyEpoch'가 있으면 지금보다 커야 하고, 없으면 지금과 같아야 한다 */
   keyEpoch: number;
   changes: Array<(typeof ROOT_CHANGES)[number]>;
   signatures: Sig[];
 }
 
 const RELEASE_KEYS = new Set(['channel', 'version', 'releaseDate', 'rolloutPercent', 'files', 'signature', 'rootChange', 'issuedAt', 'expiresAt', 'timestamp']);
-/** 릴리스 키·루트 키 서명 바이트에서 빼는 칸(@sax/updater RELEASE_FRESHNESS와 같다) */
 const RELEASE_FRESHNESS = ['signature', 'issuedAt', 'expiresAt', 'timestamp'];
 const FILE_NAME_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const FILE_ABS_URL_RE = /^https:\/\/[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63}){1,8}(\/[A-Za-z0-9._~-]{1,128}){1,8}$/;
@@ -483,7 +440,6 @@ function verifyRootChange(doc: ReleaseManifest, trust: TrustRoot, revoked: Reado
   if (!Number.isSafeInteger(keyEpoch) || keyEpoch! < 1) fail('registry.schema_invalid');
   if (!Array.isArray(changes) || changes.length < 1 || new Set(changes).size !== changes.length || !changes.every((c) => (ROOT_CHANGES as readonly unknown[]).includes(c))) fail('registry.schema_invalid');
   if (!Array.isArray(signatures) || signatures.length < 1 || signatures.length > 3) fail('registry.schema_invalid');
-  // 세대 교체는 루트 서명으로만(D09 §8.4): keyEpoch를 바꾸면 커져야 하고, 안 바꾸면 그대로여야 한다
   if (changes!.includes('keyEpoch') ? keyEpoch! <= trust.keyEpoch : keyEpoch !== trust.keyEpoch) fail('registry.key_epoch_mismatch');
   quorum(rootChangeContent(doc), signatures, 'root', trust, revoked, 2, v);
 }
@@ -515,7 +471,6 @@ export function verifyRelease(doc: ReleaseManifest, channel: Channel, trust: Tru
   semver(doc.version);
   quorum(canonicalWithout(doc, RELEASE_FRESHNESS), [doc.signature], 'release', trust, revoked, 1, v);
   if (doc.rootChange !== undefined) verifyRootChange(doc, trust, revoked, v);
-  // 같은 버전은 신선도 재발행(파일 목록이 같을 때만, @sax/updater와 같은 규칙), 낮은 버전은 롤백
   if (stored && !semverGt(doc.version, stored.version) && !(doc.version === stored.version && canonicalJson(doc.files) === canonicalJson(stored.files))) fail('registry.version_rollback');
   const signedAt = typeof doc.releaseDate === 'string' ? Date.parse(doc.releaseDate) : NaN;
   if (!Number.isFinite(signedAt)) fail('registry.schema_invalid');

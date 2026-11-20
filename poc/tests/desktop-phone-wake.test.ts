@@ -1,4 +1,3 @@
-// 폰 깨우기(ADR-053 결정 2): phone-wake PhoneWaker, PhoneGate의 approve 깨우기, PhoneIssue의 update 깨우기, 데스크톱 클라이언트 POST /v1/wake.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -150,7 +149,6 @@ describe('PhoneGate: 승인 게이트를 열 때 폰이 없으면 approve로 깨
     await w.gate.offer('run-1', gateReq(), w.on);
     assert.equal(sink.sent.length, 1);
     assert.deepEqual(w.wakes, []);
-    // 앱이 뒤로 갔다가 바로 다시 붙었다
     w.gate.detach(PAIR, sink);
     assert.equal(w.timers[0]!.ms, WAKE_DETACHED_MS);
     const back = new Sink();
@@ -158,7 +156,6 @@ describe('PhoneGate: 승인 게이트를 열 때 폰이 없으면 approve로 깨
     assert.equal(w.timers[0]!.live, false);
     w.fire();
     assert.deepEqual(w.wakes, []);
-    // 이번엔 닫힌 채
     w.gate.detach(PAIR, back);
     w.fire();
     assert.deepEqual(w.wakes, [[PAIR, 'approve']]);
@@ -169,7 +166,6 @@ describe('PhoneGate: 승인 게이트를 열 때 폰이 없으면 approve로 깨
     w.gate.attach(PAIR, third);
     w.gate.detach(PAIR, third);
     assert.equal(w.timers.length, 0, '세 번째는 없다');
-    // 닫힌 게이트, 아직 보낸 적 없는 다른 폰 세션의 detach는 깨우지 않는다
     const w2 = await gateWorld();
     const s2 = new Sink();
     w2.gate.attach(PAIR, s2);
@@ -252,7 +248,6 @@ describe('PhoneIssue: 폰이 맡긴 일에 새 소식이 생기면 update로 깨
     p.update({ ...r, status: 'preparing', steps: steps(0) } as RunView);
     p.update({ ...r, status: 'turn', steps: steps(0), handoff: { phase: 'login', afterGate: false, kind: 'login', code: 'login.simple_auth' } } as RunView);
     assert.deepEqual(wakes, [], '세션이 붙어 있으면 깨우지 않는다');
-    // 폰이 앱을 닫았다
     p.detach(PAIR, live);
     p.update({ ...r, status: 'preparing', steps: steps(2) } as RunView);
     assert.deepEqual(wakes, [], '진행 단계는 깨우지 않는다');
@@ -271,7 +266,6 @@ describe('PhoneIssue: 폰이 맡긴 일에 새 소식이 생기면 update로 깨
     p.update(done);
     p.update(done);
     assert.equal(wakes.length, 3, '발급 끝남');
-    // 다시 붙으면 끝 소식을 받는다(깨우기와 상관없이)
     const back = new IssueSink();
     p.attach(PAIR, back);
     assert.equal(back.n, 1);

@@ -1,5 +1,3 @@
-// 발급 사다리 계약(D03 §4.2, 대표 지시 2026-11-12 "가장 빠르고 싼 길부터, 마지막에 연결된 API").
-// 사다리는 칸이 끝날 때마다 실행의 자기 보고가 아니라 원장(같은 발급 키의 행)으로 다음 길을 정한다.
 import type { LedgerRow, LedgerState } from '@sax/db';
 
 /** 경로 id. 표의 순서가 사다리 순서다(routes.ts ROUTES). API 칸은 하나이고 칸 안에서 원천(팝빌·CODEF)을 고른다(부장 조정 2026-11-12). */
@@ -11,10 +9,8 @@ export type ApiProvider = 'popbill' | 'codef';
 export interface RouteSpec {
   id: RouteId;
   kind: 'portal' | 'human' | 'api';
-  /** 건당 비용(원). null = 미확인. 0 = 무료. */
   costKrw: number | null;
   costBasis: string;
-  /** 사람이 읽는 속도 근거(측정·추정 표시 포함). */
   speed: string;
   ownerDoes: string;
   needs: readonly string[];
@@ -36,14 +32,12 @@ export interface IssueRequest {
   tax: number;
   itemName: string;
   email?: string | null;
-  /** 홈택스 자동 칸의 실행 id(화면이 실행 이벤트를 자기 카드에 맞춘다). 없으면 칸이 만든다. 한 번만 쓴다(재요청이면 새로). */
   runId?: string;
 }
 
 /** 칸 하나가 끝난 모양. 발급 여부는 담지 않는다(사다리가 원장으로 본다). */
 export interface AttemptEnd {
   code?: string;
-  /** 멈춘 스텝 id(홈택스 칸). 발급 화면 이후 사람 대기 시간 초과를 가른다. */
   stoppedAtStep?: string;
 }
 
@@ -72,30 +66,23 @@ export type ConsentToken = { readonly [CONSENT]: true; issueKey: IssueKey; route
 export interface ConsentCard {
   issueKey: IssueKey;
   route: RouteId;
-  /** 고른 원천(API 칸). */
   provider: ApiProvider | null;
   costKrw: number | null;
   costBasis: string;
-  /** 앞 칸이 끝난 코드(사장님 문구는 화면이 고른다). */
   reasonCode: string;
-  /** 원장으로 확인했다: 이 키로 발급된 것도, 결과를 모르는 것도 없다. */
   nothingIssued: true;
 }
 
 /** 칸이 사다리에 묻는 것. 사다리가 사장님 답을 기다린다. */
 export interface RungIo {
-  /** 홈택스 직접 칸: [발급했어요] = issued, [못 해요] = cannot. */
   askHuman(): Promise<'issued' | 'cannot'>;
   journal(type: string, payload?: Record<string, string | number | boolean>): void;
 }
 
 export interface Rung {
   readonly route: RouteSpec;
-  /** 연결이 없으면 건너뛴다(code api.not_connected 등). 건너뛴 칸은 원장 행을 만들지 않는다. */
   available(): { ok: true } | { ok: false; code: string };
-  /** 유료 칸의 동의 카드 값(고른 원천과 그 요금). 없으면 경로 표의 값을 쓴다. */
   quote?(): { provider: ApiProvider; costKrw: number | null; costBasis: string };
-  /** 칸 하나를 끝까지 돈다. 유료 칸(costKrw !== 0)은 consent가 반드시 있다. */
   run(req: IssueRequest, io: RungIo, consent: ConsentToken | null): Promise<AttemptEnd>;
 }
 

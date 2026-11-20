@@ -1,5 +1,3 @@
-// 온보딩 저장소 어댑터(onboarding-store.ts): 상태 기계(OnboardingFlow)를 실제 엔진 data-service(#91)·암호화 DB(#53)에 붙여 돌린다. Electron 없이.
-// 동의 레코드는 쌓이고(프로필 전 NULL → 프로필에 잇기), 이어 하기는 DB 한 행.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -21,7 +19,6 @@ const UPTO_AUTH: OnbAnswer[] = [
   { step: 'welcome', choice: 'upload' },
   { step: 'biz-confirm', choice: 'confirm' },
 ];
-// [홈택스 인증서]에서 이 PC 인증서를 고르면 바로 마친다(B4: 모델 고지는 약관 화면, 텔레메트리·업무·요약 화면 없음)
 const TO_SUMMARY: OnbAnswer[] = [{ step: 'auth', choice: 'cert', certId: 'npki-1' }];
 
 describe('온보딩 저장소: 엔진 명령으로 DB에', () => {
@@ -59,7 +56,6 @@ describe('온보딩 저장소: 엔진 명령으로 DB에', () => {
     const flow = flowOn(new EngineOnboardingStore(rpc));
     await walk(flow, UPTO_AUTH);
     const consents = new ConsentRepo(db);
-    // 프로필 전: 약관·모델은 profile_id NULL로 쌓인다.
     assert.deepEqual(consents.history(null).map((c) => [c.kind, c.via]), [['terms', 'onboarding'], ['model', 'onboarding']]);
     await walk(flow, TO_SUMMARY);
     assert.equal(flow.state.step, 'first');
@@ -75,13 +71,10 @@ describe('온보딩 저장소: 엔진 명령으로 DB에', () => {
     assert.equal(model.processorsVersion, MOCK_CONSENT_CONFIG.processorsVersion);
     assert.equal(model.noticeVersion, CONSENT_NOTICES.model.version);
     assert.equal(rows.find((c) => c.kind === 'terms')!.noticeKey, CONSENT_NOTICES.terms.key);
-    // 이어 하기 행: 마지막 단계와 프로필.
     const st = (await svc.handle('onboarding.load', { profileKind: 'business' })) as { step: string; profileId: string | null };
     assert.equal(st.step, 'first');
     assert.equal(st.profileId, p.id);
-    // 값 없음: 동의 행·이어 하기 행 어디에도 비밀이 없다(목업 금고는 값을 돌려주지 않는다).
     assert.ok(!calls.includes('consent.latest') && !calls.some((m) => m.startsWith('secret')));
-    // 다른 인증으로 바꾸면 인증서 이름을 지운다(옛 이름으로 고르지 않게)
     await flow.answer({ step: 'first', choice: 'later' });
     await flow.reopen('auth');
     await flow.answer({ step: 'auth', choice: 'simple' });
@@ -107,7 +100,6 @@ describe('온보딩 저장소: 엔진 명령으로 DB에', () => {
     const a = flowOn(new EngineOnboardingStore(rpc));
     await walk(a, UPTO_AUTH.slice(0, 3));
     assert.equal(a.state.step, 'auth');
-    // 옛 빌드가 남긴 행: 보안카드를 골라 ①에서 멈춤(①·보안카드는 이제 없다, 대표 결정 2026-11-19)
     await new EngineOnboardingStore(rpc).save({ ...a.state, step: 'delegation', auth: 'card' } as never);
     const loaded = await new EngineOnboardingStore(rpc).load();
     assert.equal(loaded?.step, 'auth');

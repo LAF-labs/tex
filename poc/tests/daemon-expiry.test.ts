@@ -1,4 +1,3 @@
-// 데몬 만료 계산(D10 §4, D07 §3): expires_at 우선, 규칙표 대체(fixed_days·fiscal_year_rule), 추정 표시, 옛 서류 제외, 판 입력 모양.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { BoardDoc } from '../apps/desktop/src/board.ts';
@@ -28,7 +27,7 @@ describe('만료일 출처', () => {
   });
   it('사업자등록증명 90일(사용자 결정 11-01): 규칙표로 발급일 포함 90일, 추정 표시', () => {
     const [e] = computeExpiries([doc({ id: 'b', docType: 'biz_registration_cert', displayName: '사업자등록증명', issuedAt: '2026-11-01' })], [rule({ docType: 'biz_registration_cert' })], { today: '2026-11-06' });
-    assert.equal(e!.expiresOn, '2027-01-29'); // 11-01 + 89일
+    assert.equal(e!.expiresOn, '2027-01-29');
     assert.equal(e!.estimated, true);
     assert.equal(toBoardDocs([e!])[0]!.name, '사업자등록증명 (추정)');
   });
@@ -50,8 +49,8 @@ describe('만료일 출처', () => {
 describe('회계연도 규칙(중소기업확인서)', () => {
   it('12월 결산: 4월 1일 ~ 다음 해 3월 31일 구간', () => {
     assert.equal(fiscalYearExpiry('2026-05-10'), '2027-03-31');
-    assert.equal(fiscalYearExpiry('2026-04-01'), '2027-03-31'); // 경계: 구간 첫날
-    assert.equal(fiscalYearExpiry('2026-03-31'), '2026-03-31'); // 경계: 전 구간 마지막 날
+    assert.equal(fiscalYearExpiry('2026-04-01'), '2027-03-31');
+    assert.equal(fiscalYearExpiry('2026-03-31'), '2026-03-31');
     assert.equal(fiscalYearExpiry('2026-01-15'), '2026-03-31');
   });
   it('6월 결산: 10월 1일 ~ 다음 해 9월 30일', () => {

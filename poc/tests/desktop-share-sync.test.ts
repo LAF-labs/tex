@@ -1,5 +1,3 @@
-// 계정 공유 기록 동기화(apps/desktop/src/share-sync.ts, ADR-048 결정 5, D07 §10): 가짜 서버로 가장자리를 본다.
-// 실제 계정 서비스에 붙인 끝에서 끝 시험은 desktop-remote-cloud.test.ts에 있다.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { describe, it } from 'node:test';
@@ -14,13 +12,11 @@ const fail = (code: string): never => {
   throw Object.assign(new Error(code), { code });
 };
 
-/** 계정 서비스의 공유 기록 부분만 흉내 낸다(순번, 같은 줄 다시 올리기, 세대 검사). 줄은 암호문 그대로 둔다. */
 class FakeServer {
   rows: ShareServerRow[] = [];
   next = 1;
   epoch = 0;
   calls: string[] = [];
-  /** 다음 호출 한 번을 이 코드로 실패시킨다 */
   failNext: Record<string, string[]> = {};
   pageRows = 200;
   #maybeFail(op: string): void {
@@ -81,7 +77,6 @@ class MemStore implements ShareStore {
 const issueBody = (n: number) => ({ doc: 'tax_invoice' as const, approvalNo: `2026111741000000${String(n).padStart(8, '0')}`, writtenOn: '2026-11-17', buyerBizNo: '1234567890', buyerName: '가나다상사', supply: 1_000_000, tax: 100_000, how: 'app' as const });
 const issueItem = (n: number): ShareOutItem => ({ rowId: newShareRowId(), kind: 'issue', at: 1_800_000_000_000 + n, body: issueBody(n) });
 
-/** PC 한 대와 폰 한 대인 계정. 금고 대역은 RK에서 키를 만들고, 준 키를 기억해 나중에 지워졌는지 본다. */
 async function account(o: { phone?: boolean } = {}) {
   const rk = randomBytes(32);
   const aik = softSigner(hkdfSha256(rk, 'aik', 32), AIK_PURPOSES);
@@ -138,7 +133,6 @@ const taskRow = (a: Awaited<ReturnType<typeof account>>, epoch = 0): ShareRowCor
   v: 1, row_id: newShareRowId(), kind: 'task', epoch, at: 1_800_000_000_500, dev: a.phoneId, by: 'mobile',
   body: { do: 'tax_invoice.issue', buyerBizNo: '1234567890', supply: 500_000, tax: 50_000, item: '11월 용역' },
 });
-/** 다른 기기가 올린 줄을 서버에 넣는다 */
 async function serverPut(s: FakeServer, wire: ShareRowWire, deviceId: string) {
   await s.client().putShareRow(async () => ({ dev: deviceId }), wire);
 }
@@ -155,7 +149,6 @@ describe('계정 공유 기록 동기화: 올리기와 받기', () => {
     assert.equal((await new ShareSync({ client: s.client(), device: () => null, vault: async () => a.vault, store }).sync()).state, 'not_needed');
     assert.equal((await new ShareSync({ client: null, device: () => a.dev, vault: async () => a.vault, store }).sync()).state, 'not_needed');
     assert.deepEqual([s.calls, a.vaultCalls, store.out.length, logs], [[], [], 1, []]);
-    // 폰이 붙으면 밀린 줄이 올라간다
     await a.addPhone();
     assert.deepEqual(await sync.sync(), { state: 'ok', pulled: 0, applied: 0, rejected: {}, pushed: 1, dropped: 0, parties: 0 });
     assert.equal(store.out.length, 0);
@@ -175,18 +168,14 @@ describe('계정 공유 기록 동기화: 올리기와 받기', () => {
     assert.deepEqual(r, { state: 'ok', pulled: 1, applied: 1, rejected: {}, pushed: 2, dropped: 0, parties: 0 });
     assert.deepEqual([...store.got.values()].map((x) => [x.seq, x.row]), [[1, task]]);
     assert.deepEqual(store.sentLog, [[mine[0]!.rowId, 2], [mine[1]!.rowId, 3]]);
-    // 서버에 있는 것은 암호문이고, 폰(공개키만 가진 쪽)이 열어 PC 서명을 확인한다
     const up = s.rows.find((x) => x.rowId === mine[0]!.rowId)!;
     assert.ok(!up.body.includes('1234567890'));
     const opened = openShareRow(a.key(0), up, a.keys);
     assert.ok(opened.ok && opened.row.by === 'desktop' && opened.row.dev === a.pcId && opened.row.at === mine[0]!.at);
     assert.deepEqual(opened.ok && opened.row.body, mine[0]!.body);
-    // 금고가 준 키는 동기화가 끝나면 0으로 지워져 있다
     assert.ok(a.handed.length >= 1 && a.handed.every((k) => k.every((b) => b === 0)));
-    // 기록에는 개수와 결과만
     assert.deepEqual(logs.map(([n, d]) => [n, d.result, d.pulled, d.applied, d.pushed]), [['main.share_sync', 'ok', 1, 1, 2]]);
     assert.ok(!JSON.stringify(logs).includes('1234567890') && !JSON.stringify(logs).includes(mine[0]!.rowId));
-    // 다시 돌리면 자기가 올린 줄도 받아 넣는다(다른 PC와 같은 길). 올릴 것은 없다
     assert.deepEqual(await sync.sync(), { state: 'ok', pulled: 2, applied: 2, rejected: {}, pushed: 0, dropped: 0, parties: 0 });
     assert.equal(store.at, 3);
     assert.deepEqual(await sync.sync(), { state: 'ok', pulled: 0, applied: 0, rejected: {}, pushed: 0, dropped: 0, parties: 0 });
@@ -199,17 +188,13 @@ describe('계정 공유 기록 동기화: 올리기와 받기', () => {
     const good = taskRow(a);
     const goodWire = await sealShareRow(a.key(0), good, a.phoneSign);
     await serverPut(s, goodWire, a.phoneId);
-    // 폰이 PC 줄을 지어낸다(K_share는 알지만 Ws가 없다)
     const forged: ShareRowCore<'issue'> = { v: 1, row_id: newShareRowId(), kind: 'issue', epoch: 0, at: 9, dev: a.pcId, by: 'desktop', body: issueBody(7) };
     await serverPut(s, await sealShareRow(a.key(0), forged, a.phoneSign), a.phoneId);
-    // 서버가 다른 줄의 본문을 끼운다, 종류를 바꾼다
     await serverPut(s, { ...goodWire, rowId: newShareRowId() }, a.phoneId);
     const other = await sealShareRow(a.key(0), taskRow(a), a.phoneSign);
     await serverPut(s, { ...other, kind: 'party' }, a.phoneId);
-    // 목록에 없는 폰이 쓴 줄
     const stranger = softSigner(ed25519Keygen().secretKey, [CTX.share]);
     await serverPut(s, await sealShareRow(a.key(0), { ...taskRow(a), dev: randomUUID() }, (m) => stranger.sign(CTX.share, m)), a.phoneId);
-    // 쓰레기
     await serverPut(s, { rowId: newShareRowId(), kind: 'issue', epoch: 0, body: 'A'.repeat(728) }, a.phoneId);
     const sync = new ShareSync({ client: s.client(), device: () => a.dev, vault: async () => a.vault, store });
     const r = await sync.sync();
@@ -227,7 +212,6 @@ describe('계정 공유 기록 동기화: 올리기와 받기', () => {
     const sync = new ShareSync({ client: s.client(), device: () => a.dev, vault: async () => a.vault, store });
     assert.deepEqual(await sync.sync(), { state: 'ok', pulled: 5, applied: 5, rejected: {}, pushed: 0, dropped: 0, parties: 0 });
     assert.deepEqual(s.calls.filter((c) => c.startsWith('rows:')), ['rows:0', 'rows:2', 'rows:4']);
-    // 쪽 수 상한: 한 줄씩 주는 서버에서 상한만큼만 받고, 다음 번에 나머지를 받는다
     s.pageRows = 1;
     const store2 = new MemStore();
     for (let i = 0; i < SHARE_PULL_PAGES; i++) await serverPut(s, await sealShareRow(a.key(0), taskRow(a), a.phoneSign), a.phoneId);
@@ -245,7 +229,6 @@ describe('계정 공유 기록 동기화: 다시 하기와 실패', () => {
     const store = new MemStore();
     const item = issueItem(1);
     store.out.push(item);
-    // 첫 올리기: 서버는 받았는데 응답이 끊긴다
     const client = s.client();
     let cut = true;
     const flaky = {
@@ -272,7 +255,6 @@ describe('계정 공유 기록 동기화: 다시 하기와 실패', () => {
     const a = await account();
     const s = new FakeServer();
     const store = new MemStore();
-    // 폰을 하나 더 붙이고(끊어도 기기 2대), 다른 PC가 첫 폰을 끊었다: 서버는 세대 1을 봤고 이 PC의 목록은 아직 세대 0이다
     const p2 = randomUUID();
     a.list = await addDevice(a.aik, a.list, { deviceId: p2, role: 'mobile', noisePub: x25519Keygen().publicKey, signPub: ed25519Keygen().publicKey, registeredAt: 2 });
     const newer = await revokeDevice(a.aik, a.list, a.phoneId);
@@ -285,7 +267,6 @@ describe('계정 공유 기록 동기화: 다시 하기와 실패', () => {
     const r = await sync.sync();
     assert.deepEqual([r.state, r.pushed, refreshed, shareEpoch(a.list)], ['ok', 1, 1, 1]);
     assert.equal(s.rows[0]!.epoch, 1);
-    // 끊긴 폰이 알던 세대 0 키로는 열리지 않는다
     assert.deepEqual(openShareRow(a.key(0), s.rows[0]!, a.keys), { ok: false, reason: 'key' });
     assert.equal(openShareRow(a.key(1), s.rows[0]!, a.keys).ok, true);
   });
@@ -294,7 +275,6 @@ describe('계정 공유 기록 동기화: 다시 하기와 실패', () => {
     const a = await account({ phone: false });
     const s = new FakeServer();
     const store = new MemStore();
-    // 이 PC의 목록에는 다른 PC만 있다(기기 2대). 폰은 다른 PC가 붙였고 이 PC는 아직 모른다
     a.list = await addDevice(a.aik, a.list, { deviceId: randomUUID(), role: 'desktop', noisePub: x25519Keygen().publicKey, signPub: ed25519Keygen().publicKey, registeredAt: 2 });
     const before = a.list;
     await a.addPhone();
@@ -306,7 +286,6 @@ describe('계정 공유 기록 동기화: 다시 하기와 실패', () => {
     const sync = new ShareSync({ client: s.client(), device: () => a.dev, vault: async () => a.vault, store, refreshDeviceList: async () => void (refreshed++, (a.list = withPhone)) });
     assert.deepEqual(await sync.sync(), { state: 'ok', pulled: 1, applied: 1, rejected: {}, pushed: 0, dropped: 0, parties: 0 });
     assert.equal(refreshed, 1);
-    // 다시 받아도 모르는 폰이면 넣지 않는다
     const store2 = new MemStore();
     a.list = before;
     const sync2 = new ShareSync({ client: s.client(), device: () => a.dev, vault: async () => a.vault, store: store2, refreshDeviceList: async () => {} });
@@ -355,13 +334,11 @@ describe('계정 공유 기록 동기화: 다시 하기와 실패', () => {
     assert.deepEqual([(await sync.sync()).pushed, a.cleared], [1, 2]);
     s.failNext.rows = ['account.unauthorized', 'account.unauthorized'];
     assert.deepEqual([(await sync.sync()).code, a.cleared], ['account.unauthorized', 3]);
-    // 금고 서명이 실패하면 실패로 끝나고 줄은 남는다
     store.out.push(issueItem(2));
     const broken: ShareVault = { key: a.vault.key, sign: async () => fail('vault.locked') };
     const sync2 = new ShareSync({ client: s.client(), device: () => a.dev, vault: async () => broken, store });
     const r = await sync2.sync();
     assert.deepEqual([r.state, r.code, r.dropped, store.out.length], ['failed', 'vault.locked', 0, 1]);
-    // 동시에 불러도 한 번에 하나씩 돈다
     const [x, y] = await Promise.all([sync.sync(), sync.sync()]);
     assert.deepEqual([x.pushed, y.pushed], [1, 0]);
   });

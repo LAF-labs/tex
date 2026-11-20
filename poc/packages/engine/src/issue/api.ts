@@ -1,5 +1,3 @@
-// 발급 사다리의 API 칸(D03 §4.2). 원천은 칸 안에서 하나만 고른다: 팝빌이 연결돼 있으면 팝빌, 아니면 CODEF.
-// 무장 뒤 발급 호출은 한 번뿐이다. 오류·끊김이면 다시 부르지 않고 우리 문서번호로 조회해 원장을 종결한다.
 import { createHash } from 'node:crypto';
 import { GateRepo, Ledger, RunJournal, RunRepo, type Db } from '@sax/db';
 import { ulid, type RunService } from '../runs.ts';
@@ -105,7 +103,6 @@ export function apiRung(adapters: { popbill?: IssueApiAdapter | null; codef?: Is
       repo.create({ id: runId, playbookId: API_PLAYBOOK, playbookVersion: '1', packageDigest: p.row.packageDigest, profileId: p.profileId, trigger: 'local', inputsHash: p.row.inputsHash });
       journal.append(runId, 'run.started', { intentId, provider: source.provider });
       journal.append(runId, 'issue.rung', { issueKey: req.issueKey, rung: 'api', provider: source.provider });
-      // 사장님 [동의하고 발급]이 이 칸의 승인이다. 게이트 표에 approved로 남기고 무장이 소비한다(홈택스 승인 근거는 쓰지 않는다).
       gates.open(consent.reqId, runId);
       gates.decide(consent.reqId, 'approved', 'consent');
       journal.append(runId, 'gate.approved', { reqId: consent.reqId, by: 'consent' });
@@ -153,7 +150,6 @@ export function apiRung(adapters: { popbill?: IssueApiAdapter | null; codef?: Is
         journal.append(runId, 'ledger.in_doubt', { reason: '' });
         return end('in_doubt', 'api.unknown');
       } catch {
-        // 무장 뒤 예외: 열린 행을 숨기지 않는다(발급됐는지 모른다).
         const row = ledger.get(intentId, 'api.issue');
         if (row && (row.state === 'armed' || row.state === 'dispatched')) ledger.resolve(intentId, 'api.issue', 'in_doubt');
         return end('in_doubt', 'api.unknown');
@@ -162,7 +158,6 @@ export function apiRung(adapters: { popbill?: IssueApiAdapter | null; codef?: Is
   };
 }
 
-/** 하한을 채울 때까지 조회한다. 있으면 issued, 모름이면 그 자리에서 unknown, 하한을 채운 "없음"만 absent. */
 async function settleByLookup(source: IssueApiAdapter, docKey: string, p: ApiLookupPolicy, clock: ApiClock, seen: (t: string, n: number) => void): Promise<ApiLookupResult> {
   const t0 = clock.now();
   let absent = 0;
@@ -185,14 +180,11 @@ export class FakeIssueApi implements IssueApiAdapter {
   knob: FakeIssueKnob;
   calls = 0;
   lookups = 0;
-  /** drop_then_late: 끊긴 뒤 원천에 문서가 보이기까지(ms). */
   lateMs = 50;
-  /** 원천에 실제로 생긴 문서 수(같은 문서번호는 하나). */
   get documents(): number {
     return this.issued.size;
   }
 
-  /** 시험: 앞 시도의 문서가 원천에 이미 있다(끊긴 뒤 늦게 처리된 경우). */
   preload(docKey: string, ref: string): void {
     this.issued.set(docKey, ref);
   }
@@ -204,11 +196,9 @@ export class FakeIssueApi implements IssueApiAdapter {
 
   async issue(doc: ApiIssueDoc): Promise<ApiIssueResult> {
     this.calls++;
-    // 팝빌 MgtKey처럼 문서번호는 사업자 안에서 한 번만 쓴다(중복이면 거절).
     if (this.issued.has(doc.docKey)) return { t: 'refused', code: 'fake.duplicate_doc_key' };
     if (this.knob === 'refuse') return { t: 'refused', code: 'fake.refused' };
     if (this.knob === 'ok' || this.knob === 'drop_then_issued') this.issued.set(doc.docKey, `FAKE-NTS-${this.issued.size + 1}`);
-    // 끊긴 뒤 원천이 늦게 처리한다(첫 조회에는 안 보이고 lateMs 뒤 보인다).
     if (this.knob === 'drop_then_late') setTimeout(() => this.issued.set(doc.docKey, `FAKE-NTS-${this.issued.size + 1}`), this.lateMs);
     if (this.knob === 'ok') return { t: 'issued', ref: this.issued.get(doc.docKey)! };
     throw new Error('fake.dropped');

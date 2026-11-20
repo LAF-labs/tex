@@ -1,6 +1,3 @@
-// 게시본 H-01 건조 실행: 공동인증서(B1 로그인 s4, B2 발급 서명 s21) 사람 차례. 하네스: tests/h01-published-dryrun.ts. 실제 홈택스에 접속하지 않는다.
-// 제품 IR human 포트 = CertSecretPort(IrPackage.secret, 가짜 금고). 사전에 인증서 비밀번호 칸이 없고(실제 홈택스 인증서 창은 다른 출처 iframe#dscert)
-// 사람이 인증서 창에서 직접 넣는다: 로그인은 Paused human.cert_waiting → [다 했어요](run.resume) → 체크포인트부터, 발급 서명은 서명 차례(sign.waiting) → [다 했어요] → verify.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -25,7 +22,6 @@ const PDF: PdfPort = {
   store: async () => ({ ok: true, documentId: 'doc-1' }),
 };
 
-/** 가짜 금고: 부른 RPC만 적는다(사전에 칸이 없으면 부르지 않아야 한다). */
 class FakeVault implements SecretVault {
   calls: string[] = [];
   async rpc<T>(m: string): Promise<T> {
@@ -38,7 +34,6 @@ class FakeVault implements SecretVault {
 }
 
 type Handoff = { phase: string; code?: string };
-/** 사람 흉내: handoff 이벤트가 올 때마다 한 번 불린다(폴링 시각이 아니라 이벤트로 움직인다, 느린 CI에서도 같은 순서). */
 type Human = (h: Handoff, x: { fx: LoginFixture; resume: () => { ok: boolean }; click: (css: string) => Promise<void>; waitFor: (css: string) => Promise<void> }) => Promise<void>;
 
 async function certRun(o: { loggedIn?: boolean; human: Human; maxMs?: number }) {
@@ -87,10 +82,8 @@ async function certRun(o: { loggedIn?: boolean; human: Human; maxMs?: number }) 
     runs.on('event', (e: RunEvent) => {
       events.push(e);
       if (e.type === 'end') ended();
-      // 사람 차례는 하나씩(앞 차례가 끝난 뒤 다음).
       if (e.type === 'handoff') turn = turn.then(() => o.human(e as Handoff, x)).catch((err) => void humanErrors.push(err));
     });
-    // 승인 카드: 오면 바로 승인한다(사람 클릭).
     const answerGate = () => {
       const g = gm.find((m) => m.t === 'gate.request');
       if (!g || g.t !== 'gate.request') return;
@@ -99,7 +92,6 @@ async function certRun(o: { loggedIn?: boolean; human: Human; maxMs?: number }) 
     };
     gateHook = () => queueMicrotask(answerGate);
     runs.start({ runId: 'r1', counterpartyId: cp, supply: 100000, tax: 10000, itemName: '경영 컨설팅' });
-    // 느린 Windows CI에서도 넉넉하게(실행 자체가 끝나면 바로 빠진다).
     let cap: NodeJS.Timeout | undefined;
     await Promise.race([end, new Promise<void>((r) => (cap = setTimeout(r, o.maxMs ?? 240_000)))]);
     clearTimeout(cap);
@@ -128,11 +120,11 @@ describe('게시본 H-01 건조 실행: 공동인증서 사람 차례(B1·B2)', 
     const o = await certRun({
       human: async (h, { fx, resume, click, waitFor }) => {
         if (h.phase === 'login' && h.code === 'human.cert_waiting') {
-          fx.completeLogin(); // 사람이 홈택스 인증서 창에 직접 비밀번호를 넣었다
-          await waitFor('a[href="/logout"]'); // 로그인된 홈 화면을 보고 나서 [다 했어요]
+          fx.completeLogin();
+          await waitFor('a[href="/logout"]');
           assert.equal(resume().ok, true);
         } else if (h.phase === 'sign' && h.code === 'sign.waiting') {
-          await click('#btnSign'); // 사람이 서명 창에서 직접 서명했다
+          await click('#btnSign');
           for (let i = 0; i < 100 && fx.state.signs === 0; i++) await sleep(100);
           assert.equal(resume().ok, true);
         }
@@ -154,7 +146,7 @@ describe('게시본 H-01 건조 실행: 공동인증서 사람 차례(B1·B2)', 
       human: async (h, { fx, resume, click }) => {
         if (h.phase !== 'sign') return;
         await click('#btnSign');
-        for (let i = 0; i < 100 && fx.state.signs === 0; i++) await sleep(100); // 서명이 나간 것을 보고 [다 했어요]
+        for (let i = 0; i < 100 && fx.state.signs === 0; i++) await sleep(100);
         assert.equal(resume().ok, true);
       },
     });

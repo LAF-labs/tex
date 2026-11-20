@@ -1,6 +1,3 @@
-// 발급 사다리(D03 §4.2)의 첫째 칸(홈택스 자동)과 둘째 칸(직접)이 실화면 패키지 hometax.invoice.issue 2.2.0과 맞물리는가.
-// 하네스는 tests/h01-real-dryrun.ts(제품 원본 패키지 + 2026-11-11 실화면 기록으로 만든 가짜 홈택스, 실제 홈택스 접속 없음).
-// 두 번 발급이 될 수 있는 갈래(커밋 후보 C04 뒤 결과 모름)에서는 다음 칸으로 가지 않고, 커밋 후보 전 실패에서만 직접 칸 안내로 간다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { FakeIssueApi, RunEnd } from '@sax/engine';
@@ -67,7 +64,6 @@ describe('발급 사다리 × H-01 2.2.0 실화면 패키지(가짜 홈택스)',
   });
 
   it('미리보기 값 불일치(되읽기 s19b 사람 차례, 답 없음): stopped, 직접 칸 안내 없음', async () => {
-    // 발급 화면 뒤의 사람 대기 시간 초과는 사장님이 직접 눌렀을 수 있어 다음 칸으로 가지 않는다(issue/routes.ts branchOf)
     const o = await realDryRun({ loggedIn: true, knobs: { tamperPreview: true }, handoffCapMs: 3000, ladder: { manual: 'cannot' } });
     assert.deepEqual(o.ladder?.state, { s: 'stopped', route: 'hometax.auto', code: 'run.handoff_timeout' }, show(o));
     assert.deepEqual(commits(o), []);
@@ -90,7 +86,6 @@ describe('발급 사다리 × H-01 2.2.0 실화면 패키지(가짜 홈택스)',
   });
 
   it('로그인을 끝내 하지 않음(s5 로그인 대기 초과): 첫 칸 실패로 직접 칸 안내, 커밋 요청 0', async () => {
-    // 게시본 s5는 10분을 기다린다. 이 시험만 3초로 줄인다(바꾼 것은 이 한 값).
     const shortLogin = (files: PackageFiles) => {
       const s5 = files.playbook.steps.find((x) => x.id === 's5') as { timeoutMs?: number } | undefined;
       assert.ok(s5, 's5가 있다');

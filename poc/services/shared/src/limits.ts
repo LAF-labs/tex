@@ -1,8 +1,3 @@
-// 한도 카운터와 한도 키 솔트(팀장 결정 2026-11-05 (가), D09 §4·D08 §8).
-// 함수 인스턴스가 여럿이면 메모리 카운터는 인스턴스마다 따로 센다. 그래서 카운터와 KST 날짜별 무작위 솔트를 DB에 둔다.
-// 솔트는 당일 행만 있고 날짜가 바뀌면 지운다: 지나간 날의 HMAC은 다시 계산할 수 없다(보호 성질 유지, 노출 면은 당일 DB로 넓어짐).
-// 계정·기기 ID 키는 DB 솔트가 아니라 서버 비밀(LIMIT_ID_KEY) HMAC이다: DB만 읽어서는 다시 계산할 수 없다.
-// 메모리 구현은 단일 인스턴스(로컬·시험)용이다.
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { hmacHex, kstDay } from './crypto.ts';
@@ -19,16 +14,13 @@ export const LIMITS_VISIBILITY = {
 
 export interface Hit {
   ok: boolean;
-  /** 이번 호출을 넣은 창 안 횟수(한도를 넘으면 한도 + 1) */
   n: number;
-  /** 창이 끝날 때까지(초, 올림, Retry-After) */
   retryAfterSec: number;
 }
 
 /** 고정 창 카운터. 키는 이미 솔트 HMAC된 값만 넣는다(평문 IP·이메일·계정·기기 ID 금지). */
 export interface Limiter {
   hit(key: string, limit: number, windowMs: number): Promise<Hit>;
-  /** 올리지 않고 현재 창의 횟수만 본다(창이 없거나 지났으면 n = 0) */
   count(key: string, windowMs: number): Promise<{ n: number; retryAfterSec: number }>;
   reset(key: string, windowMs: number): Promise<void>;
   sweep(): Promise<void>;
@@ -105,7 +97,6 @@ export class SqlLimiter implements Limiter {
   async reset(key: string, windowMs: number): Promise<void> {
     await this.db.run('DELETE FROM lim_windows WHERE k = $1', [`${windowMs}|${key}`]);
   }
-  /** 끝난 창과 지난 날 솔트 행(늦은 시계의 인스턴스가 자정 뒤 다시 만든 것 포함)을 지운다 */
   async sweep(): Promise<void> {
     const now = this.now();
     await this.db.run('DELETE FROM lim_windows WHERE expires_at <= $1', [now]);
@@ -154,7 +145,6 @@ export class SqlKeySalt implements KeySalt {
     if (this.cache?.day === day) return this.cache.salt;
     this.cache?.salt.fill(0);
     this.cache = null;
-    // 자기 날짜보다 **앞선** 행만 지운다. 시계가 조금 늦은 인스턴스가 자정 직후 막 기동해도 다른 인스턴스가 만든 새 날 행을 지우지 않는다
     await this.db.run('DELETE FROM lim_salts WHERE label = $1 AND day < $2', [this.label, day]);
     await this.db.run('INSERT INTO lim_salts (label, day, salt) VALUES ($1, $2, $3) ON CONFLICT (label, day) DO NOTHING', [this.label, day, randomBytes(32)]);
     const r = await this.db.one<{ salt: Buffer | Uint8Array }>('SELECT salt FROM lim_salts WHERE label = $1 AND day = $2', [this.label, day]);
@@ -189,9 +179,7 @@ export class SecretKeySalt implements KeySalt {
 /** 한도 묶음: 카운터 + 키 솔트. DB가 있으면 DB, 없으면 메모리. */
 export interface Limits {
   limiter: Limiter;
-  /** IP·이메일처럼 계정 밖 식별자: KST 당일 무작위 솔트(DB 행 또는 메모리) */
   salt(label: string): KeySalt;
-  /** 계정·기기 ID: 서버 비밀 HMAC(DB에 없는 키) */
   idSalt(label: string): KeySalt;
 }
 

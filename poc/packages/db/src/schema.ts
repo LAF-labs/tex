@@ -1,19 +1,3 @@
-// D07 §2 요약 DDL을 순방향 마이그레이션으로 쌓는다(D07 §7). 이미 배포한 판의 SQL은 고치지 않는다(적용 기록의 sha256과 대조한다).
-// v1(PoC-5·6): 프로필·거래처·문서·실행·저널·원장·게이트·카운터·설정.
-// v2(PoC-6, ADR-021): 원장에 공급받는자 사업자번호·받는 이메일 HMAC 열. 처음 거래 판정은 committed 행만 센다.
-// v3(M1-2): D07 §2의 나머지 코어 테이블(스케줄·패키지·정책·레지스트리·미리보기·사용량·리모트).
-// v4(M1-2, ADR-031·034): 급여대장(직원·달·줄·근무표·시행일 표).
-// v5(M1-2, ADR-032·034): 세무사 꾸러미(항목·달별 상태·내보내기·카드 조회·카드 내역·메모·종이 증빙·현금매출).
-// v6(db #53): 온보딩(포털 로그인 ID·동의 기록·이어 하기 상태).
-// v7(08 §144·O-05, 데스크톱 #141): 거래처 저장 품목(이름·단가·단위 JSON 배열, 개수 상한은 CounterpartyRepo). 개인정보·비밀이 아니라 평문 열이다(D07 §2 원칙).
-// v8(ADR-042): 원장 시도 번호. PRIMARY KEY(intent_id, step_id) → (intent_id, step_id, attempt). 이전 행은 attempt=1로 옮긴다.
-//   SQLite는 PK를 바꾸지 못해 표를 새로 만들어 옮긴다(한 트랜잭션, 실패하면 이전 판 그대로 = fail-closed).
-//   불변식 일부를 DB에도 건다: (intent, step)마다 not_committed가 아닌 행은 많아야 하나(ux_irr_live). committed·미종결이 있으면 새 시도가 들어갈 수 없다.
-// v9(09 돈 맞추기 1단계): 내 계좌·가져온 회차·입출금 줄·거래처 계좌·입금자 별칭·받을 돈 건·맞춤(배분)·뗀 짝·건 기록, 거래처 결제 조건.
-//   계좌번호는 컬럼 키로 한 번 더 감싼 칸(*_enc) + 찾기용 HMAC(*_hmac) + 끝 4자리만 평문. 입금자명·적요는 DB 기본 암호화(09 §9.1).
-//   입출금 줄은 (계좌, 줄 열쇠)로 한 번만 들어간다(같은 파일을 다시 올려도 같은 결과). 원천(file·auto)과 자동 연결 공급자는 회차에 둔다.
-//   자동 원천 줄은 원천 고유 id로 줄 열쇠를 만들고, 다른 원천이 이미 들인 같은 줄(내용 열쇠: 거래일·방향·금액·잔액)은 건너뛴다. 계좌에 원천 연결 상태(파일만·자동 연결됨·자동 오류).
-// v10(D03 §4.2 발급 사다리): 원장 발급 키(issue_key, 발급 단계 행에만). 같은 키에 not_committed가 아닌 행은 경로·의도와 무관하게 하나(ux_irr_issue_live).
 export interface Migration {
   version: number;
   name: string;
@@ -422,7 +406,6 @@ CREATE UNIQUE INDEX ux_irr_issue_live ON irreversible_log(issue_key) WHERE issue
 `,
   },
   {
-    // 홈택스 인증서 창에서 고를 인증서 이름(공개 정보, 인증서 소유자 글). 사람이 한 번 고르면 실행이 저장하고 다음부터 이 이름으로 고른다(H-01 2.3.0).
     version: 11,
     name: 'profile_cert_name',
     sql: `
@@ -430,8 +413,6 @@ ALTER TABLE profiles ADD COLUMN cert_name TEXT;
 `,
   },
   {
-    // run.reverify(재시작 뒤 in_doubt 확정): 무장할 때의 기준선 B₀(게이트 전 같은 조회의 승인번호 JSON 배열)와 마지막으로 조회한 날(KST).
-    // B₀가 없는 행은 재확인하지 않는다. 같은 행은 하루에 한 번만 조회한다.
     version: 12,
     name: 'ledger_reverify',
     sql: `
@@ -440,8 +421,6 @@ ALTER TABLE irreversible_log ADD COLUMN reverify_day TEXT;
 `,
   },
   {
-    // 낼 돈(11 §2): 거래처마다 내 쪽 결제 조건(받을 조건 pay_terms_json과 따로). 매입 건은 receivables(kind='purchase')를 그대로 쓴다.
-    // 현금흐름(11 §3.6): 사람이 기억시킨 갈래 규칙(다듬은 통장 표시 → 갈래). 줄 하나의 갈래는 bank_txns.ignored_reason을 그대로 쓴다.
     version: 13,
     name: 'payables_cashflow',
     sql: `
@@ -454,9 +433,6 @@ CREATE TABLE txn_category_rules (
 `,
   },
   {
-    // 계정 공유 기록(ADR-048 결정 5, D07 §10): 이 PC가 올릴 줄(share_out)과 다른 기기에서 받은 줄(share_in), 받은 자리(share_state).
-    // 본문은 DB 전체 암호화 안의 평문 JSON이다(거래처·받을 돈과 같은 등급). 서버로 가는 봉인은 main이 올릴 때 한다.
-    // ref: 발급 기록은 승인번호, 거래처는 사업자번호, 내 사업자·돈 요약은 ''(계정에 하나).
     version: 14,
     name: 'share_log',
     sql: `

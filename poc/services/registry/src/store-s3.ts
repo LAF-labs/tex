@@ -1,12 +1,7 @@
-// S3 호환 정적 저장소(운영: Supabase Storage의 S3 엔드포인트, 팀장 결정 2026-11-06). 공급사 종속은 이 어댑터 하나다(ADR-015):
-// 표준 S3 API(SigV4)만 쓰므로 다른 S3 호환 저장소로 바꿔도 env만 바뀐다. 키는 Storage 전용 S3 접근 키이고 DB 권한이 없다
-// (Supabase 서비스 역할 키를 쓰지 않는다). 공개 읽기는 이 서버를 거치지 않고 Vercel 외부 재작성이 공개 버킷 URL로 보낸다.
-// 값은 공개 산출물뿐이다(서명된 파일 그대로). 키(경로)는 store.ts의 고정 형식만 받는다.
 import { createHash, createHmac } from 'node:crypto';
 import { checkKey, type Store } from './store.ts';
 
 export interface S3StoreOpts {
-  /** 예 `https://<ref>.supabase.co/storage/v1/s3`(경로 방식). 시험만 http://localhost·127.0.0.1 */
   endpoint: string;
   region: string;
   bucket: string;
@@ -17,13 +12,11 @@ export interface S3StoreOpts {
   timeoutMs?: number;
 }
 
-/** 저장 객체 하나의 상한(인덱스 512KB, 패키지 16MB) */
 const MAX_OBJECT = 24 * 1024 * 1024;
 const EMPTY_SHA = createHash('sha256').digest('hex');
 
 const sha256hex = (b: Buffer | string) => createHash('sha256').update(b).digest('hex');
 const hmac = (k: Buffer | string, s: string) => createHmac('sha256', k).update(s, 'utf8').digest();
-/** RFC 3986 엄격 인코딩(SigV4 정규 URI: 비예약 문자 A-Z a-z 0-9 - . _ ~ 만 그대로) */
 const enc = (s: string) => encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 
 /** 공개 파일의 Content-Type·Cache-Control(API.md 공개 GET 표). 공개 버킷이 이 메타데이터로 응답한다 */
@@ -39,7 +32,6 @@ export function objectMeta(key: string): { contentType: string; cacheControl: st
  */
 export function sigV4Authorization(o: {
   method: string;
-  /** 인코딩된 정규 경로(예 `/bucket/a%40b.json`) */
   path: string;
   headers: Record<string, string>;
   payloadHash: string;
@@ -88,7 +80,6 @@ export class S3Store implements Store {
     const amzDate = amzDateOf((this.o.now ?? Date.now)());
     const headers: Record<string, string> = { host: this.base.host, 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzDate, ...extra };
     const authorization = sigV4Authorization({ method, path, headers, payloadHash, region: this.o.region, accessKeyId: this.o.accessKeyId, secretAccessKey: this.o.secretAccessKey, amzDate });
-    // host는 fetch가 URL에서 붙인다(같은 값을 서명했다)
     const send = Object.fromEntries(Object.entries(headers).filter(([k]) => k !== 'host'));
     return (this.o.fetchFn ?? fetch)(`${this.base.origin}${path}`, {
       method,

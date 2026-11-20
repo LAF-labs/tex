@@ -1,12 +1,10 @@
-// CSV 읽기. 글자 인코딩: BOM이 있으면 UTF-8, 없으면 UTF-8(엄격) → 안 되면 EUC-KR(CP949, 국내 사이트 내려받기 기본).
-// 따옴표 칸(RFC 4180), 쉼표·탭 구분을 받는다. 수식 같은 글자는 세기만 하고 그대로 둔다(계산하지 않는다).
 import { SandboxError, SHEET_LIMITS } from './limits.ts';
 import { emptyFlags, looksLikeFormula, trimRow, type Cell, type SheetOutput } from './sheet.ts';
 
 /** prefer: 문서가 밝힌 인코딩(HTML meta charset). 그 인코딩으로 엄격하게 먼저 풀어 보고, 안 되면 UTF-8 → EUC-KR 순 */
 export function decodeText(bytes: Uint8Array, prefer?: 'utf-8' | 'euc-kr'): { text: string; encoding: 'utf-8' | 'euc-kr' } {
   if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) return { text: new TextDecoder('utf-8').decode(bytes.subarray(3)), encoding: 'utf-8' };
-  if ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff)) throw new SandboxError('text_decode_failed'); // UTF-16은 받지 않는다
+  if ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff)) throw new SandboxError('text_decode_failed');
   const order: Array<'utf-8' | 'euc-kr'> = prefer === 'euc-kr' ? ['euc-kr', 'utf-8'] : ['utf-8', 'euc-kr'];
   for (const encoding of order) {
     try {
@@ -18,7 +16,6 @@ export function decodeText(bytes: Uint8Array, prefer?: 'utf-8' | 'euc-kr'): { te
   throw new SandboxError('text_decode_failed');
 }
 
-/** 첫 줄에서 쉼표와 탭 중 많은 쪽 */
 function delimiter(text: string): ',' | '\t' {
   const first = text.slice(0, text.indexOf('\n') < 0 ? text.length : text.indexOf('\n'));
   return (first.match(/\t/g)?.length ?? 0) > (first.match(/,/g)?.length ?? 0) ? '\t' : ',';
@@ -63,7 +60,7 @@ export function parseCsvText(text: string): { rows: Cell[][]; truncated: boolean
           i++;
         } else quoted = false;
       } else field += ch;
-      if (field.length > SHEET_LIMITS.maxCellChars * 4) throw new SandboxError('sheet_too_large'); // 글자마다 본다: 닫히지 않는 따옴표는 상한×4에서 바로 거부(파일 끝까지 쌓지 않음)
+      if (field.length > SHEET_LIMITS.maxCellChars * 4) throw new SandboxError('sheet_too_large');
     } else if (ch === '"' && field.trim() === '') {
       quoted = true;
       wasQuoted = true;
@@ -71,7 +68,6 @@ export function parseCsvText(text: string): { rows: Cell[][]; truncated: boolean
     } else if (ch === d) pushField();
     else if (ch === '\n') pushRow();
     else if (ch !== '\r') {
-      // 따옴표 없는 칸: 상한을 넘으면 더 쌓지 않는다(pushField가 잘라 truncated로 표시)
       if (field.length <= SHEET_LIMITS.maxCellChars) field += ch;
     }
   }

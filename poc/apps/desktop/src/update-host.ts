@@ -1,10 +1,3 @@
-// 앱 업데이트 배선(D14 M4-9, ADR-028 결정 1~3, D11 §4 자동 업데이트 행). packages/updater README "배선 순서" 1~5단계를 main에서 돈다.
-// - 신뢰 판단은 @sax/updater만 한다: latest.json 서명·만료·채널·단조 버전(decideUpdate) → 검증한 값만 electron-updater에 넘기고 대조(matchFeed)
-//   → 받은 설치본 sha512 재확인(verifyDownloadedFile) → 설치 관문(installGate). electron-updater는 받기·설치만 한다.
-// - 원천(latest.json·폐기 목록·핀 키·투명성 확인)은 포트다. 어느 하나라도 못 받으면 보류(설치본 유지)이고 상태를 바꾸지 않는다(fail-closed).
-// - 투명성 확인(requireTransparency)은 제품에서 늘 켠다. 실계정 시험 빌드에서만 설정으로 끌 수 있다(팀장 결정 11-05, updatePolicy).
-// - 상태: userData/updater-state.json(채널별 본 최고 버전·파일 다이제스트·마지막 성공 시각, 설치 id·처음 기동 시각). 값·경로·기기 정보 없음.
-// - 로그: 결과·코드만(main.update_*). 버전 문자열도 남기지 않는다.
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -34,25 +27,16 @@ import {
 
 type UpdateLog = (name: string, data?: Record<string, string | number | boolean>) => void;
 
-/** 판정 원천. 모두 던지면 보류다(설치본 유지). */
 export interface UpdateSources {
-  /** 레지스트리 GET /releases/{channel}/latest.json 바이트 그대로(egress). 투명성 로그는 이 바이트의 sha256을 기록한다. */
   latest(channel: Channel): Promise<Uint8Array>;
-  /** 앱에 내장된 핀 키 + 엔진이 수용한 폐기 목록(keyIds·24시간 신선도). */
   registry(): Promise<{ trust: TrustRoot; revocation: Revocation }>;
-  /** 받은 latest.json 바이트가 서명된 로그 헤드에 포함됐는지(ADR-028 결정 2, update-sources.ts). */
   transparency(bytes: Uint8Array, channel: Channel): Promise<Transparency>;
 }
 
-/** 설치기(electron-updater 어댑터, update-electron.ts). */
 export interface UpdateInstaller {
-  /** 검증한 릴리스를 electron-updater에 넘겨 읽힌 값. 새 버전이 없다고 하면 null. */
   check(release: VerifiedRelease): Promise<FeedInfo | null>;
-  /** 받은 파일 경로들. */
   download(): Promise<string[]>;
-  /** 받은 파일을 지운다(검증 실패). 못 지워도 던지지 않는다. */
   discard(file: string): Promise<void>;
-  /** 재시작해 설치한다. */
   install(): void;
 }
 
@@ -65,20 +49,15 @@ export interface UpdateHostOptions {
   sources: UpdateSources;
   installer: UpdateInstaller;
   channel: Channel;
-  /** app.getVersion() */
   installedVersion: string;
   stateFile: string;
   policy: UpdatePolicy;
-  /** 설치 관문 입력(실행 중·커밋 구간·데몬 실행). */
   idle: () => InstallContext;
-  /** 14일 동안 확인 성공이 없을 때(하루 한 번까지). */
   onStale?: () => void;
   log?: UpdateLog;
   now?: () => number;
   timers?: UpdateTimers;
-  /** 확인 주기(기본 15분, D09 §8.1과 같다) */
   checkEveryMs?: number;
-  /** 설치 미룸 재시도 주기(기본 1분) */
   installRetryMs?: number;
 }
 
@@ -94,19 +73,11 @@ export type CheckOutcome =
   | { result: 'downloaded'; installed: boolean };
 
 export interface UpdateHost {
-  /** 지금 한 번 확인한다(기동·주기·절전 복귀). 겹치면 busy. */
   check(): Promise<CheckOutcome>;
-  /** 받아 둔 설치본이 있으면 관문을 보고 설치한다. 설치했으면 true. */
   tryInstall(): boolean;
   stop(): void;
 }
 
-// ---- 정책 ----
-
-/**
- * UpdatePolicy 정하기(팀장 결정 11-05). 제품 빌드는 설정이 있어도 무시하고 투명성 확인을 요구한다(fail-closed). 그때 경고 로그를 남긴다.
- * 실계정 시험 빌드(testBuild)에서만 setting.requireTransparency === false를 받는다.
- */
 export function updatePolicy(o: { testBuild: boolean; setting?: { requireTransparency?: unknown } | null; log?: UpdateLog }): UpdatePolicy {
   const off = o.setting?.requireTransparency === false;
   if (off && !o.testBuild) {
@@ -117,13 +88,9 @@ export function updatePolicy(o: { testBuild: boolean; setting?: { requireTranspa
   return off ? { requireTransparency: false } : DEFAULT_POLICY;
 }
 
-// ---- 상태 파일 ----
-
 interface UpdaterFile {
   v: 1;
-  /** 롤아웃 버킷용 설치 id(밖으로 보내지 않는다, @sax/updater가 해시만 쓴다) */
   installId: string;
-  /** 이 설치본의 처음 기동 시각(14일 미확인 알림 기준) */
   installedAt: number;
   channels: Partial<Record<Channel, UpdaterState>>;
   staleNotifiedAt: number | null;
@@ -139,10 +106,6 @@ function isState(v: unknown): v is UpdaterState {
   return h === null || (isObj(h) && typeof h.version === 'string' && SEEN_RE.version.test(h.version) && typeof h.filesDigest === 'string' && SEEN_RE.digest.test(h.filesDigest));
 }
 
-/**
- * 상태 파일. 모양이 틀리면 새로 만든다. 단, 본 최고 버전을 잃으면 롤백 기준이 사라지므로(되감기 공격 창) 틀린 채널만 버리지 않고
- * 파일 전체를 새로 시작하되 그 사실을 로그로 남긴다(main.update_state_reset). 쓰기는 임시 파일 → 이름 바꾸기.
- */
 export class UpdaterStateFile {
   private readonly file: string;
   private readonly now: () => number;
@@ -181,11 +144,8 @@ export class UpdaterStateFile {
   }
 }
 
-// ---- 본체 ----
-
 const DAY_MS = 24 * 3600_000;
 
-/** 받은 파일 가운데 설치본(files[0] 주소의 마지막 이름과 같은 것, electron-updater가 그 이름으로 저장한다). 없으면 첫 파일(어차피 sha512 재확인에서 걸린다). */
 export function pickInstaller(files: readonly string[], want: ReleaseFile): string | null {
   const name = want.url.startsWith('https://') ? path.posix.basename(new URL(want.url).pathname) : want.url;
   return files.find((f) => path.basename(f) === name) ?? files[0] ?? null;
@@ -243,7 +203,6 @@ export function startUpdateHost(o: UpdateHostOptions): UpdateHost {
       log('main.update_check', { result: 'feed_failed' });
       return { result: 'feed_failed' };
     }
-    // electron-updater가 받을 값이 검증한 매니페스트와 다르면 받지 않는다(보안 이벤트)
     if (!info || !matchFeed(release, info).ok) {
       log('main.update_held', { code: 'update.feed_mismatch', security: true });
       return { result: 'feed_mismatch' };
@@ -258,7 +217,6 @@ export function startUpdateHost(o: UpdateHostOptions): UpdateHost {
     const got = pickInstaller(files, want);
     const v = got ? await verifyDownloadedFile(got, want) : ({ ok: false, code: 'update.digest_mismatch' } as const);
     if (!v.ok) {
-      // 받은 파일은 지우고 다음 주기에 처음부터(README 롤백 규칙 4)
       for (const f of files) await o.installer.discard(f);
       log('main.update_held', { code: v.code, security: SECURITY_CODES.has(v.code) });
       return { result: 'bad_download', code: v.code };
@@ -282,10 +240,8 @@ export function startUpdateHost(o: UpdateHostOptions): UpdateHost {
     try {
       doc = JSON.parse(Buffer.from(bytes).toString('utf8'));
     } catch {
-      // 모양 오류로 판정한다(update.manifest_invalid)
       doc = undefined;
     }
-    // 투명성 확인은 검증을 통과한 더 높은 버전에만 묻는다: 먼저 미확인으로 판정해 보고, 그 이유로 보류일 때만 확인한다.
     let d = await decide(doc, reg, 'unverified');
     if (d.action === 'hold' && d.code === 'update.transparency_unverified') {
       const t: Transparency = await o.sources.transparency(bytes, o.channel).catch(() => 'unverified' as const);

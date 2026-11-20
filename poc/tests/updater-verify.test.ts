@@ -1,6 +1,3 @@
-// @sax/updater 검증(D14 M4-9, ADR-028): 정상·서명 불일치·만료·버전 역행·해시 불일치·채널 불일치와 그 주변.
-// 키는 tests/fixtures/registry(엔진 PR #52) 고정 시드 규칙을 따른다: 32바이트를 한 값으로 채운 시드. 릴리스 키는 새로 release-1 = 0x61.
-// 시드는 공개된 시험 값이라 운영에 쓰면 안 된다.
 import assert from 'node:assert/strict';
 import { createHash, createPrivateKey, createPublicKey, sign } from 'node:crypto';
 import fs from 'node:fs';
@@ -39,9 +36,7 @@ const TRUST: TrustRoot = {
   keys: {
     root: { 'root-1': pubB64(0x11), 'root-2': pubB64(0x12), 'root-3': pubB64(0x13) },
     release: { 'release-1': pubB64(0x61) },
-    // 기간 도장은 레지스트리 타임스탬프 키(샘플 timestamp-1 = 0x51)
     timestamp: { 'timestamp-1': pubB64(0x51) },
-    // 다른 역할 키로 서명하면 세지 않아야 한다(package-1 = 0x21)
     package: { 'package-1': pubB64(0x21) },
   },
 };
@@ -63,9 +58,7 @@ function unsigned(over: Partial<Unsigned> = {}): Unsigned {
     ...over,
   };
 }
-/** 사람(release 키)은 기간 칸을 뺀 내용에, 서버(timestamp 키)는 {contentDigest, issuedAt, expiresAt}에 서명한다 */
 const stamp = (m: Omit<ReleaseManifest, 'timestamp'> & { timestamp?: unknown }, issuedAt = m.issuedAt, expiresAt = m.expiresAt): ReleaseManifest => {
-  // 다시 찍을 때(이미 도장이 있는 문서)는 옛 도장도 내용에서 뺀다(releaseContent와 같은 범위)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { signature: _s, issuedAt: _i, expiresAt: _e, timestamp: _t, ...content } = m;
   const contentDigest = createHash('sha256').update(jcs(content)).digest('hex');
@@ -76,7 +69,6 @@ const signRelease = (u: Unsigned, byte = SEEDS['release-1'], keyId = 'release-1'
   const { issuedAt: _i, expiresAt: _e, ...content } = u;
   return stamp({ ...u, signature: sigOf(byte, keyId, content) });
 };
-/** JSON 왕복(네트워크에서 받은 값처럼) */
 const wire = (m: unknown): unknown => JSON.parse(JSON.stringify(m));
 const base = (doc: unknown, over: Record<string, unknown> = {}) => ({ doc: wire(doc), channel: 'stable' as const, trust: TRUST, revocation: FRESH, highestSeen: null, now: NOW, ...over });
 const codeOf = (fn: () => unknown): string => {
@@ -97,11 +89,9 @@ test('엔진 샘플 묶음이 있으면 핀 키 모양을 그대로 받는다', 
   const p = path.join(import.meta.dirname, 'fixtures/registry/trust.json');
   if (!fs.existsSync(p)) return t.skip('tests/fixtures/registry는 엔진 PR #52 머지 뒤 생긴다');
   const trust = JSON.parse(fs.readFileSync(p, 'utf8')) as TrustRoot;
-  // 샘플에 release-1(시드 0x61)이 있다(엔진 데이터 패키지 PR, 패키징 #76 요청): 샘플 핀 그대로 릴리스를 받는다
   assert.deepEqual(trust.keys.release, TRUST.keys.release);
   const doc = signRelease(unsigned());
   assert.equal(verifyRelease(base(doc, { trust })).releaseKeyId, 'release-1');
-  // release 역할이 빠진 핀이면 어떤 릴리스도 서명 부족이다(fail-closed)
   const noRelease = { ...trust, keys: Object.fromEntries(Object.entries(trust.keys).filter(([role]) => role !== 'release')) } as TrustRoot;
   assert.equal(codeOf(() => verifyRelease(base(doc, { trust: noRelease }))), 'registry.signature_insufficient');
 });
@@ -121,19 +111,13 @@ test('정상: 서명·만료·채널·버전이 맞으면 통과하고 download'
 
 test('서명 불일치: 내용 변조·다른 키·다른 역할 키·폐기 키·서명 형식', () => {
   const good = signRelease(unsigned());
-  // 서명 뒤 파일 해시를 바꾼다
   const tampered = { ...good, files: [{ ...good.files[0]!, sha512: sha512(Buffer.from('evil')) }] };
   assert.equal(codeOf(() => verifyRelease(base(tampered))), 'registry.signature_insufficient');
-  // 핀에 없는 키(0x62)로 release-1이라 주장
   assert.equal(codeOf(() => verifyRelease(base(signRelease(unsigned(), 0x62)))), 'registry.signature_insufficient');
-  // 핀에 있지만 다른 역할(package-1)
   assert.equal(codeOf(() => verifyRelease(base(signRelease(unsigned(), 0x21, 'package-1')))), 'registry.signature_insufficient');
-  // 폐기된 릴리스 키
   assert.equal(codeOf(() => verifyRelease(base(good, { revocation: { keyIds: new Set(['release-1']), fresh: true } }))), 'registry.key_revoked');
-  // alg·서명 길이가 틀리면 모양 오류
   assert.equal(codeOf(() => verifyRelease(base({ ...good, signature: { ...good.signature, alg: 'rsa' } }))), 'update.manifest_invalid');
   assert.equal(codeOf(() => verifyRelease(base({ ...good, signature: { ...good.signature, sig: good.signature.sig.slice(1) } }))), 'update.manifest_invalid');
-  // 결정은 보류 + 보안 이벤트
   const d = decideUpdate({ ...base(tampered), installedVersion: '1.1.0', state: INITIAL_STATE, deviceId: 'dev-a', transparency: 'verified' });
   assert.deepEqual([d.action, d.action === 'hold' && d.code, d.action === 'hold' && d.security], ['hold', 'registry.signature_insufficient', true]);
   assert.equal(d.state, INITIAL_STATE, '실패는 상태를 바꾸지 않는다');
@@ -144,7 +128,6 @@ test('만료·미래 발행·유효 기간 초과', () => {
   assert.equal(codeOf(() => verifyRelease(base(doc, { now: Date.parse('2026-11-12T00:00:00.000Z') }))), 'registry.expired');
   const future = signRelease(unsigned({ releaseDate: '2026-11-05T06:06:00.000Z', expiresAt: '2026-11-10T00:00:00.000Z' }));
   assert.equal(codeOf(() => verifyRelease(base(future))), 'registry.issued_in_future');
-  // 5분 안 미래는 시계 오차로 받는다
   assert.ok(verifyRelease(base(signRelease(unsigned({ releaseDate: '2026-11-05T06:04:00.000Z' })))));
   const long = signRelease(unsigned({ expiresAt: '2026-11-19T00:00:00.001Z' }));
   assert.equal(codeOf(() => verifyRelease(base(long))), 'update.validity_too_long');
@@ -158,17 +141,13 @@ test('버전 역행: 본 것보다 낮은 버전, 같은 버전 다른 설치본
   const highestSeen = { version: '1.2.0', filesDigest: createHash('sha256').update(jcs(seen.manifest.files)).digest('hex') };
   const v11 = signRelease(unsigned({ version: '1.1.9' }));
   assert.equal(codeOf(() => verifyRelease(base(v11, { highestSeen }))), 'registry.version_rollback');
-  // 같은 버전·같은 파일은 신선도 재발행(새 releaseDate·expiresAt)이라 받는다
   assert.ok(verifyRelease(base(signRelease(unsigned({ releaseDate: '2026-11-05T01:00:00.000Z' })), { highestSeen })));
-  // 같은 버전에 다른 설치본은 거부
   const swapped = signRelease(unsigned({ files: [{ url: 'SovereignAX-Setup-1.2.0.exe', sha512: sha512(Buffer.from('other')), size: 5 }] }));
   assert.equal(codeOf(() => verifyRelease(base(swapped, { highestSeen }))), 'registry.version_rollback');
-  // 설치본과 같거나 낮으면 none(다운그레이드 금지), 상태의 최고값은 낮아지지 않는다
   const d = decideUpdate({ ...base(v12), installedVersion: '1.2.0', state: INITIAL_STATE, deviceId: 'd', transparency: 'verified' });
   assert.deepEqual([d.action, d.action === 'none' && d.reason], ['none', 'up_to_date']);
   const d2 = decideUpdate({ ...base(v11), installedVersion: '1.0.0', state: { highestSeen, lastSuccessAt: NOW - 1 }, deviceId: 'd', transparency: 'verified' });
   assert.deepEqual([d2.action, d2.action === 'hold' && d2.code, d2.action === 'hold' && d2.security], ['hold', 'registry.version_rollback', true]);
-  // 설치본보다 낮은 매니페스트는 롤백 기준(highestSeen)이 되지 않는다(CodeSolar #76)
   const low = decideUpdate({ ...base(v11), installedVersion: '1.2.0', state: INITIAL_STATE, deviceId: 'd', transparency: 'verified' });
   assert.deepEqual([low.action, low.state.highestSeen, low.state.lastSuccessAt], ['none', null, NOW]);
   const keep = decideUpdate({ ...base(v11), installedVersion: '1.2.0', state: { highestSeen, lastSuccessAt: null }, deviceId: 'd', transparency: 'verified' });
@@ -217,7 +196,6 @@ test('electron-updater 피드 대조: 검증한 매니페스트와 다른 latest
   assert.equal(matchFeed(v, { version: '1.2.0', files: [{ url: 'other.exe', sha512: f.sha512 }] }).ok, false);
   assert.equal(matchFeed(v, { version: '1.2.0', files: [{ url: f.url, sha512: f.sha512, size: f.size + 1 }] }).ok, false);
   assert.equal(matchFeed(v, { version: '1.2.0', files: [{ url: f.url, sha512: f.sha512 }], sha512: sha512(Buffer.from('y')) }).ok, false);
-  // 우리가 만드는 latest.yml은 같은 값만 담는다
   const yml = renderLatestYml(v.manifest);
   assert.match(yml, /^version: 1\.2\.0\n/);
   assert.ok(yml.includes(`path: ${f.url}\nsha512: ${f.sha512}\n`));
@@ -235,13 +213,10 @@ test('뿌리 변경 릴리스(ADR-028 결정 3)는 루트 2-of-3이 있어야 �
   assert.equal(codeOf(() => verifyRelease(base(withRoot(['root-1'])))), 'update.root_change_unsigned');
   assert.equal(codeOf(() => verifyRelease(base(withRoot(['root-1', 'root-1'])))), 'update.root_change_unsigned', '같은 키 두 번은 1개');
   assert.equal(codeOf(() => verifyRelease(base(withRoot(['root-1', 'release-1'])))), 'update.root_change_unsigned', '릴리스 키는 루트가 아니다');
-  // keyEpoch를 바꾼다면서 지금 세대 그대로, 안 바꾼다면서 다른 세대
   assert.equal(codeOf(() => verifyRelease(base(withRoot(['root-1', 'root-2'], 1)))), 'update.root_change_unsigned');
   assert.equal(codeOf(() => verifyRelease(base(withRoot(['root-1', 'root-2'], 2, ['allowlist'])))), 'update.root_change_unsigned');
   assert.ok(verifyRelease(base(withRoot(['root-2', 'root-3'], 1, ['allowlist', 'ceiling']))));
-  // 폐기된 루트 키 때문에 모자라면 key_revoked
   assert.equal(codeOf(() => verifyRelease(base(withRoot(['root-1', 'root-2']), { revocation: { keyIds: new Set(['root-2']), fresh: true } }))), 'registry.key_revoked');
-  // 루트 서명 뒤 릴리스 내용을 바꾸면 릴리스 서명이 먼저 깨진다
   const m = withRoot(['root-1', 'root-2']);
   assert.equal(codeOf(() => verifyRelease(base({ ...m, rolloutPercent: 50 }))), 'registry.signature_insufficient');
   assert.notEqual(jcs(releaseContent(m)), jcs(rootChangeContent(m)));
@@ -255,7 +230,6 @@ test('기간은 서버 도장: 기간만 다시 찍어도 사람 서명은 그�
   assert.equal(codeOf(() => verifyRelease(base(doc, { revocation: { keyIds: new Set(['timestamp-1']), fresh: true } }))), 'registry.timestamp_invalid');
   const d = decideUpdate({ ...base({ ...doc, expiresAt: '2026-11-13T00:00:00.000Z' }), installedVersion: '1.1.0', state: INITIAL_STATE, deviceId: 'd', transparency: 'verified' });
   assert.deepEqual([d.action, d.action === 'hold' && d.security], ['hold', true]);
-  // Blob 공개 주소(https 절대 주소)는 받고, http·쿼리·인코딩은 거부한다
   const blob = 'https://abc123.public.blob.vercel-storage.com/releases/stable/SovereignAX-1.2.0-arm64.zip';
   assert.equal(verifyRelease(base(signRelease(unsigned({ files: [{ url: blob, sha512: sha512(INSTALLER), size: INSTALLER.byteLength }] })))).manifest.files[0]!.url, blob);
   for (const url of ['http://abc123.public.blob.vercel-storage.com/a.zip', `${blob}?x=1`, 'https://abc123.public.blob.vercel-storage.com/a%20b.zip', 'https://x/a.zip']) {
@@ -298,7 +272,6 @@ test('투명성 로그 확인 전에는 받지 않는다(ADR-028 결정 2), 롤�
   const mm = run({ transparency: 'head_mismatch' });
   assert.deepEqual([mm.action, mm.action === 'hold' && mm.code, mm.action === 'hold' && mm.security], ['hold', 'registry.head_mismatch', true]);
   assert.equal(run({ transparency: 'unverified', policy: { requireTransparency: false } }).action, 'download');
-  // 롤아웃: 0%면 아무도, 버킷 < 비율인 기기만
   const zero = decideUpdate({ ...base(signRelease(unsigned({ rolloutPercent: 0 }))), installedVersion: '1.1.0', state: INITIAL_STATE, deviceId: 'dev-a', transparency: 'verified' });
   assert.deepEqual([zero.action, zero.action === 'none' && zero.reason], ['none', 'rollout_wait']);
   const b = rolloutBucket(rolloutId('1.2.0'), 'dev-a');
@@ -306,7 +279,6 @@ test('투명성 로그 확인 전에는 받지 않는다(ADR-028 결정 2), 롤�
   const at = (pct: number) => decideUpdate({ ...base(signRelease(unsigned({ rolloutPercent: pct }))), installedVersion: '1.1.0', state: INITIAL_STATE, deviceId: 'dev-a', transparency: 'verified' }).action;
   assert.equal(at(b), 'none');
   assert.equal(at(b + 1 > 100 ? 100 : b + 1), 'download');
-  // 버킷은 API.md 공식 그대로(고정 값)
   const h = createHash('sha256').update('SAX-rollout-v1\0sax-desktop@1.2.0\0dev-a').digest();
   assert.equal(b, h.readUInt32BE(0) % 100);
 });

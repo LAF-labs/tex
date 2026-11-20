@@ -1,4 +1,3 @@
-// 발급 사다리 0원 칸 예행 2의 둘째 경우: 판정이 실모델처럼 fix_field를 내도 에이전트로 넘어간다(첫째 경우는 h01-real-agentpath.test.ts).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { realDryRun } from './h01-real-dryrun.ts';
@@ -13,7 +12,6 @@ describe('발급 사다리 0원 칸: 판정 fix_field도 에이전트로(가짜 
     assert.equal(o.end?.status, 'success', show(o));
     assert.ok(g.calls.some((c) => c.toolset === 'browser_agent'), '에이전트를 불렀다');
     assert.ok(!g.calls.some((c) => c.toolset === 'computer_use'), '화면 보기까지 가지 않았다');
-    // 첫 실행 + 재시도 1번 = 같은 스텝 실패 2번, 체크포인트 재진입 뒤에도 2번(재시도 3번이면 4번씩 8번)
     assert.equal(o.steps.filter((x) => x === 's16a!step.selector_miss').length, 4, o.steps.join(' '));
   });
 });

@@ -1,5 +1,3 @@
-// 공동인증서 비밀번호 차례(B1 로그인 s4·B2 발급 서명 s21, CertSecretPort): 금고 비밀 창 → 인증서 선택창(iframe#dscert)·칸 없음·금고가 못 찾음이면
-// 곧바로 human.cert_waiting(B3 사람 대기로 기다린다). 끝 모양: done · ttl(창 닫기 요청) · [중지] · 틀린 비밀번호 · 누적 MAX_WRONG. 가짜 금고·가짜 화면.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { CERT_FRAME_CSS, CERT_WAITING, CertSecretPort, MAX_WRONG, type CertSecretInput, type SecretTurnEvent, type SecretVault } from '@sax/engine';
@@ -63,10 +61,9 @@ describe('CertSecretPort(공동인증서 비밀번호, B1·B2)', () => {
     const ok = mk();
     ok.vault.onOpen = () => ok.vault.close('T1');
     assert.equal(await ok.port.secret(REQ), 'done');
-    await ok.port.stepFinished('click', false); // 로그인 [확인]은 상관없다
+    await ok.port.stepFinished('click', false);
     await ok.port.stepFinished('wait', false);
     assert.deepEqual(ok.vault.calls.at(-1), ['typist.authOk', { runId: 'r1', kind: 'cert_password', scope: 'business' }]);
-    // 발급 서명의 비밀번호 차례 뒤 기다림이 실패해도 맞는 기억값을 지우지 않는다
     assert.equal(await ok.port.secret({ ...REQ, stepId: 's21' }), 'done');
     const n = ok.vault.calls.length;
     await ok.port.stepFinished('wait', true);
@@ -75,10 +72,9 @@ describe('CertSecretPort(공동인증서 비밀번호, B1·B2)', () => {
     const bad = mk();
     bad.vault.onOpen = () => bad.vault.close('T1');
     assert.equal(await bad.port.secret(REQ), 'done');
-    await bad.port.stepFinished('wait', true); // H-01 s5 시간 초과(틀린 비밀번호 포함)
+    await bad.port.stepFinished('wait', true);
     assert.deepEqual(bad.vault.calls.at(-1), ['typist.authFailed', { runId: 'r1', kind: 'cert_password', scope: 'business' }]);
 
-    // 금고가 넣은 뒤 [확인] 클릭 스텝 다음에 틀림 안내가 뜨면(인증서 창 iframe 안 글자 포함) 그때 알린다
     const screen: string[] = [];
     const click = mk({ screen });
     click.vault.onOpen = () => click.vault.close('T1');
@@ -88,10 +84,9 @@ describe('CertSecretPort(공동인증서 비밀번호, B1·B2)', () => {
     assert.deepEqual(click.vault.calls.at(-1), ['typist.authFailed', { runId: 'r1', kind: 'cert_password', scope: 'business' }]);
     assert.ok(click.journal.some(([t, p]) => t === 'human.secret_password_wrong' && (p as Json).stepId === 's4h'));
     const after = click.vault.calls.length;
-    await click.port.stepFinished('wait', true); // 그 뒤 s5 시간 초과는 다시 알리지 않는다
+    await click.port.stepFinished('wait', true);
     assert.equal(click.vault.calls.length, after);
 
-    // 사이에 다른 스텝이 실패하면(비밀번호 탓 아님) 알리지 않는다
     const other = mk();
     other.vault.onOpen = () => other.vault.close('T1');
     assert.equal(await other.port.secret(REQ), 'done');

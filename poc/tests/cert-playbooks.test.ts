@@ -1,5 +1,3 @@
-// 홈택스 즉시발급 민원증명(H-03·H-08·H-09, ADR-018 결정 2) 패키지: 공유 템플릿(scripts/playbooks/hometax-certificate.ts) → 제품 원본(packages/engine/playbooks).
-// 정적 검증기(V-01~V-25) 통과, 저장된 JSON = 템플릿 결과, 서류별 차이는 입력·셀렉터뿐, fixture 포털 변형이 개발 로더를 통과하고 제품 로더는 거부한다(ADR-039).
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,7 +13,6 @@ import { bundleOutcomes, loadPkg, signPackage, testKeys } from './core-fixtures.
 const ROOT = path.resolve(import.meta.dirname, '..');
 const DIR = path.join(ROOT, 'packages/engine/playbooks');
 const bundles = bundleOutcomes();
-/** 발급 확인 조회: H-04(LAF-labs/tex#247)가 만든 공유 IR 조회 패키지(저장소 원본) */
 const issuedList = (): PackageFiles => loadPkg(LOOKUP_ID);
 const lookupMap = () => new Map([[LOOKUP_ID, issuedList()]]);
 const stepsOf = (p: PackageFiles) => p.playbook.steps as (Step & Record<string, unknown>)[];
@@ -36,7 +33,6 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
     const shared = (p: PackageFiles) => stepsOf(p).filter((s) => !/^s1[068][a-z]?$/.test(s.id) || s.id === 's10x').map((s) => {
       const c = structuredClone(s) as Record<string, unknown>;
       if (s.id === 's19a' || s.id === 's19b' || s.id === 's19f' || s.id === 's32') return { id: s.id, type: s.type };
-      // 신청 확인 레이어(H-03·H-09)의 [신청하기]는 submit.signFlow에만 있다. 레이어 없는 서류(H-08)와는 그것만 다르다(아래에서 따로 본다)
       if (s.id === 's21') delete c.signFlow;
       return c;
     });
@@ -54,7 +50,6 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
       const keys = new Set(Object.keys(p.selectors.entries).filter((k) => !LAYER_KEYS.includes(k)));
       assert.deepEqual([...keys].filter((k) => !base.has(k)).sort(), [...docKeys(CERT_DOCS[i + 1]!)].sort());
       for (const k of base) {
-        // 양식 제목(hometax.cert.form.title)은 서류마다 다르다(제목 자체가 시험 이름의 「양식 제목」)
         if (['hometax.cert.menu.doc', 'hometax.cert.form.root', 'hometax.cert.form.title', 'hometax.cert.form.issueButton'].includes(k)) continue;
         assert.deepEqual(p.selectors.entries[k], h03!.selectors.entries[k], k);
       }
@@ -66,7 +61,6 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
       const p = certPackage(d);
       assert.deepEqual(p.manifest.effects, ['issue_document']);
       const commits = Object.entries(p.selectors.entries).filter(([, e]) => e.commits).map(([k, e]) => [k, e.commitEffect]);
-      // 신청 확인 레이어가 있는 서류는 레이어의 [신청하기]도 같은 효과의 커밋 항목이다(submit.signFlow.openTargets, 같은 무장 구간에서만 누른다)
       assert.deepEqual(commits, [['hometax.cert.form.issueButton', 'issue_document'], ...(d.confirmLayer ? [['hometax.cert.confirm.apply', 'issue_document']] : [])]);
       const pre = buildCfg(p.playbook);
       const irreversible = irreversibleSteps(p.selectors, pre.info);
@@ -87,9 +81,7 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
       assert.deepEqual((p.playbook.inputs as Record<string, { values?: string[]; default?: string }>).certDoc, { type: 'enum', values: [d.name], default: d.name });
       assert.deepEqual((p.playbook.inputs as Record<string, { default?: string }>).rrnDisclosure!.default, '비공개');
       assert.equal(s('s32').docType, d.docType);
-      // 발급 안 됨이면 게이트를 지배하는 체크포인트(s10a)로 돌아가 다시 채우고 새 승인을 받는다
       assert.equal((s('s30').on as { not_committed: string }).not_committed, 's10a');
-      // 체크포인트 첫 통과는 이동하지 않는다: 로그인 뒤 화면(홈)에서 먼저 주소로 간다
       assert.deepEqual([s('s10').type, s('s10a').type], ['goto', 'checkpoint']);
     }
   });
@@ -109,13 +101,10 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
     const s10 = (p: PackageFiles) => stepsOf(p).find((x) => x.id === 's10')!;
     assert.match(s10(h03!).url as string, /tm3lIdx=4315010800$/);
     assert.match(s10(h08!).url as string, /tm3lIdx=4315010500$/);
-    // H-09 메뉴 코드는 실화면 예행(2026-11-15)으로 알았다: 이제 직접 주소로 들어간다
     assert.match(s10(h09!).url as string, /tm3lIdx=4315011800$/);
     const btn = (p: PackageFiles) => p.selectors.entries['hometax.cert.form.issueButton']!;
     assert.deepEqual([btn(h03!).namePattern, btn(h03!).candidates[0]], ['^작성완료$', { kind: 'css', value: '#mf_txppWframe_btn_wrtCmpl' }]);
     assert.deepEqual([btn(h08!).namePattern, btn(h08!).candidates[0]], ['^신청하기$', { kind: 'css', value: '#mf_txppWframe_btn_apln' }]);
-    // 실화면 2026-11-18: H-03·H-09의 [작성완료]는 「신청하시겠습니까?」 레이어(UTECAAA0A016)를 열 뿐이다. 신청은 레이어의 [신청하기]를
-    // 같은 무장 구간에서 엔진이 한 번 누른다(전에는 누르지 않아 처리결과 조회만 되풀이했다, 대표 실기기 피드백 2026-11-18)
     for (const p of [h03!, certPackage(CERT_DOCS.find((d) => d.code === 'H-09')!)]) {
       const apply = p.selectors.entries['hometax.cert.confirm.apply']!;
       assert.deepEqual([apply.namePattern, apply.candidates[0], apply.landmark, apply.commits], ['^신청하기$', { kind: 'css', value: '#mf_txppWframe_UTECAAA0A016_wframe_btn_sbms' }, 'hometax.cert.confirm.root', true]);
@@ -129,11 +118,9 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
     assert.ok(inputs.purpose!.values!.includes('금융기관제출용') && inputs.submitTo!.values!.includes('금융기관'));
     assert.deepEqual(h03!.selectors.entries['hometax.cert.form.receiveMethod']!.allowedConstants, ['인터넷발급(프린터출력)']);
     for (const k of ['periodStartYear', 'periodStartHalf', 'periodEndYear', 'periodEndHalf']) assert.ok(k in (h08!.playbook.inputs as object), k);
-    // 발급희망개업일자는 화면이 정한 값(선택지가 개업일 하나): 입력이 아니고 '*only'로 고른다(실화면 4차 예행)
     assert.ok(!('openDate' in (h08!.playbook.inputs as object)));
     assert.equal(stepsOf(h08!).find((x) => x.type === 'select' && x.target === 'hometax.cert.form.openDate')?.option, '*only');
     assert.equal(h08!.selectors.entries['hometax.cert.form.openDate']!.candidates[0]!.kind === 'css' && (h08!.selectors.entries['hometax.cert.form.openDate']!.candidates[0] as { value: string }).value, '#mf_txppWframe_sbx_bmanOfbDt');
-    // 화면이 정한 값이라 입력 대조(s18a)가 없다
     assert.equal(stepsOf(h08!).find((x) => x.id === 's18a'), undefined);
     for (const p of [h03!, h08!, h09!]) {
       const x = stepsOf(p).find((s) => s.id === 's10x')!;
@@ -145,14 +132,12 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
   it('캡처 목록(CAPTURE-hometax-cert.md)은 아직 모르는 셀렉터마다 한 줄이고, 발급 버튼·차단 알림이 들어 있다', () => {
     const md = certOutputs().get('CAPTURE-hometax-cert.md')!;
     for (const k of ['hometax.cert.form.issueButton', 'hometax.cert.alert']) assert.ok(md.includes(`\`${k}\``), k);
-    // 실화면으로 확인한 것은 빠진다: 로그인 구간은 H-01 원본(s0~s7g), 서류명·과세년도는 3·5차 예행(2026-11-15·16)
     for (const k of ['hometax.login.simpleAuthButton', 'hometax.cert.form.docName', 'hometax.cert.form.fiscalYear']) assert.ok(!md.includes(`\`${k}\``), k);
     const rows = md.split('\n').filter((l) => /^\| H-0\d \| `/.test(l));
     assert.equal(new Set(rows).size, rows.length, '한 셀렉터·메모는 한 줄');
   });
 });
 
-/** 제품 원본 → fixture 포털 변형(ADR-039): origin·id·포털만 바꾼다. 흐름·셀렉터 의미는 그대로 */
 function toFixture(files: PackageFiles, origin: string): PackageFiles {
   const host = new URL(origin).hostname;
   const text = JSON.stringify(files).replaceAll('https://hometax.go.kr', origin).replaceAll('"hometax.cert.', '"fixture.cert.').replaceAll('"hometax.', '"fixture.');
@@ -173,7 +158,6 @@ describe('승인 카드(팀장 결정 2026-11-09): 요약 표·fieldKey 닫힌 �
       assert.ok((FIELD_KEYS as readonly string[]).includes(k), k);
       assert.ok(enums.includes(`"${k}"`), k);
     }
-    // 세 서류의 게이트 앞 readback이 요약 칸을 모두 담는다
     for (const d of CERT_DOCS) {
       const rb = (certPackage(d).playbook.steps.find((x) => x.id === 's19b') as { fields: string[] }).fields;
       for (const k of APPROVAL_SUMMARIES.get('cert.confirm')!) assert.ok(rb.includes(k), `${d.code} ${k}`);

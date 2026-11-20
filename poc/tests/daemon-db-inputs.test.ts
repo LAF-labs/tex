@@ -1,5 +1,3 @@
-// 데몬(#98) ← db 저장소 계약: daemonProfileInputs + DocumentRepo가 ProfileSnapshot 모양 그대로이고, 규칙표·일정을 바꾸면 데몬 결과가 따라 바뀐다.
-// 엔진 daemon.snapshot(#91 data-service)은 이 둘에 missingReport만 더하면 된다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -9,7 +7,6 @@ import { after, before, describe, it } from 'node:test';
 import { computeExpiries, planNotifications, type ProfileSnapshot, type ScheduleRow as DaemonScheduleRow, type ValidityRuleRow as DaemonRuleRow } from '@sax/daemon';
 import { daemonProfileInputs, DocumentRepo, openDatabase, ProfileRepo, ScheduleRepo, syntheticBizNo, ValidityRuleRepo, type Db, type ScheduleRow, type ValidityRuleRow } from '@sax/db';
 
-// 타입 계약: db 행은 데몬 행에 그대로 들어간다
 const _rule: DaemonRuleRow = {} as ValidityRuleRow;
 const _sched: DaemonScheduleRow = {} as ScheduleRow;
 void _rule;

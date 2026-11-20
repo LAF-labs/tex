@@ -1,18 +1,12 @@
-// 홈택스 전자세금계산서 "발급 목록조회"·"수취 목록조회" [내려받기] 엑셀(09 §5.1 매출 원천 보강, 11 §2.1 매입 원천). 앱 밖에서 직접 발급한 매출은 받을 돈, 받은 매입은 낼 돈 건으로 들인다.
-// 열 근거: 2026-11-11 실화면 기록(목록 그리드 data-col_id: 작성일자·발급일자·전송일자·공급받는자 등록번호·상호·대표자·품목명·합계·공급가액·세액·승인번호).
-// 내려받은 파일의 머리글 글자는 아직 실물로 확인하지 않았다("추정"). 공급자·공급받는자 칸이 같은 이름(상호·대표자명·등록번호)으로 두 번 나오는
-// 한 줄 머리글과, 위 줄에 "공급자"/"공급받는자"가 있는 두 줄 머리글을 모두 받는다. 판정 없음: 줄을 다듬어 돌려줄 뿐이다.
 import type { Cell, SheetOutput, SheetTable } from './sandbox/index.ts';
 import { cellText, isTotalRow, sheetWarnings } from './table.ts';
 import { compact, findDates, normText, parseWon } from './util.ts';
 
 export interface HometaxInvoiceRow {
-  /** 승인번호 숫자 24자리 */
   approvalNo: string;
   writtenOn: string;
   issuedOn: string | null;
   supplierBizNo: string | null;
-  /** 공급자 상호·대표자(수취 목록에서 낼 돈의 거래처가 된다) */
   supplierName: string | null;
   supplierRep: string | null;
   buyerBizNo: string | null;
@@ -49,7 +43,6 @@ const textOf = (v: Cell | undefined) => {
   return t ? t.slice(0, 120) : null;
 };
 
-/** 머리글 한 칸(위 줄 무리 이름과 이은 것) → 역할. 무리 이름이 없으면 같은 이름의 n번째로 공급자/공급받는자를 가른다 */
 function roleOfHeader(h: string, group: 'supplier' | 'buyer' | null, nth: number): Role | null {
   const c = compact(h);
   const buyer = group === 'buyer' || c.includes('공급받는자') || (group === null && nth >= 1);
@@ -82,7 +75,6 @@ function findListHeader(sheet: SheetTable): { headerRow: number; cols: Map<Role,
       const a = compact(cellText(above[i] ?? null));
       if (a) carry = a;
       const group = carry.includes('공급받는자') ? 'buyer' : carry.includes('공급자') ? 'supplier' : null;
-      // 아랫줄이 비었으면(세로로 합친 칸) 윗줄 글자를 머리글로 본다
       const h = cellText(cell) || (r > 0 ? cellText(above[i] ?? null) : '');
       const key = compact(h);
       const nth = seen.get(key) ?? 0;
@@ -90,7 +82,6 @@ function findListHeader(sheet: SheetTable): { headerRow: number; cols: Map<Role,
       const role = roleOfHeader(h, group, nth);
       if (role && !cols.has(role)) cols.set(role, i);
     }
-    // 두 줄 머리글이면 아랫줄이 역할을 더 많이 갖는다(윗줄 무리 이름과 이어 본다)
     if (cols.has('approval') && cols.has('written') && cols.has('total') && (!best || cols.size > best.cols.size)) best = { headerRow: r, cols };
   }
   return best;

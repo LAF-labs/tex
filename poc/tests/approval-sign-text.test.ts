@@ -1,4 +1,3 @@
-// 승인 카드 비가역 한 줄(U3): 승인만으로는 발급되지 않는다. 발급 인증별로 승인 뒤 사람 몫을 말하고, 대화 열(600px) 카드에 들어간다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { buildGateRequest } from '@sax/engine/gate';
@@ -28,7 +27,6 @@ describe('승인 카드: 발급 인증별 비가역 한 줄', () => {
     }
     assert.match(irreversibleText(SIGN_LABEL.cert, true), /인증서 비밀번호/);
     assert.match(irreversibleText(SIGN_LABEL.simple_auth, true), /휴대폰 간편인증/);
-    // 보안카드는 지원하지 않는다(대표 결정 2026-11-19): 옛 라벨은 일반 문구로
     assert.equal(irreversibleText('보안카드', true), irreversibleText(undefined, true));
     assert.ok(!Object.values(SIGN_LABEL).includes('보안카드'));
   });

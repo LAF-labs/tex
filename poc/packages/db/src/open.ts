@@ -19,12 +19,10 @@ export function openDatabase(file: string, key: Uint8Array, opts: Omit<MigrateOp
     const kb = Buffer.from(key);
     db.key(kb);
     kb.fill(0);
-    // 잘못된 키면 여기서 SQLITE_NOTADB
     db.prepare('SELECT count(*) AS n FROM sqlite_master').get();
     db.pragma('temp_store=MEMORY');
     db.pragma('foreign_keys=ON');
     db.pragma('journal_mode=WAL');
-    // 원장 armed·토큰 소비는 전원이 나가도 남아야 한다(D03 §2 R-G7 synchronous=FULL). WAL 기본값은 NORMAL이다.
     db.pragma('synchronous=FULL');
     migrate(db, { ...opts, file });
     if (process.platform !== 'win32') fs.chmodSync(file, 0o600);

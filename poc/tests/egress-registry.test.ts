@@ -1,5 +1,3 @@
-// 레지스트리 egress 허용 목록(팀장 결정 2026-11-06, 데스크톱 #126 업데이터 전제, D09 §8·§8.3, ADR-028):
-// origin은 tax.laf-co.com 하나, GET 경로는 릴리스 매니페스트·status·폐기 키·투명성 로그·stable 인덱스·`.sxp`(엔진 패키지 공급, PR-D2), 쿼리는 leaf·size / from·to만.
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -24,12 +22,10 @@ describe('레지스트리 허용 경로(registryTargetAllowed)', () => {
       `/registry/log/proof/inclusion?leaf=${LEAF}&size=7`,
       `/registry/log/proof/inclusion?size=7&leaf=${LEAF}`,
       '/registry/log/proof/consistency?from=3&to=7',
-      // 엔진 패키지 공급(D09 §8 정적 호스팅): stable 인덱스, 불변 .sxp(id에 점 필수, 데이터 패키지 id의 -, 핫픽스 이름)
       '/registry/stable/index.json',
       '/packages/hometax.invoice.issue@2.1.0.sxp',
       '/packages/payroll.rate-tables@2026.11.1.sxp',
       '/packages/hometax.invoice.issue.hotfix@1.3.0.sxp',
-      // 서명 정책(D03 §7.1, 팀장 결정 2026-11-09 ②): 정확히 이 경로 하나
       '/policy/current.json',
     ];
     for (const t of ok) assert.ok(registryTargetAllowed(t), t);
@@ -84,7 +80,6 @@ describe('레지스트리 허용 경로(registryTargetAllowed)', () => {
       '/registry/log/entries/x.json',
       '/registry/index.json',
       '/packages/a@1.sxp',
-      // 인덱스는 stable만, .sxp는 id 규칙·x.y.z·확장자 그대로
       '/registry/beta/index.json',
       '/registry/hotfix/index.json',
       '/registry/stable/index.json?x=1',

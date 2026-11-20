@@ -1,5 +1,3 @@
-// D02 §6.1 정적 검증 규칙 V-01~V-24(V-03a~l·V-03c′·V-03j′·V-03j″·V-04a·V-25 포함). 레지스트리 CI와 엔진 로더가 같은 함수를 쓴다.
-// 위반은 규칙 번호·스텝·타깃 이름만 담는다(값 없음).
 import { ABORT, buildCfg, commitWindow, dominates, END, FALLOFF, hNode, IRREVERSIBLE_TYPES, isSynthetic, reachable, sccs, type Cfg, type EdgeKind } from './cfg.ts';
 import { compileRe2, isAnchored, re2Problem } from './re2.ts';
 import { schemaViolations } from './schema.ts';
@@ -13,20 +11,15 @@ export interface BundleOutcomes {
 }
 
 export interface ValidateOptions {
-  /** wireId(`<id>_v<ver>`) → 결과. 없으면 decide를 쓰는 IR은 V-07 위반이다(fail-closed). */
   bundles?: ReadonlyMap<string, BundleOutcomes>;
-  /** lookupsUsed의 조회 하위 패키지(id → 파일). verify가 부르는 조회 패키지는 여기 있어야 한다(V-22). */
   lookups?: ReadonlyMap<string, PackageFiles>;
 }
 
 export interface Analysis {
   cfg: Cfg;
   irreversible: Set<string>;
-  /** X → G(X). V-03a를 통과한 X만. */
   gateOf: Map<string, string>;
-  /** X → W(X). */
   windows: Map<string, Set<string>>;
-  /** G → G 앞 readback 스텝 id들(V-03h 역추적). */
   readbackBefore: Map<string, string[]>;
 }
 
@@ -144,15 +137,14 @@ export function irreversibleSteps(sel: SelectorDict, info: Cfg['info']): Set<str
 
 const followUpOf = (s: Step): string | undefined => (s.type === 'human_commit' || s.type === 'send_email' ? s.followUpOf : undefined);
 
-/** V-13: 사용자 데이터 형식 리터럴(NFKC·유사 문자 치환 뒤). */
 const HOMOGLYPH: Record<string, string> = { О: 'O', о: 'o', І: 'I', і: 'i', 'ㅡ': '-', '—': '-', '–': '-', '‐': '-', '−': '-' };
 const USER_DATA = [
-  /\d{3}-?\d{2}-?\d{5}/, // 사업자등록번호
-  /\d{6}-?[1-8]\d{6}/, // 주민·외국인등록번호
-  /[^\s@]+@[^\s@]+\.[^\s@]+/, // 이메일
-  /01[016789]-?\d{3,4}-?\d{4}/, // 휴대전화
-  /\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}/, // 카드
-  /\d{10,}/, // 계좌·긴 숫자
+  /\d{3}-?\d{2}-?\d{5}/,
+  /\d{6}-?[1-8]\d{6}/,
+  /[^\s@]+@[^\s@]+\.[^\s@]+/,
+  /01[016789]-?\d{3,4}-?\d{4}/,
+  /\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}/,
+  /\d{10,}/,
 ];
 export function looksLikeUserData(v: string): boolean {
   const n = [...v.normalize('NFKC')].map((c) => HOMOGLYPH[c] ?? c).join('').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/[Oo](?=\d)|(?<=\d)[Oo]/g, '0');
@@ -165,7 +157,7 @@ const UNIVERSAL_SAMPLES = ['', 'a', '아무 문장 123', 'confirm? 확인'];
 export function validatePackage(pkg: PackageFiles, opts: ValidateOptions = {}): Violation[] {
   const v: Violation[] = [];
   v.push(...schemaViolations('playbook-ir', pkg.playbook), ...schemaViolations('selectors', pkg.selectors), ...schemaViolations('manifest', pkg.manifest));
-  if (v.length) return v; // 스키마가 깨진 문서의 의미 검사는 하지 않는다(타입 가정이 깨진다)
+  if (v.length) return v;
   v.push(...semanticViolations(pkg, opts).violations);
   return v;
 }
@@ -183,7 +175,6 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
   const steps = [...info.values()].map((i) => i.step);
   const entry = (t: string) => sel.entries[t];
 
-  // ---- V-01: 정규식(RE2) ----
   const re = (rule: string, pattern: string | undefined, where: string, step?: string) => {
     if (pattern === undefined) return;
     const p = re2Problem(pattern);
@@ -203,20 +194,17 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
       else re('V-01', strings[k], `strings ${k}(rowVerdict)`, s.id);
     }
     if (s.type === 'submit' && s.expectConfirm && strings[s.expectConfirm] !== undefined) re('V-01', strings[s.expectConfirm], `strings ${s.expectConfirm}(expectConfirm)`, s.id);
-    // IR rev v1.3.5: 대화상자 문구 패턴은 RE2이고 ^…$ 앵커(전체 문구에 맞춘다, expectConfirm과 같은 이유).
     if (s.type === 'wait' && s.for === 'dialog' && s.value && strings[s.value] !== undefined) {
       re('V-01', strings[s.value], `strings ${s.value}(wait dialog)`, s.id);
       if (!isAnchored(strings[s.value]!)) bad('V-01', 'wait dialog 패턴이 ^…$ 앵커가 아님', s.id);
     }
   }
-  // IR rev v1.3.7: 공지 레이어 닫기는 closeAffordance 항목만(커밋·비밀 아님, 누르면 닫히기만 한다).
   if (ir.closeLayers && !info.has(ir.closeLayers.until)) bad('V-02', `closeLayers.until ${ir.closeLayers.until}가 스텝에 없음`);
   for (const k of ir.closeLayers?.targets ?? []) {
     const e = entry(k);
     if (!e) bad('V-02', `closeLayers ${k}가 셀렉터 사전에 없음`, undefined, k);
     else if (!e.closeAffordance || e.commits || isSecretEntry(e)) bad('V-02', 'closeLayers 항목이 closeAffordance가 아니거나 커밋·비밀 항목', undefined, k);
   }
-  // IR rev v1.3.6: 닫을 안내 창 제목 패턴은 RE2이고 ^…$ 앵커(제목 전체에 맞춘다. 다른 창을 닫지 않게).
   for (const k of ir.closeWindows ?? []) {
     if (strings[k] === undefined) bad('V-02', `closeWindows ${k}가 strings에 없음`);
     else {
@@ -229,10 +217,8 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     if (strings[k] === undefined) bad('V-01', `patternRef ${k}가 strings에 없음`);
     else re('V-01', strings[k], `strings ${k}`);
   }
-  // 전제·사후조건 전용 조건(§4.1)은 스텝 조건에 쓸 수 없다.
   for (const s of steps) for (const c of stepConds(s)) walkCond(c, (x) => ('inputVerified' in x || 'profileHas' in x || 'artifact' in x) && bad('V-01', '전제·사후조건 전용 조건을 스텝에서 씀', s.id));
 
-  // ---- V-02: 타깃 존재·속성, strings 키 존재 ----
   for (const s of steps) {
     for (const t of stepTargets(s)) if (!entry(t.ref)) bad('V-02', `${t.role} ${t.ref}가 셀렉터 사전에 없음`, s.id, t.ref);
     const keys: string[] = [];
@@ -252,7 +238,6 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     if (s.type === 'secret_fill') {
       const e = entry(s.target);
       if (e && e.secretKind !== s.secret) bad('V-02', `secret_fill.secret과 타깃 secretKind가 다름`, s.id, s.target);
-      // 독립 secret_fill은 로그인 구간 칸만(sign 용도 칸은 signFlow·sign 흐름 안에서만, ADR-026).
       if (e?.secretKind && e.secretPurpose !== 'login') bad('V-02', `secretPurpose ${e.secretPurpose ?? '없음'} 칸을 독립 secret_fill로 씀`, s.id, s.target);
     }
     if (s.type === 'human' && s.kind === 'secret' && s.target && entry(s.target) && !entry(s.target)!.secretKind) bad('V-02', 'human:secret 타깃이 비밀 칸이 아님', s.id, s.target);
@@ -266,7 +251,6 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
       }
       const rl = s.signFlow?.rowLabel;
       if (rl && isSecretEntry(entry(rl))) bad('V-02', 'signFlow.rowLabel이 비밀 칸', s.id, rl);
-      // IR rev v1.3.5: 열기·방식 선택은 무장 구간 클릭이라 commits:true + 같은 효과, 서명 화면·끝 표지는 읽기만 하는 비커밋·비밀 아닌 항목.
       const sf = s.signFlow;
       for (const t of [...(sf?.openTargets ?? []), ...Object.values(sf?.methodTargets ?? {})]) {
         const te = t ? entry(t) : undefined;
@@ -280,7 +264,6 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
       }
       if (sf?.methodTargets && sf.method !== '$profile.signMethod' && !sf.methodTargets[sf.method]) bad('V-02', 'signFlow.methodTargets에 그 방식 항목이 없음', s.id);
     }
-    // IR rev v1.3.6: 목록 고르기는 rows 항목만, 사라짐 기다리기는 비밀 아닌 항목만. 둘 다 커밋·비밀 항목이 아니다.
     const picks = [...(s.type === 'pick' ? [s.target] : []), ...(s.type === 'submit' && s.signFlow?.certPick ? [s.signFlow.certPick.target] : [])];
     for (const t of picks) {
       const te = entry(t);
@@ -292,13 +275,11 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     if (s.type === 'assert') walkCond(s.cond, (x) => 'fieldsFilled' in x && x.fieldsFilled.fields.forEach((f) => !fieldKeyEntries.has(f) && bad('V-02', `fieldsFilled ${f}의 항목이 없음`, s.id)));
   }
 
-  /** 선택 입력: required가 아니고 기본값도 없다(V-03m 이메일). */
   const optionalInput = (n: string | null) => {
     const d = n ? ir.inputs[n] : undefined;
     return !!d && d.required !== true && d.default === undefined;
   };
 
-  // ---- V-03: 커밋 구간 ----
   const gates = steps.filter((s): s is StepOf<'gate'> => s.type === 'gate');
   const gateOf = new Map<string, string>();
   const windows = new Map<string, Set<string>>();
@@ -313,7 +294,6 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     gateOf.set(x, gs[0]!.id);
   }
   for (const g of gates) {
-    // V-03i: 주 비가역 정확히 1개 + 그 후속.
     const auth = g.authorizes.filter((a) => info.has(a));
     for (const a of g.authorizes) if (!info.has(a)) bad('V-03i', `authorizes ${a}가 없는 스텝`, g.id);
     const notIrr = auth.filter((a) => !irreversible.has(a));
@@ -324,7 +304,6 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
       const fu = followUpOf(info.get(a)!.step);
       if (fu && fu !== primaries[0]) bad('V-03i', `${a}의 followUpOf가 이 게이트의 주 비가역이 아님`, g.id);
     }
-    // V-03h: G 앞 readback, R→G 사이 assert만.
     const rbs: string[] = [];
     const seen = new Set<string>();
     const stack = [g.id];
@@ -350,23 +329,17 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     const rbFields = new Set(rbs.flatMap((r) => (info.get(r)!.step as StepOf<'readback'>).fields));
     const primary = primaries[0];
     if (primary && !followUpOf(info.get(primary)!.step)) for (const f of CARD_REQUIRED_FIELDS) if (rbs.length && !rbFields.has(f) && hasTargetLandmark(info.get(primary)!.step)) bad('V-03h', `카드 필수 필드 ${f}가 readback에 없음`, g.id);
-    // V-03j′: 날짜형 fieldKey가 있으면 입력값 대조 assert가 R→G 사이에 필수.
     const asserts = [...seen].map((n) => info.get(n)?.step).filter((s): s is StepOf<'assert'> => s?.type === 'assert');
     const dateFields = [...rbFields].filter((f) => DATE_KEY.test(f) || (fieldKeyEntries.get(f) ?? []).some((k) => sel.entries[k]!.inputType === 'date'));
     for (const f of dateFields) {
       const has = asserts.some((a) => 'readbackEquals' in a.cond && a.cond.readbackEquals.fieldKey === f && a.cond.readbackEquals.ref.startsWith('$inputs.'));
       if (!has) bad('V-03j′', `날짜 필드 ${f}의 readbackEquals{$inputs} assert가 게이트 앞에 없음`, g.id);
     }
-    // V-03m(팀장 결정 2026-11-07, D02 §8 s19f 일반화): 게이트가 보낼 금액·상대방 fieldKey는 R→G 사이 assert에서 $inputs와 대조해야 한다.
-    // 합계처럼 입력 인자가 없는 금액은 sumEquals(s19d)의 total이고 parts가 모두 $inputs 대조된 것이면 된다.
-    // assert의 all 안은 셈하고 any·not 안은 셈하지 않는다(그 대조가 실패해도 통과할 수 있다).
     const leaves = asserts.flatMap((a) => conjuncts(a.cond));
     const inputEq = new Set(leaves.flatMap((c) => ('readbackEquals' in c && c.readbackEquals.ref.startsWith('$inputs.') ? [c.readbackEquals.fieldKey] : [])));
     const sums = leaves.flatMap((c) => ('sumEquals' in c ? [c.sumEquals] : []));
     const covered = (f: string) => inputEq.has(f) || sums.some((x) => x.total === f && x.parts.every((p) => inputEq.has(p)));
     for (const f of rbFields) if ((AMOUNT_KEY.test(f) || COUNTERPART_KEY.test(f)) && !covered(f)) bad('V-03m', `금액·상대방 필드 ${f}의 $inputs 대조 assert(readbackEquals 또는 대조된 parts의 sumEquals)가 게이트 앞에 없음`, g.id);
-    // 받는 이메일(팀장 결정 2026-11-07): 입력이 있으면 readbackEquals{$inputs}, 없으면 비었음(readbackEmpty) 중 하나가 반드시 있어야 한다.
-    // 선택 입력(required 아님·기본값 없음)과의 대조는 ifAbsent:'empty'여야 입력이 빈 실행도 덮는다.
     for (const f of rbFields) {
       if (!EMAIL_KEY.test(f)) continue;
       const eqs = leaves.flatMap((c) => ('readbackEquals' in c && c.readbackEquals.fieldKey === f && c.readbackEquals.ref.startsWith('$inputs.') ? [c.readbackEquals] : []));
@@ -378,13 +351,10 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
   for (const [x, g] of gateOf) {
     const s = info.get(x)!.step;
     const fu = followUpOf(s);
-    // V-03b. 후속 비가역은 관측 간선(R-C2)을 뺀 그래프로 본다: 핸드오프 재개 뒤의 verify committed에서는
-    // 후속 토큰을 발급하지 않으므로(D03 §3 후속 토큰은 같은 커밋 구간의 committed 전이에서만) 그 길로는 Y를 실행할 수 없다.
     if (!(fu ? (cfg.domData.get(x)?.has(g) ?? false) : dominates(cfg, g, x))) bad('V-03b', `게이트 ${g}가 ${x}를 지배하지 않음`, x);
     const w = commitWindow(cfg, g, x, { followUp: !!fu });
     windows.set(x, w);
     if (fu) {
-      // V-03c′
       const verifyOfFu = (() => {
         const f = info.get(fu)?.step;
         return f && 'verify' in f && typeof f.verify === 'string' ? f.verify : undefined;
@@ -406,8 +376,6 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
       const preds = [...(cfg.pred.get(x)?.keys() ?? [])].filter((p) => p !== hNode(x));
       if (!preds.length || preds.some((p) => info.get(p)?.step.type !== 'readback')) bad('V-03c′', '후속 비가역 직전에 readback이 없음', x);
     } else {
-      // V-03c. 구간 안 스텝 자신의 onFail 핸드오프 재개(H:m → m, m ∈ W)는 V-03f가 요구하는 모양이고, HandedOff 진입이 토큰을
-      // 폐기하므로(R-G2) 그 길로는 X를 실행할 수 없다(V-03d와 같은 판단). 그 노드는 구간 스텝으로 세지 않는다.
       for (const n of w) {
         if (n === g || n === x) continue;
         if (n.startsWith('H:') && w.has(n.slice(2)) && n === hNode(n.slice(2)) && cfg.succ.get(n)?.has(n.slice(2))) continue;
@@ -416,20 +384,15 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
         else if (!(ns.type === 'wait' || ns.type === 'assert' || (ns.type === 'extract' && ns.readback === true))) bad('V-03c', `커밋 구간에 ${ns.type}`, x, n);
       }
     }
-    // V-03d: 단일 진입(관측 간선 포함). 구간 안 스텝 자신의 핸드오프 재개(H:n → n)는 토큰이 폐기된 뒤라 진입으로 보지 않는다.
     for (const n of w) {
       if (n === g) continue;
       for (const [p, k] of cfg.pred.get(n) ?? []) {
         if (w.has(p) || p === hNode(n)) continue;
-        // 후속 비가역: 핸드오프 재개·관측 간선으로 들어오는 길에서는 후속 토큰이 없다(R-G2, commitWindow 설명). 실행기가 집행한다(M2-3).
         if (fu && (k === 'observed' || p.startsWith('H:') || p.startsWith('SECRET:'))) continue;
         bad('V-03d', `커밋 구간 ${n}에 구간 밖 ${p}에서 들어오는 간선(${k})`, x);
       }
     }
-    // V-03e
     if (info.get(x)!.repeats.length) bad('V-03e', '비가역 스텝이 repeat 안에 있음', x);
-    // V-03f
-    // W(X)와 W(Y) 모두 구간 안 모든 스텝(후속 비가역 Y의 구간에 낀 verify·capture·wait 등 포함, D02 V-03f).
     for (const n of w) {
       if (n === g) continue;
       const ns = info.get(n)?.step;
@@ -444,7 +407,6 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
         if (info.has(t) && reachable(t, fu ? withoutObserved(cfg) : cfg.succ, new Set([g])).has(x)) bad('V-03f', `verify.not_committed에서 게이트를 지나지 않고 ${x}로 돌아옴`, s.verify);
       }
     }
-    // V-03j: 커밋 랜드마크 안 fieldKey 전부가 readback에.
     const tgt = 'target' in s && typeof s.target === 'string' ? s.target : undefined;
     const rbs = readbackBefore.get(g) ?? [];
     if (tgt && entry(tgt) && rbs.length && !fu) {
@@ -455,17 +417,12 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
       }
     }
   }
-  // V-03g: commits 타깃을 누르는 click·press·select는 submit으로만(V-04: verify가 없다).
-  // V-03k는 irreversibleSteps가 press Enter를 비가역으로 계산하는 것으로 집행된다.
-  // V-03l: 게이트를 지배하는 체크포인트는 url + reload.
   for (const s of steps) {
     if (s.type !== 'checkpoint') continue;
     if (gates.some((g) => dominates(cfg, s.id, g.id)) && (!s.url || s.reentry !== 'reload')) bad('V-03l', '게이트를 지배하는 체크포인트에 url·reentry:reload가 없음', s.id);
   }
-  // V-03j″: 실패 신호 (css, ^…$ 문구) 쌍.
   for (const s of steps) if (s.type === 'verify') for (const f of s.failSignals ?? []) if (!f.css.trim() || !isAnchored(f.text)) bad('V-03j″', '실패 신호 항목에 앵커된 문구가 없음', s.id);
 
-  // ---- V-04 ----
   for (const x of irreversible) {
     const s = info.get(x)!.step;
     if (s.type === 'click' || s.type === 'press' || s.type === 'select') {
@@ -492,9 +449,6 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
       bad('V-04', 'baseline:none인데 앞선 verify.bind 값을 키로 쓰지 않음', vid);
     }
   }
-  // ---- V-04a(팀장 결정 2026-11-06) ----
-  // 비가역 X마다 자기 verify. 두 X의 verify 필드가 같은 스텝을 가리키면 그 판정을 어느 X의 원장 행에 붙일지 정할 수 없다
-  // (잘못 붙이면 중복 발급). 후속 Y가 W(Y) 안에서 Xc의 verify를 다시 지나는 것(V-03c′)은 X.verify 필드가 아니라 허용한다.
   const xByVerify = new Map<string, string>();
   for (const x of irreversible) {
     const s = info.get(x)!.step;
@@ -504,21 +458,15 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     if (first) bad('V-04a', `${first}와 같은 verify를 가리킴`, x, vid);
     else xByVerify.set(vid, x);
   }
-  // baseline:none 일반 규칙(§4.4)
   for (const s of steps) if (s.type === 'verify' && s.lookup.baseline === 'none' && !Object.values(s.lookup.match).some((r) => boundByVerify(steps, refHead(r, 'vars')))) bad('V-04', 'baseline:none은 앞선 verify.bind 값을 키로 쓸 때만', s.id);
-  // V-03n(팀장 결정 2026-11-06): 사후 부수효과 확인(baseline:none)은 행이 있는 것만으로 성공이 아니다(메일 '전송실패' 행도 행이다).
-  // 그래서 상태 문구 판정 rowVerdict가 필수다. verify별 상한 maxMs는 이 사후 확인에만 쓸 수 있다(주 비가역 verify는 앱 하한 300초를 지킨다).
   for (const s of steps) {
     if (s.type !== 'verify') continue;
     if (s.lookup.baseline === 'none' && !s.lookup.rowVerdict) bad('V-03n', 'baseline:none 사후 확인 verify에 rowVerdict가 없음', s.id);
     if (s.lookup.maxMs !== undefined && s.lookup.baseline !== 'none') bad('V-03n', 'verify.lookup.maxMs는 baseline:none 사후 확인에만', s.id);
   }
 
-  // ---- V-05 ----
   for (const [id, i] of info) if (i.step.type === 'repeat' && i.repeats.length >= 2) bad('V-05', 'repeat 중첩이 2를 넘음', id);
 
-  // ---- V-06·V-25(ADR-039) ----
-  // portal fixture(엔진 시험 가짜 페이지)는 http://127.0.0.1:PORT·http://[::1]:PORT만, 실제 포털은 https·포트 없음(V-06)만. 섞이면 V-25.
   const fixture = manifest.portal === FIXTURE_PORTAL || ir.portal === FIXTURE_PORTAL || sel.portal === FIXTURE_PORTAL;
   for (const d of manifest.domains) {
     if (fixture && !FIXTURE_HOSTS.has(d)) bad('V-25', `fixture 패키지의 domains ${d}가 127.0.0.1·[::1]가 아님`);
@@ -540,7 +488,6 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     if (p) bad('V-06', p, s.id);
   }
 
-  // IR rev v1.3.5: 엔드포인트 host는 manifest.domains 안이어야 한다(fixture는 127.0.0.1·[::1]:PORT).
   for (const m of [...sel.commitEndpoints.map((c) => c.match), ...sel.knownEndpoints]) {
     if (m.host === undefined) continue;
     let h: string;
@@ -553,7 +500,6 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     if (!hostAllowed(h, manifest.domains) && !(fixture && FIXTURE_HOSTS.has(h))) bad('V-06', `엔드포인트 host ${m.host}가 manifest.domains 밖`);
   }
 
-  // ---- V-07 ----
   for (const s of steps) {
     if (s.type !== 'decide') continue;
     const b = opts.bundles?.get(s.bundle);
@@ -565,7 +511,6 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     const got = new Set(Object.keys(s.on));
     for (const o of want) if (!got.has(o)) bad('V-07', `decide.on에 결과 ${o}가 없음`, s.id);
     for (const o of got) if (!want.has(o)) bad('V-07', `decide.on의 ${o}는 번들 결과가 아니거나 예약 결과`, s.id);
-    // V-07b
     const u = s.on.unknown;
     if (u && u !== 'handoff' && u !== 'abort') {
       const back = info.has(u) && reachable(u, explicitSucc(cfg), irreversible).has(s.id);
@@ -573,8 +518,6 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     }
   }
 
-  // ---- V-08 ----
-  // IR rev v1.3.8: 보안카드는 card 정의(새 창의 칸·요청 글자·[확인])가 있어야 한다. 옛 rowLabel만으로는 칠 수 없다.
   for (const s of steps) if (s.type === 'submit' && s.signFlow && Object.values(s.signFlow.steps ?? {}).some((a) => a?.includes('secret_fill:security_card')) && !s.signFlow.card) bad('V-08', 'signFlow 보안카드에 card 정의 없음', s.id);
   for (const s of steps) if (s.type === 'sign' && (s.then ?? []).includes('secret_fill:security_card') && !s.card) bad('V-08', 'sign 보안카드에 card 정의 없음', s.id);
   for (const s of steps) {
@@ -588,14 +531,12 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     }
     const ce = entry(card.confirmTarget);
     if (ce && s.type === 'submit') {
-      // 발급 서명 [확인하기]는 공동인증서 confirmTarget과 같은 규칙: commits:true, submit 타깃과 같은 commitEffect
       const se = entry(s.target);
       if (!ce.commits) bad('V-02', 'card.confirmTarget이 commits:true가 아님', s.id, card.confirmTarget);
       else if (se && ce.commitEffect !== se.commitEffect) bad('V-02', 'card.confirmTarget의 commitEffect가 submit 타깃과 다름', s.id, card.confirmTarget);
     }
   }
 
-  // ---- V-10 ----
   const humans = new Map(steps.filter((s): s is StepOf<'human'> => s.type === 'human').map((s) => [s.id, s]));
   for (const h of humans.values()) {
     if (h.kind !== 'captcha') continue;
@@ -604,7 +545,6 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     if (ns?.type !== 'fill' || ns.value !== `$human.${h.id}`) bad('V-10', '캡차 다음 스텝이 $human 값을 넣는 fill이 아님', h.id);
   }
 
-  // ---- V-11: 도달성 ----
   const fromEntry = reachable(cfg.entry, cfg.succ);
   for (const id of info.keys()) if (!fromEntry.has(id)) bad('V-11', '진입점에서 도달할 수 없음', id);
   if (fromEntry.has(FALLOFF)) {
@@ -624,7 +564,6 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
   }
   for (const n of fromEntry) if (!canFinish.has(n) && n !== FALLOFF) bad('V-11', `${n}에서 end·abort에 닿을 수 없음`, isSynthetic(n) ? undefined : n);
 
-  // ---- V-12 ----
   const kinds = (xs: string[]) => [...xs].sort().join(',');
   if (kinds(manifest.profileKinds) !== kinds(ir.profileKinds)) bad('V-12', 'manifest와 IR의 profileKinds가 다름');
   if (manifest.portal !== ir.portal || sel.portal !== ir.portal) bad('V-12', 'manifest·IR·selectors의 portal이 다름');
@@ -633,7 +572,6 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
   if (usesBizProfile && ir.profileKinds.includes('personal')) bad('V-12', '$profile.bizNo를 쓰는데 personal 프로필 허용');
   for (const s of steps) if (s.type === 'secret_fill' && s.secret === 'security_card' && ir.profileKinds.includes('personal') && !ir.profileKinds.includes('business')) bad('V-12', '보안카드는 사업자 프로필 흐름', s.id);
 
-  // ---- V-13·V-21: 상수 ----
   for (const s of steps) {
     const c = s.type === 'fill' ? s.value : s.type === 'select' ? s.option : undefined;
     if (c === undefined || c.startsWith('$')) continue;
@@ -644,7 +582,6 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
   for (const [k, e] of Object.entries(sel.entries)) for (const c of e.allowedConstants ?? []) if (looksLikeUserData(c)) bad('V-13', 'allowedConstants에 사용자 데이터 형식 리터럴', undefined, k);
   for (const s of steps) for (const c of stepConds(s)) walkCond(c, (x) => 'varEquals' in x && typeof x.varEquals.value === 'string' && looksLikeUserData(x.varEquals.value) && bad('V-13', 'varEquals 상수에 사용자 데이터 형식', s.id));
 
-  // ---- V-14 ----
   const effects = new Set<Effect>();
   for (const x of irreversible) {
     const s = info.get(x)!.step;
@@ -659,17 +596,13 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
   }
   for (const e of ir.effects) if (!manifest.effects.includes(e)) bad('V-14', `IR effects ${e}가 manifest에 없음`);
 
-  // ---- V-15: 값 참조 ----
   checkRefs(ir, cfg, steps, irreversible, bad);
 
-  // ---- V-17 ----
   const cpNames = steps.filter((s): s is StepOf<'checkpoint'> => s.type === 'checkpoint').map((s) => s.name);
   for (const n of new Set(cpNames)) if (cpNames.filter((x) => x === n).length > 1) bad('V-17', `체크포인트 이름 ${n} 중복`);
 
-  // ---- V-18: repeat 밖 순환은 loopGuard ----
   checkLoops(cfg, bad);
 
-  // ---- V-20: 비밀 칸 읽기 금지 ----
   const secretIds = new Set(Object.entries(sel.entries).filter(([, e]) => isSecretEntry(e)).map(([k]) => k));
   for (const s of steps) {
     for (const t of stepTargets(s)) {
@@ -689,7 +622,6 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     if (src.some((x) => secretIds.has(x))) bad('V-20', 'readbackOf가 비밀 칸을 가리킴', undefined, k);
   }
 
-  // ---- V-22: 조회 하위 플레이북 ----
   for (const s of steps) {
     if (s.type !== 'verify') continue;
     const used = manifest.lookupsUsed.find((l) => l.id === s.lookup.playbook);
@@ -703,12 +635,9 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
   }
   if (manifest.kind === 'lookup') v.push(...lookupViolations(pkg, cfg));
 
-  // ---- V-23 ----
   for (const s of steps) if (s.type === 'save_pdf' && s.nameTemplate !== undefined && nameTemplateProblem(s.nameTemplate)) bad('V-23', `nameTemplate ${nameTemplateProblem(s.nameTemplate)}`, s.id);
-  // ---- V-23a: Phase 1 엔진이 하는 save_pdf strategy만(print·page_pdf). 그 밖은 실행 중에 터지지 않게 로드 때 거부(팀장 결정 2026-11-06) ----
   for (const s of steps) if (s.type === 'save_pdf' && !SAVE_PDF_STRATEGIES.has(s.strategy)) bad('V-23a', `save_pdf strategy ${s.strategy}는 이 엔진이 지원하지 않음(print·page_pdf만)`, s.id);
 
-  // ---- V-24 ----
   for (const s of steps) {
     if (s.type !== 'submit' || !s.expectConfirm) continue;
     const p = strings[s.expectConfirm];
@@ -721,7 +650,7 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     try {
       r = compileRe2(p);
     } catch {
-      continue; // V-01이 이미 보고
+      continue;
     }
     const inner = p.slice(1, -1);
     if (/^(\.\*|\.\+|\[\\s\\S\][*+]|\(\.\*\)|\(\.\+\))$/.test(inner) || UNIVERSAL_SAMPLES.some((x) => x === '' && r.test(x)) || UNIVERSAL_SAMPLES.filter((x) => r.test(x)).length >= 3) bad('V-24', 'expectConfirm이 빈 문자열이나 임의 문장에 맞음', s.id);
@@ -734,7 +663,6 @@ function withoutObserved(cfg: Cfg): Cfg['succ'] {
   return new Map([...cfg.succ].map(([a, m]) => [a, new Map([...m].filter(([, k]) => k !== 'observed'))] as const));
 }
 
-/** 명시 간선만(암묵 세션 복귀·되감기·복구·관측 간선 제외). V-07b 대기 루프 판정용. */
 function explicitSucc(cfg: Cfg): Cfg['succ'] {
   const keep = new Set<EdgeKind>(['fall', 'body', 'out', 'fail', 'resume']);
   return new Map([...cfg.succ].map(([a, m]) => [a, new Map([...m].filter(([b, k]) => keep.has(k) && b !== a && !(a.startsWith('H:') && a === hNode(b))))] as const));
@@ -863,7 +791,6 @@ function checkRefs(ir: PlaybookIR, cfg: Cfg, steps: Step[], irreversible: Set<st
           use(`$readback.${x.readbackEquals.fieldKey}`, s.id, 'other');
           use(x.readbackEquals.ref, s.id, 'other');
         }
-        // sumEquals는 readback 값만 쓴다(D02 §8 s19d): parts·total 모두 그 앞 readback이 지배해야 한다.
         if ('sumEquals' in x) for (const f of [...x.sumEquals.parts, x.sumEquals.total]) use(`$readback.${f}`, s.id, 'other');
         if ('readbackEmpty' in x) use(`$readback.${x.readbackEmpty}`, s.id, 'other');
         if ('inputPresent' in x && !ir.inputs[x.inputPresent]) bad('V-15', `inputPresent ${x.inputPresent}가 선언되지 않음`, s.id);
@@ -887,22 +814,18 @@ function checkLoops(cfg: Cfg, bad: (rule: string, message: string, step?: string
     const out: string[] = [];
     for (const [m, k] of cfg.succ.get(n) ?? []) {
       if (!counted.includes(k) || !keep(m)) continue;
-      // repeat 본문 끝 → 헤더는 repeat가 상한을 집행한다.
       if (k === 'fall' && info.get(m)?.step.type === 'repeat' && info.get(n)?.repeats.at(-1) === m) continue;
-      // 자기 자신의 핸드오프 재개(H:n → n)는 사람 차례가 상한이다.
       if (n === hNode(m)) continue;
       out.push(m);
     }
     return out;
   };
-  // 게이트를 지나는 순환은 매번 사람 승인이 상한이다. 게이트와 합성 노드 일부를 뺀다.
   const nodes = [...cfg.succ.keys()].filter((n) => info.get(n)?.step.type !== 'gate' && n !== END && n !== ABORT && n !== FALLOFF);
   const keepAll = (m: string) => nodes.includes(m);
   const keepUnguarded = (m: string) => nodes.includes(m) && guardFree(m);
   for (const c of sccs(nodes, (n) => edge(n, keepAll))) {
     const cyclic = c.length > 1 || edge(c[0]!, keepAll).includes(c[0]!);
     if (!cyclic) continue;
-    // 고리 하나하나에 loopGuard가 있는지: 가드 있는 노드를 빼고도 남는 순환이 있으면 위반.
     const sub = c.filter(guardFree);
     for (const r of sccs(sub, (n) => edge(n, (m) => sub.includes(m) && keepUnguarded(m)))) {
       if (r.length > 1 || edge(r[0]!, (m) => sub.includes(m)).includes(r[0]!)) bad('V-18', `repeat 밖 순환(${r.filter((n) => !isSynthetic(n)).sort().join(',')})에 loopGuard가 없음`, r.find((n) => !isSynthetic(n)));
@@ -923,8 +846,6 @@ export function lookupViolations(pkg: PackageFiles, cfg = buildCfg(pkg.playbook)
     for (const t of stepTargets(s)) if (sel.entries[t.ref]?.commits) v.push({ rule: 'V-22', step: s.id, target: t.ref, message: '조회 패키지가 commits:true 타깃을 참조' });
     if (s.type === 'click' && !sel.entries[s.target]?.navigationOnly) v.push({ rule: 'V-22', step: s.id, target: s.target, message: '조회 패키지 click은 navigationOnly 항목만' });
     if (s.type === 'fill') {
-      // WebSquare 검색 조건 칸은 input type=text라 접근성 역할이 textbox다(홈택스 민원신청 처리결과 민원명, 5차 예행 run-a82e53d3).
-      // 그래서 textbox는 사전 inputType이 text일 때만 받는다. 조회 액추에이터는 무장하지 않고 click은 navigationOnly뿐이라 이 칸으로 접수할 수 없다.
       const e = sel.entries[s.target];
       const role = e?.role;
       if (role !== 'searchbox' && role !== 'combobox' && !(role === 'textbox' && e?.inputType === 'text')) v.push({ rule: 'V-22', step: s.id, target: s.target, message: '조회 패키지 fill은 searchbox·combobox·textbox(inputType text)만' });

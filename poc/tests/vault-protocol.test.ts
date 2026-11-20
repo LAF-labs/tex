@@ -1,5 +1,3 @@
-// 금고 IPC 계약(packages/vault/src/protocol.ts): 포트별 RPC 표, secretInput 결속(oneshot·store), R-C1 해시(D05 §3.3·§3.8, D03 §5.4).
-// Chrome을 띄우지 않는다.
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import {
@@ -25,27 +23,21 @@ describe('금고 IPC 계약: 포트별 RPC', () => {
       assert.ok(RPC_BY_PORT.engine.includes(m), m);
       assert.ok(!RPC_BY_PORT.control.includes(m), `${m}는 main이 부르지 않는다`);
     }
-    // 장기 키 연산: main(계정·기기·페어링, remote-ports.ts)만. 엔진 포트에는 없다: 엔진이 뚫려도 기기 키로 DPoP·계정 작업에 서명하지 못한다
-    // (게이트웨이 헤더는 main이 만들어 준다, 팀장 결정 2026-11-06). 비밀 입력 포트에도 없다.
     for (const m of ['crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen', 'crypto.linkKey', 'crypto.rkSeal', 'crypto.rkImport', 'crypto.shareKey', 'crypto.signShare']) {
       assert.ok(RPC_BY_PORT.control.includes(m), m);
       assert.ok(!RPC_BY_PORT.engine.includes(m), `${m}는 엔진이 부를 수 없다`);
       assert.ok(!RPC_BY_PORT.secretInput.includes(m), m);
     }
-    // 계정 갱신 토큰: main만 읽고 쓴다(ADR-038 (f)). 엔진·비밀 입력 포트에는 없다.
     const ACCOUNT_REFRESH = ['account.refresh.read', 'account.refresh.write', 'account.refresh.forget'];
     for (const m of ACCOUNT_REFRESH) {
       assert.ok(RPC_BY_PORT.control.includes(m), m);
       assert.ok(!RPC_BY_PORT.engine.includes(m), `${m}는 엔진이 부를 수 없다`);
       assert.ok(!RPC_BY_PORT.secretInput.includes(m), m);
     }
-    // 개인키·사이트 비밀을 꺼내는 메서드는 없다(D05 §5.1). 예외는 하나뿐이다: account.refresh.read는 계정 자격을 main(control)에게 준다.
-    // 규칙 ②는 사이트 비밀에 대한 것이고 계정 자격은 main이 세션 토큰을 드는 것과 같은 등급이다(팀장 결정 2026-11-09, D05 §2). 위에서 control 전용임을 확인했다.
     for (const ms of Object.values(RPC_BY_PORT)) for (const m of ms) if (m !== 'account.refresh.read') assert.doesNotMatch(m, /private|export|getKey|reveal|read(Secret)?$/i);
   });
 
   it('비밀 종류 표: 인증서 비밀번호는 기억(저장 가능)하고 홈택스에만 넣는다, 모든 종류에 origin 목록이 있다', () => {
-    // 대표 지시 2026-11-13(ADR-020 결정 2 갱신): 처음 넣은 인증서 비밀번호를 금고가 기억하고 다음부터 넣는다.
     assert.ok((STORABLE_KINDS as readonly string[]).includes('cert_password'));
     for (const k of SECRET_KINDS) assert.ok(Object.hasOwn(SECRET_ORIGINS, k), k);
     assert.deepEqual(SECRET_ORIGINS.cert_password, ['hometax.go.kr']);
@@ -56,7 +48,6 @@ describe('금고 IPC 계약: 포트별 RPC', () => {
 describe('secretInput 결속 검사', () => {
   it('oneshot: mode 없음·oneshot 허용, 필요한 필드만 복사', () => {
     assert.deepEqual(parseSecretInputBind({ runId: 'r1', kind: 'portal_password', scope: 'business', extra: 'x' }), { runId: 'r1', kind: 'portal_password', scope: 'business' });
-    // 칸 번호(row)는 보안카드 것이었다(대표 결정 2026-11-19 지원 안 함): 붙어 와도 복사하지 않는다
     assert.deepEqual(parseSecretInputBind({ mode: 'oneshot', runId: 'r1', kind: 'cert_password', scope: 'personal', row: 35 }), { runId: 'r1', kind: 'cert_password', scope: 'personal' });
   });
 
@@ -75,7 +66,6 @@ describe('secretInput 결속 검사', () => {
     });
     const base = { mode: 'store', kind: 'portal_password', scope: 'business', notice: { version: 't06-v1' } };
     for (const bad of [
-      // cert_password 저장 결속은 받는다(설정 > 발급 인증 저장, 대표 지시 2026-11-14). 저장 못 하는 종류는 아니다.
       { ...base, kind: 'not_a_kind' }, { ...base, kind: 'security_card' }, { ...base, notice: undefined }, { ...base, notice: { version: '' } }, { ...base, notice: { version: 'a b' } },
       { ...base, runId: 'r1' }, { ...base, scope: '../x' },
     ]) assert.equal(parseSecretInputBind(bad), null, JSON.stringify(bad));
@@ -99,7 +89,6 @@ describe('secretInput 포트: 결속 모드가 메서드를 정한다', () => {
   });
 
   it('oneshot 결속 포트에서 secret.store는 거부한다', async () => {
-    // 금고가 secret.needed를 보낸 결속만 붙는다(요청 기록을 직접 넣는다).
     (h.vault as unknown as { needs: Map<string, number> }).needs.set('r1|portal_password|business',Date.now() + 60_000);
     const port = h.secretPort({ runId: 'r1', kind: 'portal_password', scope: 'business' });
     await assert.rejects(port.rpc('secret.store', { entries: [{ field: 'pw', bytes: new Uint8Array([1, 2, 3]) }] }), /denied/);
@@ -107,7 +96,6 @@ describe('secretInput 포트: 결속 모드가 메서드를 정한다', () => {
 
   it('결속 없는·잘못된 store 결속 포트는 붙이지 않는다(vault.secret_input_unbound)', async () => {
     const before = h.log.lines.filter((l) => l.includes('vault.secret_input_unbound')).length;
-    // 실행 id가 붙은 store 결속(1회용과 섞임)·저장 못 하는 종류는 붙이지 않는다
     h.secretPort({ mode: 'store', kind: 'cert_password', scope: 'business', runId: 'r1', notice: { version: 'v1' } } as never);
     h.secretPort({ mode: 'store', kind: 'not_a_kind', scope: 'business', notice: { version: 'v1' } } as never);
     assert.equal(h.log.lines.filter((l) => l.includes('vault.secret_input_unbound')).length, before + 2);
@@ -146,7 +134,6 @@ describe('R-C1 해시(엔진·금고 공통)', () => {
 
   it('고정 벡터(엔진 트랙과 맞춤)', () => {
     assert.equal(commitExpectedHash({ a: '1', b: 'x y' }, { b: 'q', a: 'p' }), commitExpectedHash({ a: '1', b: 'x  y' }, { a: 'p', b: 'q' }));
-    // sha256("SAX-rc1-v1\n" + '[["a","1"],["b","x y"]]')
     assert.equal(commitExpectedHash({ a: '1', b: 'x y' }, { a: 'p', b: 'q' }), '5809c1c07c3126a94a420001bb383563e4798bc09eb96db675fae994f044400a');
   });
 });

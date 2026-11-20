@@ -1,7 +1,3 @@
-// 계정·릴레이 클라우드 포트(데스크톱 main 전용, 팀장 결정 2026-11-06 (가)). 포트 정본은 remote-ports.ts(#143), 서버 정본은
-// services/account/API.md·services/relay/API.md. 송신은 @sax/net Egress.cloud()·openCloudSocket()으로만 한다(D01 §3).
-// 이 모듈은 아무것도 저장하지 않는다: 계정 세션·기기 토큰은 호출자(main 메모리)가 넘기고, 응답의 토큰은 그대로 돌려줄 뿐 파일·로그에 두지 않는다.
-// 오류는 Error.code에 서버 코드(`<영역>.<코드>`) 또는 `net.<egress 코드>`만 담는다. 메시지에 본문·URL·토큰·이메일을 넣지 않는다.
 import { CLOUD_ORIGIN, CLOUD_WS_HOST, EgressError, type CloudMethod, type Egress } from '@sax/net';
 import type { AccountClient, AccountLogin, CloudPorts, DeviceAuth, PcLinkRequest, RelayHttpClient, ServerDevice, SharePage, ShareServerRow, ShareTaskState } from './remote-ports.ts';
 import {
@@ -18,19 +14,14 @@ import {
   type WebSocketLike,
 } from '@sax/remote';
 
-// 포트 정본은 remote-ports.ts(#143). 여기서는 그 타입을 구현한다.
 export type { AccountClient, CloudPorts, DeviceAuth, RelayHttpClient } from './remote-ports.ts';
 
 interface CloudPortsOptions {
   egress: Egress;
   env: 'prod' | 'dev';
-  /** env = 'dev'일 때만: 개발 스택 앞단(scripts/phone-stack/stack.ts, 예: http://localhost:8787 · localhost:8787). Egress도 cloudDevLocal을 켜야 열린다 */
   dev?: { accountOrigin: string; relayHost: string };
 }
 
-// ---- 구현 ----
-
-/** 코드만 담는 오류(메시지 = 코드) */
 class CloudPortError extends Error {
   readonly code: string;
   constructor(code: string) {
@@ -49,17 +40,14 @@ const shape = (): never => {
   throw new CloudPortError('response.shape');
 };
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
-/** 표준 base64 32바이트 */
 const B64_KEY32 = /^[A-Za-z0-9+/]{43}=$/;
 const str = (v: unknown, max = 4096): v is string => typeof v === 'string' && v.length > 0 && v.length <= max;
 const int = (v: unknown): v is number => Number.isSafeInteger(v);
 const UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-/** 갱신 토큰 모양(금고 account.refresh와 같다). 다른 모양은 받지도 보내지도 않는다. */
 export const REFRESH_TOKEN = /^sxa1\.[A-Za-z0-9_-]{43}$/;
 const refreshOk = (v: unknown): v is string => typeof v === 'string' && REFRESH_TOKEN.test(v);
 
-/** 로그인 응답 모양 검사. 갱신 토큰은 있으면 모양까지 맞아야 한다. */
 function login(b: unknown): AccountLogin {
   if (!isObj(b) || !str(b.session, 512) || !int(b.expiresInSec)) shape();
   const r = b as { session: string; expiresInSec: number; refreshToken?: unknown; refreshExpiresInSec?: unknown };
@@ -67,10 +55,8 @@ function login(b: unknown): AccountLogin {
   if (!refreshOk(r.refreshToken) || !int(r.refreshExpiresInSec)) shape();
   return { session: r.session, expiresInSec: r.expiresInSec, refreshToken: r.refreshToken as string, refreshExpiresInSec: r.refreshExpiresInSec as number };
 }
-/** remember는 참일 때만 본문에 싣는다. */
 const rem = (remember?: boolean) => (remember ? { remember: true } : {});
 
-/** 공유 기록 줄 id·일 id(무작위 16B base64url) */
 const SHARE_ID = /^[A-Za-z0-9_-]{22}$/;
 const SHARE_BODY = /^[A-Za-z0-9_-]+$/;
 const SHARE_TASK_STATES = ['open', 'claimed', 'done', 'cancelled', 'expired'];
@@ -79,7 +65,6 @@ const shareId = (v: unknown): string => {
   return v;
 };
 const shareEpochOk = (v: unknown): v is number => int(v) && v >= 0 && v <= SHARE_MAX_EPOCH;
-/** 서버가 준 줄의 겉모양만 본다(속은 호출자가 연다). 모양이 틀린 줄이 하나라도 있으면 쪽 전체를 버린다 */
 function shareRow(v: unknown): ShareServerRow {
   if (
     !isObj(v) || !int(v.seq) || v.seq < 1 || typeof v.rowId !== 'string' || !SHARE_ID.test(v.rowId) || !(SHARE_KINDS as readonly unknown[]).includes(v.kind) || !shareEpochOk(v.epoch)
@@ -89,7 +74,6 @@ function shareRow(v: unknown): ShareServerRow {
   return { seq: r.seq, rowId: r.rowId, kind: r.kind, epoch: r.epoch, deviceId: r.deviceId, at: r.at, body: r.body };
 }
 
-/** 발급 잠금 값(서버 randomToken, base64url). 모양만 본다 */
 const ISSUE_LOCK_ID = /^[A-Za-z0-9_-]{22,64}$/;
 const DEV_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1):[0-9]{1,5}$/;
 const DEV_HOST = /^(localhost|127\.0\.0\.1):[0-9]{1,5}$/;
@@ -99,7 +83,6 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
   if (dev && (!o.dev || !DEV_ORIGIN.test(o.dev.accountOrigin) || !DEV_HOST.test(o.dev.relayHost))) throw new CloudPortError('config.cloud_dev');
   if (!dev && o.dev) throw new CloudPortError('config.cloud_dev');
   const accountOrigin = dev ? o.dev!.accountOrigin : CLOUD_ORIGIN;
-  // 운영: 릴레이 HTTPS(우편함·룸 발급)는 계정과 같은 공개 origin, WSS만 룸 호스트. 개발: 스택 앞단 하나
   const relayHttpOrigin = dev ? relayOrigin(o.dev!.relayHost, true) : CLOUD_ORIGIN;
   const relayHost = dev ? o.dev!.relayHost : CLOUD_WS_HOST;
 
@@ -117,14 +100,12 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
     if (!str(session, 512)) throw new CloudPortError('account.unauthorized');
     return { authorization: `Bearer ${session}` };
   };
-  // 데스크톱이 만든 헤더를 그대로 붙인다. 이름 검사·소문자화는 egress(cloudHeaders: authorization·dpop·x-mbx-*만)
   const authed = async (auth: DeviceAuth, method: CloudMethod, url: string): Promise<Record<string, string>> => ({ ...(await auth(method, url)) });
   const bytes = (b: Uint8Array, n: number) => {
     if (!(b instanceof Uint8Array) || b.length !== n) throw new CloudPortError('request.param_rejected');
     return b64url(b);
   };
 
-  /** @sax/remote requestDeviceToken이 쓰는 HTTP(JSON). content-type은 egress가 붙인다 */
   const httpJson: HttpJson = async (req) => {
     const headers = Object.fromEntries(Object.entries(req.headers).filter(([k]) => k.toLowerCase() !== 'content-type'));
     try {
@@ -152,7 +133,6 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
       return { deviceId: x.deviceId as string, role: x.role as ServerDevice['role'], platform: x.platform as ServerDevice['platform'], name: x.name as string, state: x.state as ServerDevice['state'], registeredAt: x.registeredAt as number, Sx: x.Sx as string, Vx: x.Vx as string, deleteAfter: (x.deleteAfter as number | null | undefined) ?? null, lastSeenAt: (x.lastSeenAt as number | null | undefined) ?? null };
     });
   };
-  /** 새 PC 연결 우편함 경로. 기기 ID는 UUIDv4만(egress 허용 경로와 같은 모양) */
   const linkUrl = (deviceId: string) => {
     if (typeof deviceId !== 'string' || !UUID4.test(deviceId)) throw new CloudPortError('request.param_rejected');
     return `${accountOrigin}/v1/pc-links/${deviceId}`;
@@ -238,7 +218,6 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
     },
     async deviceToken(cert, dpop, scopes, model) {
       try {
-        // @sax/remote requestDeviceToken은 본문이 {cert}뿐이다. 범위를 줄일 때 scopes를, 모델 이름을 알면 model을 본문에 더한다(DPoP는 인증서에 묶여 본문과 무관).
         const extra = { ...(scopes ? { scopes: [...scopes] } : {}), ...(model ? { model: model.slice(0, 40) } : {}) };
         const http: HttpJson = Object.keys(extra).length ? (req) => httpJson({ ...req, body: JSON.stringify({ ...(JSON.parse(req.body!) as object), ...extra }) }) : httpJson;
         return await requestDeviceToken(http, accountOrigin, cert, dpop);
@@ -266,7 +245,6 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
     async billingCheckout(auth) {
       const url = `${accountOrigin}/v1/billing/checkout`;
       const b = (await call('POST', url, [200], { headers: await authed(auth, 'POST', url) })) as Record<string, unknown> | null;
-      // 결제 창은 우리 계정 origin의 카드 등록 창만(서버가 다른 주소를 주면 열지 않는다)
       if (!isObj(b) || !str(b.checkoutUrl, 512) || !(b.checkoutUrl as string).startsWith(`${accountOrigin}/v1/billing/card?ref=`)) shape();
       return { checkoutUrl: (b as Record<string, unknown>).checkoutUrl as string };
     },
@@ -286,7 +264,7 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
       if (!isObj(b) || !isObj(b.claim) || !str(b.sig, 128)) shape();
       const c = (b as { claim: Record<string, unknown> }).claim;
       if (!str(c.account_id, 128) || !str(c.email, 254) || !str(c.aik_pub, 64) || !int(c.iat) || !int(c.exp)) shape();
-      return b as unknown as SignedAcctClaim; // 응답 JSON 그대로(서명 검증은 폰이 고정 공개키로)
+      return b as unknown as SignedAcctClaim;
     },
     async enrollPhone(auth, x) {
       const url = `${accountOrigin}/v1/devices/enroll`;
@@ -417,7 +395,6 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
       if (!isObj(b) || !Array.isArray(b.rows) || b.rows.length > 200 || !int(b.head) || b.head < 0 || !shareEpochOk(b.epoch) || typeof b.more !== 'boolean') shape();
       const r = b as { rows: unknown[]; head: number; epoch: number; more: boolean };
       const rows = r.rows.map(shareRow);
-      // 순번은 after보다 크고 오름차순이어야 한다(아니면 커서가 꼬인다)
       let last = after;
       for (const x of rows) {
         if (x.seq <= last) shape();

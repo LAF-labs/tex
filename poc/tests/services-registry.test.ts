@@ -1,5 +1,3 @@
-// M4-7 레지스트리(D09 §8, ADR-013·023·028, D11 "레지스트리 테스트"). 서명 바이트·수용 규칙은 엔진 SIGNING.md가 정본이다.
-// 키는 엔진 샘플 묶음과 같은 공개 시험 시드(tests/registry-samples.ts, 실제 키 아님)와 시험 중에만 만드는 릴리스 키다(저장소·CI에 운영 개인 키 없음).
 import assert from 'node:assert/strict';
 import { createHash, createPrivateKey, generateKeyPairSync, randomBytes, randomUUID, sign, type KeyObject } from 'node:crypto';
 import fs from 'node:fs';
@@ -72,13 +70,11 @@ const sample = (p: string): Buffer => SAMPLES.get(p)!;
 const sampleDoc = <T>(p: string): T => JSON.parse(sample(p).toString('utf8')) as T;
 const FIXTURE_DIR = path.resolve(import.meta.dirname, 'fixtures/registry');
 
-/** 샘플 릴리스 키(release-1, 시드 0x61: 패키징 #76·엔진 #85 trust.json과 같은 키) */
 function makeRelease(): { key: Key; pub: string } {
   const privateKey = createPrivateKey({ key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), Buffer.alloc(32, SAMPLE_SEEDS.release['release-1'])]), format: 'der', type: 'pkcs8' });
   return { key: { keyId: 'release-1', priv: privateKey }, pub: ed25519RawPublic(privateKey).toString('base64') };
 }
 
-/** 샘플 trust.json(핀 키) 그대로 */
 function sampleTrust(): { ring: Ring; trust: TrustRoot } {
   const rel = makeRelease();
   const t = sampleDoc<{ keyEpoch: number; keys: Record<string, Record<string, string>> }>('trust.json');
@@ -88,11 +84,9 @@ function sampleTrust(): { ring: Ring; trust: TrustRoot } {
   return { ring, trust };
 }
 
-/** SIGNING.md §1: sig = base64url(Ed25519(utf8(JCS(내용)))), 맥락 문자열 없음 */
 const sigOf = (content: unknown, k: Key): Sig => ({ keyId: k.keyId, alg: 'ed25519', sig: sign(null, Buffer.from(jcs(content)), k.priv).toString('base64url') });
 const iso = (ms: number) => new Date(ms).toISOString().replace('.000Z', 'Z');
 const FRESH = ['signatures', 'issuedAt', 'expiresAt', 'timestamp'];
-/** 릴리스 기간 도장(게시 관문·재서명 cron과 같은 내용): 타임스탬프 키가 {contentDigest(매니페스트 − 서명·기간), issuedAt, expiresAt}에 */
 function stampRelease<T extends object>(m: T, at: number, ttl: number, k: Key): T & { issuedAt: string; expiresAt: string; timestamp: Sig } {
   const issuedAt = iso(at);
   const expiresAt = iso(at + ttl);
@@ -115,7 +109,6 @@ interface Env {
   stage(file: string, bytes?: Buffer): ReturnType<Env['req']>;
 }
 
-/** 투명성 로그 헤드 서명 키 = 샘플 타임스탬프 역할 키(시드 0x51, registry-samples.ts) */
 const TS_SEED = '51'.repeat(32);
 
 async function start(o: { store?: Store; db?: Sql; stamper?: boolean } = {}): Promise<Env> {
@@ -137,7 +130,6 @@ const LOOKUP = 'hometax.invoice.lookup@1.0.0.sxp';
 const HOTFIX = 'hometax.invoice.issue.hotfix@1.3.0.sxp';
 const DATA = 'payroll.rate-tables@2026.11.1.sxp';
 
-/** SIGNING.md §6 데이터 패키지: 기술자(패키지 키 2-of-3) + 본문 원시 바이트(bodyDigest) */
 function dataSxp(body: unknown, o: { schema?: string; version?: string; signers?: number[]; bodyBytes?: Buffer } = {}): Buffer {
   const b = o.bodyBytes ?? Buffer.from(JSON.stringify(body));
   const desc: Record<string, unknown> = { id: 'payroll.rate-tables', version: o.version ?? '2026.11.1', schema: o.schema ?? 'sax.rate-tables/v1', bodyDigest: sha256Hex(b), keyEpoch: 1, issuedAt: '2026-11-05T00:00:00Z' };
@@ -150,7 +142,6 @@ const entryOf = (file: string, kind: string, o: object = {}) => {
   return { id: id!, version: v!, kind, portal: 'hometax', sxpDigest: sha256Hex(b), size: b.length, rolloutPercent: 10, ...o };
 };
 
-/** 패키지 키 2-of-3(기본 1·2번)로 서명한 인덱스(ADR-043): 내용 = index − signatures·issuedAt·expiresAt·timestamp, 신선도 = 타임스탬프 키 */
 function index(e: Env, o: { monotonic?: number; entries?: unknown[]; signers?: number[]; ring?: Role; issuedAt?: number; expiresAt?: number; keyEpoch?: number; channel?: string; noTimestamp?: boolean } = {}) {
   const now = e.clock.now();
   const issuedAt = o.issuedAt ?? now;
@@ -158,7 +149,6 @@ function index(e: Env, o: { monotonic?: number; entries?: unknown[]; signers?: n
   return fresh(e, body, o.ring ?? 'package', o.signers ?? [0, 1], { issuedAt, ttl: (o.expiresAt ?? now + 7 * D) - issuedAt, noTimestamp: o.noTimestamp });
 }
 
-/** 정책·status·폐기 목록 공통: 내용 서명 + 타임스탬프 서명(SIGNING.md §2·§4) */
 function fresh<T extends Record<string, unknown>>(e: Env, body: T, role: Role, signers: number[], o: { issuedAt?: number; ttl?: number; noTimestamp?: boolean } = {}) {
   const issuedAt = iso(o.issuedAt ?? e.clock.now());
   const expiresAt = iso((o.issuedAt ?? e.clock.now()) + (o.ttl ?? 24 * H));
@@ -177,7 +167,6 @@ const policyBody = (monotonic: number, o: { version?: string; hometax?: string }
 });
 const statusBody = (monotonic: number, ceiling: Record<string, string>, kill: string[] = []) => ({ monotonic, keyEpoch: 1, portalModeCeiling: ceiling, killPlaybooks: kill });
 
-/** 샘플 .sxp를 풀어 일부를 바꾼 뒤 다시 정규형으로 싼다 */
 function repack(file: string, edit: (raw: { manifest: Uint8Array; playbook: Uint8Array; selectors: Uint8Array; strings: Uint8Array }) => void): Buffer {
   const d = decodeSxp(sample(`packages/${file}`));
   assert.ok(d.ok && d.sxp.kind === 'package');
@@ -222,7 +211,6 @@ describe('M4-7 레지스트리: 엔진 샘플 묶음과 상호 검증(SIGNING.md
 
   it('직전 status가 없어도(첫 설치) 엄격하게 보수적인 긴급 status는 받는다', async () => {
     assert.deepEqual((await e.put('/admin/v1/status', sampleDoc('registry/status-emergency.json'))).json, { monotonic: 11, emergency: true });
-    // 첫 설치에서 "상한 없음·킬 없음"보다 엄격하지 않으면 거부
     const e2 = await start();
     try {
       assert.equal((await e2.put('/admin/v1/status', fresh(e2, statusBody(12, {}), 'emergency', [0]))).json.error, 'policy.rejected_not_conservative');
@@ -280,7 +268,6 @@ describe('M4-7 레지스트리: 엔진 샘플 묶음과 상호 검증(SIGNING.md
     const r = loadPackage(unpack(H01), ctx({ installedLookups: installed, hotfix: { hotfix: hx.sxp.hotfix, stored: null } }));
     assert.ok(r.ok, r.ok ? '' : r.code);
     assert.deepEqual(r.events, ['registry.hotfix_applied']);
-    // 데이터 패키지: 엔진 loadDataPackage + 급여 validatePackage(SIGNING.md §6)
     const dx = decodeSxp(files.get(DATA)!);
     assert.ok(dx.ok && dx.sxp.kind === 'data');
     const dr = loadDataPackage(dx.sxp.raw, { roots: K.roots, revoked: new Set(), schemas: new Map([['sax.rate-tables/v1', validatePackage]]), installed: null, hold: false, now: SAMPLE_NOW });
@@ -289,24 +276,20 @@ describe('M4-7 레지스트리: 엔진 샘플 묶음과 상호 검증(SIGNING.md
 
   it('데이터 패키지 관문(SIGNING.md §6): 본문 다이제스트·기술자 2-of-3·등록된 schema·급여 validatePackage·이름·인덱스 종류', async () => {
     const T = SAMPLE_RATE_TABLES;
-    // 거부 경우를 먼저(같은 파일 이름에 한 번 올라간 바이트는 바꿀 수 없다)
     const tampered = decodeSxp(dataSxp(T));
     assert.ok(tampered.ok && tampered.sxp.kind === 'data');
     const forged = encodeSxp({ kind: 'data', raw: { descriptor: tampered.sxp.raw.descriptor, body: Buffer.from(JSON.stringify({ ...T, tables: [] })) } });
     assert.equal((await e.stage(DATA, forged)).json.error, 'registry.content_digest_mismatch');
-    assert.equal((await e.stage(DATA, dataSxp(T, { signers: [0] }))).json.error, 'registry.schema_invalid'); // 기술자 스키마 minItems 2
+    assert.equal((await e.stage(DATA, dataSxp(T, { signers: [0] }))).json.error, 'registry.schema_invalid');
     assert.equal((await e.stage(DATA, dataSxp(T, { signers: [0, 0] }))).json.error, 'registry.signature_insufficient');
     assert.equal((await e.stage(DATA, dataSxp({ ...T, schema: 'sax.other/v1' }, { schema: 'sax.other/v1' }))).json.error, 'registry.schema_invalid');
-    // 규칙은 급여 패키지가 정본: 같은 종류·같은 시작일 표 둘(겹침)은 거부
     const t0 = T.tables[0];
     assert.ok(validatePackage({ ...T, tables: [t0, { ...t0, id: 'nontax-2026b' }] }).length > 0);
     assert.equal((await e.stage(DATA, dataSxp({ ...T, tables: [t0, { ...t0, id: 'nontax-2026b' }] }))).json.error, 'registry.schema_invalid');
-    // 파일 이름 = 기술자 id@version
     assert.equal((await e.stage('payroll.rate-tables@2026.11.2.sxp', dataSxp(T))).json.error, 'registry.schema_invalid');
-    // 인덱스 항목: 종류 data, portal 없음
     const b = sample(`packages/${DATA}`);
     assert.equal((await e.stage(DATA)).status, 201);
-    assert.equal((await e.stage(DATA, dataSxp({ ...T, tables: [] }))).json.error, 'registry.content_digest_mismatch'); // 올라간 파일은 불변
+    assert.equal((await e.stage(DATA, dataSxp({ ...T, tables: [] }))).json.error, 'registry.content_digest_mismatch');
     const entry = { id: 'payroll.rate-tables', version: '2026.11.1', kind: 'data', sxpDigest: sha256Hex(b), size: b.length, rolloutPercent: 100 };
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { entries: [{ ...entry, kind: 'lookup' }] }))).json.error, 'registry.schema_invalid');
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { entries: [{ ...entry, portal: 'hometax' }] }))).json.error, 'registry.schema_invalid');
@@ -342,7 +325,6 @@ describe('M4-7 레지스트리: 인덱스 2-of-3·버전·만료·채널', () =>
     const outsider = generateKeyPairSync('ed25519').privateKey;
     const forged = { ...doc, signatures: [doc.signatures[0]!, sigOf(without(doc, ['signatures']), { keyId: 'package-2', priv: outsider })] };
     assert.equal((await e.put('/admin/v1/index/stable', forged)).json.error, 'registry.signature_insufficient');
-    // 서명 뒤 내용 변경
     assert.equal((await e.put('/admin/v1/index/stable', { ...doc, monotonic: 2 })).json.error, 'registry.signature_insufficient');
     assert.equal((await e.req('PUT', '/admin/v1/index/stable', { body: doc })).json.error, 'registry.unauthorized');
     assert.equal((await e.req('PUT', '/admin/v1/index/stable', { headers: { authorization: 'Admin wrong' }, body: doc })).json.error, 'registry.unauthorized');
@@ -352,7 +334,6 @@ describe('M4-7 레지스트리: 인덱스 2-of-3·버전·만료·채널', () =>
     const same = index(e, { monotonic: 5 });
     assert.equal((await e.put('/admin/v1/index/stable', same)).status, 200);
     assert.equal((await e.put('/admin/v1/index/stable', same)).status, 200);
-    // 같은 monotonic·같은 내용의 신선도 재발행(기간만 다름)은 받고, 같은 monotonic에 다른 항목은 롤백(ADR-043)
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { monotonic: 5, expiresAt: e.clock.now() + 8 * D }))).status, 200);
     await e.stage(LOOKUP);
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { monotonic: 5, entries: [entryOf(LOOKUP, 'lookup')] }))).json.error, 'registry.version_rollback');
@@ -360,7 +341,6 @@ describe('M4-7 레지스트리: 인덱스 2-of-3·버전·만료·채널', () =>
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { monotonic: 1006 }))).json.error, 'registry.version_jump_rejected');
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { monotonic: 1005 }))).status, 200);
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { monotonic: 1006, keyEpoch: 2 }))).json.error, 'registry.key_epoch_mismatch');
-    // 채널은 따로 센다
     assert.equal((await e.put('/admin/v1/index/beta', index(e, { channel: 'beta', monotonic: 1 }))).status, 200);
     assert.equal((await e.put('/admin/v1/index/beta', index(e, { channel: 'stable', monotonic: 2 }))).json.error, 'registry.schema_invalid');
   });
@@ -384,9 +364,7 @@ describe('M4-7 레지스트리: .sxp 관문(SIGNING.md §5·§6)', () => {
     const pretty = Buffer.from(JSON.stringify(JSON.parse(sample(`packages/${LOOKUP}`).toString()), null, 1));
     assert.equal((await e.stage(LOOKUP, pretty)).json.error, 'sxp.not_canonical');
     assert.equal((await e.stage(LOOKUP, Buffer.from(canonicalJson({ format: 'sxp/2', kind: 'package' })))).json.error, 'sxp.unknown_format');
-    // 다른 이름으로 올리면 거부(manifest id·version = 경로)
     assert.equal((await e.stage('hometax.invoice.lookup@1.0.1.sxp', sample(`packages/${LOOKUP}`))).json.error, 'registry.schema_invalid');
-    // ADR-039 결정 2 ③: 서명·결속이 맞아도 portal fixture 패키지는 게시하지 않는다
     const fx = lookups().get('hometax.invoice.lookup')!;
     fx.manifest.portal = 'fixture';
     fx.playbook.portal = 'fixture';
@@ -394,26 +372,22 @@ describe('M4-7 레지스트리: .sxp 관문(SIGNING.md §5·§6)', () => {
     fx.manifest.domains = ['127.0.0.1'];
     assert.equal((await e.stage(LOOKUP, encodeSxp({ kind: 'package', raw: signPackage(fx, sampleKeys().pkg.slice(0, 2)) }))).json.error, 'registry.portal_blocked');
     assert.equal((await e.stage('hometax.invoice.email_status@1.0.0.sxp', sample(`packages/${LOOKUP}`))).json.error, 'registry.schema_invalid');
-    // 원시 파일 바꾸기 → contentDigests 불일치
     assert.equal((await e.stage(LOOKUP, repack(LOOKUP, (r) => (r.strings = Buffer.from('{}'))))).json.error, 'registry.content_digest_mismatch');
-    // manifest 서명 1개
     const one = repack(LOOKUP, (r) => {
       const m = JSON.parse(Buffer.from(r.manifest).toString()) as { signatures: unknown[] };
       r.manifest = Buffer.from(JSON.stringify({ ...m, signatures: m.signatures.slice(0, 1) }));
     });
-    assert.equal((await e.stage(LOOKUP, one)).json.error, 'registry.schema_invalid'); // manifest.schema: 서명 2~3개
+    assert.equal((await e.stage(LOOKUP, one)).json.error, 'registry.schema_invalid');
     const outsider = generateKeyPairSync('ed25519').privateKey;
     const forged = repack(LOOKUP, (r) => {
       const m = JSON.parse(Buffer.from(r.manifest).toString()) as { signatures: Sig[] };
       r.manifest = Buffer.from(JSON.stringify({ ...m, signatures: [m.signatures[0]!, sigOf(without(m, ['signatures']), { keyId: 'package-2', priv: outsider })] }));
     });
     assert.equal((await e.stage(LOOKUP, forged)).json.error, 'registry.signature_insufficient');
-    // 데이터 패키지(kind data)의 컨테이너는 SIGNING.md 범위 밖: 아직 받지 않는다
     assert.equal((await e.stage('payroll.rate_tables@2026.1.0.sxp', Buffer.from(canonicalJson({ format: 'sxp/1', kind: 'data', body: 'e30=' })))).json.error, 'sxp.malformed');
     assert.equal((await e.put('/admin/v1/packages/..%2Fx@1.0.0.sxp', { data: 'AAAA' })).status, 404);
     assert.equal((await e.put('/admin/v1/packages/nodot@1.0.0.sxp', { data: 'AAAA' })).json.error, 'request.param_rejected');
     assert.equal((await e.put('/admin/v1/packages/a..b@1.0.0.sxp', { data: 'AAAA' })).json.error, 'request.param_rejected');
-    // 정상본은 받고, 같은 이름의 다른 바이트 덮어쓰기는 거부
     assert.equal((await e.stage(LOOKUP)).status, 201);
     assert.equal((await e.stage(LOOKUP)).status, 201);
     assert.equal((await e.stage(LOOKUP, repack(LOOKUP, () => undefined).subarray(0, 10))).json.error, 'registry.content_digest_mismatch');
@@ -428,7 +402,6 @@ describe('M4-7 레지스트리: .sxp 관문(SIGNING.md §5·§6)', () => {
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { entries: [hx] }))).json.error, 'registry.schema_invalid');
     assert.equal((await e.put('/admin/v1/index/hotfix', index(e, { channel: 'hotfix', entries: [{ ...hx, version: '2.3.0' }] }))).json.error, 'registry.schema_invalid');
     assert.equal((await e.put('/admin/v1/index/hotfix', index(e, { channel: 'hotfix', entries: [hx] }))).status, 200);
-    // 만료된 핫픽스는 올라가지 않는다
     e.clock.advance(15 * D);
     assert.equal((await e.stage(HOTFIX)).json.error, 'hotfix.expired');
   });
@@ -447,7 +420,6 @@ describe('M4-7 레지스트리: .sxp 관문(SIGNING.md §5·§6)', () => {
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { entries: [{ ...entry, rolloutPercent: 101 }] }))).json.error, 'registry.schema_invalid');
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { entries: [{ ...entry, id: 'nodot' }] }))).json.error, 'registry.schema_invalid');
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { entries: [{ ...entry, packageDigest: entry.sxpDigest }] }))).json.error, 'registry.schema_invalid');
-    // 데이터 패키지 항목(M6-10, 본문 스키마 packages/payroll/schema/rate-table-package.schema.json)은 파일이 있어야 한다
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { entries: [entry, { ...entry, id: 'payroll.rate_tables', version: '2026.1.0', kind: 'data', portal: 'public_api' }] }))).json.error, 'registry.not_found');
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { entries: [entry] }))).status, 200);
   });
@@ -464,7 +436,6 @@ describe('M4-7 레지스트리: 폐기 목록·정책·status', () => {
 
   it('폐기 목록: 루트 2-of-3 + 24시간 신선도. 폐기된 키 서명은 세지 않고(key_revoked 이벤트), 목록은 줄어들 수 없다', async () => {
     assert.equal((await e.put('/admin/v1/revoked-keys', revoked(e, 1, ['package-1']))).status, 200);
-    // package-1 + package-2 → package-1이 폐기라 유효 1개
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { signers: [0, 1] }))).json.error, 'registry.signature_insufficient');
     assert.ok(e.events.includes('registry.key_revoked'));
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { signers: [1, 2] }))).status, 200);
@@ -472,7 +443,6 @@ describe('M4-7 레지스트리: 폐기 목록·정책·status', () => {
     assert.equal((await e.put('/admin/v1/revoked-keys', revoked(e, 2, ['package-1'], { ttl: 25 * H }))).json.error, 'registry.revoked_validity_too_long');
     assert.equal((await e.put('/admin/v1/revoked-keys', revoked(e, 2, ['package-1'], { issuedAt: e.clock.now() - 13 * H }))).json.error, 'registry.expired_on_arrival');
     assert.equal((await e.put('/admin/v1/revoked-keys', revoked(e, 1, ['package-1', 'package-3']))).json.error, 'registry.version_rollback');
-    // 내용이 같은 재발행(같은 monotonic, 새 타임스탬프)은 받는다
     e.clock.advance(6 * H);
     assert.equal((await e.put('/admin/v1/revoked-keys', revoked(e, 1, ['package-1']))).status, 200);
     const pk = fresh(e, { monotonic: 2, keyEpoch: 1, revoked: [] }, 'package', [0, 1]);
@@ -484,7 +454,6 @@ describe('M4-7 레지스트리: 폐기 목록·정책·status', () => {
     assert.equal((await e.put('/admin/v1/revoked-keys', revoked(e, 1, ['root-1']))).status, 200);
     assert.equal((await e.put('/admin/v1/revoked-keys', revoked(e, 2, ['root-1', 'package-3']))).json.error, 'registry.signature_insufficient');
     assert.equal((await e.put('/admin/v1/revoked-keys', revoked(e, 2, ['root-1', 'package-3'], { signers: [1, 2] }))).status, 200);
-    // 타임스탬프 키를 폐기하는 목록은 그 키의 타임스탬프로 신선해질 수 없다
     assert.equal((await e.put('/admin/v1/revoked-keys', revoked(e, 3, ['root-1', 'package-3', 'timestamp-1'], { signers: [1, 2] }))).json.error, 'registry.timestamp_invalid');
   });
 
@@ -500,19 +469,14 @@ describe('M4-7 레지스트리: 폐기 목록·정책·status', () => {
     assert.equal((await e.put('/admin/v1/policy', fresh(e, policyBody(41, { hometax: 'assisted' }), 'policy', [0, 1]))).json.error, 'registry.version_rollback');
     e.clock.advance(20 * H);
     assert.equal((await e.put('/admin/v1/policy', fresh(e, policyBody(41), 'policy', [0, 2]))).status, 200);
-    // 타임스탬프를 다른 내용 다이제스트에 붙이면 거부
     const p2 = fresh(e, policyBody(43, { version: '2026.11.1' }), 'policy', [0, 1]);
     assert.equal((await e.put('/admin/v1/policy', { ...p2, timestamp: p1.timestamp })).json.error, 'registry.timestamp_invalid');
-    // 이미 있는 버전 파일을 새 monotonic으로 덮어쓰지 않는다({ver}.json은 같은 내용의 재서명만)
     assert.equal((await e.put('/admin/v1/policy', fresh(e, policyBody(43), 'policy', [0, 1]))).json.error, 'registry.version_rollback');
-    // 긴급 키 1개: 저장된 정책보다 엄격하게 보수적일 때만(엔진 isStrictlyConservative)
     assert.equal((await e.put('/admin/v1/policy', fresh(e, policyBody(44, { version: '2026.11.2' }), 'emergency', [0]))).json.error, 'policy.rejected_not_conservative');
     const em = await e.put('/admin/v1/policy', fresh(e, policyBody(44, { version: '2026.11.2', hometax: 'assisted' }), 'emergency', [0]));
     assert.deepEqual(em.json, { monotonic: 44, emergency: true });
     assert.equal((await e.put('/admin/v1/policy', fresh(e, { ...policyBody(45), version: 'x' }, 'policy', [0, 1]))).json.error, 'registry.schema_invalid');
-    // 소수 값(slowFactor 1.5)은 그대로 서명 대상이다
     assert.equal(((await e.req('GET', '/policy/current.json')).json.pace as { interactive: { slowFactor: number } }).interactive.slowFactor, 1.5);
-    // current.json 쓰기가 실패한 뒤: 같은 버전·monotonic의 다른 내용은 {ver}.json을 덮지 못하고, 같은 문서 재시도는 끝까지 간다
     const put = e.store.put.bind(e.store);
     e.store.put = (k: string, b: Buffer) => (k === 'policy/current.json' ? Promise.reject(new Error('disk')) : put(k, b));
     const half = fresh(e, policyBody(46, { version: '2026.11.3' }), 'policy', [0, 1]);
@@ -528,15 +492,14 @@ describe('M4-7 레지스트리: 폐기 목록·정책·status', () => {
     assert.equal((await e.put('/admin/v1/status', fresh(e, statusBody(2, { hometax: 'auto', gov24: 'assisted' }), 'policy', [0, 1], { ttl: 49 * H }))).json.error, 'registry.status_validity_too_long');
     assert.equal((await e.put('/admin/v1/status', fresh(e, statusBody(2, { hometax: 'auto', gov24: 'assisted' }), 'policy', [0, 1], { issuedAt: e.clock.now() - 25 * H }))).json.error, 'registry.expired_on_arrival');
     const em = (m: number, c: Record<string, string>, k: string[] = []) => e.put('/admin/v1/status', fresh(e, statusBody(m, c, k), 'emergency', [0]));
-    assert.equal((await em(2, { hometax: 'auto', gov24: 'assisted' })).json.error, 'policy.rejected_not_conservative'); // 변화 없음
-    assert.equal((await em(2, { hometax: 'auto', gov24: 'auto' })).json.error, 'policy.rejected_not_conservative'); // 상향
-    assert.equal((await em(2, { hometax: 'postprocess' })).json.error, 'policy.rejected_not_conservative'); // gov24 상한이 빠짐 = 완화
-    assert.equal((await em(2, { hometax: 'assisted', gov24: 'auto' })).json.error, 'policy.rejected_not_conservative'); // 하나 하향, 하나 상향
+    assert.equal((await em(2, { hometax: 'auto', gov24: 'assisted' })).json.error, 'policy.rejected_not_conservative');
+    assert.equal((await em(2, { hometax: 'auto', gov24: 'auto' })).json.error, 'policy.rejected_not_conservative');
+    assert.equal((await em(2, { hometax: 'postprocess' })).json.error, 'policy.rejected_not_conservative');
+    assert.equal((await em(2, { hometax: 'assisted', gov24: 'auto' })).json.error, 'policy.rejected_not_conservative');
     const down = await em(2, { hometax: 'assisted', gov24: 'assisted', iros: 'postprocess' });
     assert.deepEqual(down.json, { monotonic: 2, emergency: true });
     assert.equal((await em(3, { hometax: 'assisted', gov24: 'assisted', iros: 'postprocess' }, ['hometax.invoice.issue'])).status, 200);
-    assert.equal((await em(4, { hometax: 'assisted', gov24: 'assisted', iros: 'postprocess' }, [])).json.error, 'policy.rejected_not_conservative'); // 킬 제거
-    // 2-of-3은 상향도 할 수 있다
+    assert.equal((await em(4, { hometax: 'assisted', gov24: 'assisted', iros: 'postprocess' }, [])).json.error, 'policy.rejected_not_conservative');
     assert.equal((await e.put('/admin/v1/status', fresh(e, statusBody(4, { hometax: 'auto' }), 'policy', [1, 2]))).status, 200);
     assert.equal((await e.put('/admin/v1/status', fresh(e, statusBody(5, { hometax: 'fast' }), 'policy', [1, 2]))).json.error, 'registry.schema_invalid');
     assert.equal((await e.put('/admin/v1/status', fresh(e, statusBody(5, { mars: 'auto' }), 'policy', [1, 2]))).json.error, 'registry.schema_invalid');
@@ -589,12 +552,10 @@ describe('M4-7 레지스트리: 앱 업데이트 경로(latest.json 서명 → l
     assert.equal((await put(rooted({ keyEpoch: 1, changes: ['allowlist', 'allowlist'] }))).json.error, 'registry.schema_invalid');
     const ok = rooted({ keyEpoch: 2, changes: ['keyEpoch', 'ceiling'] });
     assert.equal((await put(ok)).status, 200);
-    // 업데이터가 게시된 latest.json을 그대로 받는다(루트 2개 셈)
     const pub = (await e.req('GET', '/releases/stable/latest.json')).json;
     const v = updaterVerify({ doc: pub, channel: 'stable', trust: e.trust, revocation: { keyIds: new Set(), fresh: true }, highestSeen: null, now });
     assert.equal(v.rootKeyIds.length, 2);
     assert.equal(v.releaseKeyId, 'release-1');
-    // 같은 버전: 파일이 같으면 신선도 재발행, 다르면 롤백
     assert.equal((await put(release(e, '1.4.0', { files }))).status, 200);
     assert.equal((await put(release(e, '1.4.0'))).json.error, 'registry.version_rollback');
   });
@@ -748,7 +709,6 @@ describe('투명성 로그(RFC 9162, D09 §8.3, 팀장 결정 2026-11-06): 서�
       }
       const mid = (await e.req('GET', '/registry/log/head.json')).json as unknown as SignedTreeHead;
       assert.equal(mid.treeSize, published.length);
-      // 같은 바이트 재게시(멱등)는 항목을 더하지 않는다
       assert.equal((await e.stage(LOOKUP)).status, 201);
       assert.equal(((await e.req('GET', '/registry/log/head.json')).json as unknown as SignedTreeHead).treeSize, published.length);
       for (const f of [HOTFIX, DATA]) {
@@ -781,14 +741,11 @@ describe('투명성 로그(RFC 9162, D09 §8.3, 팀장 결정 2026-11-06): 서�
         published,
       );
       for (const x of entries) {
-        // 항목 다이제스트 = 지금 공개된 바이트(정적 GET), 잎 해시 = SHA-256(0x00 ‖ JCS(항목))
         const served = await fetch(`http://127.0.0.1:${(e.server.address() as { port: number }).port}/${x.entry.path}`);
         assert.equal(sha256Hex(Buffer.from(await served.arrayBuffer())), x.entry.sha256, x.entry.path);
         assert.equal(leafHashOf(Buffer.from(jcs(x.entry))).toString('hex'), x.leafHash);
       }
-      // 엔진 merkleRoot(항목 바이트) = 서버 헤드 루트
       assert.equal(merkleRoot(entries.map((x) => Buffer.from(jcs(x.entry)))).toString('hex'), head.rootHash);
-      // HTTP 포함 증명
       for (const x of entries) {
         const p = await e.req('GET', `/registry/log/proof/inclusion?leaf=${x.leafHash}&size=${head.treeSize}`);
         assert.equal(p.status, 200, p.text);
@@ -796,7 +753,6 @@ describe('투명성 로그(RFC 9162, D09 §8.3, 팀장 결정 2026-11-06): 서�
         assert.equal(pj.leafIndex, x.index);
         assert.ok(verifyInclusion(Buffer.from(x.leafHash, 'hex'), pj.leafIndex, pj.treeSize, bytesOf(pj.path), Buffer.from(head.rootHash, 'hex')), x.entry.path);
       }
-      // HTTP 일관성 증명: 앞서 본 헤드 → 지금 헤드(엔진 verifyConsistency·headMismatch)
       const c = await e.req('GET', `/registry/log/proof/consistency?from=${mid.treeSize}&to=${head.treeSize}`);
       assert.equal(c.status, 200, c.text);
       const proof = bytesOf((c.json as unknown as { proof: string[] }).proof);

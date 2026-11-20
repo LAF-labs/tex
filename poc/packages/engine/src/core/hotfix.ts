@@ -1,5 +1,3 @@
-// D02 §2.2 셀렉터 핫픽스 적격 조건과 참조 집합(B-01, E-03, ADR-012). 엔진 로더와 레지스트리 핫픽스 CI가 같은 계산을 한다.
-// 서명·단조·만료 검사는 로더(registry)가 하고, 여기서는 "어느 항목의 candidates를 바꿀 수 있는가"만 정한다.
 import { semanticViolations, stepTargets, type ValidateOptions } from './validate.ts';
 import type { CommitEndpoint, Hotfix, PackageFiles, SelectorDict, Violation } from './types.ts';
 

@@ -1,17 +1,13 @@
-// remote-*.test.ts 공용: 모의 키(금고 역할은 소프트 키로 흉내), 기기, 메모리 릴레이 위 페어링.
 import {
   AIK_PURPOSES, DesktopPairing, signAcctClaim, MemoryRelay, MobilePairing, VD_PURPOSES, VM_PURPOSES, b64, ed25519Keygen, initialDeviceList, sha256Hash, softNoiseStatic,
   softSigner, toHex, uuid4, x25519Keygen, type DesktopKeys, type DeviceListJson, type PhoneKeys,
 } from '@sax/remote';
 
 export const RELAY = 'relay.sax.test';
-/** 시험용 계정 서비스 키(acct_claim 서명). 실제 키는 클라우드 세션이 만든다. */
 export const ACCOUNT_KEY = ed25519Keygen();
 export const TEST_EMAIL = 'owner@example.test';
 
-/** 계정 서비스가 이 PC의 AIK로 서명해 주는 계정 확인 주장(시험 대역). */
 export function testAcctClaim(aikPub: Uint8Array, o: { sk?: Uint8Array; email?: string; iat?: number; exp?: number } = {}): string {
-  // iat·exp는 UTC 밀리초, exp = iat + 600000(SIGNING.md §8)
   const now = Date.now();
   return signAcctClaim(o.sk ?? ACCOUNT_KEY.secretKey, { account_id: 'acc_test', email: o.email ?? TEST_EMAIL, aik_pub: b64(aikPub), iat: o.iat ?? now, exp: o.exp ?? now + 600_000 });
 }
@@ -23,7 +19,6 @@ export interface MockDesktop {
   deviceList: DeviceListJson;
 }
 
-/** 금고 VaultCrypto 대역(모의 키). 실제 PC는 금고 트랙이 구현한다. */
 export async function mockDesktop(registeredAt = Date.now() - 30 * DAY, aikSecret?: Uint8Array): Promise<MockDesktop> {
   const s = x25519Keygen();
   const vd = ed25519Keygen();
@@ -68,7 +63,6 @@ export interface PairWorld {
 export interface Enrolled {
   deviceId: string;
   roomId: Uint8Array;
-  /** 등록을 부른 때 폰 상태(pair.ok 전이어야 한다). */
   phoneState: string;
 }
 
@@ -104,7 +98,6 @@ export async function pairWorld(o: {
   return { relay, desk, phone, pc, mob, published, enrolled };
 }
 
-/** 정상 페어링 한 번(사용자가 폰의 SAS를 PC에 입력). */
 export async function pairOnce(w: PairWorld) {
   const { qr } = w.pc.offer();
   const pcLink = await w.relay.joinRoom(w.pc.roomId, 'desktop');

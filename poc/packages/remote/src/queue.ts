@@ -1,13 +1,3 @@
-// D08 §7 오프라인 큐로 보내는 사진·현금매출(intent-envelope v1.5 kind xfer, 팀장 결정 2026-11-05).
-// Phase 1은 라이브 WSS가 꺼져 있으므로, 라이브 세션이 없으면 폰 보관함을 릴레이 HTTPS 큐로 보낸다.
-//   폰: Xfer{pair_id, from, to, seq, iat, exp, qbundle_seq, type, body} → Sign_Vm("SAX-env-v1" ‖ CBOR(Xfer))
-//       → CBOR{xfer, sig} → 패딩(ENV_PAD_BUCKETS) → HPKE 봉인(pkR = Q_D, info "SAX-env-v1", aad "SAX-env-v1" ‖ mbx_epoch(8B BE))
-//       → POST /v1/mailboxes/:id/envelopes {v:1, kind:"ENV", enc, ct}
-//   PC: GET → 금고 hpkeOpen → Vm 서명·pair_id·exp·seq 검사 → ReceiveQueue(응답 없음) → POST ack{seq}(그 seq까지 릴레이가 지운다)
-// 사진은 32 KiB 청크(QUEUE.chunk), 봉투 하나 = 청크 하나. 4 MiB 사진은 offer 1 + 청크 128 = 봉투 129개(릴레이 한도 160·6 MiB 안).
-// 폰은 큐에 넣은 뒤에도 보관함에 둔다: 라이브 ack가 오면 지우고, 큐 TTL(24시간)이 지나면 다시 넣고(PC가 msgId로 중복을 없앤다),
-// 처음 넣고 QUEUE.keepMs(7일)가 지나면 지운다. 개봉·서명·만료 실패는 조용히 버린다(오류 코드 없음, D08 §7).
-// 이 모듈은 로그를 남기지 않는다.
 
 import { b64, b64url, concat, fromB64, u64be, utf8 } from './bytes.ts';
 import { decodeCbor, encodeCbor, type CborValue } from './cbor.ts';
@@ -23,21 +13,12 @@ import type { OutboxItem, OutboxStore, ReceiveQueue } from './transfer.ts';
 
 const HOUR = 3_600_000;
 export const QUEUE = {
-  /** 큐 경로 사진 청크(라이브는 48 KiB) */
   chunk: 32_768,
-  /** 릴레이 큐 TTL이자 봉투 exp 상한 */
   ttlMs: 24 * HOUR,
-  /** 릴레이 우편함당 한도(services/relay) */
   maxEnvelopes: 160,
   maxBytes: 6 * 1024 * 1024,
-  /** intent-envelope ct(base64) 상한 */
   ctMaxChars: 65_536,
-  /** 폰 보관함에 큐 기록을 두는 기한 */
   keepMs: 7 * 24 * HOUR,
-  /**
-   * 릴레이 우편함당 초당 20건(services/relay RELAY.msgPerSecPerMailbox, 고정 1초 창). 429 policy.rate_limited면
-   * 이만큼 기다렸다가 같은 봉투를 다시 보낸다(봉투 하나당 rateRetries번까지).
-   */
   rateWaitMs: 1_000,
   rateRetries: 3,
 } as const;
@@ -56,9 +37,7 @@ export interface Xfer {
   from: 'mobile';
   to: 'desktop';
   seq: number;
-  /** 초 */
   iat: number;
-  /** 초, iat + 24시간 이하 */
   exp: number;
   qbundle_seq: number;
   type: XferType;
@@ -90,7 +69,6 @@ function unpadEnv(p: Uint8Array): Uint8Array | null {
   return p.subarray(0, i);
 }
 
-/** Xfer의 바디를 라이브 봉투 검증기로 확인할 수 있게 감싼다(같은 스키마·정규형 검사). */
 function asEnvelope(x: Xfer): Envelope {
   const id = (x.body as { msgId: string }).msgId;
   return { v: 1, type: x.type, id, pairId: x.pair_id, from: 'mobile', to: 'desktop', seq: x.seq, ts: x.iat * 1000, ttl: 300, body: x.body } as Envelope;
@@ -143,15 +121,11 @@ export async function openXfer(outer: unknown, o: { hpkeOpen: HpkeOpenFn; pairId
   }
 }
 
-// ---- 릴레이 큐 HTTPS(services/relay/API.md) ----
-
 export interface RelayQueueOptions {
   http: HttpJson;
-  /** https://<릴레이 공개 origin>(DPoP htu 앞부분) */
   origin: string;
   mbxId: Uint8Array;
   tok: MailboxTokens;
-  /** 기기 범위 토큰 헤더(devauth.ts deviceAuthHeaders) */
   deviceAuth: (htm: 'GET' | 'POST' | 'PUT', htu: string) => Promise<Record<string, string>>;
 }
 
@@ -172,9 +146,7 @@ export interface QueuePage {
 
 export interface RelayQueue {
   post(e: OuterEnv): Promise<PostResult>;
-  /** 첫 쪽의 봉투만(옛 호출자용). 남은 쪽은 ACK 뒤 다음 호출에서 받는다. */
   list(): Promise<{ seq: number; env: unknown }[]>;
-  /** 한 쪽과 more. after는 ACK 전에 다음 쪽을 받을 때만(받은 마지막 seq). */
   listPage(after?: number): Promise<QueuePage>;
   ack(seq: number): Promise<void>;
   getBundle(): Promise<string | null>;
@@ -203,7 +175,6 @@ export function relayQueue(o: RelayQueueOptions): RelayQueue {
     },
     async listPage(after?: number) {
       if (after !== undefined && !(Number.isSafeInteger(after) && after >= 0)) throw new Error('queue: bad after');
-      // DPoP htu는 쿼리를 뺀 origin + 경로다(API.md). 쿼리는 요청 URL에만 붙인다.
       const r = await call('GET', '/envelopes', 'X-Mbx-Read', undefined, after === undefined ? '' : `?after=${after}`);
       if (r.status !== 200) throw new Error(`queue: list ${r.status}`);
       const b = r.body as { envelopes?: unknown; more?: unknown } | null;
@@ -211,7 +182,6 @@ export function relayQueue(o: RelayQueueOptions): RelayQueue {
       if (!Array.isArray(envs)) throw new Error('queue: list shape');
       return {
         envelopes: envs.filter((x): x is { seq: number; env: unknown } => !!x && Number.isSafeInteger((x as { seq?: unknown }).seq)),
-        // more를 모르는 옛 서버는 필드가 없다 → 한 쪽으로 본다
         more: b?.more === true,
       };
     },
@@ -233,27 +203,20 @@ export function relayQueue(o: RelayQueueOptions): RelayQueue {
   };
 }
 
-// ---- 폰: 보관함 → 큐 ----
-
 export interface QueueSendOptions {
   queue: Pick<RelayQueue, 'post'>;
   pairId: string;
   vm: Pick<Signer<typeof CTX.env>, 'sign'>;
-  /** verifyQBundle을 통과한 번들 */
   bundle: QBundle;
   mbxEpoch: number;
-  /** 봉투마다 새 seq(앱이 영속, 단조 증가) */
   nextSeq: () => number;
   now?: number;
-  /** 429 rate 뒤 기다리기(시험은 가짜 시계). 기본 setTimeout */
   sleep?: (ms: number) => Promise<void>;
 }
 
 export interface QueueSendResult {
   queued: string[];
-  /** 큐가 차서 다음에 보낼 것 */
   waiting: string[];
-  /** 보관 기한이 지나 지운 것 */
   expired: string[];
 }
 
@@ -263,7 +226,6 @@ export async function queueOutbox(store: OutboxStore, o: QueueSendOptions): Prom
   const res: QueueSendResult = { queued: [], waiting: [], expired: [] };
   if (o.bundle.validTo <= now) throw new Error('queue: bundle expired');
   const items = (await store.list()).sort((a, b) => a.createdAt - b.createdAt);
-  // full: 큐가 참, rate: 기다려도 초당 한도가 풀리지 않음. 둘 다 남은 항목은 다음으로 미룬다.
   let full = false;
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   for (const it of items) {
@@ -282,7 +244,6 @@ export async function queueOutbox(store: OutboxStore, o: QueueSendOptions): Prom
       for await (const x of xfersOf(store, it, o, now)) {
         const sealed = await sealXfer(x, o.vm, o.bundle.Qx, o.mbxEpoch);
         ok = await o.queue.post(sealed);
-        // 초당 한도: 같은 봉투(같은 seq)를 다시 보낸다. 새로 봉인하지 않는다(seq를 더 쓰지 않는다).
         for (let i = 0; ok === 'rate' && i < QUEUE.rateRetries; i++) {
           await sleep(QUEUE.rateWaitMs);
           ok = await o.queue.post(sealed);
@@ -324,19 +285,13 @@ async function* xfersOf(store: OutboxStore, it: OutboxItem, o: QueueSendOptions,
   }
 }
 
-// ---- PC: 큐 → 수신 큐 ----
-
 export interface QueueReceiverOptions {
-  /** listPage가 있으면 more를 보고 쪽을 이어 읽는다. list만 있으면 한 쪽(옛 동작). */
   queue: Pick<RelayQueue, 'list' | 'ack'> & Partial<Pick<RelayQueue, 'listPage'>>;
-  /** 금고 crypto.hpkeOpen */
   hpkeOpen: HpkeOpenFn;
   pairId: string;
-  /** AIK 서명 기기 목록의 이 폰 Vm */
   phoneVm: Uint8Array;
   mbxEpoch: number;
   receive: ReceiveQueue;
-  /** remote_pair_state.async_seq_max 영속(통과한 뒤에만 올린다) */
   seqMax: { get(): Promise<number>; set(seq: number): Promise<void> };
   now?: () => number;
 }
@@ -345,9 +300,7 @@ export interface DrainResult {
   handled: number;
   dropped: number;
   ackedTo: number | null;
-  /** 읽은 쪽 수(listPage로 쪽을 읽을 때만. list만 있는 옛 큐는 옛 결과 모양 그대로) */
   pages?: number;
-  /** 서버가 more라고 했는데 상한·빈 쪽·진전 없음으로 멈췄다(호출자는 곧 다시 부르면 된다). listPage일 때만 */
   more?: boolean;
 }
 
@@ -366,7 +319,6 @@ export async function drainQueue(o: QueueReceiverOptions): Promise<DrainResult> 
   const paged = typeof o.queue.listPage === 'function';
   const res: DrainResult = paged ? { handled: 0, dropped: 0, ackedTo: null, pages: 0, more: false } : { handled: 0, dropped: 0, ackedTo: null };
   let max = await o.seqMax.get();
-  // 큐에서는 PC가 폰에 답할 곳이 없다(receipt.ack 등은 버린다).
   const replier = { pairId: o.pairId, send: () => '' } as unknown as Parameters<ReceiveQueue['handle']>[0];
   const readPage = async (): Promise<QueuePage> => (paged ? o.queue.listPage!() : { envelopes: await o.queue.list(), more: false });
   let pages = 0;
@@ -397,7 +349,6 @@ export async function drainQueue(o: QueueReceiverOptions): Promise<DrainResult> 
       }
     }
     if (!page.more) return res;
-    // more인데 빈 쪽이거나 앞으로 가지 않으면(서버 이상) 멈춘다. 상한도 같다.
     const progressed = pageAck !== null && (before === null || pageAck > before);
     if (!progressed || pages >= DRAIN_MAX_PAGES) {
       res.more = true;

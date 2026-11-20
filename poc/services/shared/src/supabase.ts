@@ -1,7 +1,3 @@
-// Supabase(관리형 PostgreSQL) 마이그레이션 내보내기. 서비스 마이그레이션 SQL을 그대로 쓰고 스키마·역할 구획만 더한다(공급사 중립: 출력은 평범한 PostgreSQL SQL).
-// 한 PostgreSQL 안에서 서비스마다 스키마 + 로그인 역할을 나눈다. 역할은 자기 스키마의 행만 읽고 쓰고(DML), 다른 서비스 스키마·DDL 권한은 없다
-// (D08 §8 분리 저장: 릴레이 역할은 계정 테이블을 읽을 수 없다). 한도 표는 서비스마다 별도 스키마 `<서비스>_limits`(팀장 결정 2026-11-05 (가)).
-// 역할 비밀번호는 넣지 않는다. 사용자가 대시보드에서 정한다(services/deploy/README.md).
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,18 +5,14 @@ import { LIMITS_MIGRATIONS_DIR } from './limits.ts';
 import { subst } from './sql.ts';
 
 export interface ExportService {
-  /** 서비스 이름 = 스키마 이름 = schema_migrations의 service */
   name: string;
   migrationsDir: string;
-  /** 이 단계에 넣는 마이그레이션 번호 범위(포함). 적용된 단계는 범위를 고정한다(새 번호가 그 단계 파일을 바꾸지 않게) */
   versions: { from: number; to: number };
 }
 
 interface ExportPhase {
   prefix: string;
-  /** 역할·스키마 파일. 이미 있는 서비스의 증분 단계는 없다(null) */
   rolesFile: string | null;
-  /** 첫 단계만 한도 표(<서비스>_limits)를 만든다. 증분 단계는 false */
   limits: boolean;
   services: readonly ExportService[];
 }
@@ -88,7 +80,6 @@ function serviceSql(s: ExportService, withLimits: boolean): string {
   const lim = limitsSchemaOf(s.name);
   const all = files(s.migrationsDir);
   const own = all.filter((f) => Number(f.slice(0, 3)) >= s.versions.from && Number(f.slice(0, 3)) <= s.versions.to);
-  // 범위 끝 번호의 파일이 있어야 한다(번호를 잘못 적으면 내보내기가 실패한다)
   if (own.length !== s.versions.to - s.versions.from + 1) throw new Error(`export_versions_${s.name}`);
   const limits = withLimits ? files(LIMITS_MIGRATIONS_DIR) : [];
   const out = [HEADER, `-- ${s.name}: 서비스 마이그레이션은 스키마 ${s.name}, 한도 표는 ${lim}. 기록은 ${s.name}.schema_migrations(상시 서버의 migrate와 같은 표).\n`, `SET search_path TO ${s.name};`, ''];

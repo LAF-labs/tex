@@ -1,8 +1,3 @@
-// chat_agent 도구 결과 전달 탐침(chat-eval 진단): 첫 호출에서 받은 출력과 도구 결과를 여러 모양으로 다시 보내 보고,
-// 두 번째 호출이 답(message)을 내는지 같은 도구를 다시 부르는지 센다. 게이트웨이 본문(openAIResponsesBody)이 기준이다.
-//   set -a; . ./.env.local; set +a
-//   EVAL_MODEL=<OpenRouter 모델 ID> node --conditions=development tests/chat-eval/probe.ts [--n=3]
-// 키·응답 원문은 남기지 않는다. 출력은 변형별 message/function_call 개수와 첫 응답 항목 키 모양뿐이다.
 import { CHAT_AGENT, toolsetPrefix } from '@sax/model';
 import { openAIResponsesBody } from '../../services/gateway/src/providers.ts';
 
@@ -28,15 +23,10 @@ async function call(input: unknown[], patch: (b: Item) => Item = (b) => b): Prom
   return ((await res.json()) as { output?: Item[] }).output ?? [];
 }
 
-/** 두 번째 호출 input을 만드는 변형들. first = 첫 호출 출력, out = 도구 결과 문자열 */
 const VARIANTS: Record<string, { input: (user: Item, first: Item[], out: string) => unknown[]; patch?: (b: Item) => Item }> = {
-  // 지금 게이트웨이와 같다: 첫 출력 그대로 + function_call_output
   as_is: { input: (u, f, o) => [u, ...f, ...f.filter((x) => x.type === 'function_call').map((x) => ({ type: 'function_call_output', call_id: x.call_id, output: o }))] },
-  // 추론 항목을 빼고 보낸다
   no_reasoning: { input: (u, f, o) => [u, ...f.filter((x) => x.type !== 'reasoning'), ...f.filter((x) => x.type === 'function_call').map((x) => ({ type: 'function_call_output', call_id: x.call_id, output: o }))] },
-  // 함수 호출 항목을 최소 필드(type·call_id·name·arguments)로 줄인다
   min_call: { input: (u, f, o) => [u, ...f.filter((x) => x.type === 'function_call').flatMap((x) => [{ type: 'function_call', call_id: x.call_id, name: x.name, arguments: x.arguments }, { type: 'function_call_output', call_id: x.call_id, output: o }])] },
-  // 도구 결과를 user 문장으로 다시 붙인다(도구 결과 항목이 모델에 안 보일 때의 대조군)
   as_user_text: { input: (u, f, o) => [{ ...u, content: [{ type: 'input_text', text: `${(u.content as Array<{ text: string }>)[0]!.text}\n[도구 결과] ${f.filter((x) => x.type === 'function_call').map((x) => `${String(x.name)} → ${o}`).join('; ')}\n도구를 다시 부르지 말고 agent_reply로 답한다.` }] }] },
 };
 
@@ -51,7 +41,6 @@ for (const s of SAYS) {
     const user: Item = { role: 'user', content: [{ type: 'input_text', text: s.text }] };
     let first: Item[];
     try {
-      // 첫 호출은 도구를 꼭 부르게 한다(비교할 두 번째 호출을 만들려고). 두 번째 호출은 제품과 같은 본문이다.
       first = await call([user], (b) => ({ ...b, tool_choice: 'required' }));
     } catch (e) {
       console.log('첫 호출 실패', (e as Error).message);

@@ -1,5 +1,3 @@
-// 카드 정기결제(토스페이먼츠 자동결제, 빌링키): 카드 등록 창 → 빌링키 발급·봉인 → 첫 달 청구 → 갱신일 청구(정리 cron) → 실패·재시도·해지.
-// 서비스 흐름은 모의 빌링키 PG(MockBillingGateway), 토스 어댑터는 가짜 fetch로 요청 모양·허용 목록·결과 분류를 본다. 실제 토스 호출은 없다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
@@ -42,7 +40,6 @@ async function start(): Promise<Env> {
     publicOrigin: ORIGIN,
     billingReturnUrl: 'https://app.test.invalid/billing/done',
     onEvent: (n) => void events.push(n),
-    // 응답과 따로 도는 알림 발송을 모아 두었다가 시험이 기다린다
     defer: (t) => void deferred.push(t),
     now: clock.now,
   });
@@ -53,7 +50,6 @@ async function start(): Promise<Env> {
 
 const bearer = (s: string) => ({ authorization: `Bearer ${s}` });
 
-/** 로그인(첫 로그인이면 계정 생성). 기본은 무료 체험이 끝난 계정으로 만든다(가입 시각을 40일 앞으로): 바로 결제하는 흐름 시험. trial: true면 체험 중 그대로 */
 async function login(e: Env, email: string, o: { trial?: boolean } = {}): Promise<string> {
   const s = await e.req('POST', '/v1/auth/code', { body: { email } });
   const v = await e.req('POST', '/v1/auth/code/verify', { body: { loginId: s.json.loginId, code: e.mail.lastCode(email) } });
@@ -61,7 +57,6 @@ async function login(e: Env, email: string, o: { trial?: boolean } = {}): Promis
   return v.json.session as string;
 }
 
-/** checkout → 카드 등록 창 → 성공 돌아옴 */
 async function subscribe(e: Env, s: string, authKey = 'auth_ok'): Promise<{ ref: string; done: Awaited<ReturnType<Env['req']>> }> {
   const c = await e.req('POST', '/v1/billing/checkout', { headers: bearer(s) });
   assert.equal(c.status, 200, c.text);
@@ -78,7 +73,6 @@ async function subscribe(e: Env, s: string, authKey = 'auth_ok'): Promise<{ ref:
 }
 
 const sub = async (e: Env, s: string) => (await e.req('GET', '/v1/billing/subscription', { headers: bearer(s) })).json.subscription as Record<string, unknown>;
-/** 시계를 넘기면 세션(1시간)이 끝나므로 상태는 DB에서 본다 */
 const st = async (e: Env, ref: string) => {
   const r = await e.db.one<{ status: string; renew_at: number | null }>('SELECT status, renew_at FROM subscriptions WHERE pg_customer_ref = $1', [ref]);
   return { status: r!.status, renewAt: r!.renew_at === null ? null : Number(r!.renew_at) };
@@ -99,20 +93,16 @@ describe('카드 정기결제(빌링키 PG)', () => {
     assert.deepEqual((await sub(e, s)), { plan: 'standard', status: 'active', renewAt: addMonthKst(t0), amountKrw: 19900, period: 'month', refund: { amountKrw: 19900, refundableUntil: t0 + 7 * D } });
     assert.equal(e.pg.charges.length, 1);
     assert.equal(e.pg.charges[0]!.amountKrw, 19900);
-    // 결제 창에서 동의한 약관 판이 동의 이력에 남는다
     assert.deepEqual((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.consents, ['terms-2026-11-30']);
     assert.equal(e.pg.charges[0]!.customerKey, ref);
     assert.match(e.pg.charges[0]!.orderId, /^[A-Za-z0-9_-]{6,64}$/);
     const row = await e.db.one<{ billing_key_sealed: Buffer }>('SELECT billing_key_sealed FROM subscriptions WHERE pg_customer_ref = $1', [ref]);
     assert.ok(!Buffer.from(row!.billing_key_sealed).toString('latin1').includes('bk_'));
-    // 결과 페이지를 새로 고쳐도 두 번 청구하지 않는다
     const again = await e.req('GET', `/v1/billing/card/success?customerKey=${ref}&authKey=auth_ok`);
     assert.ok(again.text.includes('구독 중이에요'));
     assert.equal(e.pg.charges.length, 1);
-    // 활성이면 카드 창이 닫혀 있다
     assert.equal((await e.req('GET', `/v1/billing/card?ref=${ref}`)).status, 404);
 
-    // 갱신일 전 cron은 청구하지 않고, 갱신일이 지나면 한 번 청구·다음 갱신일로
     e.clock.advance(20 * D);
     assert.deepEqual(await e.svc.chargeDue(), { paid: 0, declined: 0, uncertain: 0 });
     e.clock.t = addMonthKst(t0) + H;
@@ -122,7 +112,6 @@ describe('카드 정기결제(빌링키 PG)', () => {
     assert.equal(e.pg.charges.length, 2);
     assert.notEqual(e.pg.charges[0]!.orderId, e.pg.charges[1]!.orderId);
 
-    // 해지: 빌링키를 지우고 더 청구하지 않는다. 이미 낸 기간의 갱신일은 남는다
     await e.svc.cancelSubscription({ accountId: (await e.db.one<{ account_id: string }>('SELECT account_id FROM subscriptions WHERE pg_customer_ref = $1', [ref]))!.account_id });
     const after = await st(e, ref);
     assert.deepEqual([after.status, after.renewAt], ['canceled', addMonthKst(addMonthKst(t0))]);
@@ -139,7 +128,7 @@ describe('카드 정기결제(빌링키 PG)', () => {
     assert.equal(done.status, 202);
     assert.equal((await st(e, ref)).status, 'pending');
     const first = e.pg.charges.at(-1)!.orderId;
-    assert.deepEqual(await e.svc.chargeDue(), { paid: 0, declined: 0, uncertain: 0 }); // 임대 중
+    assert.deepEqual(await e.svc.chargeDue(), { paid: 0, declined: 0, uncertain: 0 });
     e.clock.advance(BILLING.chargeLeaseMs + 1);
     assert.deepEqual(await e.svc.chargeDue(), { paid: 1, declined: 0, uncertain: 0 });
     assert.equal(e.pg.charges.at(-1)!.orderId, first);
@@ -172,7 +161,7 @@ describe('카드 정기결제(빌링키 PG)', () => {
     assert.equal((await e.svc.chargeDue()).declined, 1);
     assert.equal((await st(e, ref)).status, 'past_due');
     await e.svc.chargeDue();
-    assert.equal(e.pg.charges.filter((c) => c.customerKey === ref).length, 2); // 하루 안에는 다시 하지 않음
+    assert.equal(e.pg.charges.filter((c) => c.customerKey === ref).length, 2);
     e.clock.advance(BILLING.retryAfterMs + 1);
     await e.svc.chargeDue();
     e.clock.advance(BILLING.retryAfterMs + 1);
@@ -191,12 +180,10 @@ describe('카드 정기결제(빌링키 PG)', () => {
     await e.svc.chargeDue();
     assert.equal((await st(e, ref)).status, 'past_due');
     const declinedOrder = e.pg.charges.at(-1)!.orderId;
-    // 연체 중 다시 checkout(같은 참조)하려면 새 세션이 필요하다
     const s2 = await login(e, 'recard@example.com');
     const { done } = await subscribe(e, s2, 'auth_new');
     assert.equal(done.status, 200);
     assert.deepEqual([(await st(e, ref)).status, (await st(e, ref)).renewAt], ['active', addMonthKst(due)]);
-    // 같은 기간·실패 수 0으로 돌아가도 새 카드는 새 주문번호(앞서 거절된 주문의 멱등 응답을 받지 않는다)
     assert.notEqual(e.pg.charges.at(-1)!.orderId, declinedOrder);
   });
 
@@ -210,7 +197,6 @@ describe('카드 정기결제(빌링키 PG)', () => {
     assert.ok(f.text.includes('카드 등록을 취소했어요'));
     assert.ok(!f.text.includes('<script>'));
     assert.ok(e.events.includes('account.billing_card_fail.PAY_PROCESS_CANCELED'));
-    // 빌링키 PG는 웹훅을 받지 않는다
     assert.equal((await e.req('POST', '/v1/billing/webhook', { raw: '{}' })).json.error, 'account.billing_signature_invalid');
   });
 });
@@ -263,7 +249,6 @@ describe('청약철회 환불·유료 기능 권리(체험 1달)', () => {
     await assert.rejects(e.svc.refundSubscription(await session(ref)), /account.refund_failed/);
     const r = await e.svc.refundSubscription(await session(ref));
     assert.equal(r.amountKrw, 19900 - Math.ceil((19900 * 3) / periodDays));
-    // 두 시도의 멱등 키가 같다(결과를 모른 첫 시도가 실은 됐어도 두 번 환불되지 않음)
     assert.equal(e.pg.refunds[0]!.idempotencyKey, e.pg.refunds[1]!.idempotencyKey);
 
     const s2 = await login(e, 'late@example.com');
@@ -286,7 +271,6 @@ describe('청약철회 환불·유료 기능 권리(체험 1달)', () => {
     assert.equal(e.pg.charges.length, 0);
     assert.deepEqual(await st(e, ref), { status: 'active', renewAt: trialEnd });
     assert.deepEqual((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.consents, ['terms-2026-11-30']);
-    // 첫 결제 7일 전 안내(한 번)
     e.clock.t = trialEnd - 8 * D;
     assert.equal(await e.svc.trialConversionNotices(), 0);
     e.clock.t = trialEnd - 6 * D;
@@ -295,7 +279,6 @@ describe('청약철회 환불·유료 기능 권리(체험 1달)', () => {
     await e.flush();
     await e.svc.drainNotices();
     assert.ok(e.mail.outbox.some((m) => m.to === 'trialsub@example.com' && m.kind === 'trial_converting'));
-    // 체험 끝나는 날 첫 결제 → 청약철회 7일은 그때부터
     e.clock.t = trialEnd + H;
     assert.equal((await e.svc.chargeDue()).paid, 1);
     assert.equal(e.pg.charges[0]!.amountKrw, 19900);
@@ -303,7 +286,6 @@ describe('청약철회 환불·유료 기능 권리(체험 1달)', () => {
     const r = await e.svc.refundSubscription({ accountId: (await e.db.one<{ account_id: string }>('SELECT account_id FROM subscriptions WHERE pg_customer_ref = $1', [ref]))!.account_id });
     assert.equal(r.amountKrw, 19900);
 
-    // 다른 계정: 체험 중 등록 뒤 해지하면 결제 없음
     const s2 = await login(e, 'trialcancel@example.com', { trial: true });
     const c2 = await e.req('POST', '/v1/billing/checkout', { headers: bearer(s2) });
     const ref2 = new URL(c2.json.checkoutUrl as string).searchParams.get('ref')!;
@@ -361,8 +343,7 @@ describe('한 달 뒤(KST 달력)', () => {
     assert.equal(addMonthKst(kst(2026, 1, 31)), kst(2026, 2, 28));
     assert.equal(addMonthKst(kst(2028, 1, 31)), kst(2028, 2, 29));
     assert.equal(addMonthKst(kst(2026, 12, 15)), kst(2027, 1, 15));
-    // UTC로는 전날이지만 KST로는 1일인 시각
-    const t = Date.UTC(2026, 10, 30, 16); // KST 12/1 01:00
+    const t = Date.UTC(2026, 10, 30, 16);
     assert.equal(addMonthKst(t), Date.UTC(2026, 11, 31, 16));
   });
 });
@@ -403,7 +384,6 @@ describe('토스페이먼츠 어댑터(가짜 fetch)', () => {
     assert.equal(h.authorization, `Basic ${Buffer.from(`${SK}:`).toString('base64')}`);
     assert.equal(calls[0]!.init.redirect, 'manual');
     assert.deepEqual(JSON.parse(calls[0]!.init.body as string), { authKey: 'ak', customerKey: 'cus_aaaaaaaaaaaaaaaaaaaaaaaa' });
-    // 다른 customerKey로 발급된 응답은 받지 않는다
     reply = () => Response.json({ billingKey: 'bk_123', customerKey: 'cus_other' });
     assert.equal(await toss().billing.issueBillingKey({ authKey: 'ak', customerKey: 'cus_aaaaaaaaaaaaaaaaaaaaaaaa' }), null);
   });

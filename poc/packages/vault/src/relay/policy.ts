@@ -10,9 +10,7 @@ import {
 
 /** 중계 정책. 앱은 constants.ts 값만 쓰고(defaultRelayPolicy), 테스트는 origin 목록만 바꿔 주입한다. */
 export interface RelayPolicy {
-  /** 엔진에 노출하는 타깃의 허용 호스트(eTLD+1 또는 정확한 호스트). */
   allowedHosts: string[];
-  /** 비밀 종류별 허용 호스트. */
   secretHosts: Record<string, string[]>;
   domainMethods: Record<string, readonly string[]>;
   deniedMethods: Set<string>;
@@ -46,15 +44,12 @@ export function urlAllowed(url: string, allowed: string[]): boolean {
     return false;
   }
   if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
-  // http는 테스트 픽스처(127.0.0.1)에서만 의미가 있다. 내장 목록(hometax.go.kr)은 https로만 쓴다.
   if (u.protocol === 'http:' && !['127.0.0.1', 'localhost'].includes(u.hostname)) return false;
   return hostAllowed(u.hostname, allowed);
 }
 
 export type SessionState = {
-  /** 비밀 창 활성 상태(D05 §3.5 ①). */
   active: boolean;
-  /** 비밀 창 오염 상태(활성 포함, 다음 문서 커밋까지). */
   tainted: boolean;
 };
 
@@ -92,9 +87,7 @@ export function checkSessionCommand(
   if (state.tainted || state.active) {
     if (method === 'Page.captureScreenshot' || method === 'Page.startScreencast') return deny('secret_window_tainted');
     if (method === 'Runtime.evaluate' || method === 'Runtime.callFunctionOn') {
-      // Playwright의 callFunctionOn은 범용 래퍼이고 실제 코드는 문자열 인자로 간다(S6b). 인자 문자열까지 본다.
       const args = Array.isArray(params?.arguments) ? (params.arguments as Array<{ value?: unknown }>).map((a) => (typeof a.value === 'string' ? a.value : '')) : [];
-      // 고정 화면 확인 식과 정확히 같은 조각만 검사에서 뺀다(N-20). 다른 조각은 그대로 본다.
       const code = [String(params?.expression ?? ''), String(params?.functionDeclaration ?? ''), ...args].filter((part) => !isExemptInspect(part)).join('\n');
       if (TAINT_RUNTIME_DENY_PATTERNS.some((re) => re.test(code))) return deny('secret_window_tainted');
     }

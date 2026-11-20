@@ -1,4 +1,3 @@
-// 데이터 패키지 로더(SIGNING.md §6 kind:"data", D14 M6-10): 기술자 서명 2-of-3 → 본문 다이제스트 → 등록된 본문 검증기 → 버전.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { canonicalJson, canonicalWithout, decodeSxp, encodeSxp, loadDataPackage, sha256Hex, type DataLoaderContext, type DataLoadResult } from '@sax/engine/core';

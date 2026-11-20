@@ -1,5 +1,3 @@
-// M1-4 정책 상한·하한 집행(D03 §7.1): 필드별 클램프·범위 역전(E-17)·포털 키 없음 = postprocess·신선도·1인 긴급 키 보수성 판정(E-04).
-// CE-16: gov24 auto 정책은 postprocess로 고정된다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { clampPolicy, freshnessProblem, isStrictlyConservative, policyFreshness, policyMode, type Policy } from '@sax/engine/core';

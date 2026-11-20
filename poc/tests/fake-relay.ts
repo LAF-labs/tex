@@ -1,4 +1,3 @@
-// 금고 시험용 가짜 CDP 연결과 노출 실행 page 하나(Chrome 없음). audit-v의 setup과 같은 모양이며 금고 Phase 1 시험이 같이 쓴다.
 import { EventEmitter } from 'node:events';
 import { FileEventLog } from '@sax/platform';
 import { Relay, SecretOps, type RelayPolicy, type SecretOpsOptions } from '@sax/vault';
@@ -10,7 +9,6 @@ type Handler = (params: Json, sessionId?: string) => Json | Promise<Json>;
 export class FakeConn extends EventEmitter {
   private nextId = 1000;
   readonly sent: Array<{ method: string; params: Json; sessionId?: string }> = [];
-  /** 중계(sendRaw)로 Chrome에 넘어간 엔진 명령. */
   readonly raw: Json[] = [];
   readonly handlers = new Map<string, Handler>();
 
@@ -34,7 +32,6 @@ export class FakeConn extends EventEmitter {
     this.emit('message', m);
   }
 
-  /** 중계된 엔진 명령에 Chrome이 답한 것처럼. */
   reply(id: number, result: Json, sessionId?: string): void {
     const m: Json = { id, result };
     if (sessionId) m.sessionId = sessionId;
@@ -60,9 +57,7 @@ export interface FakeRelay {
   page: FakePage;
   ops: SecretOps;
   events: Array<{ to: readonly string[]; name: string; data: Json }>;
-  /** 엔진 세션 ID(실행 page). */
   sid: string;
-  /** 엔진이 보낸 것처럼 명령을 넣고, 결과(엔진이 받은 응답)를 돌려준다. 중계되면 Chrome 응답을 result로 흉내 낸다. */
   call(method: string, params?: Json, result?: Json): Promise<Json>;
 }
 

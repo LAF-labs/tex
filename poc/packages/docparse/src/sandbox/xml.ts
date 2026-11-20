@@ -1,5 +1,3 @@
-// xlsx 부분 XML(시트·공유 문자열·통합 문서·스타일)만 읽는 작은 토크나이저. DTD·엔티티 선언은 받지 않는다(XXE·억대 웃음 폭탄).
-// 미리 정의된 다섯 엔티티와 숫자 참조만 푼다. 깊이 상한을 둔다.
 import { SandboxError, SHEET_LIMITS } from './limits.ts';
 
 export interface XmlOpen {
@@ -68,7 +66,7 @@ export function* tokenize(xml: string): Generator<XmlToken> {
       i = e + 3;
       continue;
     }
-    if (xml.startsWith('<!', lt)) throw new SandboxError('xml_doctype'); // DOCTYPE·ENTITY·ELEMENT
+    if (xml.startsWith('<!', lt)) throw new SandboxError('xml_doctype');
     const gt = findTagEnd(xml, lt + 1);
     if (gt < 0) throw new SandboxError('xml_invalid');
     const body = xml.slice(lt + 1, gt);
@@ -94,7 +92,6 @@ export function* tokenize(xml: string): Generator<XmlToken> {
   }
 }
 
-/** 따옴표 안의 '>'를 건너뛰며 태그 끝을 찾는다. */
 function findTagEnd(xml: string, from: number): number {
   let q: string | null = null;
   for (let k = from; k < xml.length; k++) {

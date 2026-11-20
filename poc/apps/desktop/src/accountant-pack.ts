@@ -1,8 +1,3 @@
-// 세무사 꾸러미(08 D-05, 대표 지시 2026-11-14 "끊김없이"): 한 달치 발급 세금계산서 목록·PDF·증명서·받을 돈을 한 폴더와 zip으로 만든다.
-// - 재료는 로컬뿐이다: 실행 이력(원장 기준 PastRun), 문서함(보관함 서류), 받을 돈(엔진 bank). 서버로 보내지 않는다. 보내기는 사용자가 macOS 공유 시트에서 한다.
-// - 같은 달을 다시 만들면 같은 자리에 새로 쓴다(폴더를 지우고 다시 쓴다). 만드는 데 확인 단계가 없다.
-// - 엔진 @sax/bundle 내보내기(암호 엑셀 + AES ZIP)는 쓰지 않는다. 받는 쪽이 암호를 따로 받아야 하고 macOS 기본 압축 해제로 못 연다.
-// - 폴더는 앱 데이터(userData) 아래다. 문서·다운로드 폴더에 쓰면 macOS가 폴더 접근 허용 창을 띄운다.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { deflateRawSync } from 'node:zlib';
@@ -10,7 +5,6 @@ import { checkPaperInvoice, paperDirection, type PaperInvoice } from '@sax/remot
 import type { Doc } from './shell-model.ts';
 import type { PastRun } from './run-history.ts';
 
-/** YYYY-MM */
 type PackMonth = string;
 
 interface PackInvoice {
@@ -22,11 +16,9 @@ interface PackInvoice {
   total: number | null;
   approvalNo: string | null;
   mail: PastRun['mail'];
-  /** 꾸러미에 넣은 PDF 파일 이름. 없으면 null(빠진 것) */
   pdf: string | null;
 }
 
-/** 빠진 것 한 줄. 종류가 화면 문구와 순서를 정한다(GAP_LABEL). */
 type PackGapKind = 'unsure' | 'no_pdf' | 'mail_unconfirmed' | 'not_issued' | 'no_bank' | 'paper_check';
 interface PackGap {
   kind: PackGapKind;
@@ -43,17 +35,13 @@ interface PackReceivable {
 
 interface PackSummary {
   month: PackMonth;
-  /** 화면 글: "10월" */
   label: string;
   invoices: PackInvoice[];
   totals: { count: number; supply: number; tax: number; total: number };
   certs: Array<{ id: string; name: string; issuedOn: string | null; file: string | null }>;
-  /** 계좌 연결 전이면 null */
   receivables: { count: number; total: number; rows: PackReceivable[] } | null;
   gaps: PackGap[];
-  /** 그 달(작성일 기준) 종이 세금계산서·계산서. 폰 연결 전이면 빈 목록 */
   paper: PackPaper[];
-  /** 만든 zip 이름과 폴더 안 파일 목록(꾸러미 기준 상대 경로) */
   zipName: string;
   files: string[];
   madeAt: string;
@@ -69,17 +57,14 @@ export const GAP_LABEL: Record<PackGapKind, string> = {
 };
 const GAP_ORDER: PackGapKind[] = ['unsure', 'no_pdf', 'mail_unconfirmed', 'not_issued', 'paper_check', 'no_bank'];
 
-/** 폰으로 찍은 종이 세금계산서 한 장(엔진 receipts.phone_ocr_json.paperInvoice + 보관함 원본 JPEG) */
 interface PackPaperSource {
   docId: string;
   paper: PaperInvoice;
-  /** 보관함 원본(JPEG). 없으면 null */
   file: string | null;
 }
 
 interface PackPaper {
   docId: string;
-  /** PC가 내 사업자번호로 정한 방향. 둘 다 아니면 null(확인 필요) */
   direction: 'sales' | 'purchase' | null;
   docKind: PaperInvoice['docKind'];
   writtenOn: string;
@@ -88,24 +73,18 @@ interface PackPaper {
   supply: number;
   tax: number;
   total: number;
-  /** 다시 본 결과 틀린 칸(빈 목록이면 이상 없음) */
   issues: string[];
-  /** 꾸러미 안 원본 사진 경로. 없으면 null */
   image: string | null;
 }
 
 interface PackPorts {
   past(): Promise<PastRun[]>;
   docs(): Promise<Doc[]>;
-  /** 문서 id → PDF 경로. 없으면 던진다 */
   docFile(id: string): Promise<string>;
   receivables(): Promise<Array<{ counterparty: string; date: string; total: number | null }> | null>;
   businessName(): string | null;
-  /** 폰으로 찍은 종이 세금계산서(작성일이 그 달 근처인 것, 거르는 것은 꾸러미가 한다). 없으면 빈 목록 */
   paperInvoices?(month: PackMonth): Promise<PackPaperSource[]>;
-  /** 내 사업자번호(종이 세금계산서 매출·매입 판정) */
   businessBizNo?(): string | null;
-  /** 꾸러미를 쓰는 폴더(userData/세무사 꾸러미) */
   outRoot: string;
   now?: () => Date;
 }
@@ -113,7 +92,6 @@ interface PackPorts {
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 export const isPackMonth = (m: unknown): m is PackMonth => typeof m === 'string' && MONTH_RE.test(m);
 
-/** KST 오늘 YYYY-MM-DD → 지난달·이번 달 */
 function packMonths(today: string): { last: PackMonth; this: PackMonth } {
   const y = Number(today.slice(0, 4));
   const m = Number(today.slice(5, 7));
@@ -121,9 +99,7 @@ function packMonths(today: string): { last: PackMonth; this: PackMonth } {
   return { last, this: today.slice(0, 7) };
 }
 
-/** 대화 L0 규칙(엔진 l0/rules.ts bundle.monthly와 같은 꼴) */
 const PACK_RE = /꾸러미|세무사\s*.{0,8}(자료|보낼|넘길|묶)/;
-/** 대화 문장이 꾸러미 요청이면 그 달(이번 달·N월이 없으면 지난달), 아니면 null */
 export function packAsk(text: string, today: string): PackMonth | null {
   if (!PACK_RE.test(text)) return null;
   const { last, this: cur } = packMonths(today);
@@ -145,14 +121,12 @@ const ymd = (d: string | null) => (d ? d.replaceAll('-', '') : '날짜모름');
 const MAIL_KO = { sent: '보냄', unconfirmed: '확인 못 함' } as const;
 const KIND_KO: Record<PastRun['kind'], string> = { issued: '발급됨', unsure: '확인 필요', not_issued: '발급 안 됨', stopped_before_gate: '승인 전 멈춤' };
 
-/** 엑셀이 수식으로 읽지 않게(=+-@로 시작하면 작은따옴표) 감싸고 따옴표를 겹친다 */
 const cell = (v: string | number | null | undefined): string => {
   if (v === null || v === undefined) return '';
   if (typeof v === 'number') return String(v);
   const s = /^[=+\-@\t\r\n＝＋－＠]/u.test(v) ? `'${v}` : v;
   return /[",\r\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 };
-/** 엑셀이 한글을 바로 읽는 CSV(UTF-8 BOM, CRLF) */
 const csv = (rows: Array<Array<string | number | null | undefined>>) => '﻿' + rows.map((r) => r.map(cell).join(',')).join('\r\n') + '\r\n';
 
 async function exists(p: string): Promise<boolean> {
@@ -181,7 +155,6 @@ export class AccountantPack {
     return `세무사 꾸러미 ${month}${biz ? ` ${SAFE(biz)}` : ''}.zip`;
   }
 
-  /** 그 달 꾸러미를 폴더와 zip으로 새로 쓰고 요약을 돌려준다. */
   async make(month: PackMonth): Promise<PackSummary> {
     const [past, docs, recv] = await Promise.all([this.ports.past(), this.ports.docs(), this.ports.receivables().catch(() => null)]);
     const inMonth = past.filter((p) => p.day?.startsWith(month)).sort((a, b) => `${a.day}${a.time}`.localeCompare(`${b.day}${b.time}`));
@@ -249,7 +222,6 @@ export class AccountantPack {
       certs.push({ id: d.id, name: d.docName || d.name, issuedOn: d.issuedOn, file });
     }
 
-    // 종이 세금계산서(폰 사진 + 사장님이 확인한 값): 원본 사진과 매출·매입 표. 폰 값은 후보라 같은 규칙으로 다시 본다
     const paper: PackPaper[] = [];
     const paperSrc = ((await this.ports.paperInvoices?.(month).catch(() => [])) ?? []).filter((x) => x.paper?.writtenOn?.startsWith(month)).sort((a, b) => a.paper.writtenOn.localeCompare(b.paper.writtenOn));
     if (paperSrc.length) await fs.mkdir(path.join(dir, '종이 세금계산서'), { recursive: true });
@@ -337,8 +309,6 @@ export class AccountantPack {
   }
 }
 
-// ---- zip(PKZIP 2.0, deflate, UTF-8 이름). macOS 압축 해제·Windows 탐색기가 바로 연다 ----
-
 const CRC_TABLE = (() => {
   const t = new Uint32Array(256);
   for (let n = 0; n < 256; n++) {
@@ -402,7 +372,6 @@ export function zip(entries: Array<{ name: string; bytes: Uint8Array }>, at: Dat
   return Buffer.concat([...locals, cd, end]);
 }
 
-/** 렌더러 요청 표(ipc.ts SHELL_METHODS에 펼친다). month는 YYYY-MM이고 처리기가 다시 본다. */
 const MONTH = { t: 'string', max: 7, required: true } as const;
 export const PACK_SHELL_METHODS = {
   'pack.make': { month: MONTH },

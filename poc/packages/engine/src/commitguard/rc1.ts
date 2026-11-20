@@ -1,5 +1,3 @@
-// 금고 R-C1 계약(#81, vault/src/protocol.ts)의 엔진 쪽 사본. 엔진은 @sax/vault에 의존하지 않는다(네이티브 키링을 끌어오지 않게).
-// 같은지는 시험(tests/commitguard.test.ts)이 금고 함수와 바로 대조한다.
 import { createHash } from 'node:crypto';
 
 export interface CommitArmParams {
@@ -7,7 +5,6 @@ export interface CommitArmParams {
   intentId: string;
   stepId: string;
   targetId: string;
-  /** Fetch urlPattern. 스킴·호스트는 와일드카드 없이 고정. */
   endpoint: string;
   method?: string;
   bodyFieldMap: Record<string, string>;
