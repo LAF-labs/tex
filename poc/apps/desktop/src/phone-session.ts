@@ -15,7 +15,7 @@ export const SESSION_CAPS: readonly string[] = Object.freeze([CAP.issue, CAP.cop
 /** 폰 승인을 배선한 PC가 더 알리는 기능(v1.10) */
 export const APPROVE_CAPS: readonly string[] = Object.freeze([CAP.approve]);
 
-export interface PhoneSessionOptions {
+interface PhoneSessionOptions {
   issue: PhoneIssue;
   copy: (pairId: string) => Promise<PhoneCopyBody>;
   /** 폰 승인(ADR-052). 없으면 px.enroll·gate.*를 받지 않는다(hello에도 approve.v1을 알리지 않는다). */

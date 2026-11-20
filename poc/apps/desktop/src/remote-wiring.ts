@@ -14,7 +14,7 @@ export const PROD_PHONE_PAIRING = true;
 
 const DEV_HOST = /^(localhost|127\.0\.0\.1):[0-9]{1,5}$/;
 
-export interface ProductRemoteOptions {
+interface ProductRemoteOptions {
   isPackaged: boolean;
   env: NodeJS.ProcessEnv;
   onSecurityEvent?: (e: EgressSecurityEvent) => void;

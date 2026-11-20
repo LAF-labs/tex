@@ -6,7 +6,7 @@ import type { Vat } from '@sax/chat-core';
 import type { RunView } from './shell-model.ts';
 
 /** 이보다 오래된 이어 하기는 버린다(반나절 넘게 꺼져 있었으면 사람이 다시 말한다). */
-export const RESUME_MAX_MS = 6 * 3_600_000;
+const RESUME_MAX_MS = 6 * 3_600_000;
 
 export interface ResumeItem {
   /** 앞 실행 id(카드 "이어서 해요"·로그에만). */
@@ -23,19 +23,19 @@ export interface ResumeItem {
 }
 
 /** 승인을 보낸 뒤 꺼진 건(다시 시작하지 않는다). 다음 기동에 안내 한 줄만. */
-export interface ResumeApproved {
+interface ResumeApproved {
   from: string;
   name: string;
   total: number;
 }
 
-export interface ResumeWork {
+interface ResumeWork {
   items: ResumeItem[];
   approved: ResumeApproved[];
 }
 
 /** 엔진 resume.save(값 또는 null)·resume.take(읽고 지움). */
-export interface ResumePort {
+interface ResumePort {
   save(value: string | null): Promise<unknown>;
   take(): Promise<unknown>;
 }

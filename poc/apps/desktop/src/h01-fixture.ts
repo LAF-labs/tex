@@ -66,7 +66,7 @@ const pad = (n: number, w = 2) => String(n).padStart(w, '0');
 export const today = (now = Date.now()) => new Date(now + 9 * 3_600_000).toISOString().slice(0, 10);
 
 /** 가짜 사업자 조회 대장(공급받는자 확인 버튼). */
-export type Registry = Record<string, string>;
+type Registry = Record<string, string>;
 
 function form(k: H01Knobs): string {
   // 합계는 공급가액 + 세액을 페이지가 계산해 보이는 별도 요소(readbackOf가 아닌 표시값)다.

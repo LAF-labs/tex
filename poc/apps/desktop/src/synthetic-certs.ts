@@ -3,8 +3,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { formatBizNo, syntheticBizNo } from '@sax/db';
 
-export type SyntheticKind = 'national_tax_cert' | 'biz_registration_cert' | 'localtax_cert' | 'biz_registration' | 'closure_cert';
-export type DateStyle = 'ko' | 'ko0' | 'dot' | 'dash';
+type SyntheticKind = 'national_tax_cert' | 'biz_registration_cert' | 'localtax_cert' | 'biz_registration' | 'closure_cert';
+type DateStyle = 'ko' | 'ko0' | 'dot' | 'dash';
 
 export interface SyntheticCert {
   id: string;
@@ -15,7 +15,7 @@ export interface SyntheticCert {
 }
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
-export function fmtDate(iso: string, style: DateStyle): string {
+function fmtDate(iso: string, style: DateStyle): string {
   const [y, m, d] = iso.split('-').map(Number) as [number, number, number];
   if (style === 'ko') return `${y}년 ${m}월 ${d}일`;
   if (style === 'ko0') return `${y}년 ${pad2(m)}월 ${pad2(d)}일`;

@@ -206,7 +206,7 @@ async function runJobNow(payload: Record<string, unknown>, timeoutMs: number, me
   }
 }
 
-export interface OcrResult {
+interface OcrResult {
   text: string;
   confidence: number;
   ms: number;
@@ -227,7 +227,7 @@ export interface PdfExtractRun extends PdfExtract {
   peakMemoryKb: number;
 }
 
-export const PDF_MAX_PAGES = 5;
+const PDF_MAX_PAGES = 5;
 export interface PdfOptions {
   /** 열기 암호. 사용자가 입력한 값을 이 작업에만 쓰고 저장하지 않는다. */
   password?: string;
@@ -260,7 +260,7 @@ export async function parsePdfInSandbox(bytes: Uint8Array, opts: PdfOptions = {}
  */
 export type OcrModel = 'tessdata' | 'best_int';
 
-export interface ImageOptions {
+interface ImageOptions {
   /** document: 고정 임계 흑백 + 표 선 지우기(증명서 사진). photo: 국소 임계(종이 증빙·폰 사진) */
   mode: 'document' | 'photo';
   model?: OcrModel;

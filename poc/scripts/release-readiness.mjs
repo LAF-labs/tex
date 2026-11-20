@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /** Windows 실기기 점검 보고서(PR #152). */
-export const WIN_REALDEVICE_REPORT = path.resolve(import.meta.dirname, '../reports/WIN-REALDEVICE.md');
+const WIN_REALDEVICE_REPORT = path.resolve(import.meta.dirname, '../reports/WIN-REALDEVICE.md');
 
 /**
  * 보고서에 설치·첫 실행 통과 표시가 있는지. 표시 형식(SIGNING-SETUP.md §4):
@@ -38,7 +38,7 @@ export function readWinReport(file = WIN_REALDEVICE_REPORT) {
  * @param {{ channel: 'beta' | 'stable', signing: { mode: string, reason?: string, missing?: string[] }, publisherName?: string,
  *   devOnly: string[], outside: string[], testBuild?: boolean, winReport: string | null }} f
  */
-export function readinessBlockers(f) {
+function readinessBlockers(f) {
   if (f.channel !== 'beta' && f.channel !== 'stable') throw new Error(`알 수 없는 채널: ${f.channel}`);
   const blockers = [];
   if (f.signing.mode !== 'azure' && f.channel === 'stable') blockers.push({ code: 'unsigned_build', detail: f.signing.reason, missing: f.signing.missing });

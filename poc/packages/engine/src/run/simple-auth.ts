@@ -22,9 +22,8 @@ export const OACX_PROVIDERS: Readonly<Record<string, string>> = {
   samsung: '삼성패스',
   banksalad: '뱅크샐러드',
 };
-export const OACX_PREFIXES = ['010', '011', '016', '017', '018', '019'] as const;
 /** 통신사PASS의 통신사 칸 값(홈택스 창 select, 2026-11-19 실화면) */
-export const OACX_CARRIERS: Readonly<Record<string, string>> = { S: 'SKT', K: 'KT', L: 'LGU+', SA: 'SKT알뜰폰', KA: 'KT알뜰폰', LA: 'LGU+알뜰폰' };
+const OACX_CARRIERS: Readonly<Record<string, string>> = { S: 'SKT', K: 'KT', L: 'LGU+', SA: 'SKT알뜰폰', KA: 'KT알뜰폰', LA: 'LGU+알뜰폰' };
 
 export interface SimpleAuthIdentity {
   provider: string;
@@ -60,7 +59,7 @@ async function waitOacx(page: Page, ms: number): Promise<Frame | null> {
   }
 }
 
-export type SimpleAuthResult = { ok: true } | { ok: false; code: string };
+type SimpleAuthResult = { ok: true } | { ok: false; code: string };
 
 /** 간편인증 창을 열고(이미 열려 있으면 그대로) 칸을 채운 뒤 [인증 요청]을 누른다. */
 export async function oacxRequest(page: Page, d: SimpleAuthIdentity): Promise<SimpleAuthResult> {

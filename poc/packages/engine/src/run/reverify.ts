@@ -31,8 +31,8 @@ import type { SignalDict } from '../signals.ts';
 import type { IrPackage } from './service-ir.ts';
 
 /** 한 번에 조회하는 행 수(최근 순)와 한 호출의 시간 상한. */
-export const REVERIFY_MAX_ROWS = 5;
-export const REVERIFY_BUDGET_MS = 60_000;
+const REVERIFY_MAX_ROWS = 5;
+const REVERIFY_BUDGET_MS = 60_000;
 /** 실행 탭 머리말로 로그인을 본다(H-01 s2와 같은 대상·문구). 대상을 못 찾으면 판단하지 않고 조회에 맡긴다. */
 const LOGIN_PROBE = { target: 'hometax.header.loginLink', pattern: 'login.loggedIn' } as const;
 
@@ -44,7 +44,7 @@ type Skip = (typeof SKIPS)[number];
 export type ReverifyCounts = { checked: number; committed: number; unknown: number; skipped: number };
 export type ReverifyResult = ({ ok: true } & ReverifyCounts) | ({ ok: false; code: string } & ReverifyCounts);
 
-export interface ReverifyInput {
+interface ReverifyInput {
   /** 지금 열린 실행 탭(로그인된 앱 안 브라우저). 조회 팝업을 여기서 연다. */
   page: Page;
   ir: IrPackage;

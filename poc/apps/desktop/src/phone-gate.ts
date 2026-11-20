@@ -28,9 +28,9 @@ const STEP_REF = /^s[0-9]{1,3}[a-z]?$/;
 const ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
 /** 폰으로 보내지 않는 이유(run.event.code). pc_only = 그 밖(카드 종류·값 대조 등). */
-export type PcOnlyCode = 'pc_key' | 'pc_first' | 'pc_limit' | 'pc_only';
+type PcOnlyCode = 'pc_key' | 'pc_first' | 'pc_limit' | 'pc_only';
 
-export interface ApprovalRow {
+interface ApprovalRow {
   at: number;
   /** 한국 시간 날짜(하루 한도) */
   day: string;
@@ -104,7 +104,7 @@ export interface GateSink {
   send(type: 'gate.resolved', body: GateResolvedBody): unknown;
 }
 
-export interface PhoneGatePorts {
+interface PhoneGatePorts {
   /** 지금 그 폰의 승인 키(phone-link PhoneLink.px). 답이 올 때마다 다시 읽는다. */
   px: (pairId: string) => { pub: Uint8Array; hw: PxHw; deviceId: string } | null;
   /** 셸 실행 id → 그 실행을 맡긴 폰과 폰 쪽 runId(phone-issue PhoneIssue.trackedOf). 폰이 시작한 실행이 아니면 null. */
@@ -133,7 +133,7 @@ const systemTimers = {
   clear: (h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>),
 };
 
-export interface GateHandlers {
+interface GateHandlers {
   /** 폰이 승인했다(서명 검증·기록 끝). 한 번만 불린다. */
   approve: () => void | Promise<void>;
   /** 폰이 거절했다([중지]와 같다). 한 번만 불린다. */
@@ -162,7 +162,7 @@ interface OpenGate {
   again: unknown;
 }
 
-export type AnswerResult =
+type AnswerResult =
   | 'approved' | 'denied'
   | 'no_request' | 'wrong_gate' | 'sig_alg' | 'wrong_action' | 'expired' | 'no_key' | 'bad_sig' | 'limit' | 'log_failed';
 

@@ -34,7 +34,7 @@ export interface AgentRuns {
   discardDraft(id: string): RunView;
 }
 
-export interface AgentWiring {
+interface AgentWiring {
   rpc(method: string, params: Record<string, unknown>): Promise<unknown>;
   profileId(): string | null;
   runs: AgentRuns;

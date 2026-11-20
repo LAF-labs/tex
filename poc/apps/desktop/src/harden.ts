@@ -135,7 +135,7 @@ export function hardenWindow(win: BrowserWindow): void {
 // ---- 설치본 자기 점검(#76 인계, apps/desktop/build/README.md "기동 자기 점검") ----
 
 /** 앱 안 build-info.json(scripts/package-win.mjs가 쓴다). */
-export interface BuildInfo {
+interface BuildInfo {
   productName: string;
   version: string;
   channel: 'stable' | 'beta';

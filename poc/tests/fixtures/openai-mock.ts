@@ -4,13 +4,13 @@ import { createHash } from 'node:crypto';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-export interface MockCall {
+interface MockCall {
   path: string;
   body: Record<string, unknown>;
   headers: http.IncomingHttpHeaders;
 }
 
-export interface MockOptions {
+interface MockOptions {
   /** 경로별 앞쪽 N개 요청에 돌려줄 오류(재시도 정책 테스트) */
   failures?: Array<{ status: number; code?: string; retryAfter?: string }>;
   /** Decisions answers를 바꿔치기(이름 조인·비신뢰 응답 테스트) */

@@ -3,7 +3,7 @@
 import { EgressError, GatewayError, isCodefEnv, type CodefEnv, type CodefPath, type Egress } from '@sax/net';
 import { CODEF_OK, CODEF_TOKEN_CODES, CodefError, failureOf, type CodefBankCode, type CodefClientType } from './codes.ts';
 
-export interface CodefGrant {
+interface CodefGrant {
   accessToken: string;
   expiresAt: number;
   env: CodefEnv;
@@ -17,7 +17,7 @@ type Json = Record<string, unknown>;
 const obj = (v: unknown): Json | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Json) : null);
 const str = (v: unknown, max = 200): string => (typeof v === 'string' ? v.slice(0, max) : typeof v === 'number' && Number.isFinite(v) ? String(v) : '');
 
-export interface CodefReply {
+interface CodefReply {
   code: string;
   data: unknown;
   /** result.message·extraMessage(원문). 밖으로 내보내지 않고 빠진 파라미터 키 이름을 가를 때만 쓴다 */
@@ -35,7 +35,7 @@ export interface CodefTwoWay {
 }
 
 /** CODEF data → 추가 인증 정보. continue2Way가 true이고 SMS 인증번호를 요구할 때만 */
-export function twoWayOf(data: unknown): CodefTwoWay | null {
+function twoWayOf(data: unknown): CodefTwoWay | null {
   const d = obj(data);
   if (!d || d.continue2Way !== true) return null;
   const extra = obj(d.extraInfo);
@@ -76,7 +76,7 @@ export function hintOf(text: string | undefined): string | null {
 }
 
 /** 감싼 로그인(금고 codef.seal 결과): 계정 등록 accountList 원소의 인증서 칸 */
-export interface SealedLogin {
+interface SealedLogin {
   derFile: string;
   keyFile: string;
   password: string;
@@ -105,7 +105,7 @@ export interface CodefTxn {
   counterAccount: string;
 }
 
-export interface CodefTxnPage {
+interface CodefTxnPage {
   txns: CodefTxn[];
   /** CODEF가 실제로 쓴 기간(은행 한도로 줄였으면 다르다) YYYYMMDD */
   startDate: string;

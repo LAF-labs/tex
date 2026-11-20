@@ -23,7 +23,7 @@ export const CP_CERT_HOLD_MS = 30 * 60_000;
 /** 등록증 읽기 결과: 후보, 'unreadable'(골랐지만 못 읽음), null(고르지 않음). */
 export type CpCertRead = BizFields | 'unreadable' | null;
 /** hold: 이 읽기의 표(폼이 저장 때 돌려준다, 값 없음). item: 등록증 종목(저장 품목 후보, F-15). */
-export type CpCertReply = { found: true; name: string; bizNo: string; rep: string; hold: string; item: string } | { found: false; reason: 'cancelled' | 'unreadable' };
+type CpCertReply = { found: true; name: string; bizNo: string; rep: string; hold: string; item: string } | { found: false; reason: 'cancelled' | 'unreadable' };
 
 type Rpc = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
 

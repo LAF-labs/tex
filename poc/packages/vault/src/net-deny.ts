@@ -5,7 +5,7 @@ import module from 'node:module';
 
 const DENIED = new Set(['net', 'http', 'https', 'tls', 'dgram', 'dns', 'http2', 'electron']);
 
-export function netDenied(specifier: string): boolean {
+function netDenied(specifier: string): boolean {
   const bare = specifier.startsWith('node:') ? specifier.slice(5) : specifier;
   return DENIED.has(bare.split('/')[0]!);
 }

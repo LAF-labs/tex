@@ -5,7 +5,7 @@
 //  - 사용자가 직접 재우면 막지 않는다. 깨어나면 PhoneLink.wake('resume')로 바로 다시 붙는다.
 // 화면 잠금은 그대로다: 폰이 보내는 것은 영수증·현금매출 받기뿐이고 발급·제출은 PC 앞 사람의 승인이 있어야 한다(ADR-026).
 
-export type CloseAction = 'quit' | 'minimize' | 'hide';
+type CloseAction = 'quit' | 'minimize' | 'hide';
 
 /** 창 닫기 단추를 눌렀을 때 할 일. */
 export function closeAction(o: { phones: number; quitting: boolean; platform: NodeJS.Platform }): CloseAction {
@@ -18,7 +18,7 @@ export function shouldStayAwake(o: { phones: number; onBattery: boolean }): bool
   return o.phones > 0 && !o.onBattery;
 }
 
-export interface PowerBlocker {
+interface PowerBlocker {
   start(type: 'prevent-app-suspension'): number;
   stop(id: number): void;
 }

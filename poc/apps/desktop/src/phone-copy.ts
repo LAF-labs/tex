@@ -94,7 +94,7 @@ export interface CashFlowLike {
 }
 
 /** 받을 돈 목록에서 7일 안에 받기로 한 건(BankSummary에는 받을 돈 dueSoon이 없다) */
-export interface ReceivableLike {
+interface ReceivableLike {
   remaining: number;
   dueIn: number | null;
   overdue: boolean;
@@ -156,7 +156,7 @@ export function copyMoney(s: BankSummaryLike, cf: CashFlowLike | null, recv: rea
   return money;
 }
 
-export interface PhoneCopySource {
+interface PhoneCopySource {
   counterparties: () => readonly Counterparty[];
   runs: () => readonly RunView[];
   /** 엔진 은행 조회(BankHost.call, 사업자 프로필 id를 붙인다). 실패하면 돈 칸 없이 보낸다. */

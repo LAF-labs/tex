@@ -12,9 +12,9 @@ export const CHAT_SUGGEST_CHIPS = {
 export type ChatSuggestion = keyof typeof CHAT_SUGGEST_CHIPS;
 
 export const CHAT_REPLY_KINDS = ['help', 'clarify', 'smalltalk', 'tax_advice', 'out_of_scope'] as const;
-export const CHAT_FILTERED = ['advice', 'unsafe', 'refusal'] as const;
+const CHAT_FILTERED = ['advice', 'unsafe', 'refusal'] as const;
 /** 엔진이 검사하는 답 상한(계약 ≤ 200자). 넘으면 믿지 않는다. */
-export const CHAT_REPLY_MAX = 200;
+const CHAT_REPLY_MAX = 200;
 
 export interface ChatReply {
   reply: string;

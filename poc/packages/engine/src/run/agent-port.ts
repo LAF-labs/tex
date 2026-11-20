@@ -77,7 +77,7 @@ export interface AgentModel {
   next(req: AgentRequest): Promise<AgentAction | null>;
 }
 
-export interface AgentPortInput {
+interface AgentPortInput {
   responder: LocateResponder;
   redactor: Pick<Redactor, 'apply' | 'map'>;
   runToken: () => Promise<RunToken>;

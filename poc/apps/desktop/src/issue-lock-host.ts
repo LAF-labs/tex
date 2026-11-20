@@ -30,7 +30,7 @@ export interface IssueLockDevice {
   clearToken(): void;
 }
 
-export interface IssueLockTimers {
+interface IssueLockTimers {
   every(ms: number, fn: () => void): () => void;
 }
 const systemTimers: IssueLockTimers = {
@@ -41,7 +41,7 @@ const systemTimers: IssueLockTimers = {
   },
 };
 
-export interface IssueLockHostOptions {
+interface IssueLockHostOptions {
   /** 계정 클라이언트. 없으면(클라우드 연결 없는 실행) 잠금이 필요 없다. */
   client: Pick<AccountClient, 'acquireIssueLock' | 'renewIssueLock' | 'releaseIssueLock'> | null;
   /** 로그인(기기 등록)을 마쳤으면 기기 세션, 아니면 null(잠금이 필요 없다). 던지면 issue.lock_unavailable. */

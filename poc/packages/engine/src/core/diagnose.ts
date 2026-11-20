@@ -20,7 +20,7 @@ const masked = (x: ElementShape): Shape => ({
   type: x.type, readonly: x.readonly, disabled: x.disabled, visible: x.visible,
 });
 
-export interface TargetDiagnosis {
+interface TargetDiagnosis {
   key: string;
   frame: string;
   role: string;

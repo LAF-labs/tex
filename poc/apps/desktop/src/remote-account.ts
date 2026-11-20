@@ -115,7 +115,7 @@ export class RemoteIdentityFile {
 }
 
 /** 받은 로그인 코드의 대기 정보(코드 자체는 없다). 이것만으로는 로그인할 수 없다(메일의 6자리가 있어야 한다). */
-export interface PendingCode {
+interface PendingCode {
   email: string;
   loginId: string;
   expiresAt: number;
@@ -184,7 +184,7 @@ export interface AccountView {
   linkCode?: string;
 }
 
-export interface DesktopAccountOptions {
+interface DesktopAccountOptions {
   /** 없으면 이 빌드에서는 계정에 닿을 수 없다(unavailable). */
   client: AccountClient | null;
   keys: () => Promise<DesktopKeys>;

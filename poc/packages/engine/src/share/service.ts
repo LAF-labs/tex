@@ -66,7 +66,7 @@ export interface ShareCollected {
   self: number;
 }
 /** 받은 거래처 줄을 이 PC 거래처 목록에 반영한 결과(개수만). kept = 이 PC 값이 더 새것이라 그대로 둠, skipped = 값이 규칙 밖이라 넣지 않음. */
-export interface SharePartiesApplied {
+interface SharePartiesApplied {
   added: number;
   updated: number;
   removed: number;
@@ -79,7 +79,7 @@ export interface ShareStatus {
   in: Record<Kind, number>;
 }
 
-export interface ShareServiceOptions {
+interface ShareServiceOptions {
   now?: () => Date;
 }
 

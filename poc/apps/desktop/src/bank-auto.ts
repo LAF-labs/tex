@@ -47,9 +47,9 @@ ${
 }
 
 /** 화면에 보이는 인증서 행(이름·용도·만료일만, 경로·주체 전체 없음) */
-export type BankAutoCert = Pick<NpkiCert, 'id' | 'owner' | 'usage' | 'expiresOn' | 'usable' | 'kind'> & { why?: string; issuance?: boolean };
+type BankAutoCert = Pick<NpkiCert, 'id' | 'owner' | 'usage' | 'expiresOn' | 'usable' | 'kind'> & { why?: string; issuance?: boolean };
 
-export interface BankAutoDeps {
+interface BankAutoDeps {
   /** 엔진 RPC(codef.*) */
   engine: (method: string, params: Record<string, unknown>) => Promise<unknown>;
   certs: () => Promise<NpkiCert[]>;

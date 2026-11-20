@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 
 export const MAX_TRIES = 5;
 export const PICK_TTL_MS = 300_000;
-export const MAX_PICKS = 2;
+const MAX_PICKS = 2;
 
 interface Pick {
   bytes: Uint8Array;

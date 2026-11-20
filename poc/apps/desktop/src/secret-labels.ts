@@ -6,7 +6,7 @@ export type { SecretKind } from '@sax/vault';
 export type SecretInputBind = OneShotBind;
 
 /** 금고의 secret.needed(I-2) 데이터. */
-export interface SecretNeeded extends OneShotBind {
+interface SecretNeeded extends OneShotBind {
   targetId: string;
 }
 

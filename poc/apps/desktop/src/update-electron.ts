@@ -10,14 +10,14 @@ import type { Channel, FeedInfo, VerifiedRelease } from '@sax/updater';
 import type { UpdateInstaller } from './update-host.ts';
 
 /** VerifiedFeed가 electron-updater에 돌려주는 업데이트 정보(6.8.x UpdateInfo 가운데 쓰는 칸). */
-export interface VerifiedUpdateInfo extends FeedInfo {
+interface VerifiedUpdateInfo extends FeedInfo {
   files: Array<{ url: string; sha512: string; size: number }>;
   path: string;
   sha512: string;
   releaseDate: string;
 }
 
-export function updateInfoOf(release: VerifiedRelease): VerifiedUpdateInfo {
+function updateInfoOf(release: VerifiedRelease): VerifiedUpdateInfo {
   const m = release.manifest;
   return {
     version: m.version,
@@ -39,7 +39,7 @@ interface VerifiedFeedConfig {
 }
 
 /** 사용자 정의 공급자: 받을 정보는 check()가 넣은 검증된 값뿐이고, 파일 주소는 피드 기준 주소 + 파일 이름이다. */
-export function verifiedFeed(Base: ProviderBase) {
+function verifiedFeed(Base: ProviderBase) {
   return class VerifiedFeed extends Base {
     readonly cfg: VerifiedFeedConfig;
     constructor(cfg: VerifiedFeedConfig, _updater: unknown, runtimeOptions: unknown) {

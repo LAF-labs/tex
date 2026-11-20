@@ -31,7 +31,7 @@ export async function openExternalKey(key: string): Promise<void> {
  * 구독 결제 창(계정 서비스 /v1/billing/card?ref=…)을 기본 브라우저로 연다. 주소는 main이 계정 서비스에서 받은 것만(렌더러는 주소를 보내지 않는다).
  * 운영 origin(https, 포트·사용자 정보 없음)이나 개발 스택(http://localhost) 계정 origin과 정확히 맞아야 한다.
  */
-export function billingCheckoutUrl(url: string, accountOrigin: string): string {
+function billingCheckoutUrl(url: string, accountOrigin: string): string {
   const u = new URL(url);
   const o = new URL(accountOrigin);
   const devLocal = o.protocol === 'http:' && (o.hostname === 'localhost' || o.hostname === '127.0.0.1');

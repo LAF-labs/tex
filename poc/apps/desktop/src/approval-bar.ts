@@ -89,16 +89,16 @@ function barSession(): Session {
 }
 
 /** 카드 자리 계산. wide면 레일 오른쪽부터 창 끝까지의 띠(값이 대화 열 폭에 안 들어갈 때). height는 main이 줄 수로 정한 카드 높이. */
-export type Placer = (contentWidth: number, contentHeight: number, wide: boolean, height: number) => Rect & { band?: boolean };
+type Placer = (contentWidth: number, contentHeight: number, wide: boolean, height: number) => Rect & { band?: boolean };
 
 /** batch: 이 클릭을 받은 카드가 묶음 글자(N건·2~N건 줄)로 그려졌으면 그 건수, 아니면 0. 묶음 승인은 이것이 참일 때만 기록한다. */
-export type BarOutcome = { decision: 'approve'; approval: LocalApproval; batch: number } | { decision: 'closed'; reason: string };
+type BarOutcome = { decision: 'approve'; approval: LocalApproval; batch: number } | { decision: 'closed'; reason: string };
 /** 승인 카드에 같이 올릴 묶음(main ShellRuns.batchOffer): 건수와 2~N건의 상호·합계. */
-export interface BarBatch {
+interface BarBatch {
   count: number;
   lines: ReadonlyArray<{ name: string; total: number }>;
 }
-export type AttestOutcome = { decision: 'attest'; attestation: LocalAttestation } | { decision: 'closed'; reason: string };
+type AttestOutcome = { decision: 'attest'; attestation: LocalAttestation } | { decision: 'closed'; reason: string };
 
 /**
  * 바 자리에 올라온 것(ADR-021 표시 조건). 게이트(비가역 승인)와 InDoubt 증언 두 가지이고, 우선순위는 게이트 > 증언이다.
@@ -108,7 +108,7 @@ type BarItem =
   | { kind: 'gate'; id: string; runId: string; gate: GateRequest; done: (o: BarOutcome) => void }
   | { kind: 'attest'; id: string; runId: string; attest: AttestRequest; done: (o: AttestOutcome) => void };
 
-export interface BarSnapshot {
+interface BarSnapshot {
   visible: boolean;
   /** 바 자리에 올라온 것. 증언 바는 'attest'. */
   kind: 'gate' | 'attest' | null;
@@ -133,7 +133,7 @@ export interface BarSnapshot {
   targets: CardTargets;
 }
 
-export interface BarOptions {
+interface BarOptions {
   /** 토큰 거부(bar.tokens_rejected)를 남길 곳. */
   log?: EventLog;
 }

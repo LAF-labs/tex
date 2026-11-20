@@ -247,7 +247,7 @@ export function parseRegex(text: string, counterparties: Counterparty[]): Parsed
 
 /** 거래처를 물었는데 장부에 없는 이름으로 답할 때 그 이름(F-03). 조사·"요"·"로 해 줘"를 뗀 짧은 낱말만. 아니면 null. */
 const CP_ANSWER_TAIL = /\s*(?:(?:으로|로|에게|한테|에)\s*(?:해\s?(?:줘|주세요|요)|발급해\s?(?:줘|주세요)|끊어\s?(?:줘|주세요))|에게|한테|에|이요|이에요|예요|입니다|요)$/;
-export const CP_NAME_MAX = 60;
+const CP_NAME_MAX = 60;
 export function cpNameFromAnswer(text: string): string | null {
   const t = text
     .trim()
@@ -359,7 +359,7 @@ export function sentFromGateway(paths: readonly string[]): SentTo[] {
 }
 
 /** 민원증명 실행의 서류와 신청 값(cert-docs.ts 표의 한 줄, run.startCert inputs 그대로). */
-export interface CertRun {
+interface CertRun {
   code: CertCode;
   playbookId: string;
   name: string;

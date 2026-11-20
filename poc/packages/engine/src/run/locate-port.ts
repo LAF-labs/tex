@@ -19,7 +19,7 @@ const SCOPE = 'frame';
  * 어댑터는 응답 toolsetDigest를 이 정의의 해시와 대조하므로(C-24) 열거 정의로 부르면 늘 toolset_digest_mismatch다.
  * 도구 답은 scopeId와 상관없이 같은 목록으로만 한다(toolAnswer).
  */
-export function locateToolset(): ToolsetDef {
+function locateToolset(): ToolsetDef {
   const t = selectorRepair([SCOPE]);
   for (const tool of t.tools) {
     const props = (tool.parameters as { properties: Record<string, unknown> }).properties;
@@ -29,7 +29,7 @@ export function locateToolset(): ToolsetDef {
 }
 const BLOCK_FLAGS = new Set(['target_is_irreversible_action', 'possible_injection_text']);
 
-export interface GatewayLocateInput {
+interface GatewayLocateInput {
   responder: LocateResponder;
   redactor: Pick<Redactor, 'apply' | 'map'>;
   runToken: () => Promise<RunToken>;
@@ -48,7 +48,7 @@ export interface RunAiBudget {
   day?: { spent: boolean };
 }
 /** 응답 사유가 실행 예산 소진인가(게이트웨이 429 gateway.run_budget_exceeded, 어댑터 사유 'gateway:run_budget_exceeded'). */
-export const budgetSpent = (reason: string | undefined): boolean => !!reason && /run_budget_exceeded|budget_exceeded/.test(reason);
+const budgetSpent = (reason: string | undefined): boolean => !!reason && /run_budget_exceeded|budget_exceeded/.test(reason);
 /** 응답 사유가 계정 한도(오늘·이번 달·구독)인가. */
 export const accountLimited = (reason: string | undefined): boolean => !!reason && /daily_limit|quota_exceeded|subscription_required/.test(reason);
 /** 이 응답 사유로 예산 표시를 바꾼다. 계정 한도면 한 번 저널에 남긴다. */

@@ -13,7 +13,7 @@ export const WAKE_APPROVE_AGAIN_MS = 60_000;
 /** 승인 요청을 보낸 세션이 답 없이 닫힌 뒤 깨우기까지 기다리는 때(바로 다시 붙는 경우를 거른다) */
 export const WAKE_DETACHED_MS = 5_000;
 
-export interface PhoneWakerPorts {
+interface PhoneWakerPorts {
   /** 연결 기록의 그 폰 서버 deviceId. 끊은 폰이면 null. */
   deviceOf: (pairId: string) => string | null;
   /** POST /v1/wake(기기 토큰 wake 범위). 서버 오류는 code를 가진 Error로 던진다. 클라우드 연결이 없으면 null을 넘긴다. */

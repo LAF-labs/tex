@@ -16,7 +16,7 @@ export const BOARD_KINDS: ReadonlyArray<{ kind: BoardKind; title: string }> = [
 ];
 
 /** 항목을 눌렀을 때 갈 곳. 승인·실행 시작은 없다(대화 입력창에 채우기까지만, 보내기는 사람이 한다). */
-export type BoardTarget =
+type BoardTarget =
   | { to: 'run'; id: string }
   | { to: 'doc'; id: string }
   | { to: 'compose'; text: string }
@@ -108,7 +108,7 @@ export interface BoardInput {
   money?: BoardCard[];
 }
 
-export const EXPIRING_WITHIN_DAYS = 30;
+const EXPIRING_WITHIN_DAYS = 30;
 const ACTIVE = new Set(['draft', 'preparing', 'turn', 'waiting', 'issuing', 'attention']);
 const PROGRESS = new Set(['preparing', 'turn', 'waiting', 'issuing']);
 
