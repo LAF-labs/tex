@@ -104,6 +104,8 @@ export interface CodefEvent {
   order?: string;
   /** 모르는 거절의 단서(CODEF 안내문 단어, 로그 전용) */
   hint?: string;
+  /** next_banking: 계좌번호를 더 묻는 뱅킹이라 다른 뱅킹 뒤로 미뤘다(로그 전용) */
+  deferred?: boolean;
 }
 
 interface CodefLinkOptions {
@@ -165,6 +167,8 @@ const SMS_TRIES = 3;
 
 /** 이 뱅킹만의 사정이라 같은 인증서로 다른 뱅킹을 해 볼 실패 */
 const TRY_OTHER: ReadonlySet<CodefFailure> = new Set(['identity_required', 'withdraw_account_required', 'banking_kind', 'not_enrolled', 'cert_not_registered', 'cert_kind', 'rejected']);
+/** 미뤄 둔 뱅킹으로도 넘어가지 않고 바로 멈추는 거절(잠김 방지·사람이 그만둠) */
+const STOP_NOW: ReadonlySet<CodefFailure> = new Set(['password_wrong', 'password_locked', 'cancelled', 'busy']);
 /** 둘 다 안 되면 사람이 할 일이 분명한 쪽을 알린다 */
 // 계좌번호 한 칸이면 끝나는 쪽을 먼저 묻는다(은행에서 본인인증을 하는 것보다 쉽다)
 const RANK: readonly CodefFailure[] = ['withdraw_account_required', 'identity_required', 'not_enrolled', 'banking_kind', 'cert_not_registered', 'cert_kind'];
@@ -275,41 +279,65 @@ export class CodefLink {
     // 같은 인증서·같은 비밀번호(한 번 받은 것)로 뱅킹을 차례로 해 본다. 사장님은 기업/개인 뱅킹을 고르지 않는다(대표 2026-11-19).
     // 다른 뱅킹으로 넘어가는 것은 그 뱅킹만의 사정(본인인증 요구·인증서 미등록·용도·모르는 거절)일 때뿐이고, 비밀번호 틀림은 바로 멈춘다(잠김 방지).
     const failures: { e: CodefError; clientType: CodefClientType }[] = [];
+    // 계좌번호·계좌 비밀번호를 더 묻는 뱅킹은 다른 뱅킹을 먼저 다 해 본 뒤로 미룬다. 다른 뱅킹이 되면 사람에게 더 묻지 않는다
+    // (2026-11-20 실기기: 우리은행 개인 뱅킹이 계좌 비밀번호를 한 번 더 물은 뒤 CF-12811로 거절, 기업 뱅킹은 인증서 비밀번호만으로 됐다)
+    const deferred: CodefClientType[] = [];
+    const login = { derFile: s.derFile, keyFile: s.keyFile, password: s.password };
+    const fail = (e: unknown, clientType: CodefClientType, last: boolean): void => {
+      if (e instanceof CodefError && TRY_OTHER.has(e.code) && !last) {
+        failures.push({ e, clientType });
+        // 넘어간 뱅킹의 거절도 원인이 로그에 남아야 한다(화면에는 하나만 보인다)
+        this.emit({ phase: 'next_banking', clientType, code: e.code, ...(e.cf ? { cf: e.cf } : {}), ...(e.param ? { param: e.param } : {}), ...(e.hint ? { hint: e.hint } : {}) });
+        return;
+      }
+      if (e instanceof CodefError) {
+        failures.push({ e, clientType });
+        // 마지막 뱅킹의 거절도 원인이 로그에 남아야 한다(화면에는 하나만 보여 이 뱅킹의 코드가 가려진다. 2026-11-19 실기기: 기업 CF-12831이 로그에 없었다)
+        this.emit({ phase: 'banking_failed', clientType, code: e.code, ...(e.cf ? { cf: e.cf } : {}), ...(e.param ? { param: e.param } : {}), ...(e.hint ? { hint: e.hint } : {}) });
+      }
+      throw failures.length ? worst(failures) : e;
+    };
+    const done = (id: string, clientType: CodefClientType) => {
+      // 쓰기 전에 PC DB에 먼저 적는다. 지우면 빠지고, 앱이 그 사이 꺼지면 다음 실행의 sweep이 지운다
+      this.save({ orphans: [...this.o.store.get().orphans, { connectedId: id, bank, clientType }] });
+      const b = this.budget();
+      if (b.pwFails[certId]) {
+        delete b.pwFails[certId];
+        this.save({ budget: b });
+      }
+      return { connectedId: id, clientType };
+    };
     try {
-      for (const clientType of types) {
-        let id: string;
-        const login = { derFile: s.derFile, keyFile: s.keyFile, password: s.password };
+      for (const [i, clientType] of types.entries()) {
         try {
-          try {
-            id = await this.o.client.createAccount(bank, clientType, login);
-          } catch (e0) {
-            // 그 은행 계좌번호를 요구하면: 알고 있으면 같은 비밀번호로 한 번 더, 모르면 사람에게 계좌번호 한 칸
-            if (!(e0 instanceof CodefError && e0.cf === 'CF-12401' && /withdrawaccount/i.test(`${e0.param ?? ''} ${e0.hint ?? ''}`))) throw e0;
-            if (!withdraw) throw new CodefError('withdraw_account_required', e0.cf);
-            id = await this.withWithdraw(certId, bank, clientType, login, withdraw, mode, publicKey);
+          return done(await this.o.client.createAccount(bank, clientType, login), clientType);
+        } catch (e0) {
+          // 그 은행 계좌번호를 요구하면: 다른 뱅킹이 남았으면 그쪽을 먼저, 아니면 아래에서 계좌번호로 이어 간다
+          if (e0 instanceof CodefError && e0.cf === 'CF-12401' && /withdrawaccount/i.test(`${e0.param ?? ''} ${e0.hint ?? ''}`)) {
+            deferred.push(clientType);
+            if (i < types.length - 1) {
+              this.emit({ phase: 'next_banking', clientType, code: 'withdraw_account_required', cf: e0.cf, deferred: true });
+              continue;
+            }
+            break;
           }
-        } catch (e) {
-          if (e instanceof CodefError && TRY_OTHER.has(e.code) && clientType !== types[types.length - 1]) {
-            failures.push({ e, clientType });
-            // 넘어간 뱅킹의 거절도 원인이 로그에 남아야 한다(화면에는 하나만 보인다)
-            this.emit({ phase: 'next_banking', clientType, code: e.code, ...(e.cf ? { cf: e.cf } : {}), ...(e.param ? { param: e.param } : {}), ...(e.hint ? { hint: e.hint } : {}) });
+          // 미뤄 둔 뱅킹이 있으면 이 뱅킹의 다른 거절(은행 오류 등)도 그쪽으로 넘어간다. 비밀번호 틀림·취소는 바로 멈춘다
+          if (deferred.length && e0 instanceof CodefError && !STOP_NOW.has(e0.code)) {
+            failures.push({ e: e0, clientType });
+            this.emit({ phase: 'next_banking', clientType, code: e0.code, ...(e0.cf ? { cf: e0.cf } : {}), ...(e0.param ? { param: e0.param } : {}), ...(e0.hint ? { hint: e0.hint } : {}) });
             continue;
           }
-          if (e instanceof CodefError) {
-            failures.push({ e, clientType });
-            // 마지막 뱅킹의 거절도 원인이 로그에 남아야 한다(화면에는 하나만 보여 이 뱅킹의 코드가 가려진다. 2026-11-19 실기기: 기업 CF-12831이 로그에 없었다)
-            this.emit({ phase: 'banking_failed', clientType, code: e.code, ...(e.cf ? { cf: e.cf } : {}), ...(e.param ? { param: e.param } : {}), ...(e.hint ? { hint: e.hint } : {}) });
-          }
-          throw failures.length ? worst(failures) : e;
+          fail(e0, clientType, i === types.length - 1);
         }
-        // 쓰기 전에 PC DB에 먼저 적는다. 지우면 빠지고, 앱이 그 사이 꺼지면 다음 실행의 sweep이 지운다
-        this.save({ orphans: [...this.o.store.get().orphans, { connectedId: id, bank, clientType }] });
-        const b = this.budget();
-        if (b.pwFails[certId]) {
-          delete b.pwFails[certId];
-          this.save({ budget: b });
+      }
+      // 미뤄 둔 뱅킹: 알고 있는 계좌번호면 같은 비밀번호로 한 번 더, 모르면 사람에게 계좌번호 한 칸
+      for (const [i, clientType] of deferred.entries()) {
+        try {
+          if (!withdraw) throw new CodefError('withdraw_account_required', 'CF-12401');
+          return done(await this.withWithdraw(certId, bank, clientType, login, withdraw, mode, publicKey), clientType);
+        } catch (e) {
+          fail(e, clientType, i === deferred.length - 1);
         }
-        return { connectedId: id, clientType };
       }
       throw new CodefError('rejected');
     } catch (e) {
