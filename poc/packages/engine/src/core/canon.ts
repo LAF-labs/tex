@@ -1,5 +1,3 @@
-// RFC 8785 JCS. 서명 대상(manifest − signatures, 정책 내용, 타임스탬프 본문)의 정규 바이트. gate.ts의 jcs는 정수만 받아
-// 정책(slowFactor 1.5 등)을 다룰 수 없어 따로 둔다. 숫자는 ECMAScript Number 직렬화(JSON.stringify와 같다), -0은 0.
 import { createHash } from 'node:crypto';
 
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
@@ -18,7 +16,6 @@ export function canonicalJson(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(canonicalJson).join(',')}]`;
   if (typeof v === 'object') {
     const o = v as Record<string, unknown>;
-    // 키는 UTF-16 코드 단위 순서(RFC 8785 §3.2.3). undefined 값은 뺀다.
     const keys = Object.keys(o).filter((k) => o[k] !== undefined).sort();
     return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`).join(',')}}`;
   }

@@ -1,8 +1,3 @@
-// 서버 서명 계정 클레임 acct_claim(D08 §4.2 7단계, 팀장 결정 2026-11-06).
-// PC가 페어링 때 데스크톱 기기 토큰으로 받아 PAIR_OK에 싣는다. 폰은 앱에 고정한 공개키로 검증하고, aik_pub가 PAIR_OK의 AIK_pub와 같은지 본다.
-// 공격자 PC는 자기 AIK로 피해자 이메일을 적어 서명할 수 있지만, 이 클레임은 계정 서비스만 만들 수 있어 공격자 계정의 이메일만 보여 줄 수 있다.
-// 서명 키는 이 용도 전용 Ed25519(ACCT_CLAIM_SIGNING_KEY)다. 기기 토큰 키·레지스트리 키와 섞지 않는다.
-// 서명 입력: utf8("SAX-acct-claim-v1") ‖ JCS({account_id, email, aik_pub, iat, exp}), 시각은 UTC 밀리초, exp = iat + 10분.
 import type { KeyObject } from 'node:crypto';
 import { ed25519Private, ed25519RawPublic, fromB64, jcs, key32, signCtx, verifyCtx } from '@sax/svc-shared';
 
@@ -10,9 +5,7 @@ export const ACCT_CLAIM_TTL_MS = 10 * 60_000;
 
 export interface AcctClaim {
   account_id: string;
-  /** 계정 이메일 전체(소문자 정규화). 폰이 화면에 가려 보여 준다 */
   email: string;
-  /** 계정 AIK 공개키(표준 base64 32B) */
   aik_pub: string;
   iat: number;
   exp: number;
@@ -26,7 +19,6 @@ export interface SignedAcctClaim {
 
 export class AcctClaimSigner {
   private readonly key: KeyObject;
-  /** 고정용 공개키(표준 base64 32B) */
   readonly publicKey: string;
   constructor(key: KeyObject) {
     this.key = key;

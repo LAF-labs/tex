@@ -1,14 +1,3 @@
-// H-01 발급 사다리 0원 칸 실모델 예행(가짜 홈택스 + 제품 H-01 패키지). 제품 패키지 그대로 결정적 스크립트(hometax.auto)를 돌리고,
-// 선택자가 어긋난 화면에서 실제 모델이 고치는지 본다. 게이트웨이 자리는 이 파일이 맡아 게이트웨이와 같은 본문(openAIResponsesBody)과
-// 같은 공급자 규칙으로 OpenRouter에 보낸다: 위치 찾기(selector_repair)는 응답 모델 + 공급자 고정, 판정·에이전트(page_judge·browser_agent)는
-// 에이전트 모델(기본 typesafe/jev-router) + 고정 없음.
-//   set -a; . ./.env.local; set +a
-//   EVAL_MODEL=deepseek/deepseek-v4.1-flash-1017 EVAL_PROVIDERS=crusoe/fp8 node --conditions=development tests/chat-eval/h01-live.ts [--only=script,repair,agent] [--runs=1]
-// 시나리오
-//   script: 어긋남 없음. 모델 0번으로 끝까지 가야 한다(결정적 스크립트).
-//   repair: 품목명 칸 id가 어긋남. 위치 찾기(실모델)로 고쳐 끝까지.
-//   agent:  같은 어긋남 + 위치 찾기는 못 찾음으로 막음. 판정(jev) → 브라우저 에이전트(jev)로 넘겨 끝까지.
-// 키·화면 원문은 남기지 않는다. 출력은 시나리오별 결과·걸린 시간·툴셋별 호출 수·마지막 오류 코드뿐이다.
 import type { LocateResponder } from '@sax/engine';
 import type { PackageFiles } from '@sax/engine/core';
 import { toolsetPrefix, type RespondRequest, type RespondResult, type ToolsetDef } from '@sax/model';
@@ -19,7 +8,6 @@ const KEY = process.env.OPENROUTER_API_KEY ?? '';
 const MODEL = process.env.EVAL_MODEL ?? 'deepseek/deepseek-v4.1-flash-1017';
 const AGENT_MODEL = process.env.EVAL_AGENT_MODEL ?? 'typesafe/jev-router';
 const ONLY_PROVIDERS = (process.env.EVAL_PROVIDERS ?? '').split(',').filter(Boolean);
-/** 판정·에이전트 보관 조건(게이트웨이 OPENROUTER_AGENT_PRIVACY와 같은 뜻): off·deny·zdr */
 const AGENT_PRIVACY = process.env.EVAL_AGENT_PRIVACY ?? 'off';
 const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3);
 const ONLY = (arg('only') ?? 'script,repair,agent').split(',');

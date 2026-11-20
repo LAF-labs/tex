@@ -1,4 +1,3 @@
-// M6-5 파일 넣기 파서(Electron 없음): xlsx·CSV 읽기(샌드박스 모듈을 Node에서 직접), 정산(J-01·J-02)·4대보험 고지내역(S-06) 규칙.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { parseInsuranceNotice, parseSettlement } from '@sax/docparse';

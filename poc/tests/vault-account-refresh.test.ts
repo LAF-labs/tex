@@ -1,4 +1,3 @@
-// 계정 갱신 토큰 보관(ADR-038 (f) 자동 로그인, D05 §2, 팀장 결정 2026-11-09). Chrome·OS 키체인 없이 모의 백엔드로 돈다.
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import {
@@ -14,7 +13,6 @@ class Log {
   }
 }
 
-/** 고장을 끼울 수 있는 키체인 항목 저장소. */
 class FlakyItems extends MemoryItemStore {
   failSet: ((name: string) => boolean) | null = null;
   failDelete: ((name: string) => boolean) | null = null;
@@ -166,7 +164,6 @@ describe('계정 갱신 토큰: 회전 쓰기는 원자적이다', () => {
     blob[blob.length - 1]! ^= 1;
     assert.deepEqual(await a.read(), { ok: false, reason: 'corrupt' });
     assert.ok(log.lines.includes('{"e":"vault.account_refresh_corrupt"}'));
-    // 깨진 칸 위에 새로 쓰면 다시 쓸 수 있다.
     assert.deepEqual(await a.write(T2), { ok: true });
     assert.deepEqual(await a.read(), { ok: true, token: T2 });
   });
@@ -177,7 +174,6 @@ describe('계정 갱신 토큰: 회전 쓰기는 원자적이다', () => {
     items.items.set(accountRefreshItem('b'), items.items.get(accountRefreshItem('a'))!);
     items.items.set(accountRefreshKekItem('b'), items.items.get(accountRefreshKekItem('a'))!);
     items.items.delete(accountRefreshItem('a'));
-    // KEK 래핑이 칸 이름에 묶여 있어 KEK부터 풀리지 않는다.
     assert.deepEqual(await a.read(), { ok: false, reason: 'kek_unavailable' });
   });
 });
@@ -276,9 +272,7 @@ describe('계정 갱신 토큰: 포트', () => {
       await assert.rejects(port.rpc(m, { token: T1 }), /denied/, m);
       assert.ok(h.log.lines.some((l) => l.includes('"vault.rpc_denied"') && l.includes(m) && l.includes('"engine"')));
     }
-    // 엔진이 지우거나 바꾸지 못했다.
     assert.deepEqual(await h.control.rpc('account.refresh.read', {}), { ok: true, token: T3 });
-    // 엔진 포트 IPC 어디에도 토큰이 없다.
     assert.deepEqual(h.capture.scan([T3]).filter((f) => f.source.startsWith('ipc.engine')), []);
     await h.control.rpc('account.refresh.forget', {});
   });

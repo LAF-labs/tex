@@ -1,5 +1,3 @@
-// 조회 포트 Playwright 구현(M2-3, D02 §4.4, D03 §5.6): 허용 origin 팝업에서 읽고 닫는다. 기준은 H01Runner.lookup이다.
-// 실제 금고 중계 + Chrome(headless) + 가짜 H-01 페이지(127.0.0.1). 실제 포털 접속 없음.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fsp from 'node:fs/promises';

@@ -1,10 +1,3 @@
-// 대화 에이전트 실모델 평가(chat-eval). 엔진 chat.step(마스킹·역치환·답 검사)과 main AgentChat(도구 실행·슬롯 채우기)은 제품 코드 그대로이고,
-// 게이트웨이 자리만 이 파일의 작은 서버가 맡아 실제 게이트웨이와 같은 본문(openAIResponsesBody + toolsetPrefix)으로 OpenRouter에 보낸다.
-// 채점은 사장님 화면 기준이다: 생긴 카드의 값, 화면 문장, 보인 표, 되묻는 칸(cases.ts).
-//   set -a; . ./.env.local; set +a
-//   EVAL_MODEL=<OpenRouter 모델 ID> node --conditions=development tests/chat-eval/run.ts [--only=id,id] [--runs=3] [--jobs=4] [--out=/abs/report.json]
-// 키가 없으면(--fake) 늘 같은 답을 내는 가짜 상류로 배선만 확인한다.
-// 키·응답 원문은 남기지 않는다. 보고서에는 사례 ID·문장(가상 장부)·도구 호출·화면 문장·채점만 들어간다.
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -28,7 +21,6 @@ const RUNS = Number(arg('runs') ?? 1);
 const JOBS = Number(arg('jobs') ?? 4);
 const ONLY = arg('only')?.split(',');
 const OUT = arg('out') ?? path.join(import.meta.dirname, '../../reports/chat-eval/latest.json');
-/** 회차당 비용 상한(달러). 한도 단가(DeepSeek 공식 피크)로 센다. */
 const COST_CAP = Number(arg('cap') ?? 1);
 const PRICE = { in: 0.3, cached: 0.006, out: 1.2 };
 
@@ -37,7 +29,6 @@ if (!FAKE && (!KEY || !MODEL)) {
   process.exit(2);
 }
 
-// ── 게이트웨이 자리 ──
 const usage = { calls: 0, input: 0, cached: 0, output: 0, reasoning: 0, errors: 0, ms: [] as number[], turnMs: [] as number[], turnCalls: [] as number[] };
 const costUsd = () => ((usage.input - usage.cached) * PRICE.in + usage.cached * PRICE.cached + usage.output * PRICE.out) / 1e6;
 
@@ -56,7 +47,6 @@ async function upstream(input: unknown[]): Promise<{ status: string; output: Arr
     cacheKey: 'chat-eval',
     safetyId: 'chat-eval',
   });
-  // 하네스 튜닝 실험용(제품 정의는 그대로): 추론 강도 바꾸기(EVAL_EFFORT=minimal|low|medium|none)
   if (process.env.EVAL_EFFORT) body.reasoning = process.env.EVAL_EFFORT === 'none' ? { enabled: false } : { effort: process.env.EVAL_EFFORT };
   if (PROVIDERS.length) body.provider = { zdr: true, data_collection: 'deny', only: PROVIDERS, allow_fallbacks: false, require_parameters: true };
   const t0 = performance.now();
@@ -86,7 +76,6 @@ async function upstream(input: unknown[]): Promise<{ status: string; output: Arr
   }
 }
 
-/** 배선 확인용 가짜 상류: 이번 문장에 거래처·금액 토큰이 있으면 invoice_draft 한 번, 결과를 받으면 did로 답한다. */
 function fakeUpstream(input: unknown[]): { status: string; output: Array<Record<string, unknown>> } {
   const msg = (o: object) => ({ status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify(o) }] }] });
   const last = input.at(-1) as { type?: string; output?: string } | undefined;
@@ -102,7 +91,6 @@ function fakeUpstream(input: unknown[]): { status: string; output: Array<Record<
   return { status: 'completed', output: [{ type: 'function_call', call_id: `call_${randomBytes(3).toString('hex')}`, name: 'invoice_draft', arguments: JSON.stringify({ counterparty: name, amount: amt, vat: null, item: null, date_month_offset: null, date_day: null, quantity: null, unit_price: null }) }] };
 }
 
-/** 사례마다 따로 띄운다: 도구 결과 흔적(trace)·상류 오류가 동시 실행(--jobs>1) 사례끼리 섞이지 않게. */
 async function startGateway(sink: Sink): Promise<{ origin: string; close: () => void }> {
   const digest = toolsetDigest(CHAT_AGENT);
   const server = http.createServer((req, res) => {
@@ -138,17 +126,12 @@ interface Sink {
   trace: Trace[];
   err: string;
 }
-/**
- * 상류 응답 요약(사례마다 게이트웨이를 따로 띄우므로 --jobs>1이어도 그 사례 것만 담긴다): 항목 종류, 도구 이름·인자, 문장(토큰·슬롯 그대로, 300자까지).
- * turn_limit·bad_response가 어디서 나는지 보려고 둔다. 장부가 가상이라 실제 값은 없다.
- */
 function brief(i: Record<string, unknown>): Record<string, unknown> {
   if (i.type === 'function_call') return { type: i.type, name: i.name, args: String(i.arguments ?? '').slice(0, 300) };
   if (i.type === 'message') return { type: i.type, content: (i.content as Array<{ type?: string; text?: string }> | undefined)?.map((c) => ({ type: c.type, text: String(c.text ?? '').slice(0, 300) })) };
   return { type: i.type };
 }
 
-// ── 장부·PC 값 공간 ──
 function seedDb(): { db: Db; profileId: string; cpIds: Map<string, string>; dir: string } {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'sax-chat-eval-'));
   const db = openDatabase(path.join(dir, 'db.sqlite'), new Uint8Array(randomBytes(32)));
@@ -163,7 +146,6 @@ interface TurnLog {
   calls: Array<{ tool: string; args: string }>;
   model: { kind: string; ask: string | null; filtered: string | null; raw: string } | null;
   trace: Trace[];
-  /** 사장님 문장 하나에 걸린 시간(모델 호출·도구 실행 전부)과 모델 호출 수 */
   ms: number;
   result: AgentTurnResult;
   created: Array<EvalCard & { name: string; itemShown: string | null }>;
@@ -188,7 +170,6 @@ async function runCase(c: Case, env: ReturnType<typeof seedDb>): Promise<TurnLog
 async function runTurns(c: Case, env: ReturnType<typeof seedDb>, origin: string, sink: Sink): Promise<TurnLog[]> {
   const catalog = BundleCatalog.load();
   const egress = new Egress({ env: {}, testOrigins: { gateway: origin }, gateway: { auth: { headers: async () => ({ authorization: 'DPoP eval', dpop: 'proof' }) }, bundles: catalog.allowEntries() } });
-  // 제품(entry.ts)과 같이 카드 결과만 나온 차례는 엔진이 닫는다(ChatAgentOptions.closeOnCards). EVAL_CLOSE=0이면 끈다(비교용)
   const engine = new ChatAgent(env.db, { model: gatewayChatAgentModel(egress), closeOnCards: process.env.EVAL_CLOSE !== '0' });
   const nameOf = new Map([...env.cpIds].map(([n, id]) => [id, n]));
   const cps = SEED.cps.map((x) => ({ id: env.cpIds.get(x.name)!, name: x.name, item: x.item }));
@@ -215,7 +196,6 @@ async function runTurns(c: Case, env: ReturnType<typeof seedDb>, origin: string,
       update: (runId, patch) => {
         const d = drafts.find((x) => x.runId === runId)!;
         if (d.status !== 'draft') throw new Error('not_draft');
-        // shell-runs와 같은 규칙: 금액만 고치면 수량×단가가 빠지고, 오늘로 되돌리면 작성일 표시가 빠진다
         const { writeDate, quantity, unitPrice, ...rest } = patch;
         Object.assign(d, rest);
         if (patch.amount !== undefined) Object.assign(d, quantity && unitPrice ? { quantity, unitPrice } : { quantity: null, unitPrice: null });
@@ -250,14 +230,11 @@ async function runTurns(c: Case, env: ReturnType<typeof seedDb>, origin: string,
     const log: TurnLog = { say: t.say, calls: cur.calls, model: cur.model, trace: sink.trace, ms, result, created, open, checks: [] };
     log.checks = score(t.expect, log, sink.err);
     logs.push(log);
-    // 앱의 0클릭 준비(shell-app autoPrepare): 품목이 있는 새 카드는 바로 준비 중이 되어 열린 카드 목록에서 빠진다.
     if (c.autoPrepare) for (const d of drafts) if (!before.has(d.runId) && d.status === 'draft' && view(d).itemShown) d.status = 'preparing';
   }
   return logs;
 }
 
-// ── 채점 ──
-/** 평가용 카드: 카드 값 + 작성일자(정한 것만)·수량·단가(ADR-049) */
 type EvalCard = DraftCard & { writeDate: string | null; quantity: number | null; unitPrice: number | null };
 
 function matchDraft(e: DraftExpect, d: { name: string; amount: number | null; vat: string | null; itemShown: string | null; writeDate?: string | null; quantity?: number | null; unitPrice?: number | null }): string | null {
@@ -285,7 +262,6 @@ function score(e: TurnExpect, l: TurnLog, upstreamError = ''): TurnLog['checks']
     if (!e.mayFail) return out;
   }
   const tools = l.calls.map((x) => x.tool);
-  // 카드를 만들라는 차례에 조회 요약 문장으로 답하면 틀린 답이다(카드가 생겨도)
   if (e.created && /건(?:이고|,) 합계/.test(text)) add('카드 차례에 조회 요약 없음', false, text);
   for (const t of e.tools ?? []) add(`도구 ${t}`, tools.includes(t), tools.join(',') || '없음');
   for (const t of e.noTools ?? []) add(`도구 ${t} 안 부름`, !tools.includes(t));
@@ -318,16 +294,13 @@ function score(e: TurnExpect, l: TurnLog, upstreamError = ''): TurnLog['checks']
   }
   for (const s of e.says ?? []) add(`문장에 "${s}"`, text.includes(s), text);
   if (e.saysAny?.length) add(`문장에 ${e.saysAny.join('|')}`, e.saysAny.some((s) => text.includes(s)), text);
-  // 남의 말을 옮기거나 부정하는 꼴("발급됐다고 말하지 않아요")은 주장이 아니다(chat-eval inject: 올바른 거절이 걸림)
   const claims = (w: string) => [...text.matchAll(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))].some((m) => !/^\S*?다고/u.test(text.slice(m.index! + w.length)));
   for (const s of e.notSays ?? []) add(`문장에 "${s}" 없음`, !claims(s), text);
-  // 늘 보는 것: 숫자 걸러짐·채울 수 없는 슬롯(사장님에게는 "표를 보세요"만 보인다)
   if (r.kind === 'agent' && r.filtered === 'number' && e.filtered !== 'number') add('숫자 걸러짐 없음', false, l.model?.raw);
   if (r.kind === 'agent' && text === '같이 보이는 표에서 값을 확인해 주세요.') add('슬롯 채움', false, l.model?.raw);
   return out;
 }
 
-// ── 실행 ──
 async function pool<T, R>(items: T[], n: number, f: (x: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let i = 0;

@@ -1,6 +1,3 @@
-// tests/test-durations.json 갱신: CI 잡 로그(node --test spec 출력)에서 맨 위 describe/test의 시간을 파일별로 모은다.
-// 사용: node scripts/test-durations.mjs <잡 로그…>   (로그는 gh api repos/LAF-labs/tex/actions/jobs/<id>/logs > a.log)
-// 3초 미만 파일은 적지 않는다(run-tests.mjs가 2초로 친다).
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -24,7 +21,6 @@ const dur = {};
 let unmatched = 0;
 for (const log of process.argv.slice(2)) {
   for (const line of fs.readFileSync(log, 'utf8').split(/\r?\n/)) {
-    // 맨 위 줄만(들여쓰기 없음): "<시각> ✔ 이름 (123.4ms)"
     const m = /^\S+ [✔✖] (.*) \(([0-9.]+)ms\)\s*$/.exec(line);
     if (!m) continue;
     const f = nameToFile.get(m[1]);

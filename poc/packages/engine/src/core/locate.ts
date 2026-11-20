@@ -1,9 +1,3 @@
-// 대상 다시 찾기(폴백 사슬 2·3단계, core/fallback.ts가 부른다): 사전 후보로 못 찾은 대상을 패키지의 role·label 후보로, 그다음 AI 위치 찾기로 찾는다.
-// - 쓰는 곳: 비밀 칸이 아니고, commits가 아니고, 비가역 스텝이 아닌 항목만. 게이트·checkpoint·제출·서명·발급은 지금처럼 멈춘다.
-// - 화면 목록: 그 항목 frame의 같은 역할 요소만, 역할·접근성 이름·DOM id만 담는다. 입력값은 읽지 않는다. 모델에는 포트가 마스킹해서 보낸다.
-// - 모델 제안은 그대로 쓰지 않는다. 제안 선택자를 이 실행의 사전 사본에서 그 항목 후보 맨 앞에 두고 resolveTarget(유일 일치·보임·역할·이름 패턴)을 통과할 때만 받는다.
-//   통과한 선택자는 이번 실행 동안 그 항목의 첫 후보로 남는다(같은 실행의 다음 스텝·GuardedActuator의 R-A1 재확인도 그것을 본다).
-// - 모델 호출은 스텝당 최대 2번이다(게이트웨이 실행당 L2 예산 2와 같다).
 import type { PageReader, Resolved } from './page.ts';
 import { maskScreenText, normalizeName } from './constants.ts';
 import { nameMatches, resolveTarget } from './resolve.ts';
@@ -22,15 +16,10 @@ export interface LocateRequest {
   purpose: 'fill' | 'click' | 'select';
   role: string;
   namePattern: string;
-  /** 대상 설명(사전 항목 키·필드 키·입력 종류). 코드 이름뿐이라 값이 없다. */
   describe: string;
-  /** 같은 역할 요소 목록(마스킹 전). 포트가 마스킹한다. */
   listing: Array<{ n: number; name: string; id: string | null }>;
-  /** 앞 시도에서 받았지만 검사를 통과하지 못한 선택자. */
   rejected: string[];
-  /** 패키지 사전의 예전 후보(선택자 글, 지금 화면에서 못 찾은 것). 값은 없다. */
   was?: string[];
-  /** 사전 후보가 찾은 요소의 목록 번호(역할은 맞고 이름만 namePattern과 다를 때, step.identity_mismatch). 모델이 맞다고 하면 받는다. */
   found?: number;
 }
 
@@ -41,11 +30,9 @@ export interface LocateModel {
 
 export interface LocateEnv {
   model: LocateModel;
-  /** 저널(코드·키·선택자만, 화면 글·값 없음). */
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
 }
 
-/** 스텝당 모델 호출 상한 */
 const LOCATE_MAX_CALLS = 2;
 
 /** 실행 사본 사전: 원본 패키지 사전을 바꾸지 않고 항목만 갈아 끼운다. */
@@ -63,10 +50,6 @@ type Cand = SelectorEntry['candidates'][number];
 /** 저널·제외 목록에 쓰는 선택자 글(코드 이름·접근성 이름뿐). */
 export const candidateText = (c: Cand): string => (c.kind === 'role' ? `role=${c.role}[name="${c.name}"]` : c.kind === 'css' ? c.value : `label=${c.value}`);
 
-/**
- * 실행 사본 사전의 그 항목 맨 앞에 후보를 두고 resolveTarget을 통과하면 남긴다. 아니면 되돌린다.
- * namePattern: 모델이 확인한 요소의 이름으로 그 항목 이름 규칙을 이번 실행 동안 바꾼다(identity_mismatch 확인 길만).
- */
 async function tryCandidate(page: PageReader, dict: SelectorDict, key: string, cand: Cand, namePattern?: string): Promise<{ ok: true; t: Resolved } | { ok: false; code: string }> {
   const before = dict.entries[key]!;
   dict.entries[key] = { ...before, ...(namePattern ? { namePattern } : {}), candidates: [cand, ...before.candidates] };
@@ -102,10 +85,6 @@ export async function refindWithoutCss(page: PageReader, dict: SelectorDict, key
 
 const reEscape = (s: string) => s.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
 
-/**
- * step.identity_mismatch의 그 요소: 사전 후보가 (landmark 안에서) 정확히 하나를 찾았고 역할은 같은데 이름만 namePattern과 다르면 그 정규화 이름.
- * 역할이 다르거나 모호하면 null(모델에게 확인시키지 않는다).
- */
 async function nameMismatched(page: PageReader, dict: SelectorDict, key: string): Promise<string | null> {
   const entry = dict.entries[key];
   if (!entry) return null;
@@ -145,7 +124,6 @@ export async function locateTarget(
   if (!entry || !o.page.listRole) return null;
   const { calls, rejected } = o;
   const mism = await nameMismatched(o.page, o.dict, o.key);
-  // 결과 한 줄(engine.log): 고른 선택자 또는 고르지 못한 이유. mismatchName은 사전 요소의 실제 접근성 이름(숫자 가림).
   const result = (why: string, extra: Record<string, string | number | boolean> = {}) =>
     o.loc.journal('locate.result', { stepId: o.stepId, key: o.key, result: why, calls: calls.n, rejected: rejected.length, mismatch: mism !== null, ...(mism !== null ? { mismatchName: maskScreenText(mism) } : {}), ...extra });
   while (calls.n < LOCATE_MAX_CALLS) {
@@ -170,10 +148,8 @@ export async function locateTarget(
     } catch {
       cands = null;
     }
-    // sameName: 목록에서 사전 요소와 같은 이름 수(1이어야 모델에게 그 번호를 알려 확인시킨다)
     o.loc.journal('locate.asked', { stepId: o.stepId, key: o.key, call: calls.n, listed: listed.length, proposed: cands?.length ?? 0, mismatch: mism !== null, sameName: same.length, foundN: found?.n ?? 0 });
     if (!cands) {
-      // not_found·응답 없음·가림 실패 모두(어느 쪽인지는 locate.answer·locate.unavailable 줄)
       result('model_gave_none');
       return null;
     }
@@ -181,7 +157,6 @@ export async function locateTarget(
       const cand: Cand = c.kind === 'role' ? { kind: 'role', role: c.value, name: c.name } : c.kind === 'css' ? { kind: 'css', value: c.value } : { kind: 'label', value: c.value };
       const sel = candidateText(cand);
       if (rejected.includes(sel)) continue;
-      // 모델이 사전이 찾은 그 요소를 골랐다(css #id 또는 같은 이름): 이름 규칙을 그 이름으로 바꿔 확인한다.
       const confirms = !!found && mism !== null && (cand.kind === 'css' ? !!found.x.id && cand.value === `#${found.x.id}` : normalizeName(cand.kind === 'role' ? cand.name : cand.value) === mism);
       const r = await tryCandidate(o.page, o.dict, o.key, cand, confirms ? `^${reEscape(mism!)}$` : undefined);
       if (r.ok) {

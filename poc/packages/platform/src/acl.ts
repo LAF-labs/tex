@@ -23,10 +23,6 @@ function run(file: string, args: string[], opts: ExecFileOptions = {}): Promise<
   return execFileAsync(file, args, { timeout: TOOL_TIMEOUT_MS, ...opts, encoding: 'utf8' });
 }
 
-// D07 §1.1: 루트 DACL = 소유자 + SYSTEM, 상속 차단. 매 기동 시 확인하고 다르면 복구·경고.
-// D05 §3.1: 경로의 어느 구성 요소도 재분석 지점(심볼릭 링크·정션)이 아니어야 한다.
-// unreadable: 확인·복구 도구가 그 폴더에서 실패했다(접근 거부 등). 부모 확인은 통과할 때만 쓴다(preparePrivateDir).
-// no_user_access: 사용자 자신에게 모든 권한이 없다. 남에게 열려 있지 않아도 앱(Chrome·DB)이 그 폴더를 쓰지 못한다.
 export type AclProblem = 'missing' | 'not_dir' | 'reparse_point' | 'not_owner' | 'others_access' | 'no_user_access' | 'inherited' | 'extra_principal' | 'unreadable';
 
 export interface AclCheck {
@@ -35,10 +31,8 @@ export interface AclCheck {
 }
 
 export interface DirGuard {
-  /** 없으면 만들고, 사용자 전용으로 설정한 뒤 다시 읽어 확인한다. */
   ensurePrivate(dir: string): Promise<AclCheck>;
   checkPrivate(dir: string): Promise<AclCheck>;
-  /** 검색 색인 제외(Windows FILE_ATTRIBUTE_NOT_CONTENT_INDEXED, macOS Spotlight). */
   excludeFromIndex(dir: string): Promise<void>;
 }
 
@@ -53,7 +47,7 @@ export async function findReparsePoint(p: string): Promise<string | null> {
     try {
       st = await fs.lstat(cur);
     } catch {
-      return null; // 아직 없는 꼬리 구성 요소
+      return null;
     }
     if (st.isSymbolicLink()) return cur;
   }
@@ -65,7 +59,6 @@ class PosixDirGuard implements DirGuard {
     const rp = await findReparsePoint(dir);
     if (rp) return { ok: false, problems: ['reparse_point'] };
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-    // macOS ACL 항목(누구나 거부·허용)은 모드 비트와 따로 남는다. 지우지 않으면 extra_principal이 남고, 거부 항목은 이름 바꾸기도 막는다(실측).
     if (process.platform === 'darwin') await run('/bin/chmod', ['-N', dir]);
     await fs.chmod(dir, 0o700);
     return this.checkPrivate(dir);
@@ -95,11 +88,9 @@ class PosixDirGuard implements DirGuard {
 
 async function hasDarwinAcl(dir: string): Promise<boolean> {
   const { stdout } = await run('/bin/ls', ['-led', dir]);
-  // 첫 줄은 권한 줄, ACL 항목은 " 0: ..." 형태로 이어진다.
   return stdout.split('\n').some((l) => /^\s*\d+: /.test(l));
 }
 
-// Windows 도구는 PATH가 아니라 System32 절대 경로로 부른다. PATH 앞에 Git의 whoami 같은 같은 이름 도구가 있으면 그것이 돈다(PoC-1 실측).
 export function windowsTool(exe: string): string {
   return path.win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', exe);
 }
@@ -115,7 +106,6 @@ export function windowsPowerShellEnv(extra: Record<string, string>, base: NodeJS
   return { ...env, ...extra };
 }
 
-// SDDL 별칭 → SID. /remove에 넘길 때만 쓴다. 모르는 별칭은 지우지 못하고 extra_principal로 남는다(실패 닫힘).
 const SDDL_ALIASES: Record<string, string> = {
   SY: 'S-1-5-18', BA: 'S-1-5-32-544', BU: 'S-1-5-32-545', BG: 'S-1-5-32-546', PU: 'S-1-5-32-547',
   AU: 'S-1-5-11', WD: 'S-1-1-0', IU: 'S-1-5-4', AN: 'S-1-5-7', LS: 'S-1-5-19', NS: 'S-1-5-20',
@@ -125,7 +115,6 @@ const SDDL_ALIASES: Record<string, string> = {
 export interface DaclEntry {
   type: string;
   flags: string[];
-  /** 접근 마스크(`FA`, `0x1f01ff` 등). */
   rights: string;
   sid: string;
 }
@@ -152,7 +141,7 @@ export function parseDacl(sddl: string): Dacl {
   for (let i = start + 2; i < sddl.length; i++) {
     const ch = sddl[i];
     if (depth === 0 && ch !== '(') {
-      if (sddl.startsWith('S:', i) || sddl.startsWith('O:', i) || sddl.startsWith('G:', i)) break; // SACL(무결성 레이블 등)은 보지 않는다
+      if (sddl.startsWith('S:', i) || sddl.startsWith('O:', i) || sddl.startsWith('G:', i)) break;
       if (aceTexts.length === 0) header += ch;
       continue;
     }
@@ -220,7 +209,6 @@ export class OwnerMemo {
     this.identity = identity;
   }
 
-  /** 소유자가 신뢰 소유자인가. */
   async isTrusted(dir: string, userSid: string): Promise<boolean> {
     const id = await this.identity(dir);
     const known = id ? this.trusted.get(id) : undefined;
@@ -233,18 +221,15 @@ export class OwnerMemo {
     }
     const owner = await pending;
     const ok = isTrustedOwner(owner, userSid);
-    // 읽는 동안 폴더가 바뀌었으면(다시 만들어짐) 기억하지 않는다.
     if (ok && id && (await this.identity(dir)) === id) this.trusted.set(id, owner);
     return ok;
   }
 
-  /** 기억한 폴더 수(시험·진단). */
   get size(): number {
     return this.trusted.size;
   }
 }
 
-/** 프로세스 공용(금고는 Chrome을 띄울 때마다 dirGuard()를 새로 만든다). */
 const ownerMemo = new OwnerMemo();
 
 /**
@@ -275,7 +260,6 @@ export function grantsUserFullControl(dacl: Dacl, userSid: string, local = false
   return dacl.aces.some((a) => a.type === 'A' && isUserSid(a.sid, userSid, local) && /^(FA|0x1f01ff)$/i.test(a.rights) && a.flags.includes('OI') && a.flags.includes('CI') && !a.flags.includes('IO'));
 }
 
-/** 프로세스 사용자는 바뀌지 않으므로 whoami는 한 번만 부른다(실패하면 다음에 다시). */
 let userOnce: Promise<{ sid: string; local: boolean }> | null = null;
 
 class WindowsDirGuard implements DirGuard {
@@ -287,13 +271,11 @@ class WindowsDirGuard implements DirGuard {
     return userOnce;
   }
 
-  /** 사용자 SID와 로컬 계정 여부(`whoami` 이름의 도메인 부분이 이 컴퓨터 이름이면 로컬). 로컬 여부는 SDDL 별칭 `LA`·`LG`를 풀 때만 쓴다. */
   private async readUser(): Promise<{ sid: string; local: boolean }> {
     const { stdout } = await run(windowsTool('whoami.exe'), ['/user', '/fo', 'csv', '/nh']);
     const [name, sid] = stdout.trim().split('","').map((f) => f.replace(/"/g, ''));
     if (!sid?.startsWith('S-1-')) throw new Error('cannot resolve user SID');
     const domain = name?.includes('\\') ? name.split('\\')[0] : '';
-    // NetBIOS 이름(COMPUTERNAME)은 15자로 잘리므로 호스트 이름과 둘 다 본다. 둘 다 아니면 로컬로 보지 않는다(실패 닫힘).
     const machine = [process.env.COMPUTERNAME, os.hostname()].filter((n): n is string => !!n).map((n) => n.toLowerCase());
     return { sid, local: !!domain && machine.includes(domain.toLowerCase()) };
   }
@@ -302,18 +284,14 @@ class WindowsDirGuard implements DirGuard {
     if (await findReparsePoint(dir)) return { ok: false, problems: ['reparse_point'] };
     await fs.mkdir(dir, { recursive: true });
     const { sid, local } = await this.user();
-    // 다른 계정 소유 폴더의 DACL은 고쳐 쓰지 않는다. 고쳐도 소유자가 다시 열 수 있다(실패 닫힘).
     if (!(await ownerMemo.isTrusted(dir, sid))) return this.checkPrivate(dir);
     const icacls = windowsTool('icacls.exe');
     await run(icacls, [dir, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`, '/grant:r', '*S-1-5-18:(OI)(CI)F'], REPAIR);
-    // 상속을 끊어도 명시 ACE(누가 직접 추가한 Users 읽기 등)는 남는다. 사용자·SYSTEM 밖은 지운다.
     const extra = new Set((await readDacl(dir)).aces.map((a) => a.sid).filter((s) => !isUserSid(s, sid, local) && !isSystem(s)));
     const removable = [...extra].map((s) => (s.startsWith('S-1-') ? s : SDDL_ALIASES[s])).filter((s): s is string => !!s);
     if (removable.length) await run(icacls, [dir, '/remove', ...removable.map((s) => `*${s}`)], REPAIR);
     const check = await this.checkPrivate(dir);
     if (check.ok || check.problems.includes('reparse_point') || check.problems.includes('not_dir')) return check;
-    // icacls는 조건부(콜백) ACE 등을 지우지 못한다(PoC-1 실측). 남으면 DACL 전체를 바꾼다.
-    // Get-Acl 객체는 SACL까지 쓰려 해 SeSecurityPrivilege가 필요하므로 DACL만 담은 새 객체로 쓴다. 경로는 환경 변수로 넘긴다.
     const script = `$s = New-Object System.Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm('D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;${sid})', 'Access'); [System.IO.Directory]::SetAccessControl($env:SAX_ACL_TARGET, $s)`;
     await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { ...REPAIR, env: windowsPowerShellEnv({ SAX_ACL_TARGET: dir }) });
     return this.checkPrivate(dir);

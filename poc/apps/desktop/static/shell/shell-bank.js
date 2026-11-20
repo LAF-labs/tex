@@ -1,7 +1,3 @@
-// 받을 돈(09 D-09) 화면: 못 받은 돈 · 받은 돈 · 확인할 입금 · 내 계좌. 거래처 상세의 계좌·입금자 이름 칸, 대화 답 카드.
-// 값(거래처·금액·입금자명)은 main이 엔진 로컬 조회로 준 것을 그대로 그린다. 계산·판정은 하지 않는다(엔진 몫).
-// 모든 고치기는 한 번 누르면 되고, 10초 동안 [되돌리기]가 뜬다(그 뒤에도 건 상세 기록에서 되돌린다, 09 §7.5).
-// 결과·오류는 토스트 대신 이 화면 안 글로 남긴다(대표 2026-11-13). 한 덩어리에 주요 단추는 하나, 줄마다 붙는 단추는 조용한 단추다(v2.0).
 import { btn, emptyState, h, icon, kv, note, num, replyOptions } from './shell-views.js';
 import { accountInput, amountInput, amountOf, checkFields, dateInput, field, keys, LIMITS, selectInput, textInput } from './fields.js';
 
@@ -36,7 +32,6 @@ const ERR = {
   'source.not_linked': '이 계좌는 자동 연결이 안 돼 있어요. 거래내역 파일을 올려 주세요.',
   'source.not_available': '자동 연결을 지금 쓸 수 없어요. 거래내역 파일을 올려 주세요.',
 };
-/** 원천 연결 상태(원천 이름은 쓰지 않는다) */
 const LINK_LABEL = { file_only: '파일만', auto_connected: '자동 연결됨', auto_error: '자동 연결 안 됨' };
 const SOURCE_ERR = {
   'source.login_failed': '은행 로그인이 안 됐어요. 인증서를 확인해 주세요.',
@@ -46,9 +41,7 @@ const SOURCE_ERR = {
   'source.unsupported_bank': '이 은행은 아직 자동 조회를 못 해요. 파일을 올려 주세요.',
 };
 const sourceErrText = (code) => SOURCE_ERR[code] ?? '최신화하지 못했어요. 이미 넣은 거래내역은 그대로예요. 다시 해 주세요.';
-/** 원천의 하루 상한(오류 아님) */
 const DAILY_TEXT = '오늘은 다 가져왔어요. 내일 다시 가져올 수 있어요.';
-/** 방금 가져와서 이번엔 은행에 묻지 않았다(오류 아님). retryAt까지 남은 분 */
 const soonText = (retryAt) => {
   const min = Math.max(1, Math.ceil((Date.parse(retryAt) - Date.now()) / 60_000));
   return Number.isFinite(min) ? `방금 가져왔어요. ${min}분 뒤에 다시 가져올 수 있어요.` : '방금 가져왔어요. 잠시 뒤에 다시 가져올 수 있어요.';
@@ -62,15 +55,9 @@ function statusText(v) {
 }
 const dueText = (v) => (v.dueIn === null ? '기한 없음' : v.dueIn < 0 ? `${-v.dueIn}일 지남` : v.dueIn === 0 ? '오늘' : `D-${v.dueIn}`);
 
-/** main이 거절한 까닭이 칸 하나의 것이면 그 칸(data-field) 아래에 쓴다. 나머지는 폼 끝 한 줄. */
 const ERR_FIELD = { bad_amount: 'amount', bad_date: 'on', bad_account_number: 'number', duplicate_account: 'number', bad_bank: 'bank', bad_alias: 'alias', bad_holder: 'holder' };
-/** 화면 안 알림 한 줄(되돌리기 띠와 같은 모양): 아이콘 · 글(+ 작은 글) · 단추 0~2개. bad = 확인 필요 */
 const bar = (text, { bad = false, extra = null, action = null, ic = null, attrs = {} } = {}) =>
   h('div', { class: `sx-note${bad ? ' is-attention' : ''}`, role: bad ? 'alert' : 'status', ...attrs }, icon(ic ?? (bad ? 'warn' : 'info')), h('div', {}, text, extra ? h('div', { class: 'sx-meta' }, extra) : null), action);
-/**
- * 폼 안에서 하나 고르기(v2.0: select 대신 답 후보 줄). 고른 줄은 실선 + 체크, 다시 눌러 바꿀 수 있다(저장 전이라 굳히지 않는다).
- * opts = [[값, 글]]. 많으면(거래처 수십 곳) 줄이 화면을 덮으므로 그때만 select를 쓴다.
- */
 const PICK_MAX = 6;
 const pickRows = (opts, value, onPick, attrs = {}) =>
   h(
@@ -86,34 +73,30 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
     tab: 'unpaid',
     data: null,
     loading: false,
-    sel: null, // 고른 건 id
+    sel: null,
     detail: null,
-    form: null, // { kind: 'received'|'promise'|'exclude', ... }
-    formErr: null, // { where: 'form'|'account'|'import', text } 폼 안에 보이는 까닭
-    notice: null, // { text, extra?, bad?, load?, retry?: [단추 글, 할 일] } 화면 위 알림 한 줄
-    preview: null, // 거래내역 미리보기(main)
-    cols: null, // 열 고르기(사람이 고친 것)
+    form: null,
+    formErr: null,
+    notice: null,
+    preview: null,
+    cols: null,
     previewAccount: null,
-    adding: null, // 계좌 추가 입력 { bank, number, alias }
-    confirmDel: null, // [지우기]를 한 번 누른 계좌 id(그 줄이 확인 줄로 바뀐다)
-    offer: null, // 별칭 제안 { name, counterpartyId, cpName }
-    assign: null, // [이 거래처 입금으로] 연 입금 { id, cp, remember }
-    undo: null, // { seq, text, until }
+    adding: null,
+    confirmDel: null,
+    offer: null,
+    assign: null,
+    undo: null,
     busy: false,
     invoiceResult: null,
-    refreshing: {}, // 계좌 id → 최신화 진행(엔진 RefreshJob)
+    refreshing: {},
   };
-  /** 거래처 상세(cpSection)는 받을 돈 화면 밖이라 토스트로 알린다 */
   const say = (e) => toast(ERR[errText(e)] ?? '처리하지 못했어요. 다시 해 주세요.');
   const errMsg = (e) => ERR[errText(e)] ?? '처리하지 못했어요. 다시 해 주세요.';
   const tell = (text, o = {}) => (s.notice = { text, ...o });
-  /** 실패는 그 폼 안(where)의 그 칸 아래, 칸을 모르면 폼 끝 한 줄, 폼이 없으면 화면 위 알림 한 줄로 */
   const fail = (e, where) => (where ? (s.formErr = { where, text: errMsg(e), field: ERR_FIELD[errText(e)] ?? null }) : tell(errMsg(e), { bad: true }));
   const formMsg = (where) => (s.formErr?.where === where && !s.formErr.field ? h('p', { class: 'form-msg is-bad', role: 'alert' }, s.formErr.text) : null);
-  /** 그 폼 그 칸의 까닭(field의 error) */
   const errAt = (where, f) => (s.formErr?.where === where && s.formErr.field === f ? s.formErr.text : null);
 
-  /** 다시 그리면 DOM을 새로 만든다. 입력 중이던 칸(data-field)의 포커스와 커서를 지킨다([최신화] 진행이 1.5초마다 다시 그려도 칸에서 튕기지 않게) */
   const rerender = () => {
     const a = document.activeElement;
     const f = a?.closest?.('[data-view="bank"]') ? a.dataset.field : null;
@@ -150,7 +133,6 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
     await load();
     rerender();
   };
-  /** 고치기 하나: 부르고 → 되돌리기 띠(10초) → 다시 읽기. 성공하면 main 응답(없으면 true), 실패하면 null. where = 실패 까닭을 보일 폼 */
   async function act(method, params, text, where) {
     if (s.busy) return null;
     s.busy = true;
@@ -191,9 +173,6 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
     await refresh();
   }
 
-  // ---- 파일 올리기 ----
-
-  /** 미리보기가 끝났으면 올린 파일을 버리고 다시 올리게 한다 */
   const lostPreview = () => {
     s.preview = null;
     s.tab = 'unpaid';
@@ -236,7 +215,6 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       const r = await call('bank.commitStatement', { token: s.preview.token, accountId: s.previewAccount, columns: s.cols });
       s.preview = null;
       s.tab = r.match.review || r.match.unknown ? 'review' : 'unpaid';
-      // 넣은 결과는 화면에 남는 요약 한 줄(토스트로 사라지지 않게)
       tell('거래내역을 넣었어요.', { extra: [`새 줄 ${r.newCount}줄`, r.duplicateCount ? `이미 있던 줄 ${r.duplicateCount}줄` : null, `자동으로 붙임 ${r.match.auto}건`, `확인할 후보 ${r.match.review}건`, `누가 보낸지 모르는 입금 ${r.match.unknown}건`].filter(Boolean).join(' · ') });
     } catch (e) {
       if (errText(e) === 'preview_expired') lostPreview();
@@ -259,15 +237,11 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
     await refresh();
   }
 
-  // ---- 그리기 ----
-
   const tabBtn = (key, label, n) => h('button', { type: 'button', class: s.tab === key ? 'is-on' : null, 'aria-pressed': String(s.tab === key), 'data-bank-tab': key, onclick: () => ((s.tab = key), (s.sel = null), (s.detail = null), (s.form = null), (s.formErr = null), (s.confirmDel = null), rerender()) }, label, n ? ` ${n}` : '');
 
-  /** 머리: 제목 · 기준일 · 오른쪽 단추. railHead를 받으면 그것을 쓴다(승인 대기 칩이 같이 붙는다) */
   function head() {
     const sum = s.data?.summary;
     const basis = !sum ? '' : `${sum.latestDay ? `거래내역 ${md(sum.latestDay)}까지 반영` : '거래내역을 아직 올리지 않았어요'}${sum.stale && sum.latestDay ? ' · 오래됐어요' : ''}`;
-    // 계좌가 없으면 거래내역 단추를 두지 않는다(누를 수 없는 단추는 보이지 않는다). 그때 할 일은 알림 줄의 [계좌 등록하기] 하나다.
     const right = !s.data ? [] : [s.data.accounts?.length ? btn('거래내역 파일 올리기', pickStatement, 'sx-btn-primary', { 'data-act': 'bank-statement' }) : null, btn('홈택스 발급목록 파일 올리기', pickInvoices, 'sx-btn-quiet', { 'data-act': 'bank-invoices' })].filter(Boolean);
     if (railHead) return railHead('받을 돈', basis, ...right);
     return h('div', { class: 'rs-head' }, h('h1', { class: 'title-screen' }, '받을 돈'), basis ? h('span', { class: 'sx-meta', 'data-bank-basis': '' }, basis) : null, h('div', { class: 'rs-right' }, ...right));
@@ -347,14 +321,12 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
     const form = s.form;
     const today = new Date().toISOString().slice(0, 10);
     const close = () => ((s.form = null), (s.formErr = null), rerender());
-    /** 폼을 열면 그 폼만 보인다(한 번에 한 가지). sel = 처음 포커스할 칸 */
     const openForm = (f, sel) => {
       s.form = f;
       s.formErr = null;
       rerender();
       focusLater(`[data-bank-form] ${sel}`);
     };
-    /** 폼 저장: 성공하면 닫고, 실패하면 폼 안에 까닭을 남긴다 */
     const done = (run) => async () => {
       if (await run()) {
         s.form = null;
@@ -364,7 +336,6 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
     const formActs = (label, submit, attrs = {}) => h('div', { class: 'sx-actions' }, btn(label, submit, 'sx-btn-primary', attrs), btn('그만두기', close, 'sx-btn-quiet'));
     let formEl = null;
     if (form?.kind === 'received') {
-      // 칸 검사(금액 0·빈 값, 덜 넣은 날짜)를 먼저 하고, 맞으면 main에 보낸다
       const submit = done(() => checkFields(formEl) && act('bank.markReceived', { receivableId: v.id, method: form.method, amount: form.amount, on: form.on }, '받았음으로 표시했어요', 'form'));
       formEl = h(
         'div',
@@ -413,7 +384,6 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       allocs.length
         ? h('ul', { class: 'bank-allocs' }, ...allocs.map((a) => h('li', { 'data-bank-alloc': a.id }, a.txn ? `${md(a.txn.day)} ${won(a.amount)} · ${a.txn.payer ?? '이름 없음'} · ···${a.txn.accountLast4}` : `${METHOD_LABEL[a.method] ?? '직접'} ${won(a.amount)}${a.receivedOn ? ` · ${md(a.receivedOn)}` : ''}`, a.decidedBy === 'auto' ? h('span', { class: 'sx-tag' }, '자동') : null, btn('떼기', () => act('bank.detach', { allocId: a.id }, '뗐어요'), 'sx-btn-quiet', { 'data-act': 'bank-detach' }))))
         : h('div', { class: 'sx-meta' }, '아직 붙은 입금이 없어요.'),
-      // 주요 단추는 [받았음 표시] 하나, 같은 건의 상태를 바꾸는 나머지는 같은 줄의 조용한 단추. 폼을 열면 단추 줄 대신 폼만 보인다.
       open && !form
         ? h(
             'div',
@@ -483,7 +453,6 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
                     { 'data-bank-cand': c.receivableIds.join(',') },
                     h('div', {}, h('b', {}, `→ ${c.cpName ?? '거래처'} ${md(c.writtenOn)} ${won(c.total)}?`), FIT_LABEL[c.fit] ? [' ', h('span', { class: 'sx-tag' }, FIT_LABEL[c.fit])] : null),
                     h('div', { class: 'sx-meta' }, c.reason),
-                    // 카드의 주요 단추는 첫 후보의 [맞아요] 하나
                     h(
                       'div',
                       { class: 'sx-actions' },
@@ -522,7 +491,6 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
     );
   }
 
-  /** [최신화]: 원천 → 넣기 → 맞추기. 진행을 1.5초마다 본다. 결과는 화면 위 알림 한 줄 */
   async function startRefresh(id) {
     if (s.refreshing[id]) return;
     try {
@@ -562,7 +530,6 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
     return h('td', {}, chip, x.canRefresh ? btn('최신화', () => startRefresh(x.id), 'sx-btn-quiet', { 'data-act': 'bank-refresh' }) : null);
   }
 
-  /** [계좌 추가]: 눌렀을 때만 폼(처음이면 동의 카드)을 연다 */
   const openAdd = () => {
     s.adding = { bank: '국민', number: '', alias: '' };
     s.formErr = null;
@@ -617,7 +584,6 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
             h('div', { class: 'sx-actions' }, btn('저장', save, 'sx-btn-primary', { 'data-act': 'bank-account-save' }), btn('그만두기', cancel, 'sx-btn-quiet')),
           );
     const addBtn = (kind) => btn('계좌 추가', openAdd, kind, { 'data-act': 'bank-account-add' });
-    /** [지우기]를 한 번 누르면 그 줄이 확인 줄로 바뀐다(창 confirm은 셸 창에서 막혀 있다) */
     const confirmRow = (x) => {
       const no = () => ((s.confirmDel = null), rerender());
       const yes = async () => {
@@ -745,12 +711,10 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       'section',
       { class: 'rail-screen', 'data-view': 'bank', 'data-screen': 'D-09' },
       head(),
-      // 처음 불러오기에 실패하면 화면 가운데 [다시 시도] 하나(알림 줄과 같은 말을 두 번 쓰지 않는다)
       d ? noticeBar() : null,
       undoBar(),
       offerBar(),
       sum?.stale && sum?.hasAccounts && unpaid.length ? note(sum.latestDay ? `거래내역이 ${md(sum.latestDay)}까지만 있어요. 새 거래내역을 올리면 "못 받음"이 맞는지 다시 볼게요.` : '거래내역을 올리기 전이라 입금 여부를 확인하지 못했어요.', true) : null,
-      // 계좌가 없으면 할 일은 하나(계좌 등록). 내 계좌 탭에서는 빈 상태가 같은 말을 하므로 그리지 않는다.
       sum && !sum.hasAccounts && s.tab !== 'accounts' ? bar('먼저 내 계좌를 등록해 주세요. 파일로 쓰면 은행 로그인 정보를 받지 않아요.', { action: btn('계좌 등록하기', toAccounts, 'sx-btn-primary', { 'data-act': 'bank-go-accounts' }) }) : null,
       d || s.preview ? h('div', { class: 'filters', role: 'group', 'aria-label': '받을 돈 탭' }, tabBtn('unpaid', '못 받은 돈', unpaid.length), tabBtn('received', '받은 돈', d?.received?.length), tabBtn('review', '확인할 입금', d?.review?.length), tabBtn('accounts', '내 계좌', d?.accounts?.length), s.preview ? tabBtn('import', '올린 파일') : null) : null,
       !d && !s.preview
@@ -767,14 +731,10 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
     );
   }
 
-  // ---- 거래처 상세: 계좌·입금자 이름·결제 조건 ----
-
   const cpCache = new Map();
   function cpSection(c) {
     const box = h('div', { class: 'bank-cp', 'data-bank-cp': c.id }, h('div', { class: 'sx-panel-sec' }, '계좌 · 입금자 이름'));
-    // 상세 패널은 보는 자리다. 더하는 폼은 [계좌 더하기]·[입금자 이름 더하기]를 눌렀을 때만 연다(빈 폼을 늘 펼쳐 두지 않는다, v2.0).
-    let adding = null; // 'account' | 'alias' | null
-    // 거절되어 다시 그려도 넣던 값이 남게 둔다(저장하거나 닫으면 비운다). formErr: { text, field }
+    let adding = null;
     let vals = {};
     let formErr = null;
     let pickingTerms = false;
@@ -783,7 +743,6 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       const aliases = info?.aliases ?? [];
       const terms = info?.terms;
       const termsKey = terms ? (terms.kind === 'days' ? `days:${terms.n}` : terms.kind === 'next_month_day' ? `next_month_day:${terms.d}` : terms.kind) : 'default';
-      // 받기로 한 날: 값은 글자, 누르면 그 자리에 답 후보 줄(v2.0, 같은 일에 select를 섞지 않는다). 고르면 곧 저장이다.
       const TERMS = [['default', '기본값(작성일 + 30일)'], ['days:60', '작성일 + 60일'], ['days:15', '작성일 + 15일'], ['next_month_day:10', '다음 달 10일'], ['month_end', '다음 달 말일'], ['none', '기한 없음']];
       const termsLabel = (TERMS.find(([k]) => k === termsKey) ?? TERMS[0])[1];
       const pickTerms = async (key) => {
@@ -792,7 +751,6 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
         pickingTerms = false;
         if (!ok) return draw(info);
         toast('결제 조건을 바꿨어요');
-        // 저장한 값을 다시 읽어 캐시와 화면을 함께 맞춘다(처음 읽기 전에 고른 경우도).
         void reload();
       };
       const termsRow = pickingTerms
@@ -852,7 +810,6 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       const open = (k) => () => ((adding = k), (formErr = null), (vals = {}), draw(cpCache.get(c.id)));
       box.replaceChildren(
         h('div', { class: 'sx-panel-sec' }, '계좌 · 입금자 이름'),
-        // 계좌·입금자 이름은 선으로 나누지 않고 한 면(cp-list) 안의 줄로 둔다(v2.0 선 대신 면). [지우기]는 줄 가운데에 맞춘다.
         ...(accounts.length || aliases.length
           ? [
               h(
@@ -863,7 +820,6 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
               ),
             ]
           : []),
-        // replaceChildren(null)은 "null" 글자를 넣는다: 없을 때는 아예 넘기지 않는다.
         ...(!accounts.length && !aliases.length && !form ? [h('p', { class: 'sx-meta' }, '등록한 계좌와 입금자 이름이 없어요.')] : []),
         form ?? h('div', { class: 'sx-actions' }, btn('계좌 더하기', open('account'), '', { 'data-act': 'bank-cp-account-open' }), btn('입금자 이름 더하기', open('alias'), '', { 'data-act': 'bank-cp-alias-open' })),
         h('div', { class: 'sx-panel-sec' }, '받기로 한 날'),

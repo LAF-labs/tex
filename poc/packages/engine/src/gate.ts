@@ -1,9 +1,5 @@
-// 게이트 요청·승인 근거의 모양과 D03 §3 해시. main(승인 바)과 엔진이 같이 쓴다. node:crypto 말고 의존성이 없다
-// (main이 엔진 코드를 끌어오지 않게 protocol.ts처럼 따로 둔다). 엔진과 main이 같은 함수를 쓰므로 자기 일치 확인이다(ADR-021).
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Portal } from './core/types.ts';
-
-// ---- 정규 인코딩 ----
 
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
@@ -33,7 +29,6 @@ function head(major: number, n: number): Buffer {
  */
 export function cbor(v: Cbor): Buffer {
   if (typeof v === 'string') {
-    // 고립 서로게이트는 UTF-8로 바꿀 때 U+FFFD가 되어 다른 문자열과 같은 해시가 된다. 받지 않는다.
     if (LONE_SURROGATE.test(v)) throw new Error('cbor_bad_string');
     const s = Buffer.from(v, 'utf8');
     return Buffer.concat([head(3, s.length), s]);
@@ -58,7 +53,6 @@ export function jcs(v: unknown): string {
   }
   if (Array.isArray(v)) return `[${v.map(jcs).join(',')}]`;
   if (typeof v === 'object') {
-    // 키는 UTF-16 코드 단위 순서(기본 sort가 그렇다). undefined 값은 JSON.stringify처럼 뺀다.
     const keys = Object.keys(v as object).filter((k) => (v as Record<string, unknown>)[k] !== undefined).sort();
     return `{${keys.map((k) => `${JSON.stringify(k)}:${jcs((v as Record<string, unknown>)[k])}`).join(',')}}`;
   }
@@ -71,13 +65,10 @@ const hexBytes = (h: string) => {
   return Buffer.from(h, 'hex');
 };
 
-// ---- 게이트 요청(엔진 → main 게이트 포트) ----
-
 /** schemas/remote-envelope의 fieldKey 닫힌 목록(B-24). 예약 키($first.*·$dup.*)는 엔진만 만든다(ADR-021). */
 export const FIELD_KEYS = [
   'supplyAmount', 'taxAmount', 'totalAmount', 'counterpartBizNo', 'counterpartName', 'counterpartEmail', 'supplierBizNo', 'supplierName',
   'issueDate', 'itemName', 'itemCount', 'remark', 'receiptType',
-  // 홈택스 민원증명 승인 카드(H-03·H-04·H-08·H-09 공통 cert.confirm, 팀장 결정 2026-11-09)
   'certDoc', 'certPurpose', 'certSubmitTo', 'rrnDisclosure',
   '$first.bizNo', '$first.email', '$dup.businessKey', '$dup.priorNotCommitted', '$dup.otherDevice',
 ] as const;
@@ -99,22 +90,16 @@ export interface GateRequest {
   v: 2;
   runId: string;
   gateStepId: string;
-  /** gate_requests.req_id. 같은 실행에서 게이트가 다시 열리면 바뀐다. */
   reqId: string;
-  /** 엔진이 게이트 요청마다 만드는 로컬 전용 값(폰 챌린지·토큰 nonce와 다르다). */
   approvalNonce: string;
-  /** 서류 종류(승인 카드 id에서, CARD_DOC_TYPE). main은 이것으로 앞 readback 칸 수와 카드 줄을 고른다. */
   docType: GateDocType;
   trigger: 'local';
-  /** readback 값과 예약 키의 배열 전체. 순서도 cardHash에 들어간다. */
   fields: GateField[];
   cardHashInputs: CardHashInputs;
   actionHash: string;
-  /** 승인 대기 상한(gate.waitMs). */
   waitMs: number;
 }
 
-/** click+batch: 여러 건 묶음의 뒤 건. main이 같은 묶음의 처음 승인 카드에서 클릭을 관찰했고, 이 게이트의 되읽기 값이 그때 카드 값과 같다. */
 /**
  * remote+px(ADR-052): 폰의 하드웨어 승인 키(Px) 서명을 main이 검증했다(연결 기록의 키, 챌린지 1회용, 하루 한도).
  * 세금계산서 게이트에서만, 처음 거래처·처음 보내는 이메일이 아닐 때만 받는다(remotePresenceRefusal).
@@ -132,7 +117,6 @@ export function remotePresenceRefusal(req: Pick<GateRequest, 'docType' | 'fields
   if (req.docType !== 'H-01') return 'doc';
   const first = (k: FieldKey) => {
     const v = req.fields.find((f) => f.fieldKey === k)?.value;
-    // 엔진은 H-01 게이트에 두 키를 늘 넣는다(gateSelfCheck). 빠졌으면 처음으로 본다(안전한 쪽).
     return v === undefined || (v !== '' && v !== 'false');
   };
   return first('$first.bizNo') || first('$first.email') ? 'first' : null;
@@ -153,8 +137,6 @@ export interface LocalApproval {
 
 export const LOCAL_APPROVAL_TTL_MS = 120_000;
 
-// ---- InDoubt 증언(ADR-021 결정 5, D03 §2 InDoubt 행) ----
-
 /** 증언 바 요약 2줄(공급받는자 상호·사업자번호, 합계금액). 이 순서·이 세 키만. */
 export const ATTEST_SUMMARY_KEYS = ['counterpartName', 'counterpartBizNo', 'totalAmount'] as const satisfies readonly FieldKey[];
 
@@ -168,16 +150,11 @@ export interface AttestRequest {
   runId: string;
   intentId: string;
   stepId: string;
-  /** 엔진이 증언 요청마다 만든다. 조회를 다시 해도 InDoubt가 그대로면 유지한다. */
   attestReqId: string;
-  /** 로컬 전용 값. 게이트의 approvalNonce·토큰 nonce와 다르다. */
   attestNonce: string;
   portal: Portal;
-  /** ATTEST_SUMMARY_KEYS 순서의 GateField 3개. */
   fields: GateField[];
-  /** attestSummaryHash(fields). main이 다시 계산해 같을 때만 무장한다. */
   summaryHash: string;
-  /** 조회 재시도 없이 받는 경우(정지 하향). 바에 "{포털} 발급목록을 직접 확인한 뒤 답해 주세요"를 더한다. */
   manualCheck: boolean;
 }
 
@@ -264,11 +241,8 @@ export type GatePortMessage =
   | { t: 'gate.answer.result'; reqId: string; ok: boolean; code?: string }
   | { t: 'attest.request'; req: AttestRequest }
   | { t: 'attest.withdrawn'; runId: string; attestReqId: string; reason: AttestWithdrawReason }
-  /** note는 선택이고 로컬 저널에만 남긴다(텔레메트리·로그 금지). */
   | { t: 'attest.answer'; attestation: LocalAttestation; note?: string }
   | { t: 'attest.answer.result'; attestReqId: string; ok: boolean; code?: AttestRejectCode };
-
-// ---- D03 §3 해시 ----
 
 /** cardHash = SHA-256(CBOR([[fieldKey, value], …])). 배열 전체(키·값·순서). */
 export function cardHash(fields: readonly GateField[]): string {
@@ -312,18 +286,14 @@ export const GATE_CARDS: ReadonlyMap<string, { docType: GateDocType; keys: reado
   ['cert.confirm', { docType: 'cert', keys: CERT_READBACK_KEYS }],
 ]);
 
-/** 서류 종류 → readback 칸(gateSelfCheck가 앞 칸 수·키를 대조한다). */
 const DOC_KEYS: Readonly<Record<GateDocType, readonly FieldKey[]>> = { 'H-01': READBACK_KEYS, cert: CERT_READBACK_KEYS };
-/** 서류 종류별로 엔진이 늘 넣는 예약 키. H-01은 처음 거래·처음 보내는 주소다. 민원증명은 없다. */
 const DOC_REQUIRED_RESERVED: Readonly<Record<GateDocType, readonly FieldKey[]>> = { 'H-01': ['$first.bizNo', '$first.email'], cert: [] };
 
 /** 게이트 요청 하나를 만든다. 엔진 openGate·개발 콘솔 시험 값·e2e가 같은 식을 쓴다. */
 export function buildGateRequest(d: {
   runId: string;
   gateStepId: string;
-  /** 승인 카드 id(gate.card). 없으면 H-01 'invoice.confirm'. GATE_CARDS에 없으면 던진다. */
   card?: string;
-  /** 카드의 readback 칸 값(GATE_CARDS keys 전부). */
   readback: Readonly<Record<string, string>>;
   reserved: GateField[];
   packageDigest: string;
@@ -361,16 +331,13 @@ export function buildGateRequest(d: {
  * actionHash가 fields·cardHashInputs와 맞는지. 문제가 없으면 null. 엔진 버그를 잡는 장치이지 침해 방어가 아니다.
  */
 export function gateSelfCheck(req: Pick<GateRequest, 'fields' | 'cardHashInputs' | 'actionHash'> & { docType?: GateDocType }): 'field_key' | 'duplicate' | 'readback_hash' | 'action_hash' | null {
-  // docType이 없으면 H-01(이전 요청 모양). 모르는 서류 종류는 거부한다.
   const doc = req.docType ?? 'H-01';
   const rbKeys = Object.hasOwn(DOC_KEYS, doc) ? DOC_KEYS[doc] : null;
   if (!rbKeys) return 'field_key';
   const keys = req.fields.map((f) => f.fieldKey);
   if (!keys.every(isFieldKey) || req.fields.some((f) => typeof f.value !== 'string')) return 'field_key';
   if (new Set(keys).size !== keys.length) return 'duplicate';
-  // H-01: 처음 거래·처음 보내는 주소는 엔진이 늘 넣는다. 빠지면 바가 표시 없이 무장하게 되므로 엔진 버그로 본다.
   if (DOC_REQUIRED_RESERVED[doc].some((k) => !keys.includes(k))) return 'field_key';
-  // 앞 칸은 그 서류 종류의 readback 칸 그대로(키·순서), 뒤는 예약 키만.
   const n = rbKeys.length;
   const rb = req.fields.slice(0, n);
   if (rb.length !== n || rb.some((f, i) => f.fieldKey !== rbKeys[i]) || req.fields.slice(n).some((f) => !f.fieldKey.startsWith('$'))) return 'field_key';

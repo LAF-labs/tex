@@ -1,5 +1,3 @@
-// 최소 HTTP 라우터(node:http). 프레임워크를 쓰지 않는 이유: 의존성 표면(ADR-028)과, 바디·헤더가 로그·APM으로 새는 경로를
-// 우리가 다 쥐기 위해서다(D09 §3). 응답 오류 본문은 {error: code}뿐이고 입력을 되풀이하지 않는다.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { ServiceError, fail, type ErrorCode } from './errors.ts';
@@ -7,18 +5,14 @@ import type { Logger } from './log.ts';
 
 export interface Ctx {
   method: string;
-  /** 라우트 패턴(로그용) */
   route: string;
   path: string;
   params: Record<string, string>;
   query: URLSearchParams;
   headers: http.IncomingHttpHeaders;
-  /** 파싱된 JSON 본문(없으면 undefined) */
   body: unknown;
   rawBody: Buffer;
-  /** 소켓 원격 주소(신뢰 프록시 설정이면 X-Forwarded-For 첫 값). 로그·저장 금지, 일 회전 HMAC으로만 쓴다. */
   ip: string;
-  /** 접근 로그 `aid`(일 회전 HMAC)를 핸들러가 채운다. 비우면 남기지 않는다. */
   logAid?: string;
 }
 
@@ -26,7 +20,6 @@ export interface Reply {
   status: number;
   body?: unknown;
   headers?: Record<string, string>;
-  /** 문자열·바이트 본문을 그대로 보낼 때(정적 파일) */
   raw?: Buffer | string;
 }
 
@@ -38,7 +31,6 @@ interface Route {
   parts: string[];
   handler: Handler;
   maxBodyBytes: number;
-  /** 원문 본문 보존(웹훅 서명 검증용) */
   raw: boolean;
 }
 
@@ -68,7 +60,6 @@ export class Router {
         const p = r.parts[i]!;
         const s = segs[i]!;
         if (p.startsWith(':')) {
-          // 경로 변수는 안전 문자만(디코딩 없음). 그 밖은 일치하지 않는다.
           if (!/^[A-Za-z0-9_.@-]{1,128}$/.test(s)) {
             ok = false;
             break;
@@ -92,9 +83,7 @@ export class Router {
 
 export interface ServeOpts {
   logger: Logger;
-  /** 앞단 L4/TLS 프록시를 믿을 때만 true(D09 §4: LB 기능에 의존하지 않음) */
   trustProxy?: boolean;
-  /** 모든 응답에 붙일 헤더 */
   headers?: Record<string, string>;
 }
 

@@ -1,8 +1,3 @@
-// RunService의 IR 실행 경로(M2-3 RunService IR 전환 PR-C, D03 §2~§5): 로드한 패키지를 RunController + 코어 핸들러 + 드라이버로 돌린다.
-// - H01Runner 경로와 같은 바깥 모양(RunEvent·게이트 포트 메시지·저널·원장)을 낸다. 골든 대조(tests/h01-golden.test.ts)가 둘을 비교한다.
-// - 게이트 예약 키($first·$dup)·원장 행 재료(업무 키·HMAC)는 RunService가 주는 함수로 만든다(H01과 같은 값).
-// - 패키지가 portal fixture면 GuardedActuator·goto 핸들러에 로더 허가(fixtureOriginGrant)만 주입한다(ADR-039 결정 2 ②′).
-// - 저널에는 코드·스텝 id·해시만(⑦). 화면 값은 RunScope 메모리에만 있다.
 import type { Db, GateRepo, Ledger, LedgerState } from '@sax/db';
 import type { RunToken } from '@sax/model';
 import { Redactor } from '@sax/redaction';
@@ -56,45 +51,21 @@ import { BundleCatalog } from '@sax/model';
 import type { ArmRow } from '@sax/db';
 import type { RunPermit } from '../core/permit.ts';
 
-/** 프로필에 발급 인증이 없으면 공동인증서로 서명한다(대표 지시 2026-11-14: 서비스 기본 발급 인증은 공동인증서). */
 const DEFAULT_SIGN_METHOD = 'cert';
 
 /** RunService가 IR 경로에 주는 패키지와 포트. 제품은 레지스트리 로더가, 시험은 fixture 빌더가 만든다. */
 export interface IrPackage {
   pkg: LoadedPackage;
-  /** 서명 없는 예행 로컬 패키지(rehearsalIrSource). 있으면 금고 인증서 비밀번호는 첫 입력(fill) 스텝 전에만 쓴다(로그인만, 서명 창에는 넣지 않는다). */
   local?: { digest: string };
-  /**
-   * verify.lookup.playbook → 서명 조회 패키지(IrLookupPort, 제품). 있으면 조회는 그 패키지 IR을 팝업에서 돌린다(팀장 결정 2026-11-09 (가)).
-   * 조회 셀렉터·열 이름이 서명 패키지에 있으니 실기기에서 틀리면 다시 게시해 고친다.
-   */
   lookupPackages?: ReadonlyMap<string, LoadedPackage>;
-  /** verify.lookup.playbook → 조회 화면 정의(PopupLookupPort, 가짜 페이지 시험). lookupPackages가 있으면 쓰지 않는다. */
   lookupDefs?: ReadonlyMap<string, LookupDef>;
-  /** portal fixture 패키지일 때만(loader.fixtureOriginGrant). */
   fixtureGrant?: FixtureOriginGrant | null;
-  /** decide 판정기(L0 → 모델). 없으면 decide 스텝은 decide.unavailable(핸드오프). */
   judge?: Pick<Judge, 'decide'>;
   runToken?: RunToken;
-  /** 실행마다 받는 모델 실행 토큰(제품: 게이트웨이 run 토큰). runToken보다 먼저 쓴다. */
   runTokenFor?: (runId: string) => Promise<RunToken>;
-  /**
-   * fixture 패키지의 부재 판정 시간(가짜 페이지는 반영이 바로 된다, H01Runner의 fixturePortal.verify와 같은 값).
-   * IR 스키마 하한(30초) 아래라 패키지에 넣지 않고, fixtureGrant가 유효할 때만(개발 조건 소스) 실행 사본에 넣는다. 제품 dist에서는 무시한다.
-   */
   verifyTiming?: { minElapsedMs: number; lookups: number; maxMs: number };
-  /** save_pdf 포트(금고 pdf.print·보관함). 없으면 save_pdf 스텝은 실행하지 않는다(unhandled). */
   pdf?: PdfPort;
-  /**
-   * 공동인증서 비밀번호 차례(sign cert·signFlow cert·human kind=secret)의 금고(B1·B2). 있으면 CertSecretPort(금고 비밀 창 또는 사람 직접 입력 대기),
-   * 없으면 사람 비밀 차례는 곧바로 TTL이다(가짜 H-01 경로·시험).
-   */
   secret?: { vault: SecretVault; targetId(): string };
-  /**
-   * AI 위치 찾기(core/locate.ts) 모델 길(제품: 게이트웨이 selector_repair). 폴백 사슬(core/fallback.ts) 3단계다. 없으면 그 단계만 건너뛴다.
-   * 실행 토큰은 decide와 같은 것(runTokenFor)을 쓴다.
-   * 같은 길로 예상 밖 화면 판정(page_judge)과 브라우저 에이전트(browser_agent)도 부른다(run/judge.ts, run/browser-agent.ts). 폴백 사슬 5단계다.
-   */
   locate?: LocateResponder;
 }
 
@@ -116,71 +87,38 @@ export interface IrRunInput {
   portal: PortalConfig;
   rate: RateGuard;
   profile: { id: string; bizNo: string; signMethod: string | null; certName?: string | null };
-  /** pick.remember(IR rev v1.3.6): 고른 인증서 이름을 프로필에 저장한다. 없으면 이번 실행 범위에만 둔다. */
   profileWrite?: (field: 'certName', value: string) => Promise<boolean>;
-  /** 실행 종류(없으면 invoice = H-01). cert = 홈택스 민원증명: 진행 단계는 스텝 종류로 정하고(certPhases), 메일 확인(mailConfirmed)은 내지 않는다. */
   kind?: 'invoice' | 'cert';
-  /** $inputs(H01 RunInputs와 같은 모양). */
   inputs: Record<string, unknown>;
   db: Db;
-  /** 고친 선택자 기억(core/heal-memory.ts)·에이전트 길 기억. false면 끈다(기본 켬). */
   heal?: boolean;
-  /** 화면 보기(computer-use) 칸. false면 끈다(기본 켬, 대표 결정 2026-11-16). */
   vision?: boolean;
-  /** 결정 모델 칸(위치 찾기 첫 호출을 decision_pick으로). 기본 켬(2026-11-16 jev 평가: p 0.7 문턱에서 24번 중 틀린 칸 0). false면 끈다. */
   decision?: boolean;
   ledger: Ledger;
   gates: GateRepo;
-  /** 게이트 카드의 readback이 정해진 뒤 예약 키·원장 행 재료를 만든다. card = 승인 카드 id(GATE_CARDS). 그 카드의 재료를 못 만들면 null(게이트를 열지 않는다). */
   history: (rb: Readonly<Record<string, string>>, card: string) => GateHistory | null;
-  /** 게이트 앞 readback이 대조를 다 통과한 뒤 한 번: 카드 칸 밖의 readback 값까지(공급자·거래처 칸 자동 채움). 실행 흐름은 바꾸지 않는다. */
   readbackFixed?: (values: ReadonlyMap<string, string>, card: string) => void;
-  /** 사람 대기 [직접 발급함]의 X 원장 행 재료(무장 전이라 게이트 actionHash가 없다, RunService가 실행 초안으로 만든다). */
   manualRow: (stepId: string) => ArmRow | null;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
-  /** 진단 한 줄(engine.log diag, 값 없음·화면 글 가림): 핸드오프 대상의 실제 화면 모양(core/diagnose.ts). 없으면 남기지 않는다. */
   diag?: (code: string, fields: Record<string, string | number | boolean>, data: unknown) => void;
   phase: (phase: string, state: 'now' | 'done' | 'attention', code?: string) => void;
   postGate: (m: GatePortMessage) => void;
   waiting: (reqId: string) => void;
-  /** 시험용: gate.waitMs 대신 쓸 값. */
   gateWaitMs?: number;
   clock?: Clock;
-  /** 신호 사전(없으면 포털 내장 사전). RunService가 받은 정책의 blockSignalsAdd를 더한 사전을 준다. */
   signals?: SignalDict;
-  /** 실행 허가(status kill·실효 수준). Running 진입 확인·스텝 경계·recheck에서 부른다. 없으면 늘 허가. */
   permit?: () => RunPermit;
-  /** 스텝 궤적(골든 대조). 값 없이 스텝 id·타입·코드만. */
   trace?: (e: { name: string; stepId: string; type: string; code?: string }) => void;
-  /**
-   * 사람 대기 알림(B3): 실행이 끝나지 않고 사람을 기다린다. phase는 진행 표시 단계(login·form·…·sign), code는 까닭.
-   * 서명 차례면 phase 'sign', code 'sign.waiting'. RunService가 RunEvent handoff로 낸다. 재개는 command('resume'|'manual').
-   */
   handoff?: (h: { phase: string; code?: string; stepId: string | null }) => void;
-  /**
-   * 사람 입력 포트(금고 비밀 창 등). 없으면 지금처럼 대역(secret은 바로 ttl → 사람 대기로 넘어간다).
-   * engine-cert가 금고 비밀 창(D05 §3.5)을 여기 붙인다(B1 로그인 s4, B2 발급 서명 s21 signFlow human:secret).
-   */
   human?: HumanPort;
-  /**
-   * 발급 잠금(ADR-048 결정 7, issue-lock.ts). 세금계산서 발급(kind invoice)만 쓴다: 게이트 앞(기준선 조회 전)에 잡고, 커밋 직전에 갱신하고, 쉬거나 끝나면 놓는다.
-   * 없으면(계정 연결 없는 기동·시험) 잠그지 않는다. 잠금이 필요한지는 main이 정한다(PC 한 대 계정은 서버를 부르지 않는다).
-   */
   issueLock?: IssueLockPort;
-  /** 다른 PC가 잡고 있을 때 기다리는 상한·간격(ms, 기본 10분·5초). 시험용. */
   issueLockWaitMs?: number;
   issueLockRetryMs?: number;
-  /** 사람 대기 한 번의 상한(ms, 기본 30분). 시험용. */
   handoffCapMs?: number;
-  /** 실행 전체 수명 상한(ms, 대기 포함, 기본 2시간). 시험용. */
   lifetimeMs?: number;
-  /** 공동인증서 비밀번호 차례 알림(값 없음, main 안내: mode window = 전용 Chrome 칸에 직접, manual = 홈택스 인증서 창에서 직접 → B3 사람 대기 [다 했어요]). */
   secretEvent?: (e: SecretTurnEvent) => void;
-  /** 포털 대화상자 문구(wait for:'dialog')를 앱 실행 단계에 글로 보인다. 저널·로그에는 넣지 않는다. */
   portalNotice?: (n: { stepId: string; key: string; text: string; ok: boolean }) => void;
-  /** 비밀 차례 TTL(기본 120초, 시험용). */
   secretTtlMs?: number;
-  /** 조회(verify·기준선) 스텝이 멈췄을 때 그 조회 탭 기록(예행만, RunService가 넘긴다). */
   lookupSnap?: (popup: Page, at: { stepId: string; code: string }) => Promise<void>;
 }
 
@@ -193,16 +131,10 @@ type HandoffCommand = 'resume' | 'manual' | 'stop' | 'cap';
 export interface IrRunResult {
   status: RunStatus;
   code?: string;
-  /** 포털 점검으로 멈췄으면 안내에서 읽은 끝 시각(ISO +09:00). 앱이 "언제 다시" 문구에 쓴다. */
   maintenanceUntil?: string;
   approvalNo?: string;
   mailConfirmed?: boolean;
-  /** 조율기 마지막 상태(골든 대조). */
   state: RunStateName;
-  /**
-   * 멈춘 스텝(성공 끝이 아닐 때): 스텝 id·종류·대상 셀렉터 키·하위 패키지 안이면 그 id. 실기기 디버깅용이다.
-   * 셀렉터 키와 스텝 id만 담는다(화면 문구·입력 값 없음, ⑦).
-   */
   stoppedAt?: StoppedAt;
 }
 
@@ -217,7 +149,6 @@ export function stoppedAtOf(ir: PlaybookIR, stepId: string | null): StoppedAt | 
   if (!stepId) return undefined;
   const s = flatten(ir.steps).info.get(stepId)?.step as (Step & { target?: unknown; for?: unknown; value?: unknown }) | undefined;
   if (!s) return { stepId, type: 'unknown' };
-  // branch는 조건이 보는 요소를 대상으로 친다(IR rev v1.3.7: s2 머리말 불일치 진단 줄이 남게).
   const on = s.type === 'branch' ? (s as StepOf<'branch'>).on : undefined;
   const condTarget = on && 'textMatches' in on ? on.textMatches.target : on && 'exists' in on ? on.exists : undefined;
   const target = typeof s.target === 'string' ? s.target : s.type === 'wait' && s.for === 'selector' && typeof s.value === 'string' ? s.value : condTarget;
@@ -227,8 +158,6 @@ export function stoppedAtOf(ir: PlaybookIR, stepId: string | null): StoppedAt | 
 /** H-01 IR 스텝 → 진행 표시 단계(H01 TS 플레이북과 같은 단계 이름, 승인 바·진행 줄이 쓴다). */
 export const PHASE_OF: Readonly<Record<string, string>> = {
   s0: 'login', s1: 'login', s2: 'login', s3: 'login', s4: 'login', s5: 'login', s6: 'login', s90: 'login', s91: 'login', s92: 'login', s93: 'login',
-  // H-01 2.3.x 로그인 하위 스텝: 공동인증서 로그인(s4a~s4h·s8~s8b)과 간편인증 갈래(s7~s7g). 사람 대기 시간 초과가 여기서 나면
-  // 발급 화면 전이라 사다리가 다음 칸으로 간다(issue/routes.ts branchOf)
   s4a: 'login', s4b: 'login', s4c: 'login', s4d: 'login', s4e: 'login', s4f: 'login', s4g: 'login', s4h: 'login',
   s8: 'login', s8a: 'login', s8b: 'login',
   s7: 'login', s7a: 'login', s7b: 'login', s7c: 'login', s7d: 'login', s7e: 'login', s7f: 'login', s7g: 'login',
@@ -271,18 +200,12 @@ const STATUS_OF: Partial<Record<RunStateName, RunStatus>> = {
   Completed: 'success', CompletedWithIssues: 'completed_with_issues', Failed: 'failed', HandedOff: 'handoff', InDoubt: 'in_doubt', Paused: 'handoff', Interrupted: 'failed',
 };
 
-/** 사용자 [중지]·거부·만료 코드 → RunStatus(H01 RunService와 같은 바깥 모양). */
 function abortedStatus(code: string | null): RunStatus {
   if (code === 'gate.expired') return 'expired';
   if (code === 'run.aborted' || code === 'gate.denied' || code === 'run.stopped') return 'stopped';
   return 'failed';
 }
 
-/**
- * 실행 사본. 패키지(공유 객체)는 바꾸지 않는다.
- * - 시험용 gateWaitMs: gate.waitMs만 바꾼다.
- * - fixture 부재 판정 시간(허가가 유효할 때만 넘어온다): verify의 notCommittedPolicy와, 있으면 lookup.maxMs.
- */
 function runCopy(ir: PlaybookIR, gateWaitMs: number | undefined, timing: IrPackage['verifyTiming']): PlaybookIR {
   if (gateWaitMs === undefined && !timing) return ir;
   return {
@@ -307,35 +230,21 @@ export class IrRun {
   private wiring: RunWiring | null = null;
   private history: GateHistory | null = null;
   private stopRequested = false;
-  /** 입력(fill) 스텝을 시작했다. 로컬 예행 패키지는 이 뒤로 비밀번호를 쓰지 못한다. */
   private formStarted = false;
   private mail: boolean | undefined;
-  /** verify를 한 번이라도 판정했다(H01처럼 그 뒤 종료에는 mailConfirmed를 붙인다). */
   private verified = false;
-  /** 사용자 [중지]·신호로 열린 게이트를 거부했을 때 게이트 포트에 알리는 사유(H01과 같은 stopped·signal). */
   private closeAs: 'stopped' | 'signal' | null = null;
-  /** main이 승인으로 답한 게이트. 그 바는 main이 이미 닫았으니 뒤의 닫힘(거부 우선 창의 [중지] 등)은 알리지 않는다(H01과 같음). */
   private answered: string | null = null;
-  /** 열린 게이트 요청(RunService.answer가 승인 근거를 대조한다). */
   gateReq: GateRequest | null = null;
   gateDeadline = 0;
-  /** 원장 armed 뒤(커밋 구간). 이 뒤로는 중지를 받지 않는다. */
   armed = false;
-  /** 정지 하향 사유(허가가 처음 없어진 때의 값, 이 실행 동안 그대로). */
   private denied: Extract<RunPermit, { ok: false }> | null = null;
-  /** 조율기에 downgrade를 건넸다(한 번만, 커밋 구간 배너가 되풀이되지 않게). */
   private downgradeSent = false;
-  /** 사람 대기(HandedOff·Paused)에서 명령을 기다리는 중이면 깨우는 함수. */
   private cmdWake: ((c: HandoffCommand) => void) | null = null;
-  /** 사람 대기 중인 조율기 상태(manualDone은 HandedOff에서만). */
   private waitingState: RunStateName | null = null;
-  /** 사람 대기의 까닭 코드(간편인증 도우미는 login.simple_auth 차례에서만 돈다). */
   private waitingCode: string | null = null;
-  /** 발급 잠금을 main에 잡아 달라고 했다(놓을 때까지). 쉬거나 끝날 때 놓는다. */
   private lockAsked = false;
-  /** 비밀 차례 [중지](금고 창 닫기 요청). */
   private readonly secretAbort = new AbortController();
-  /** [중지] 전용 신호: 실행기가 진행 중인 화면 대기·재시도 지연을 버리고 멈춘다(core/interp.ts stop). halt(걸쇠)는 쓰지 않는다(걸쇠 코드로 멈춰야 한다). */
   private readonly stopAbort = new AbortController();
 
   constructor(i: IrRunInput) {
@@ -346,17 +255,14 @@ export class IrRun {
     return this.actuator?.notice ?? null;
   }
 
-  /** 걸쇠에 걸린 종료 코드(차단 신호 등). */
   get halted(): string | null {
     return this.enforcer?.halted ?? null;
   }
 
-  /** 정지 하향 사유(없으면 null). RunService가 hardStop이면 자동화 Chrome을 닫는다. */
   get downgraded(): Extract<RunPermit, { ok: false }> | null {
     return this.denied;
   }
 
-  /** 지금 허가가 없으면 그 사유. 처음 없어진 때 저널에 남기고, 그 뒤로는 같은 값이다(허가가 돌아와도 이 실행은 멈춘다). */
   private denial(): Extract<RunPermit, { ok: false }> | null {
     if (!this.denied) {
       const p = this.i.permit?.();
@@ -368,11 +274,6 @@ export class IrRun {
     return this.denied;
   }
 
-  /**
-   * 허가가 없어졌으면 조율기에 정지 하향을 한 번 건넨다(스텝 경계·레지스트리 동기화 뒤). 조율기가 다음 스텝 경계에서 멈추고,
-   * 승인 대기면 게이트를 닫고, 커밋 구간·사람 차례면 verify·그 차례 뒤로 미룬다(D03 §2 하향 행, §5.3, ADR-023 결정 5).
-   * 건넸으면 true.
-   */
   recheck(): boolean {
     if (this.downgradeSent || !this.controller || !this.denial()) return false;
     this.downgradeSent = true;
@@ -380,7 +281,6 @@ export class IrRun {
     return true;
   }
 
-  /** RunService.answer가 승인 근거를 다 대조한 뒤 부른다. */
   approve(reqId: string, actionHash: string, by: 'local' | 'remote' = 'local'): { ok: boolean; code?: string } {
     if (!this.controller) return { ok: false, code: 'no_open_gate' };
     const r = this.controller.answerGate({ reqId, decision: 'approved', by, actionHash });
@@ -388,17 +288,14 @@ export class IrRun {
     return r;
   }
 
-  /** [중지]. 승인 대기 중이면 게이트를 거부로 닫는다(H01과 같이 gate.denied, 사유 stopped). 사람 대기면 멈춘다. 서명 차례면 verify로 간다(조율기). 금고 비밀 창이 열려 있으면 닫기를 요청한다. */
   stop(): void {
     this.stopRequested = true;
     this.secretAbort.abort();
     if (this.cmdWake) return this.cmdWake('stop');
     if (!this.denyOpenGate('stopped')) this.controller?.abort();
-    // 조율기가 중지를 미뤄 둔(pending) 뒤에 끊는다: 실행기가 run.stopped로 멈추면 조율기가 그 중지로 받는다.
     this.stopAbort.abort();
   }
 
-  /** p 또는 [중지] 중 먼저 오는 것. [중지]면 v(버린 p의 뒤늦은 동작은 정책 집행기가 run.stopped로 거부한다). */
   private orStop<T>(p: Promise<T>, v: T): Promise<T> {
     const sig = this.stopAbort.signal;
     if (sig.aborted) return (void p.catch(() => {}), Promise.resolve(v));
@@ -412,10 +309,6 @@ export class IrRun {
     });
   }
 
-  /**
-   * 서명 없는 로컬 예행 패키지: 입력 스텝을 시작한 뒤의 비밀번호 차례는 금고에 넘기지 않는다(패키지가 비가역 표시를 틀려도 서명 창에 비밀번호가 들어가지 않게).
-   * 로그인(s4)은 입력 전이라 그대로 된다. 서명 패키지는 그대로 둔다.
-   */
   private localGuard(h: HumanPort): HumanPort {
     if (!this.i.ir.local) return h;
     return {
@@ -429,15 +322,10 @@ export class IrRun {
     };
   }
 
-  /** 사람을 기다리는 중인가(핸드오프·Paused 대기 또는 서명 차례). RunService가 무장 뒤에도 [중지]를 넘길지 본다. */
   get waiting(): boolean {
     return this.cmdWake !== null || (this.controller?.signTurnOpen ?? false);
   }
 
-  /**
-   * 사람 대기 재개 명령(B3). resume = [다 했어요](같은 체크포인트부터, 원장 미종결이면 verify부터; 서명 차례면 버튼을 누르지 않고 verify),
-   * manual = [직접 발급함](HandedOff에서만: 원장 observed_manual → 그 X의 verify).
-   */
   command(c: 'resume' | 'manual'): { ok: boolean; code?: string } {
     if (this.controller?.signTurnOpen) {
       if (c !== 'resume') return { ok: false, code: 'sign.turn_resume_only' };
@@ -449,10 +337,6 @@ export class IrRun {
     return { ok: true };
   }
 
-  /**
-   * 폰에서 시작한 간편인증(run/simple-auth.ts). 공동인증서 로그인 실패 차례(HandedOff, login.simple_auth)에서만.
-   * request: 홈택스 간편인증 창을 채워 [인증 요청]. complete: [인증 완료]를 누르고 재개(s7f가 로그인 표지를 기다린다).
-   */
   async simpleAuth(op: 'request' | 'complete', d?: SimpleAuthIdentity): Promise<{ ok: boolean; code?: string }> {
     if (this.waitingState !== 'HandedOff' || this.waitingCode !== 'login.simple_auth' || !this.cmdWake) return { ok: false, code: 'not_simple_turn' };
     if (op === 'request') {
@@ -467,7 +351,6 @@ export class IrRun {
     return this.command('resume');
   }
 
-  /** 명령·[중지]·상한 중 먼저 오는 것. */
   private waitCommand(ms: number): Promise<HandoffCommand> {
     return new Promise((resolve) => {
       const t = setTimeout(() => wake('cap'), ms);
@@ -481,10 +364,6 @@ export class IrRun {
     });
   }
 
-  /**
-   * 게이트 앞에서 발급 잠금을 잡는다. 다른 PC가 잡고 있으면 상한(기본 10분)까지 다시 잡아 본다. [중지]가 오면 그만둔다.
-   * 세금계산서 발급이 아니거나 잠금 포트가 없으면 바로 통과한다.
-   */
   private async takeIssueLock(clock: Clock): Promise<ActResult> {
     const lock = this.i.kind === 'cert' ? undefined : this.i.issueLock;
     if (!lock) return { ok: true };
@@ -510,7 +389,6 @@ export class IrRun {
         return r;
       }
       if (!waited) {
-        // 다른 PC가 발급 중이다: 승인 단계에 그 까닭을 한 줄로 보이고(멈춘 것이 아니다) 끝나기를 기다린다
         this.i.journal('issue.lock_wait', {});
         this.i.phase('gate', 'now', ISSUE_LOCKED_ELSEWHERE);
       }
@@ -519,20 +397,17 @@ export class IrRun {
     }
   }
 
-  /** 잠금을 놓는다(잡아 달라고 한 적이 있을 때만 main에 알린다). */
   private dropIssueLock(): void {
     if (!this.lockAsked) return;
     this.lockAsked = false;
     this.i.issueLock?.release();
   }
 
-  /** 재개할 수 있는 멈춤인가. 게이트 만료·정지 하향·걸쇠(차단 신호 등)는 끝낸다(부장 결정 2026-11-11 ①). */
   private resumable(out: RunOutcome): boolean {
     if (out.state !== 'HandedOff' && out.state !== 'Paused') return false;
     return out.code !== 'gate.expired' && !this.denied && !this.halted && !this.stopRequested;
   }
 
-  /** 엔진 밖 사유의 정지(금고 누출 의심 등). 무장 전에만. 열린 게이트는 거부로 닫는다(사유 signal). */
   halt(code: string): void {
     if (this.armed) return;
     this.secretAbort.abort();
@@ -540,7 +415,6 @@ export class IrRun {
     this.enforcer?.haltFor(code);
   }
 
-  /** 열린 게이트를 거부로 결정한다(거부 우선, R-G8). 게이트가 없거나 이미 결정됐으면 false. */
   private denyOpenGate(as: 'stopped' | 'signal'): boolean {
     const r = this.gateReq;
     if (!r || !this.controller) return false;
@@ -552,13 +426,11 @@ export class IrRun {
     const i = this.i;
     const { pkg } = i.ir;
     const files = pkg.files;
-    // 실행 사본 사전: AI 위치 찾기로 찾은 선택자를 이 실행 동안만 그 항목 첫 후보로 둔다(서명 패키지 원본은 그대로).
     const dict = runLocalDict(pkg.selectors);
     const domains = files.manifest.domains;
     const clock = i.clock ?? systemClock;
     const ir = runCopy(files.playbook, i.gateWaitMs, isFixtureGrant(i.ir.fixtureGrant) ? i.ir.verifyTiming : undefined);
     const analysis = semanticViolations(files).analysis;
-    // 고친 선택자 기억(0원 칸): 앞 실행이 고친 선택자를 이 실행 사본 사전의 첫 후보로 둔다. 실패하면 폴백 0단계가 버린다.
     const heal = i.heal === false ? null : new HealMemory({ store: new DbHealStore(i.db, files.manifest.id), pkg: pkg.selectors, healable: healableKeys(ir, pkg.selectors, analysis.irreversible), now: () => clock.now(), journal: i.journal });
     const seeded = heal?.seed(dict) ?? new Map<string, string>();
     const paths = i.heal === false ? null : new AgentPathMemory(new DbJsonStore<AgentPathFile>(i.db, agentPathKey(files.manifest.id)), { now: () => clock.now(), journal: i.journal });
@@ -568,7 +440,6 @@ export class IrRun {
     const enforcer = new RunEnforcer({
       guard: i.rate, clock, mono: () => performance.now(), dict: i.signals ?? SIGNAL_DICT[i.portal.kind], profileId: i.profile.id,
       journal: i.journal, stopRequested: () => this.stopRequested,
-      // 승인 대기 중 신호가 걸리면 게이트를 닫는다(바뀐 화면을 승인하지 못하게).
       onLatch: () => {
         this.denyOpenGate('signal');
         this.controller?.abort();
@@ -576,7 +447,6 @@ export class IrRun {
     });
     this.enforcer = enforcer;
     const raw = new PlaywrightActuator({ page, reader, afterNavigation: () => enforcer.settled(), onError: (op, why) => i.journal('actuator.why', { stepId: curStep ?? '', op, ...why }), onBoxClick: (r) => i.journal('actuator.box_click', { stepId: curStep ?? '', ...r }) });
-    // 예상 밖 화면 판정(아래에서 만든다). 대화상자 훅과 스텝 경계가 먼저 생겨 이 자리에 둔다.
     let pageJudge: PageJudge | null = null;
     let agent: BrowserAgent | null = null;
     let curStep: string | null = null;
@@ -587,7 +457,6 @@ export class IrRun {
       dialogJudge: (kind, notice) => pageJudge?.onDialog(kind, notice) ?? Promise.resolve(null),
     });
     this.actuator = act;
-    // IR rev v1.3.6: 패키지가 닫으라고 적은 안내 창(제목 패턴)만 닫는다. 로더(V-01)가 패턴을 이미 확인했다.
     const closeWindows = (ir.closeWindows ?? []).flatMap((k) => {
       try {
         return [compileRe2(files.strings[k]!)];
@@ -599,7 +468,6 @@ export class IrRun {
 
     const p = i.profile;
     const scope = newScope({ inputs: i.inputs, profile: { bizNo: p.bizNo, signMethod: p.signMethod ?? DEFAULT_SIGN_METHOD, ...(p.certName ? { certName: p.certName } : {}) }, intentId: i.intentId });
-    // 모델 실행 토큰은 실행마다 한 번 받아 decide와 AI 위치 찾기가 같이 쓴다(L1·L2 예산이 한 토큰에 묶인다).
     let tokenP: Promise<RunToken> | null = null;
     const runToken = (): Promise<RunToken> => {
       tokenP ??= (i.ir.runTokenFor ? i.ir.runTokenFor(i.runId) : Promise.resolve(i.ir.runToken ?? (i.runId as RunToken))).catch((e: unknown) => {
@@ -609,16 +477,11 @@ export class IrRun {
       return tokenP;
     };
     const redactor = new Redactor({ runId: i.runId });
-    // 실행당 예산: 게이트웨이가 다 썼다고(run_budget_exceeded) 하면 그 뒤로는 부르지 않는다(헛된 429 호출을 줄인다).
-    // 위치 찾기(L2, 실행당 2번)와 판정·에이전트(agentPerRun)는 게이트웨이가 따로 세므로 표시도 따로 둔다.
-    // 계정 한도(오늘·이번 달·구독)는 실행 안의 유료 칸 전부가 같이 본다.
     const day = { spent: false };
     const locateBudget = { spent: false, day };
     const pageAiBudget = { spent: false, day };
-    // 위치 찾기 첫 호출은 결정 모델(decision_pick, jev: 0.4초·약 0.15원)로 목록 번호를 고르고, 확신이 없을 때만 생성 모델(selector_repair)
     const locatePort = i.ir.locate ? { responder: i.ir.locate, redactor, runToken, journal: i.journal, budget: locateBudget } : null;
     const locate = locatePort ? { model: i.decision === false ? new GatewayLocateModel(locatePort) : new DecisionFirstLocateModel(locatePort, new GatewayLocateModel(locatePort)), journal: i.journal } : undefined;
-    // IR rev v1.3.7 closeLayers: 공지 레이어(X)를 until 스텝(또는 첫 게이트) 전 스텝마다 본다. 해석되면 GuardedActuator로 누른다. 없거나 틀리면 건너뛴다.
     const layers = ir.closeLayers?.targets ?? [];
     let layersDone = layers.length === 0;
     const closeLayers = async (): Promise<void> => {
@@ -633,7 +496,6 @@ export class IrRun {
     if (i.profileWrite) env.profileWrite = i.profileWrite;
     env.journal = i.journal;
     if (i.portalNotice) env.dialogShown = i.portalNotice;
-    // 폴백 사슬: 재시도 뒤 → role·이름 다시 찾기 → AI 위치 찾기 → 체크포인트 재진입 → 사람. 되돌릴 수 있는 스텝만(core/fallback.ts).
     if (i.ir.locate) {
       const port = { responder: i.ir.locate, redactor, runToken, journal: i.journal, budget: pageAiBudget };
       const screen = { page: reader, dict, act, frame: 'main', journal: i.journal };
@@ -675,7 +537,6 @@ export class IrRun {
       journal: i.journal,
     });
     const sv = i.ir.secret;
-    // 포털 기본 팝업 숨김(H-01 2.3.2 strings popup.*): 금고에 그대로 넘긴다. 금고가 실행 탭 문서마다 숨기고 새 창은 열리자마자 닫는다.
     const ps = files.strings;
     if (sv && (ps['popup.hide'] || ps['popup.window.close'])) {
       void sv.vault
@@ -686,15 +547,12 @@ export class IrRun {
       ? new CertSecretPort({
         vault: sv.vault, targetId: sv.targetId, dict, strings: files.strings, journal: i.journal, signal: this.secretAbort.signal,
         page: {
-          // 틀린 비밀번호 안내는 홈택스 인증서 창(iframe#dscert, ML4Web) 안에 뜬다: 본 프레임과 그 창의 글자를 함께 본다
           text: async () => {
             const main = await page.locator('body').innerText({ timeout: 2_000 }).catch(() => '');
             const cert = await page.frameLocator(CERT_FRAME_CSS).first().locator('body').innerText({ timeout: 1_000 }).catch(() => '');
             return cert ? `${main}\n${cert}` : main;
           },
-          // 인증서 선택창 iframe 요소만 본다(안은 다른 출처라 읽지 않는다).
           certFrame: () => page.locator(CERT_FRAME_CSS).first().isVisible(),
-          // 틀린 비밀번호 안내 닫기(인증서 창 경고 [확인], 커밋 아님). 보일 때만 누른다.
           dismissAlert: async () => {
             const ok = page.frameLocator(CERT_FRAME_CSS).first().locator(CERT_ALERT_OK_CSS).first();
             if (await ok.isVisible().catch(() => false)) await ok.click({ timeout: 2_000 }).catch(() => {});
@@ -706,7 +564,6 @@ export class IrRun {
     const handlers: Handlers = { ...BASIC_HANDLERS, decide: decide ? decide.handler : async (): Promise<Outcome> => ({ t: 'fail', code: 'decide.unavailable' }) };
     let phase: string | null = null;
     const kind = i.kind ?? 'invoice';
-    // 발급 잠금은 세금계산서 발급만(ADR-048 결정 7 "대상"). 민원증명은 잠그지 않는다
     const lock = kind === 'invoice' ? i.issueLock : undefined;
     const phaseOf: Readonly<Record<string, string>> = kind === 'cert' ? certPhases(ir) : PHASE_OF;
     const ledgerStates = (): LedgerState[] => {
@@ -719,7 +576,6 @@ export class IrRun {
     const capMs = i.handoffCapMs ?? HANDOFF_CAP_MS;
     const c = new RunController({
       runId: i.runId, intentId: i.intentId, packageDigest: i.packageDigest, ir, handlers, env,
-      // 사람 대기 상한은 IrRun이 센다(Paused도 같은 상한). 조율기 자체 HandedOff 타이머는 그 뒤로 미룬다(이기지 않게).
       handoffTimeoutMs: capMs + 60_000,
       signTurnMs: () => Math.min(capMs, lifeLeft()),
       signTurn: {
@@ -727,20 +583,16 @@ export class IrRun {
         closed: () => {},
       },
       interp: { retries: { stepMax: 3, backoff: 'equal_jitter', baseMs: 800, capMs: 10_000 }, retryFloorMs: 0, escalate: (s, cause) => fallback.eligible(s, cause), fastEscalate: (s, cause, attempt) => fallback.fastEscalate(s, cause, attempt), stop: this.stopAbort.signal },
-      // [중지]면 폴백(AI 위치 찾기·판정·에이전트 모델 호출)을 기다리지 않는다: false를 돌려주면 조율기가 미뤄 둔 중지를 바로 적용한다.
       recover: (stop) => {
-        // 다시 걸은(또는 에이전트가 방금 걸은) 길로 돌아간 확인 스텝이 재시도까지 실패했다: 그 길은 남기지 않는다.
         paths?.failed(stop.at, stop.cause ?? stop.code ?? 'step.failed');
         return this.orStop(fallback.recover(stop.at, stop.cause ?? stop.code), false);
       },
-      // Running 진입 확인(D03 §2)·정지 분기의 Chrome 닫기(hardStop).
       allowed: () => !this.denial(),
       hardStop: () => this.denial()?.hardStop ?? false,
       beforeStep: async (s) => {
         curStep = s.id;
         if (s.type === 'gate' || s.id === ir.closeLayers?.until) layersDone = true;
         if (!layersDone) await closeLayers();
-        // 스텝 경계: status가 바뀌었으면 조율기가 이 스텝 전에 멈춘다(요청률 지연을 기다리지 않는다).
         if (this.recheck()) return { ok: true };
         const p = phaseOf[s.id];
         if (p && p !== phase) {
@@ -759,7 +611,6 @@ export class IrRun {
           fallback.confirmed(d.stepId);
           paths?.confirmed(d.stepId);
         }
-        // 인증서 비밀번호를 넣은 뒤 로그인 확인(첫 기다림 스텝 결과)을 금고에 알린다: 통과면 그때 기억, 실패면 버리고 지움
         if (name === 'step.finished' && secretPort) void secretPort.stepFinished(d.type, !!d.code, d.stepId);
       },
       clock, gates: i.gates, tokens: new GateTokens(i.runId), ledgerStates,
@@ -776,12 +627,10 @@ export class IrRun {
         const safe = decide?.safeForGate() ?? { ok: true as const };
         if (!safe.ok) return safe;
         if (this.stopRequested) return { ok: false, code: 'run.aborted' };
-        // 발급 잠금은 기준선보다 먼저 잡는다(기준선 뒤에 잡으면 두 PC가 서로 모르는 기준선으로 같은 건을 낼 수 있다, ADR-048 결정 7)
         const locked = await this.takeIssueLock(clock);
         if (!locked.ok) return locked;
         return takeBaseline(verifyDeps, ir, g);
       },
-      // 커밋 직전: 잠금 갱신을 서버가 받아 줘야 누른다. 안 되면 토큰을 쓰지 않고 멈춘다(재개하면 게이트 앞부터 다시)
       ...(lock ? { beforeCommit: async (): Promise<ActResult> => (this.lockAsked ? lock.renew().catch((): ActResult => ({ ok: false, code: ISSUE_LOCK_LOST })) : { ok: false, code: ISSUE_LOCK_LOST }) } : {}),
       wmaxMs: (x) => wmaxMs(analysis, x, 30_000),
       commitWindowMs: 600_000,
@@ -795,16 +644,13 @@ export class IrRun {
         },
         closed: (reqId, why) => {
           this.gateReq = null;
-          // 승인은 main이 답한 것이라 알리지 않는다(H01 게이트 포트와 같음). 거부·중단이 [중지]·신호 때문이면 그 사유로 알린다.
           if (why === 'approved' || reqId === this.answered) return;
           const reason = this.closeAs && (why === 'denied' || why === 'aborted') ? this.closeAs : why;
           i.postGate({ t: 'gate.closed', runId: i.runId, reqId, reason });
         },
       },
-      // 사람 입력 포트: 주입(시험) → 금고가 있으면 CertSecretPort(공동인증서 비밀번호 B1·B2) → 대역(secret은 바로 ttl → 로그인이면 Paused 사람 대기, 발급 서명이면 서명 차례).
       human: this.localGuard(i.human ?? {
         request: () => {},
-        // 공동인증서 비밀번호(B1 로그인·B2 발급 서명): 금고 비밀 창 또는 사람 직접 입력 대기(CertSecretPort). 금고가 없으면(시험·가짜 H-01) 곧바로 TTL.
         secret: secretPort ? (r) => secretPort.secret(r) : async () => 'ttl',
         ...(secretPort ? { afterSignConfirm: (r: { runId: string; stepId: string }) => secretPort.afterSignConfirm(r) } : {}),
         closed: () => {},
@@ -820,20 +666,16 @@ export class IrRun {
       commit,
       ...(i.ir.pdf ? { pdf: i.ir.pdf } : {}),
       verifyBook: book,
-      // run.started는 RunService가 이미 썼다(의도·포털·보수 모드 값과 함께). 상태 기계의 같은 효과는 두 번 쓰지 않는다.
       journal: (type, payload) => {
         if (type !== 'run.started') i.journal(type, payload);
       },
       onEffect: (effect, at) => {
         if (effect.startsWith('ledger.')) commit.ledgerEffect(effect, at);
-        // 발급 여부가 원장에 확정되면 잠금을 놓는다(뒤의 PDF·메일 확인 동안 다른 PC를 막지 않는다). 발급 안 됨이면 게이트 앞에서 다시 잡는다
         if (effect.startsWith('ledger.committed') || effect.startsWith('ledger.not_committed')) this.dropIssueLock();
-        // 발급 안 됨으로 정해지면 커밋 구간이 끝난다(D02 §8 not_committed → s11 재게이트). 그 뒤로는 다시 [중지]를 받는다.
         if (effect.startsWith('ledger.not_committed')) this.armed = false;
       },
     });
     this.controller = c;
-    // 원장 armed는 LedgerCommitPort.arm이 쓴다. 그 뒤로는 중지를 받지 않는다(H01 a.armed와 같음).
     const arm = commit.arm.bind(commit);
     commit.arm = (a) => {
       const r = arm(a);
@@ -844,24 +686,19 @@ export class IrRun {
     let out: RunOutcome;
     try {
       out = await c.start();
-      // 사람 대기(B3): 핸드오프·Paused에서 끝내지 않고 명령을 기다린다. 재개는 조율기 규칙(같은 체크포인트, 토큰 폐기, 원장 미종결이면 verify).
       while (this.resumable(out)) {
-        // 사람을 기다리는 동안은 잠금을 놓는다(다른 PC를 막지 않는다). 재개하면 게이트 앞에서 다시 잡는다. 커밋 뒤 확인을 못 한 채 멈춘 경우도 놓는다(원장이 in_doubt로 남는다)
         this.dropIssueLock();
         const left = Math.min(capMs, lifeLeft());
         const phase = PHASE_OF[out.at ?? ''] ?? 'login';
         this.waitingState = out.state;
         this.waitingCode = out.code ?? null;
-        // 사람에게 넘긴 이유를 엔진 로그에도 남긴다(runs.ts가 run.handoff를 engine.log로 옮긴다): 코드·대상 셀렉터 키·거친 폴백 단계. 값·화면 글 없음.
         const at = stoppedAtOf(ir, out.at ?? null);
         i.journal('run.handoff', { stepId: out.at ?? '', state: out.state, code: out.code ?? '', ...(at?.target ? { target: at.target } : {}), ...(out.at ? { fallback: fallback.tried(out.at) } : {}) });
-        // 대상을 못 찾았거나(시간 초과 포함) 이름·역할이 달라 넘겼으면 그 대상의 실제 화면 모양을 남긴다(값 없음, 10초 안에 못 읽으면 건너뜀).
         if (i.diag && at?.target && (out.code === 'step.identity_mismatch' || out.code === 'step.selector_miss' || out.code === 'step.timeout')) {
           let timer: ReturnType<typeof setTimeout> | undefined;
           const d = await Promise.race([targetDiagnosis(reader, dict, at.target).catch(() => null), new Promise<null>((r) => (timer = setTimeout(() => r(null), 10_000)))]).finally(() => clearTimeout(timer));
           i.diag('run.handoff_target', { stepId: out.at ?? '', code: out.code, target: at.target, read: !!d }, d);
         }
-        // readback은 대상이 칸 여럿이라 위 한 줄이 없다: 해석이 안 되는 칸마다 같은 진단 줄을 남긴다(field = fieldKey, 값 없음).
         const rbStep = out.at ? flatten(ir.steps).info.get(out.at)?.step : undefined;
         if (i.diag && rbStep?.type === 'readback' && (out.code === 'step.identity_mismatch' || out.code === 'step.selector_miss' || out.code === 'step.timeout')) {
           for (const f of rbStep.fields) {
@@ -886,7 +723,6 @@ export class IrRun {
           break;
         }
         if (cmd === 'cap') {
-          // 상한: 멈춘 그대로 끝낸다(status handoff). 원장이 열려 있으면 RunService가 in_doubt로 닫는다.
           i.journal('run.handoff_timeout', { stepId: out.at ?? '' });
           out = { ...out, code: 'run.handoff_timeout' };
           break;
@@ -895,7 +731,6 @@ export class IrRun {
         out = cmd === 'manual' ? await c.attestManualCommit() : await c.resume();
       }
     } finally {
-      // E2: 끝난 실행에 조율기 타이머(HandedOff 상한)가 남지 않게.
       c.dispose();
       this.dropIssueLock();
       if (phase) i.phase(phase, 'done');
@@ -903,7 +738,6 @@ export class IrRun {
       await this.wiring?.dispose().catch(() => {});
       await reader.release().catch(() => {});
     }
-    // 민원증명 verify는 접수·발급 번호를 issueNo로 묶는다(bind approvalNo → issueNo). 바깥 모양은 H-01과 같은 approvalNo 칸이다.
     return this.result(out, kind === 'cert' ? scope.vars.get('issueNo') : scope.vars.get('approvalNo'), ir, kind);
   }
 
@@ -911,19 +745,14 @@ export class IrRun {
     const halted = this.halted;
     let status = out.state === 'Aborted' ? abortedStatus(out.code) : (STATUS_OF[out.state] ?? 'failed');
     let code = out.code ?? undefined;
-    // 만료는 쉼(Paused)이지만 바깥 상태는 H01과 같이 expired다. [중지]로 끝난 것은 H01과 같은 코드로 알린다.
     if (code === 'gate.expired') status = 'expired';
-    // 게이트가 열려 있을 때(승인 대기·거부 우선 창)의 [중지]는 gate.stopped, 그 밖의 [중지]는 run.stopped.
     if (this.closeAs === 'stopped' && (code === 'gate.denied' || code === 'run.aborted')) code = 'gate.stopped';
     else if (this.stopRequested && code === 'run.aborted') code = 'run.stopped';
     if (halted && status !== 'success' && status !== 'completed_with_issues' && status !== 'in_doubt') {
-      // 걸쇠(차단 신호·누출 의심)가 사유다. 그 뒤에 난 실패(바뀐 화면) 코드보다 앞선다.
       code = halted;
-      // 점검은 사람 차례가 아니다(핸드오프 아님). 앱(#363)은 failed·code portal.maintenance·maintenanceUntil을 읽는다.
       status = halted === 'portal.maintenance' ? 'failed' : halted.startsWith('portal.') && halted !== 'portal.blocked' ? 'handoff' : 'failed';
     }
     const until = halted === 'portal.maintenance' ? this.enforcer?.maintenanceUntil : null;
-    // 정지 하향으로 쉬었거나(Paused → handoff) 확정 뒤 멈췄으면(CompletedWithIssues) 사유는 하향 코드다. InDoubt는 그 코드를 둔다.
     if (this.denied && (status === 'handoff' || status === 'completed_with_issues') && (!code || code === 'run.state_stop')) code = this.denied.code;
     if (status === 'completed_with_issues' && this.mail === false && !code) code = 'mail.not_confirmed';
     const stoppedAt = status === 'success' ? undefined : stoppedAtOf(ir, out.at);

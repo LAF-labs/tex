@@ -1,6 +1,3 @@
-// 대화 표(도구·결과 슬롯 문법·답 종류·되묻기 칸). PC 대화 에이전트(chat_agent)와 폰 대화(chat_phone)가 이 표 하나에서 나온다.
-// @sax/model이 이 표로 툴셋 정의(ToolsetDef)를 만들고, 폰 코어는 이 표로 모델 출력을 다시 검사한다(폰에는 @sax/model이 없다).
-// 머리말(toolsets/chat_agent.ko.txt·chat_phone.ko.txt)은 손으로 맞추고 시험이 대조한다.
 
 const obj = (properties: Record<string, unknown>) => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
 const VAT = { type: ['string', 'null'], enum: ['separate', 'included', null] };
@@ -38,10 +35,7 @@ export const CHAT_AGENT_TOOLS = [
   { name: 'invoice_draft', parameters: obj({ counterparty: { type: 'string' }, amount: NULLABLE_STRING, vat: VAT, item: NULLABLE_STRING, ...DRAFT_EXTRA }) },
   { name: 'draft_edit', parameters: obj({ draft: { type: 'string' }, amount: NULLABLE_STRING, vat: VAT, item: NULLABLE_STRING, ...DRAFT_EXTRA }) },
   { name: 'draft_discard', parameters: obj({ draft: { type: 'string' } }) },
-  // say: 화면을 열며 사장님께 할 한두 문장. 엔진이 답 검사(checkAgentReply)를 거쳐 그대로 답으로 닫는다(두 번째 모델 호출 없음, 2026-11-19 DeepSeek가 opened 뒤 같은 호출을 되풀이해 턴 상한에 걸림).
   { name: 'open_screen', parameters: obj({ screen: { type: 'string', enum: OPEN_SCREENS }, say: { type: 'string' } }) },
-  // 도구 없이 답할 때(잡담·인사·고맙다는 말·할 수 없는 일·세무 판단). DeepSeek는 도구가 있으면 늘 도구를 부른다(chat-eval 2026-11-19: 점심·날씨에
-  // open_screen·sales_summary를 부름). 답도 도구 하나로 쥐여 주면 엉뚱한 도구로 말하지 않는다. 엔진이 답 검사를 거쳐 그대로 닫는다. PC만(폰은 PHONE_OMITTED_TOOLS).
   { name: 'reply', parameters: obj({ kind: { type: 'string', enum: ['answer', 'ask', 'smalltalk', 'cannot', 'tax_advice'] }, text: { type: 'string' }, ask: { type: ['string', 'null'], enum: [...AGENT_ASKS, null] } }) },
 ] as const;
 export type ChatAgentToolName = (typeof CHAT_AGENT_TOOLS)[number]['name'];
@@ -89,8 +83,6 @@ export const CHAT_REPLY_MAX_CHARS = 200;
 export const TOOL_NEEDS = ['amount', 'item', 'counterparty', 'date'] as const;
 export type ToolNeed = (typeof TOOL_NEEDS)[number];
 export type Vat = 'separate' | 'included';
-
-// ── 폰 대화(chat_phone, ADR-047 결정 3) ──
 
 /** 폰에 없는 도구(장부 전체·통장 거래내역이 있어야 답하는 조회. 낼 돈·돈 흐름은 폰 사본에 아직 없다). 이런 요청은 defer로 답하고 PC가 켜지면 PC가 이어받는다. */
 export const PHONE_OMITTED_TOOLS = ['sales_summary', 'payables', 'cash_flow', 'reply'] as const;

@@ -1,5 +1,3 @@
-// 새 PC 연결(ADR-048 결정 3, D08 §4.3): 약속 뒤 공개로 만든 6자리, 승인 뒤 목록·인증서·RK 봉인문.
-// 기존 PC와 새 PC를 한 프로세스에서 돌리고, 가운데(서버)가 메시지를 바꾸는 경우를 따로 본다.
 import assert from 'node:assert/strict';
 import { hkdfSync, randomUUID } from 'node:crypto';
 import { describe, it } from 'node:test';
@@ -9,7 +7,6 @@ import {
   verifyDeviceList, x25519Keygen, type DeviceListJson, type PcLinkChallenge, type PcLinkHello,
 } from '@sax/remote';
 
-/** 금고가 하는 일의 시험용 대역: RK → AIK(HKDF "aik"), RK 봉인 */
 const aikSeed = (rk: Uint8Array) => new Uint8Array(hkdfSync('sha256', rk, new Uint8Array(0), 'aik', 32));
 
 async function oldPc() {
@@ -25,7 +22,6 @@ function newPc() {
   const self = { deviceId: randomUUID(), noisePub: x25519Keygen().publicKey, signPub: ed25519Keygen().publicKey, linkPub: link.publicKey };
   return { link, self, ...pcLinkHello(self) };
 }
-/** 금고 rkImport 대역: 열고, 연 RK의 AIK가 기대한 값과 같을 때만 받는다 */
 function vaultImport(linkSk: Uint8Array, g: { enc: Uint8Array; ct: Uint8Array; info: Uint8Array; aad: Uint8Array; aikPub: Uint8Array }): Uint8Array {
   const rk = hpkeOpen(linkSk, g.enc, g.info, g.aad, g.ct);
   assert.deepEqual(ed25519Public(aikSeed(rk)), g.aikPub, '연 RK의 AIK = 6자리에 묶인 AIK');
@@ -45,7 +41,6 @@ describe('새 PC 연결: 정상 흐름', () => {
     assert.equal(ap.state, 'awaiting_sas');
     assert.equal(ap.confirm(r.sas), true);
     assert.equal(ap.state, 'approved');
-    // 목록을 먼저 만들고(호출자가 서버에 올린다), 올라간 목록으로 인증서·봉인문을 만든다
     await assert.rejects(ap.grant({ aik: e.aik, deviceList: e.list, sealRk: e.sealRk }), /not listed/);
     const deviceList = await ap.listWithNew(e.aik, e.list);
     const grant = await ap.grant({ aik: e.aik, deviceList, sealRk: e.sealRk });
@@ -59,7 +54,6 @@ describe('새 PC 연결: 정상 흐름', () => {
     assert.deepEqual(vaultImport(n.link.secretKey, g), e.rk);
     const cert = verifyCert(g.cert, e.aik.publicKey)!;
     assert.deepEqual([cert.device_id, cert.role, b64(cert.Sx), b64(cert.Vx)], [n.self.deviceId, 'desktop', n.hello.Sx, n.hello.Vx]);
-    // 새 PC도 같은 RK에서 같은 AIK를 얻어 그 뒤 목록을 스스로 서명한다(모든 PC가 같다)
     const aik2 = softSigner(aikSeed(e.rk), AIK_PURPOSES);
     const phone = { deviceId: randomUUID(), role: 'mobile' as const, noisePub: x25519Keygen().publicKey, signPub: ed25519Keygen().publicKey, registeredAt: 3 };
     assert.ok(verifyDeviceList(await addDevice(aik2, g.deviceList, phone), e.aik.publicKey).ok);
@@ -80,7 +74,6 @@ describe('새 PC 연결: 정상 흐름', () => {
     ];
     for (const v of variants) assert.notDeepEqual(v, base);
     assert.equal(pcLinkSas(base), pcLinkSas(pcLinkTranscript(n.hello, c, n.nonce)));
-    // 문맥이 페어링 SAS와 다르다
     assert.notEqual(CTX.pclinkSas, CTX.sas);
   });
 });
@@ -90,7 +83,6 @@ describe('새 PC 연결: 가운데에서 바꾸는 경우', () => {
     const e = await oldPc();
     const n = newPc();
     const evil = x25519Keygen();
-    // (1) 키만 바꾸고 약속은 그대로: reveal에서 걸린다
     const swapped: PcLinkHello = { ...n.hello, Hx: b64(evil.publicKey) };
     const ap1 = new PcLinkApprover(swapped, { deviceId: e.deviceId, aikPub: e.aik.publicKey });
     const r1 = pcLinkReveal(n.hello, ap1.challenge, n.nonce);
@@ -98,10 +90,9 @@ describe('새 PC 연결: 가운데에서 바꾸는 경우', () => {
     assert.equal(ap1.state, 'failed');
     await assert.rejects(ap1.listWithNew(e.aik, e.list), /not approved/);
     await assert.rejects(ap1.grant({ aik: e.aik, deviceList: e.list, sealRk: e.sealRk }), /not approved/);
-    // (2) 서버가 자기 난수로 약속까지 새로 낸다: reveal은 통과하지만 새 PC 화면의 6자리와 다르다
     const forged = pcLinkHello({ ...n.self, linkPub: evil.publicKey });
     const ap2 = new PcLinkApprover(forged.hello, { deviceId: e.deviceId, aikPub: e.aik.publicKey });
-    const shown = pcLinkReveal(n.hello, ap2.challenge, n.nonce).sas; // 새 PC가 보이는 값
+    const shown = pcLinkReveal(n.hello, ap2.challenge, n.nonce).sas;
     assert.equal(ap2.reveal({ v: 1, nonce: b64(forged.nonce) }), true);
     const serverSide = pcLinkSas(pcLinkTranscript(forged.hello, ap2.challenge, forged.nonce));
     if (shown !== serverSide) {
@@ -133,7 +124,6 @@ describe('새 PC 연결: 가운데에서 바꾸는 경우', () => {
     assert.equal(late.confirm(r2.sas), false);
     assert.equal(late.state, 'failed');
 
-    // 맞힌 뒤에도 다시 넣을 수 있다(승인 뒤 단계가 실패해 다시 할 때). 그때 틀리면 승인을 거두고 횟수를 센다
     const n3 = newPc();
     const again = new PcLinkApprover(n3.hello, { deviceId: e.deviceId, aikPub: e.aik.publicKey }, () => t);
     const r3 = pcLinkReveal(n3.hello, again.challenge, n3.nonce);
@@ -160,29 +150,22 @@ describe('새 PC 연결: 가운데에서 바꾸는 경우', () => {
     const grant = await ap.grant({ aik: e.aik, deviceList: await ap.listWithNew(e.aik, e.list), sealRk: e.sealRk });
     const check = (g: unknown, c = ap.challenge) => checkPcLinkGrant(n.hello, c, r.transcript, g);
     assert.equal(check(grant).ok, true);
-    // 모양
     assert.deepEqual(check({ ...grant, extra: 1 }), { ok: false, reason: 'shape' });
     assert.deepEqual(check({ ...grant, ct: b64(randomBytes(47)) }), { ok: false, reason: 'shape' });
     assert.deepEqual(check(null), { ok: false, reason: 'shape' });
-    // 서버가 기존 PC인 척: 다른 RK·다른 AIK로 만든 목록은 challenge의 AIK로 검증되지 않는다
     const fake = await oldPc();
     const fakeList = await addDevice(fake.aik, fake.list, { deviceId: n.self.deviceId, role: 'desktop', noisePub: n.self.noisePub, signPub: n.self.signPub, registeredAt: 2 });
     assert.deepEqual(check({ ...grant, deviceList: fakeList }), { ok: false, reason: 'list' });
-    // challenge까지 가짜 AIK로 바꾸면 목록은 통과하지만 6자리(대조 해시)가 달라 봉인문이 열리지 않는다
     const fakeCh: PcLinkChallenge = { ...ap.challenge, aik_pub: b64(fake.aik.publicKey), device_id: fake.deviceId };
     const fakeSeal = hpkeSeal(n.link.publicKey, utf8(CTX.pclinkRk), pcLinkTranscript(n.hello, fakeCh, n.nonce), fake.rk);
     assert.throws(() => hpkeOpen(n.link.secretKey, fakeSeal.enc, utf8(CTX.pclinkRk), r.transcript, fakeSeal.ct));
-    // 목록에 내 키가 다르게 들어 있다
     const other = await addDevice(e.aik, e.list, { deviceId: n.self.deviceId, role: 'desktop', noisePub: x25519Keygen().publicKey, signPub: n.self.signPub, registeredAt: 2 });
     assert.deepEqual(check({ ...grant, deviceList: other }), { ok: false, reason: 'not_listed' });
     assert.deepEqual(check({ ...grant, deviceList: e.list }), { ok: false, reason: 'not_listed' });
-    // 승인했다는 PC가 목록에 없다
     assert.deepEqual(check(grant, { ...ap.challenge, device_id: randomUUID() }), { ok: false, reason: 'approver' });
-    // 인증서가 다른 기기 것
     const g2 = structuredClone(grant) as typeof grant;
     g2.cert.cert.device_id = randomUUID();
     assert.deepEqual(check(g2), { ok: false, reason: 'cert' });
-    // 봉인문의 aad가 이 신청의 대조 해시가 아니면 열리지 않는다
     const g = check(grant);
     assert.ok(g.ok);
     if (g.ok) assert.throws(() => hpkeOpen(n.link.secretKey, g.enc, g.info, randomBytes(32), g.ct));

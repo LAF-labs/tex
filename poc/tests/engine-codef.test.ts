@@ -1,4 +1,3 @@
-// 계좌 자동조회 CODEF 원천(엔진): 모의 게이트웨이 + 모의 CODEF HTTP 서버(URL 인코딩 JSON). 실제 CODEF·은행을 부르지 않는다. 값은 모두 가짜다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -22,7 +21,6 @@ interface Call {
   body: Record<string, unknown>;
 }
 
-/** 모의 CODEF: 계정 등록·삭제·보유계좌·거래내역. scenario로 오류 갈래를 고른다 */
 class MockCodef {
   calls: Call[] = [];
   scenario: { createCode?: string; createAsErrorList?: string; createByType?: Partial<Record<'B' | 'P', string>>; needWithdraw?: string; needWithdrawPass?: boolean; smsCode?: string; txnCode?: string; tokenExpiredOnce?: boolean; deleteFails?: boolean } = {};
@@ -44,11 +42,9 @@ class MockCodef {
       if (this.scenario.createCode) return err(this.scenario.createCode);
       const entry = (body.accountList as Array<Record<string, unknown>>)?.[0] ?? {};
       const t = String(entry.clientType) as 'B' | 'P';
-      // 우리은행 개인 뱅킹처럼 출금계좌번호를 요구한다(실기기 2026-11-19: CF-12401, 안내문에 commWithdrawAccountNo)
       if (t === 'P' && this.scenario.needWithdraw && entry.withdrawAccountNo !== this.scenario.needWithdraw) {
         return { result: { code: 'CF-12401', message: '로그인 파라미터가 누락되었습니다.', extraMessage: 'commWithdrawAccountNo' }, data: {} };
       }
-      // 그다음 출금계좌 비밀번호(실기기 03:45: reqWithdrawAccountPass)
       if (t === 'P' && this.scenario.needWithdrawPass && typeof entry.withdrawAccountPassword !== 'string') {
         return { result: { code: 'CF-12401', message: '로그인 파라미터가 누락되었습니다.', extraMessage: 'reqWithdrawAccountPass' }, data: {} };
       }
@@ -67,7 +63,6 @@ class MockCodef {
     }
     if (!this.live.has(String(body.connectedId))) return err('CF-04019');
     if (path.endsWith('/account-list')) {
-      // 은행이 SMS 추가 인증을 요구한다(CODEF 개인 보유계좌 추가인증 출력부). 2차 요청의 번호가 맞아야 계좌를 준다
       if (this.scenario.smsCode && !(body.is2Way === true && body.smsAuthNo === this.scenario.smsCode && (body.twoWayInfo as { jti?: string })?.jti === 'jti0000000001')) {
         return { result: { code: 'CF-03002', message: '추가 인증 필요' }, data: { continue2Way: true, method: 'smsAuthNo', jobIndex: 0, threadIndex: 0, jti: 'jti0000000001', twoWayTimestamp: 1763500000000, extraInfo: { reqSMSAuthNo: '' } } };
       }
@@ -131,7 +126,6 @@ function egress(): Egress {
   });
 }
 
-/** 가짜 금고: 감싼 로그인을 돌려준다. asks는 창을 연 횟수(기억해 두면 auto는 창 없음) */
 function fakeSeal(o: { remember?: boolean; result?: SealResult } = {}): CodefSealPort & { asks: number; forgets: number; remembered: boolean } {
   const s = {
     asks: 0,
@@ -162,14 +156,9 @@ const ME = syntheticBizNo(70);
 const BUYER = syntheticBizNo(71);
 const opened: Array<{ db: Db; dir: string }> = [];
 
-/**
- * 실제 돈 맞추기(BankService, 임시 DB) + 모의 CODEF. bank: false는 엔진 DB 전(bank_not_ready), 'no_consent'는 받을 돈 동의 전.
- * 받을 돈 건 하나(가나상사 1,100,000원)를 먼저 넣어 둔다. 모의 CODEF 첫 거래(가나상사 입금 1,100,000원)와 맞는다.
- */
 async function setup(o: { remember?: boolean; seal?: CodefSealPort; bank?: false | 'no_consent'; dailyCalls?: number } = {}) {
   const events: CodefEvent[] = [];
   let clock = Date.parse('2026-11-12T03:00:00Z');
-  /** [최신화] 쿨다운(15분)을 넘기려고 시계를 민다 */
   const tick = (ms = 20 * 60_000) => void (clock += ms);
   const seal = (o.seal as ReturnType<typeof fakeSeal>) ?? fakeSeal({ remember: o.remember });
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'sax-codef-'));
@@ -185,7 +174,6 @@ async function setup(o: { remember?: boolean; seal?: CodefSealPort; bank?: false
   const mk = (st = store) => new CodefLink({ client: new CodefClient({ egress: egress() }), seal, store: st, bank: () => (o.bank === false ? null : port), onEvent: (e) => events.push(e), now: () => new Date(clock), dailyCalls: o.dailyCalls });
   const link = mk();
   svc.registerSource(codefTxnSource(link));
-  /** 받을 돈 최신화가 끝날 때까지 */
   const settle = async (accountId: string): Promise<RefreshJob> => {
     for (let i = 0; i < 200; i++) {
       const j = await call<RefreshJob | null>('db.query.bank.refreshStatus', { accountId });
@@ -604,7 +592,6 @@ describe('CODEF: 은행 SMS 추가 인증을 카드 안 칸 하나로(2-way)', (
     assert.equal(r.step, 'sms');
     assert.equal(r.accounts.length, 0);
     assert.equal(mock.live.size, 1, '번호를 기다리는 동안 connectedId를 붙잡아 둔다');
-    // 틀린 번호: 은행이 다시 요구한다 → 같은 sms 단계
     const again = await link.sms({ sessionId: r.sessionId, code: '000000' });
     assert.equal(again.step, 'sms');
     const ok = await link.sms({ sessionId: again.sessionId, code: '482 913' });
@@ -665,7 +652,6 @@ describe('CODEF: 은행이 출금계좌번호를 요구하면(우리은행 개�
     assert.ok(events.some((x) => x.phase === 'next_banking' && x.clientType === 'P' && x.code === 'withdraw_account_required'));
     assert.ok(events.some((x) => (x.phase === 'next_banking' || x.phase === 'banking_failed') && x.clientType === 'B' && x.cf === 'CF-12831'), '기업 뱅킹의 거절도 남는다');
     assert.ok(events.some((x) => x.phase === 'banking_failed' && x.clientType === 'P' && x.code === 'withdraw_account_required'), '미뤄 둔 개인 뱅킹이 마지막이다');
-    // 화면으로 가는 결과에는 코드만(값·빠진 키·단서 없음)
     const r = codefFailResult(e);
     assert.deepEqual(r, { ok: false, code: 'withdraw_account_required', cf: 'CF-12401', clientType: 'P', also: { clientType: 'B', code: 'identity_required' } });
   });

@@ -1,10 +1,3 @@
-// 맞추기 규칙(09 §6). 결정적 규칙만 쓴다: 같은 입력이면 늘 같은 결과다. 모델에 입출금·이름을 보내지 않는다.
-// - 이름 신호: S1 거래처 등록 계좌 = 상대 계좌(강), S2 사람이 넣었거나 확인한 별칭(강), S3 거래처 계좌 예금주(강), A 이 줄만 사람이 정한 거래처(강),
-//   S4 다듬은 상호(중), S5 대표자명(중), S6 앞부분 일치(잘린 글자, 3글자 이상, 약).
-// - 금액: A1 남은 돈과 같음, A2 수수료 허용치 안에서 적음, A3 같은 거래처 미결 건 몇 개의 합, A4 부분, 초과.
-// - 날짜 창 D1 = [작성일 − 30일, 받기로 한 날(없으면 작성일) + 90일].
-// - 자동 확정(§6.3): 강한 이름 신호가 가리키는 거래처가 하나 ∧ A1 ∧ D1 ∧ 그 줄의 A1 후보가 그 건 하나뿐 ∧ 그 거래처에 사람이 확정한 맞춤이 1건 이상.
-// - 사람이 뗀 (줄, 건) 짝은 다시 후보로 내지 않는다(§6.5 5).
 import { normalizePayerName } from '@sax/db';
 
 export type Strength = 3 | 2 | 1;
@@ -14,14 +7,12 @@ export type AmountFit = 'exact' | 'fee' | 'sum' | 'partial' | 'over';
 const STRENGTH: Record<NameSignal, Strength> = { cp_account: 3, alias: 3, holder: 3, assigned: 3, name: 2, rep: 2, prefix: 1 };
 
 export interface MatchCounterparty {
-  /** 거래처 id(장부에 있으면) 또는 'biz:<번호>'·'r:<건 id>' */
   key: string;
   name: string | null;
   rep: string | null;
   aliases: string[];
   holders: string[];
   accountHmacs: string[];
-  /** 사람이 확정한 맞춤이 있다(첫 맞춤은 사람이 본다) */
   humanConfirmed: boolean;
 }
 
@@ -29,7 +20,6 @@ export interface MatchReceivable {
   id: string;
   cpKey: string;
   writtenOn: string;
-  /** 받기로 한 날(기다리는 중이면 약속일). 기한 없음이면 null */
   dueOn: string | null;
   remaining: number;
 }
@@ -38,7 +28,6 @@ export interface MatchTxn {
   id: string;
   day: string;
   amount: number;
-  /** 아직 어느 건에도 붙지 않은 금액 */
   unallocated: number;
   payer: string | null;
   counterAccountHmac: string | null;
@@ -51,11 +40,8 @@ export interface Candidate {
   fit: AmountFit;
   signal: NameSignal | null;
   strength: Strength | 0;
-  /** 이 후보로 붙일 금액(건마다) */
   amounts: number[];
-  /** 수수료로 보이는 차액(fit = fee) */
   feeGap: number;
-  /** 사람에게 보일 근거 한 줄 */
   reason: string;
 }
 
@@ -63,10 +49,8 @@ export interface MatchInput {
   counterparties: MatchCounterparty[];
   receivables: MatchReceivable[];
   txns: MatchTxn[];
-  /** 'receivableId|txnId' */
   rejects: Set<string>;
   feeTolerance?: number;
-  /** in = 받을 돈(입금), out = 낼 돈(출금, 11 §2.3). 규칙은 같고 근거 문구만 다르다 */
   side?: Side;
 }
 
@@ -79,7 +63,6 @@ export interface AutoMatch {
 
 export interface MatchResult {
   auto: AutoMatch[];
-  /** 자동이 아닌 줄의 후보(1~3개, 앞이 가장 그럴듯함). 후보가 없으면 빈 배열(미지정) */
   candidates: Map<string, Candidate[]>;
 }
 
@@ -229,7 +212,6 @@ export function autoOf(txn: MatchTxn, all: Candidate[], cps: Map<string, CpIndex
 export function runMatch(input: MatchInput): MatchResult {
   const cps = indexCps(input.counterparties);
   const side = input.side ?? 'in';
-  // 출금은 내가 보내는 돈이라 거래처가 수수료를 빼는 일이 없다(이체 수수료는 따로 찍힌다, 11 §2.3)
   const tol = side === 'out' ? 0 : (input.feeTolerance ?? FEE_TOLERANCE);
   const recv = input.receivables.map((r) => ({ ...r }));
   const txns = [...input.txns].sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : a.id < b.id ? -1 : 1)).map((t) => ({ ...t }));

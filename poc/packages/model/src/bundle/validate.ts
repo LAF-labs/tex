@@ -1,5 +1,3 @@
-// 번들 정의 검증: 스키마 → 구조 → BV-01~06(D03 §3.2) + 선택지 ≤ 26(D04 §1, System One 호환).
-// 엔진 로더와 번들 CI(tests/model-bundles.test.ts)가 같은 함수를 쓴다.
 import fs from 'node:fs';
 import ajv2020 from 'ajv/dist/2020.js';
 import type { ValidateFunction } from 'ajv';
@@ -74,10 +72,6 @@ function bv01(def: BundleDef, v: BvViolation[]): void {
   });
 }
 
-/**
- * BV-02 거절 단조성: refusal을 onRefusal로 해석했을 때 도달하는 진행 결과는, 그 질문이 가장 보수적인 정상 값을 가질 때도
- * 도달 가능한 진행 결과(모든 정상 값에 대한 교집합)에 들어 있어야 한다. 즉 거절로 새 진행 경로가 열리면 안 된다.
- */
 function bv02(def: BundleDef, v: BvViolation[]): void {
   const prog = progressOutcomes(def);
   for (const q of def.questions) {
@@ -134,9 +128,6 @@ function bv05(def: BundleDef, v: BvViolation[]): void {
   });
 }
 
-/**
- * BV-06: 다이제스트가 정의·접두와 일치하고 앱 내장 허용 목록에 있어야 한다. 허용 목록 밖 정의(레지스트리·파일 주입)는 로드하지 않는다.
- */
 function bv06(def: BundleDef, prefixText: string, allow: ReadonlyArray<{ id: string; digest: string }> | null, v: BvViolation[]): void {
   const d = computeDigest(def, prefixText);
   if (d !== def.digest) v.push({ rule: 'BV-06', message: `digest 불일치(계산 ${d.slice(0, 12)}…)` });

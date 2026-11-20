@@ -1,4 +1,3 @@
-// 생성 호출만 Anthropic으로(GW_RESPOND_PROVIDER=anthropic, 대표 2026-11-19 시험 기간 조직 크레딧). 판정(jev)은 기본 공급사에 남는다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { parseRespond } from '../packages/chat-core/src/phone-gateway.ts';
@@ -132,7 +131,6 @@ describe('게이트웨이: 생성만 Anthropic(GW_RESPOND_PROVIDER)', () => {
       '앞말 글은 출력 JSON이 아니므로 message로 내지 않는다',
     );
     assert.deepEqual(r1.output[1], { type: 'function_call', call_id: 'toolu_1', name: CHAT_PHONE.tools[0]!.name, arguments: '{"counterparty":null}' });
-    // 폰 해석기가 그대로 받는다(reasoning은 읽지 않고 되돌린다)
     const parsed = parseRespond({ status: r1.status, output: r1.output.map((item) => ({ item, tag: 'a'.repeat(64) })) });
     assert.equal(parsed.status, 'completed');
 
@@ -188,7 +186,6 @@ describe('게이트웨이: 생성만 Anthropic(GW_RESPOND_PROVIDER)', () => {
     for (const retryable of [true, true, false]) {
       await assert.rejects(p.respond(s), (e: unknown) => e instanceof ProviderError && e.retryable === retryable);
     }
-    // 상태 코드와 error.type만 이벤트로 남긴다(오류 글은 남기지 않는다)
     assert.deepEqual(events.filter((e) => e.startsWith('upstream_anthropic_')), ['upstream_anthropic_429_unknown', 'upstream_anthropic_529_unknown', 'upstream_anthropic_400_invalid_request_error']);
     assert.deepEqual(events.filter((e) => e.startsWith('anthropic_err:')), ['anthropic_err:tools.0.input_schema:_not_supported']);
     assert.ok(!events.join(' ').includes('사용자'));

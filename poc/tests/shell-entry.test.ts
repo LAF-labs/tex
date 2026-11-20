@@ -1,5 +1,3 @@
-// ADR-035 W-7·#76 인계 ③: 제품 진입점(shell.ts, app-identity entry)은 가짜 홈택스·시연·e2e 코드에 닿지 않는다.
-// package-win이 dist에서 같은 이름 규칙(DEV_ONLY_RE)으로 devOnlyIncluded를 적는다. 여기서는 소스의 값 import(타입 import 제외)를 따라간다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,10 +6,8 @@ import { BUILD_WARN_TEXT, isBuildInfo, isTestBuild, packagedProblems } from '../
 
 const SRC = path.join(import.meta.dirname, '../apps/desktop/src');
 const DEV_ONLY_RE = /(^|[-/])(demo|e2e|measure|fixture|smoke|synthetic|mock)([-.]|$)|poc\d+-measure/;
-/** 제품 진입점에 남는 개발 전용 이름(없어야 한다). 견본은 시연 연결(ShellDev.sample, demo-dev.ts)로만 온다(WIN-REALDEVICE §10.2). */
 const STAND_INS: string[] = [];
 
-/** 값 import만 따라간다(import type·export type은 지워져 dist에 남지 않는다). */
 function reach(entry: string): string[] {
   const seen = new Set<string>();
   const walk = (f: string) => {
@@ -96,7 +92,6 @@ describe('설치본 자기 점검(packagedProblems, #76 인계 ①)', () => {
     const src = fs.readFileSync(path.join(SRC, '../../../scripts/package-win.mjs'), 'utf8');
     assert.match(src, /'test-build': \{ type: 'boolean' \}/);
     assert.match(src, /testBuild: args\['test-build'\] === true,/);
-    // 판정은 release-readiness.mjs로 옮겼다(채널별 판정표 시험은 release-readiness.test.ts). package-win은 testBuild를 넘긴다.
     assert.match(src, /judgeReadiness\(\{[^)]*testBuild: buildInfo\.testBuild/);
     const judge = fs.readFileSync(path.join(SRC, '../../../scripts/release-readiness.mjs'), 'utf8');
     assert.match(judge, /if \(f\.testBuild\) blockers\.push\(\{ code: 'test_build'/);
@@ -106,7 +101,6 @@ describe('설치본 자기 점검(packagedProblems, #76 인계 ①)', () => {
     const src = fs.readFileSync(path.join(SRC, 'shell.ts'), 'utf8');
     assert.ok(src.indexOf('packagedProblems(') < src.indexOf('prepareLayout(root)'));
     assert.match(src, /if \(problems\.some\(\(p\) => p\.startsWith\('fatal:'\)\)\) \{[\s\S]*?app\.exit\(1\);/);
-    // 뒤 인자(update·externalChrome 등)가 더 붙어도 앞의 셋은 그대로다
     assert.match(src, /startShell\(\{ engine: \{ portal: \{ kind: 'hometax' \} \}, buildBadges, remote: productRemote\(\{ isPackaged: app\.isPackaged, env: process\.env \}\)(?:, [^\n]*)? \}\)/);
   });
 });

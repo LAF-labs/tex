@@ -1,8 +1,3 @@
-// 금고 장기 키 연산(D05 §5.1 VaultCrypto, D08 §2.1·§3, C-19). 개인키(Sd·Vd·Qd·Kv·RK→AIK)는 금고 밖으로 나가지 않는다.
-// - 키는 KeyStore(OS 키체인, 무인 등급)에 32바이트 시드로 둔다. 없으면 만들고(vault.key_created), 길이가 틀리면 덮지 않고 실패한다(N-30).
-// - 서명 입력은 utf8(purpose) ‖ msg(구분 바이트 없음, schemas/SIGNING.md §8). purpose는 허용 목록과 고정 비교한다.
-// - 호출 감사: 연산·용도를 로그에 남기고, 한 시간 기대치를 넘으면 vault.crypto_rate_anomaly(막지는 않는다, D05 §5.1).
-// - 오라클 한계(D05 §1): 침해된 엔진은 허용 용도 안의 서명·개봉을 요청할 수 있다. 키 자체는 나가지 않는다.
 import { createHmac, createPrivateKey, createPublicKey, diffieHellman, hkdfSync, randomBytes, sign as edSign, timingSafeEqual, type KeyObject } from 'node:crypto';
 import { chacha20poly1305 } from '@noble/ciphers/chacha.js';
 import type { EventLog } from '@sax/platform';
@@ -41,7 +36,6 @@ interface Keys {
   qd: Pair;
   kv: Pair;
   aik: Pair;
-  /** 계정 공유 기록 서명 키 Ws(RK 파생, D07 §10) */
   ws: Pair;
 }
 
@@ -77,7 +71,6 @@ export function aikSeedFromRk(rk: Uint8Array): Uint8Array {
 
 function x25519(priv: KeyObject, remotePub: Uint8Array): Uint8Array {
   const pub = createPublicKey({ key: Buffer.concat([X25519_SPKI, remotePub]), format: 'der', type: 'spki' });
-  // 낮은 차수 점(전부 0 출력)은 거부한다(RFC 7748 §6.1). OpenSSL은 스스로 거부하고, 아니면 여기서 본다.
   let out: Uint8Array;
   try {
     out = new Uint8Array(diffieHellman({ privateKey: priv, publicKey: pub }));
@@ -90,8 +83,6 @@ function x25519(priv: KeyObject, remotePub: Uint8Array): Uint8Array {
 
 const isBytes = (x: unknown, min: number, max: number): x is Uint8Array => x instanceof Uint8Array && x.length >= min && x.length <= max;
 const isRkInfo = (x: unknown): x is typeof RK_LINK_INFO | typeof RK_ESCROW_INFO => x === RK_LINK_INFO || x === RK_ESCROW_INFO;
-
-// ───────────────────────── HPKE(RFC 9180) Base 개봉 ─────────────────────────
 
 const i2osp = (n: number, len: number) => {
   const b = new Uint8Array(len);
@@ -116,7 +107,6 @@ const labeledExtract = (suite: Uint8Array, salt: Uint8Array, label: string, ikm:
 const labeledExpand = (suite: Uint8Array, prk: Uint8Array, label: string, info: Uint8Array, len: number) =>
   expand(prk, cat(i2osp(len, 2), enc.encode('HPKE-v1'), suite, enc.encode(label), info), len);
 
-/** RFC 9180 §5.1 KeySchedule(Base)에서 seq 0의 키·논스. dh와 중간값은 지운다. */
 function hpkeKeys(dh: Uint8Array, encap: Uint8Array, pkR: Uint8Array, info: Uint8Array): { key: Uint8Array; nonce: Uint8Array } {
   const kemContext = cat(encap, pkR);
   const eaePrk = labeledExtract(KEM_SUITE, new Uint8Array(0), 'eae_prk', dh);
@@ -132,11 +122,6 @@ function hpkeKeys(dh: Uint8Array, encap: Uint8Array, pkR: Uint8Array, info: Uint
   }
 }
 
-/**
- * ChaCha20-Poly1305(RFC 8439). node:crypto의 'chacha20-poly1305'는 쓰지 않는다: 금고가 도는 Electron(BoringSSL)에는 그 이름의 암호가 없어
- * createCipheriv가 "Unknown cipher"로 던진다(Node에서 도는 시험은 통과한다). @sax/remote·폰과 같은 구현(@noble/ciphers)을 쓴다.
- * 한 번 봉인하거나 한 번 여는 데만 쓴다(부를 때마다 새로 만든다).
- */
 const aead = (key: Uint8Array, nonce: Uint8Array, aad: Uint8Array) => chacha20poly1305(key, nonce, aad);
 
 /**
@@ -174,8 +159,6 @@ export function hpkeSealBase(pkR: Uint8Array, info: Uint8Array, aad: Uint8Array,
   }
 }
 
-// ───────────────────────── 금고 연산 ─────────────────────────
-
 export interface VaultCryptoOptions {
   keyStore: KeyStore;
   log: EventLog;
@@ -187,7 +170,6 @@ export class VaultCrypto {
   private keysP: Promise<Keys> | null = null;
   private readonly calls = new Map<CryptoOp, number[]>();
   private readonly anomalyAt = new Map<CryptoOp, number>();
-  /** 새 PC 연결의 넘겨받기 키(Hx). 메모리에만 있고, 다시 만들거나 한 번 쓰면 사라진다 */
   private link: Pair | null = null;
   private readonly rkSeals: number[] = [];
 
@@ -199,7 +181,6 @@ export class VaultCrypto {
     return this.o.now?.() ?? Date.now();
   }
 
-  /** 키를 한 번 읽는다(없으면 만든다). 실패는 캐시하지 않는다(다음 호출에서 다시 읽는다). */
   private keys(): Promise<Keys> {
     if (!this.keysP) {
       const p = this.load();
@@ -308,12 +289,6 @@ export class VaultCrypto {
     }
   }
 
-  // ───────── 계정 공유 기록(ADR-048 결정 5, D07 §10). control 포트(main)만 부른다 ─────────
-
-  /**
-   * 세대 e의 줄 봉인 키와 Ws 공개키. RK는 나가지 않는다. 계정 열쇠를 넘겨받으면(rkImport) 값이 바뀐다.
-   * 키는 계정 공유 기록 줄만 연다. 부른 쪽(main)이 쓰고 지운다.
-   */
   async shareKey(x: unknown): Promise<{ key: Uint8Array; signPub: Uint8Array }> {
     const p = x as Partial<ShareKeyParams> | undefined;
     if (!Number.isSafeInteger(p?.epoch) || p!.epoch! < 0 || p!.epoch! > SHARE_EPOCH_MAX) throw new Error('bad_params');
@@ -328,7 +303,6 @@ export class VaultCrypto {
     }
   }
 
-  /** PC가 쓴 줄의 서명: Ed25519(Ws, utf8("SAX-share-v1") ‖ msg). 컨텍스트는 여기서 붙인다(다른 용도의 서명으로 쓸 수 없다). */
   async signShare(x: unknown): Promise<Uint8Array> {
     const p = x as Partial<SignShareParams> | undefined;
     if (!isBytes(p?.msg, 1, SHARE_SIGN_MSG_MAX)) throw new Error('bad_params');
@@ -337,9 +311,6 @@ export class VaultCrypto {
     return new Uint8Array(edSign(null, cat(enc.encode(SHARE_SIGN_CONTEXT), p!.msg!), k.ws.priv));
   }
 
-  // ───────── 새 PC 연결(ADR-048 결정 3, D08 §4.3). control 포트(main)만 부른다 ─────────
-
-  /** [새 PC] 넘겨받기 키를 새로 만든다(앞 키는 버린다). 공개키만 돌려준다. */
   async linkKey(): Promise<Uint8Array> {
     const seed = new Uint8Array(randomBytes(32));
     try {
@@ -351,10 +322,6 @@ export class VaultCrypto {
     return this.link.pub.slice();
   }
 
-  /**
-   * [쓰던 PC] RK를 새 PC의 넘겨받기 키로 봉인한다. RK 평문은 여기 밖으로 나가지 않는다.
-   * 24시간에 RK_SEALS_PER_DAY번까지(이 프로세스가 떠 있는 동안의 셈). 넘으면 Error('rate_limited').
-   */
   async rkSeal(x: unknown): Promise<{ enc: Uint8Array; ct: Uint8Array }> {
     const p = x as Partial<RkSealParams> | undefined;
     if (!isBytes(p?.recipient, 32, 32) || !isRkInfo(p?.info) || !isBytes(p?.aad, 32, 32)) throw new Error('bad_params');
@@ -364,7 +331,7 @@ export class VaultCrypto {
       this.o.log.event('vault.rk_seal_denied', { reason: 'rate' });
       throw new Error('rate_limited');
     }
-    await this.keys(); // RK가 없으면 여기서 만들어진다(첫 PC가 아직 계정 키를 고정하기 전이어도 같은 값)
+    await this.keys();
     const rk = await this.o.keyStore.get(CRYPTO_KEY_ITEMS.rk, 32);
     if (!rk) throw new Error('vault.keystore_mismatch');
     try {
@@ -379,10 +346,6 @@ export class VaultCrypto {
     }
   }
 
-  /**
-   * [새 PC] 봉인문을 넘겨받기 키로 열고, 연 RK의 AIK 공개키가 aikPub와 같을 때만 계정 루트 키를 바꾼다.
-   * 쓰던 RK는 보관 항목으로 먼저 옮긴다. 성공하면 넘겨받기 키를 지우고 키를 다시 읽는다(AIK가 바뀐다). 새 AIK 공개키를 돌려준다.
-   */
   async rkImport(x: unknown): Promise<Uint8Array> {
     const p = x as Partial<RkImportParams> | undefined;
     if (!isBytes(p?.enc, 32, 32) || !isBytes(p?.ct, 48, 48) || !isRkInfo(p?.info) || !isBytes(p?.aad, 32, 32) || !isBytes(p?.aikPub, 32, 32)) throw new Error('bad_params');
@@ -406,7 +369,6 @@ export class VaultCrypto {
       const old = await this.o.keyStore.get(CRYPTO_KEY_ITEMS.rk, 32);
       if (old) {
         try {
-          // 이미 같은 RK면(다시 받은 경우) 옮기지 않는다
           if (!timingSafeEqual(old, rk)) await this.o.keyStore.put(`${RK_PREV_ITEM}${this.now()}`, old);
         } finally {
           old.fill(0);

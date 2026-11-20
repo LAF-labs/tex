@@ -1,9 +1,3 @@
-// 돈 맞추기 저장소(09 §9.1, 스키마 v9). 내 계좌·거래처 계좌·입금자 별칭·입출금 줄·받을 돈 건·맞춤(배분)·기록.
-// - 계좌번호는 컬럼 키로 감싼 칸(number_enc, AAD = "<table>.number_enc:<id>") + 찾기용 HMAC(number_hmac) + 끝 4자리만 평문.
-//   HMAC 키는 DB 키에서 HKDF로 파생한다(엔진 entry, info "SAX-bank-hmac-v1"). 원장 cp_biz_no_hmac와 같은 방식이다.
-// - 입금자명·적요·예금주는 DB 기본 암호화(SQLCipher)만. 화면·대화로 원문을 보내는 것은 엔진 서비스가 정한다.
-// - 입출금 줄은 (계좌, 줄 열쇠)로 한 번만 들어간다(INSERT OR IGNORE). 줄 열쇠는 엔진이 만든다(계좌·일시·방향·금액·잔액·같은 값 순번).
-// - 맞춤은 지우지 않는다: 떼기·되돌리기는 removed_at을 채운다. 기록(receivable_events)은 더하기만 한다.
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import type { ColumnCipher } from './column.ts';
 import type { Db } from './open.ts';
@@ -73,7 +67,6 @@ export interface BankTxn {
   counterAccountLast4: string | null;
   ignoredAt: string | null;
   ignoredReason: string | null;
-  /** 사람이 [거래처 지정]으로 이 줄만 정한 거래처(별칭으로 기억하지 않은 경우) */
   assignedCounterpartyId: string | null;
 }
 
@@ -86,7 +79,6 @@ export interface TxnInput {
   balance: number | null;
   payer: string | null;
   memo: string | null;
-  /** 상대 계좌번호(파일에 있으면). 저장은 HMAC·끝 4자리만 */
   counterAccount?: string | null;
 }
 
@@ -129,7 +121,6 @@ export interface Receivable {
 }
 
 export interface ReceivableInput {
-  /** 없으면 sale. 낼 돈(매입)은 purchase(11 §2) */
   kind?: 'sale' | 'purchase';
   approvalNo: string | null;
   runId?: string | null;
@@ -187,7 +178,6 @@ export function normalizeAccountNumber(raw: unknown): string {
 }
 
 const LEGAL_FORMS = /주식회사|유한회사|합자회사|합명회사|사단법인|재단법인|\(주\)|\(유\)|\(합\)|\(사\)|\(재\)|㈜|㈲/g;
-// 은행 표기 앞뒤 낱말(09 §6.1). 실제 표기는 PoC 고객 파일로 더한다.
 const BANK_WORDS = /^(cms|펌뱅킹|인터넷|모바일|타행|스마트|폰뱅킹|오픈뱅킹)+|(cms|펌뱅킹|인터넷|모바일|타행|스마트|폰뱅킹)+$/;
 
 /**
@@ -204,7 +194,6 @@ export function normalizePayerName(raw: string | null | undefined): string {
 }
 
 const last4 = (d: string) => d.slice(-4);
-/** 원천과 상관없는 같은 줄 열쇠(거래일·방향·금액·잔액) */
 const contentKey = (r: Pick<TxnInput, 'day' | 'direction' | 'amount' | 'balance'>) => createHash('sha256').update([r.day, r.direction, r.amount, r.balance ?? ''].join('|')).digest('hex').slice(0, 32);
 const optText = (v: unknown, max: number, code: string): string | null => {
   if (v === undefined || v === null) return null;
@@ -271,12 +260,9 @@ export class BankRepo {
     this.hmacKey = Buffer.from(hmacKey);
   }
 
-  /** 계좌번호 HMAC(숫자만 다듬은 값). 같은 번호면 같은 값 */
   accountHmac(digits: string): string {
     return createHmac('sha256', this.hmacKey).update(`acct:${digits}`).digest('hex');
   }
-
-  // ---- 내 계좌 ----
 
   addAccount(input: { profileId: string; bank: unknown; number: unknown; alias?: unknown; usage?: unknown }, at: string): BankAccount {
     const bank = optText(input.bank, BANK_MAX, 'bad_bank');
@@ -300,7 +286,6 @@ export class BankRepo {
     return (this.db.prepare('SELECT * FROM bank_accounts WHERE profile_id = ? ORDER BY created_at, rowid').all(profileId) as Row[]).map(toAccount);
   }
 
-  /** 계좌번호 전체([보기]). 없으면 null */
   revealAccount(id: string): string | null {
     const r = this.db.prepare('SELECT number_enc FROM bank_accounts WHERE id = ?').get(id) as { number_enc: Uint8Array } | undefined;
     return r ? this.cipher.open(r.number_enc, `bank_accounts.number_enc:${id}`) : null;
@@ -317,7 +302,6 @@ export class BankRepo {
     return this.account(id)!;
   }
 
-  /** 원천 연결 상태(자동 연결 세션이 연결·끊기·오류 때 쓴다). error는 짧은 코드만 */
   setLink(id: string, link: { state: BankLinkState; provider?: string | null; error?: string | null }, at: string): BankAccount {
     if (!['file_only', 'auto_connected', 'auto_error'].includes(link.state)) throw new ValidationError('bad_link_state');
     const provider = link.state === 'file_only' ? null : optText(link.provider ?? this.account(id)?.linkProvider ?? null, 40, 'bad_provider');
@@ -327,7 +311,6 @@ export class BankRepo {
     return this.account(id)!;
   }
 
-  /** 계좌와 그 입출금 줄·회차·맞춤을 함께 지운다(CASCADE). 지운 맞춤 수를 돌려준다 */
   deleteAccount(id: string): { removedAllocs: number } {
     return this.db.transaction(() => {
       const removed = this.db.prepare('SELECT count(*) FROM receivable_allocs a JOIN bank_txns t ON t.id = a.txn_id WHERE t.account_id = ? AND a.removed_at IS NULL').pluck().get(id) as number;
@@ -335,8 +318,6 @@ export class BankRepo {
       return { removedAllocs: removed };
     })();
   }
-
-  // ---- 거래처 계좌·별칭 ----
 
   addCpAccount(input: { counterpartyId: string; bank?: unknown; number: unknown; holder?: unknown; usage?: unknown; memo?: unknown }, at: string): CpBankAccount {
     if (!this.db.prepare('SELECT 1 FROM counterparties WHERE id = ?').get(input.counterpartyId)) throw new ValidationError('not_found');
@@ -360,7 +341,6 @@ export class BankRepo {
     return (rows as Row[]).map(toCpAccount);
   }
 
-  /** 같은 번호(HMAC)로 등록한 거래처 계좌들 */
   cpAccountsByHmac(hmac: string): CpBankAccount[] {
     return (this.db.prepare('SELECT * FROM cp_bank_accounts WHERE number_hmac = ?').all(hmac) as Row[]).map(toCpAccount);
   }
@@ -374,7 +354,6 @@ export class BankRepo {
     return this.db.prepare('DELETE FROM cp_bank_accounts WHERE id = ?').run(id).changes > 0;
   }
 
-  /** 별칭 더하기. 다듬은 이름이 비거나 2글자 미만이면 bad_alias. 같은 거래처에 이미 있으면 그것을 돌려준다 */
   addAlias(counterpartyId: string, raw: unknown, source: AliasSource, at: string): PayerAlias {
     const name = optText(raw, ALIAS_MAX, 'bad_alias');
     const norm = normalizePayerName(name);
@@ -392,7 +371,6 @@ export class BankRepo {
     return (rows as Row[]).map(toAlias);
   }
 
-  /** 다듬은 이름이 같은 별칭을 가진 거래처 id들 */
   aliasOwners(norm: string): string[] {
     return this.db.prepare('SELECT DISTINCT counterparty_id FROM cp_payer_aliases WHERE name_norm = ?').pluck().all(norm) as string[];
   }
@@ -401,7 +379,6 @@ export class BankRepo {
     return this.db.prepare('DELETE FROM cp_payer_aliases WHERE id = ?').run(id).changes > 0;
   }
 
-  /** 거래처 결제 조건. side in = 받을 조건, out = 내 쪽(낼) 조건 */
   payTerms(counterpartyId: string, side: 'in' | 'out' = 'in'): PayTerms | null {
     const v = this.db.prepare(`SELECT ${side === 'out' ? 'pay_out_terms_json' : 'pay_terms_json'} FROM counterparties WHERE id = ?`).pluck().get(counterpartyId) as string | null | undefined;
     if (!v) return null;
@@ -418,19 +395,11 @@ export class BankRepo {
     return t;
   }
 
-  // ---- 가져온 회차·입출금 줄 ----
-
-  /** 회차 하나와 줄들을 한 트랜잭션으로. 이미 있는 줄 열쇠는 건너뛴다. 새로 들어간 줄 id를 돌려준다 */
-  /**
-   * 다른 원천이 이미 들인 같은 줄은 건너뛴다: 내용 열쇠(거래일·방향·금액·잔액)가 같은 줄이 다른 원천 회차에 이 묶음 안 순번보다 많이 있으면 같은 줄로 본다.
-   * (파일로 넣은 뒤 자동 연결로 같은 기간을 받아도, 그 반대여도 두 번 들어가지 않는다.) 같은 원천 안의 중복은 줄 열쇠가 막는다.
-   */
   importTxns(input: { profileId: string; accountId: string; source: BankImportSource; provider?: string | null; documentId: string | null; format: unknown; rows: TxnInput[]; period?: { from: string; to: string } | null }, at: string): { import: BankImport; newIds: string[]; crossSkipped: number } {
     return this.db.transaction(() => {
       const acct = this.account(input.accountId);
       if (!acct || acct.profileId !== input.profileId) throw new ValidationError('account_not_found');
       const id = randomUUID();
-      // 회차 구간 = 조회한 기간(알면) ∪ 줄의 처음·끝 날. 현금흐름이 그달을 다 덮었는지 이것으로 본다(11 §3.4). 거래가 없던 날도 덮은 것이다
       const p = input.period && /^\d{4}-\d{2}-\d{2}$/.test(input.period.from) && /^\d{4}-\d{2}-\d{2}$/.test(input.period.to) && input.period.from <= input.period.to ? input.period : null;
       const days = [...input.rows.map((r) => r.day), ...(p ? [p.from, p.to] : [])].sort();
       this.db
@@ -498,7 +467,6 @@ export class BankRepo {
     return (this.db.prepare(`SELECT * FROM bank_txns WHERE ${where.join(' AND ')} ORDER BY day, occurred_at, rowid`).all(...args) as Row[]).map(toTxn);
   }
 
-  /** 계좌별 가장 늦은 거래일(거래내역 기준일) */
   latestDay(profileId: string): string | null {
     return (this.db.prepare('SELECT max(day) FROM bank_txns WHERE profile_id = ?').pluck().get(profileId) as string | null) ?? null;
   }
@@ -511,14 +479,11 @@ export class BankRepo {
     if (this.db.prepare('UPDATE bank_txns SET assigned_counterparty_id = ? WHERE id = ?').run(counterpartyId, txnId).changes === 0) throw new ValidationError('not_found');
   }
 
-  // ---- 받을 돈 건 ----
-
   receivable(id: string): Receivable | null {
     const r = this.db.prepare('SELECT * FROM receivables WHERE id = ?').get(id) as Row | undefined;
     return r ? toReceivable(r) : null;
   }
 
-  /** 건 목록. kind 기본 sale(받을 돈), purchase = 낼 돈 */
   receivables(profileId: string, kind: 'sale' | 'purchase' = 'sale'): Receivable[] {
     return (this.db.prepare(`SELECT * FROM receivables WHERE profile_id = ? AND kind = ? ORDER BY written_on, rowid`).all(profileId, kind) as Row[]).map(toReceivable);
   }
@@ -533,17 +498,12 @@ export class BankRepo {
     return r ? toReceivable(r) : null;
   }
 
-  /**
-   * 건 넣기·합치기. 같은 승인번호(또는 같은 실행)가 있으면 빈 칸만 채우고 원천 표시를 더한다(금액·작성일은 원장 것을 앞세운다).
-   * 돌려주는 created: 새로 만든 건이면 true.
-   */
   upsertReceivable(profileId: string, input: ReceivableInput, at: string): { receivable: Receivable; created: boolean } {
     if (!Number.isSafeInteger(input.total) || input.total <= 0 || input.total > AMOUNT_MAX) throw new ValidationError('bad_amount');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.writtenOn)) throw new ValidationError('bad_date');
     return this.db.transaction(() => {
       const prev = (input.approvalNo ? this.byApproval(profileId, input.approvalNo) : null) ?? (input.runId ? this.byRun(input.runId) : null);
       if (prev) {
-        // 같은 승인번호가 다른 쪽(매출↔매입) 건이면 합치지 않는다(내가 나에게 발급한 것처럼 보이는 잘못된 줄)
         if (prev.kind !== (input.kind ?? 'sale')) throw new ValidationError('kind_mismatch');
         const ledger = input.from === 'ledger';
         const keepLedger = prev.fromLedger && !ledger;
@@ -581,8 +541,6 @@ export class BankRepo {
     this.db.prepare('UPDATE receivables SET counterparty_id = ?, updated_at = ? WHERE id = ?').run(counterpartyId, at, id);
   }
 
-  // ---- 맞춤(배분)·뗀 짝·기록 ----
-
   addAlloc(input: { profileId: string; receivableId: string; txnId: string | null; amount: number; method: AllocMethod; decidedBy: AllocDecider; reason?: string | null; receivedOn?: string | null; memo?: unknown }, at: string): Alloc {
     if (!Number.isSafeInteger(input.amount) || input.amount <= 0 || input.amount > AMOUNT_MAX) throw new ValidationError('bad_amount');
     const id = randomUUID();
@@ -597,14 +555,12 @@ export class BankRepo {
     return r ? toAlloc(r) : null;
   }
 
-  /** 살아 있는 맞춤(떼지 않은 것). receivableId·txnId 중 하나로 좁힌다 */
   liveAllocs(profileId: string, q: { receivableId?: string; txnId?: string } = {}): Alloc[] {
     if (q.receivableId) return (this.db.prepare('SELECT * FROM receivable_allocs WHERE receivable_id = ? AND removed_at IS NULL ORDER BY created_at, rowid').all(q.receivableId) as Row[]).map(toAlloc);
     if (q.txnId) return (this.db.prepare('SELECT * FROM receivable_allocs WHERE txn_id = ? AND removed_at IS NULL ORDER BY created_at, rowid').all(q.txnId) as Row[]).map(toAlloc);
     return (this.db.prepare('SELECT * FROM receivable_allocs WHERE profile_id = ? AND removed_at IS NULL ORDER BY created_at, rowid').all(profileId) as Row[]).map(toAlloc);
   }
 
-  /** 떼지 않은 것까지 모두(건 상세 기록용) */
   allocsOf(receivableId: string): Alloc[] {
     return (this.db.prepare('SELECT * FROM receivable_allocs WHERE receivable_id = ? ORDER BY created_at, rowid').all(receivableId) as Row[]).map(toAlloc);
   }
@@ -614,7 +570,6 @@ export class BankRepo {
     return this.alloc(id)!;
   }
 
-  /** 떼었던 맞춤을 되살린다(되돌리기) */
   restoreAlloc(id: string): Alloc {
     if (this.db.prepare('UPDATE receivable_allocs SET removed_at = NULL, removed_by = NULL WHERE id = ? AND removed_at IS NOT NULL').run(id).changes === 0) throw new ValidationError('not_found');
     return this.alloc(id)!;
@@ -650,7 +605,6 @@ export class BankRepo {
     return (this.db.prepare('SELECT * FROM receivable_events WHERE receivable_id = ? ORDER BY seq').all(receivableId) as Row[]).map(toEvent);
   }
 
-  /** 이 사건을 되돌린 사건이 이미 있는가 */
   undone(profileId: string, seq: number): boolean {
     return this.db.prepare('SELECT 1 FROM receivable_events WHERE profile_id = ? AND undo_of = ?').get(profileId, seq) !== undefined;
   }

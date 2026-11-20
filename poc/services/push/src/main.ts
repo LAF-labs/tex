@@ -1,4 +1,3 @@
-// 기동: 환경 변수(ENV.md) → DB 마이그레이션 → HTTP. 공급사 자격 증명은 KMS가 주입하고 저장소·이미지에 두지 않는다(절대 규칙 ⑥).
 import { fileURLToPath } from 'node:url';
 import { HttpDeviceDirectory, InternalAuth, Logger, SqlNonceStore, TokenVerifier, createServer, fromB64, key32, listen, migrate, openFromEnv, LIMITS_MIGRATIONS_DIR, sqlLimits, type DeviceDirectory } from '@sax/svc-shared';
 import { pushRouter } from './app.ts';

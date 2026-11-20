@@ -1,4 +1,3 @@
-// D03 §7.1 앱 내장 상한·하한(앱 업데이트로만 바뀐다). 정책·패키지·레지스트리로 바꿀 수 없다.
 import type { CaptchaRelay, Portal, PortalMode } from './types.ts';
 
 export const PORTAL_MODE_CEILING: Readonly<Record<Portal, PortalMode>> = Object.freeze({

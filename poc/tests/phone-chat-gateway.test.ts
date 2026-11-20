@@ -1,5 +1,3 @@
-// 폰 대화 끝에서 끝(ADR-047): PhoneChat → PhoneGateway(HTTP·기기 토큰·DPoP) → 실제 게이트웨이 서비스 → 모의 공급사.
-// 계정 서비스가 준 폰 토큰(chat 범위)으로 실행 토큰을 받고, 도구 왕복을 replay 태그로 잇고, 공급사에는 가린 글만 간다. 공급사는 모의다(모의 기준).
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
@@ -13,7 +11,6 @@ import { accountStack, signedDesktop, signedPhone, type Signed, type Stack } fro
 
 const GW = 'https://gw.test.invalid';
 
-/** 호출마다 다음 출력을 내는 모의 공급사 */
 class ScriptedProvider extends MockProvider {
   queue: Array<Array<Record<string, unknown>>> = [];
   readonly specs: RespondSpec[] = [];
@@ -74,7 +71,6 @@ async function start(): Promise<Env> {
   const phone = await signedPhone(s, pc);
   const gateway = new PhoneGateway({
     origin: GW,
-    // 시험에서는 공개 origin을 로컬 서버로 돌린다. DPoP의 htu는 공개 origin 그대로다.
     fetch: (url, init) => fetch(url.replace(GW, base), init),
     authHeaders: async (method, url) => phone.headers(method, GW, url.slice(GW.length), await phone.token()),
   });
@@ -115,11 +111,9 @@ describe('폰 대화 끝에서 끝: 폰 코어 → 게이트웨이(chat 범위) 
     const sent = JSON.stringify(e.provider.responds);
     for (const raw of ['한빛전자', '220-81-62517', '55만원', '550000', '1100000', '1,100,000', 'hanbit', '율무상회']) assert.ok(!sent.includes(raw), `공급사에 원값이 나갔다: ${raw}`);
     assert.match(JSON.stringify(first.input), /사용자: \[NAME_1\]\(\[BIZNO_\d\]\)에 \[AMT_1\] 세금계산서 끊어줘/);
-    // 둘째 호출: 첫 출력(function_call)과 폰이 답한 도구 결과가 이어진다
     const input = second.input as Array<Record<string, unknown>>;
     assert.deepEqual(input.slice(-2).map((x) => x.type), ['function_call', 'function_call_output']);
     assert.match(String(input.at(-1)!.output), /^\{"ref":"d\d+","status":"card_shown","fields":null,"needs":null\}$/);
-    // 계량: 폰 기기 이름으로, 표면은 판정(chat_route_v1, ADR-057) 한 번과 chat_phone 두 번
     const rows = await e.db.all<{ device_id: string; surface: string }>('SELECT device_id, surface FROM call_records ORDER BY at');
     assert.deepEqual(rows.map((x) => [x.device_id === e.phone.d.id, x.surface]), [[true, 'chat_route_v1'], [true, 'chat_phone'], [true, 'chat_phone']]);
     const usage = await e.gateway.usage();
@@ -130,7 +124,6 @@ describe('폰 대화 끝에서 끝: 폰 코어 → 게이트웨이(chat 범위) 
     e.provider.respondOutput = message({ kind: 'smalltalk', text: '네.', show: [], ask: null });
     for (let i = 1; i <= 20; i++) {
       reply(await e.chat.send(`한빛전자 ${'가'.repeat(i)}`));
-      // 계정 단위 분당 L2 한도(10회)에 닿지 않게 사람이 말하는 간격으로 보낸다
       e.s.clock.advance(20_000);
     }
     e.provider.queue = [message({ kind: 'smalltalk', text: '네.', show: [], ask: null }), message({ summary: '[NAME_1] 이야기를 나눴다.' }), message({ kind: 'smalltalk', text: '네.', show: [], ask: null })];
@@ -146,7 +139,6 @@ describe('폰 대화 끝에서 끝: 폰 코어 → 게이트웨이(chat 범위) 
   it('폰을 정지하면 받아 둔 토큰이 있어도 바로 끊긴다(chat.device_suspended), 공급사가 실패하면 다시 시도할 수 있는 오류', async () => {
     e.provider.respondOutput = message({ kind: 'smalltalk', text: '네.', show: [], ask: null });
     reply(await e.chat.send('안녕'));
-    // 판정 호출이 먼저 실패해도(반응 없이 늘 하던 대로) 대화 호출이 실패해야 턴이 실패한다
     e.provider.failures = ['fatal', 'fatal'];
     const f = await e.chat.send('안녕하세요');
     assert.deepEqual([f.kind, f.kind === 'unavailable' && [f.code, f.retry]], ['unavailable', ['chat.unavailable', true]]);

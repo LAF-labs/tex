@@ -1,7 +1,3 @@
-// 서류 유효기간 규칙표(D07 validity_rules, §3)와 갱신 일정(D07 schedules, D10). 데몬(@sax/daemon #98)이 엔진 읽기 질의(#91 data-service,
-// daemon.snapshot)로 받는 행 모양을 그대로 낸다: ValidityRuleRow·ScheduleRow(@sax/daemon과 구조가 같다. db는 daemon을 가져오지 않는다).
-// Phase 1 데몬은 notify뿐이다(D10 §2). semi_auto·auto 행은 동의 객체(B-27)가 결속될 때만 저장하고, 데몬은 그래도 notify로 강등한다.
-// 값·비밀은 없다: 서류 종류·날짜·창·동의 서명만.
 import { randomUUID } from 'node:crypto';
 import type { Db } from './open.ts';
 import { ValidationError } from './repo.ts';
@@ -11,8 +7,6 @@ const need = (ok: boolean, code: string): void => {
 };
 type Row = Record<string, unknown>;
 
-// ---- 유효기간 규칙표 ----
-
 export type ValidityRuleKind = 'fixed_days' | 'fiscal_year_rule' | 'none';
 
 /** D07 validity_rules 한 행(@sax/daemon ValidityRuleRow와 같은 모양) */
@@ -21,7 +15,6 @@ export interface ValidityRuleRow {
   defaultDays: number | null;
   rule: ValidityRuleKind;
   userOverrideDays: number | null;
-  /** 만료 n일 전 알림(쉼표 구분, 큰 것부터). D07 기본 '7,1' */
   remindDays: string;
 }
 
@@ -79,7 +72,6 @@ export class ValidityRuleRepo {
     this.db = db;
   }
 
-  /** 초기값 + 저장된 행(저장된 행이 이긴다). 종류 이름 순 */
   list(): ValidityRuleRow[] {
     const stored = new Map((this.db.prepare('SELECT * FROM validity_rules').all() as Row[]).map((r) => [String(r.doc_type), toRule(r)]));
     const base = DEFAULT_VALIDITY_RULES.map((d) => stored.get(d.docType) ?? { ...d, userOverrideDays: null, remindDays: DEFAULT_REMIND_DAYS });
@@ -94,7 +86,6 @@ export class ValidityRuleRepo {
     return d ? { ...d, userOverrideDays: null, remindDays: DEFAULT_REMIND_DAYS } : null;
   }
 
-  /** 사용자 유효 일수(1~3650일). null이면 초기값으로 되돌린다. 만료 개념이 없는 종류(none)는 거부 */
   setOverrideDays(docType: string, days: number | null): ValidityRuleRow {
     need(days === null || (Number.isSafeInteger(days) && days >= 1 && days <= 3650), 'bad_override_days');
     const cur = this.known(docType);
@@ -102,13 +93,11 @@ export class ValidityRuleRepo {
     return this.put({ ...cur, userOverrideDays: days });
   }
 
-  /** 알림 날(만료 n일 전). '7,1' 또는 [7, 1] */
   setRemindDays(docType: string, remindDays: string | readonly number[]): ValidityRuleRow {
     const cur = this.known(docType);
     return this.put({ ...cur, remindDays: normalizeRemindDays(remindDays) });
   }
 
-  /** 사용자가 바꾼 것을 지우고 초기값으로 */
   reset(docType: string): boolean {
     return this.db.prepare('DELETE FROM validity_rules WHERE doc_type = ?').run(docType).changes > 0;
   }
@@ -129,8 +118,6 @@ export class ValidityRuleRepo {
   }
 }
 
-// ---- 갱신 일정 ----
-
 export type ScheduleMode = 'notify' | 'semi_auto' | 'auto';
 
 /** D07 schedules 한 행(@sax/daemon ScheduleRow와 같은 모양 + lastRunId) */
@@ -140,9 +127,7 @@ export interface ScheduleRow {
   docType: string;
   playbookId: string;
   mode: ScheduleMode;
-  /** {"days":[0..6],"from":"HH:MM","to":"HH:MM"}(한국 시간, 0 = 일요일) */
   windowJson: string | null;
-  /** B-27 동의 객체 JSON. notify는 동의가 필요 없어 null */
   consentJson: string | null;
   nextDueAt: string | null;
   lastRunId: string | null;
@@ -169,14 +154,12 @@ export interface ScheduleConsent {
 }
 
 export interface ScheduleInput {
-  /** 빼면 새 id */
   id?: string;
   profileId: string;
   docType: string;
   playbookId: string;
   mode?: ScheduleMode;
   window?: ScheduleWindow;
-  /** semi_auto·auto면 필수(이 일정의 profileId·docType·playbookId와 결속) */
   consent?: ScheduleConsent | null;
   enabled?: boolean;
   nextDueAt?: string | null;
@@ -230,7 +213,6 @@ export class ScheduleRepo {
     this.db = db;
   }
 
-  /** 프로필의 일정(서류 종류 → id 순). profileId를 빼면 전부 */
   list(profileId?: string): ScheduleRow[] {
     const rows = profileId
       ? this.db.prepare('SELECT * FROM schedules WHERE profile_id = ? ORDER BY doc_type, id').all(profileId)
@@ -243,7 +225,6 @@ export class ScheduleRepo {
     return r ? toSchedule(r) : null;
   }
 
-  /** 새로 넣거나(id 없음·없는 id) 바꾼다. 바꿀 때 빠진 칸은 그대로 둔다(mode를 notify로 내리면 동의는 지운다) */
   upsert(input: ScheduleInput): ScheduleRow {
     const cur = input.id ? this.get(input.id) : null;
     need(!cur || cur.profileId === input.profileId, 'schedule_profile_mismatch');
@@ -277,14 +258,12 @@ export class ScheduleRepo {
     return this.get(id)!;
   }
 
-  /** 다음 예정(데몬·엔진이 만료 계산 뒤 남긴다). null이면 미정 */
   setNextDue(id: string, nextDueAt: string | null): ScheduleRow {
     need(nextDueAt === null || ISO.test(nextDueAt), 'bad_next_due_at');
     need(this.db.prepare('UPDATE schedules SET next_due_at = ? WHERE id = ?').run(nextDueAt, id).changes > 0, 'schedule_not_found');
     return this.get(id)!;
   }
 
-  /** 이 일정으로 돈 마지막 실행(Phase 2 semi_auto부터. runs 행이 있어야 한다) */
   recordRun(id: string, runId: string): ScheduleRow {
     need(!!this.db.prepare('SELECT 1 FROM runs WHERE id = ?').get(runId), 'run_not_found');
     need(this.db.prepare('UPDATE schedules SET last_run_id = ? WHERE id = ?').run(runId, id).changes > 0, 'schedule_not_found');
@@ -295,8 +274,6 @@ export class ScheduleRepo {
     return this.db.prepare('DELETE FROM schedules WHERE id = ?').run(id).changes > 0;
   }
 }
-
-// ---- 데몬 스냅숏의 db 몫(엔진 daemon.snapshot이 문서·missingReport와 합친다) ----
 
 /** 설정 키(D07 §2 끝: 프로필마다) */
 export const DAEMON_SETTING_KEYS = {
@@ -320,9 +297,7 @@ export interface DaemonProfileInputs {
   validityRules: ValidityRuleRow[];
   schedules: ScheduleRow[];
   settings: DaemonSettings;
-  /** 보냈어요 표시가 있는 꾸러미 달(bundle_exports.sent_marked_at, 급여 기록 내보내기 'payroll:…'은 뺀다) */
   bundleSentPeriods: string[];
-  /** 사업용 카드 마지막 최신화 날짜(한국 날짜) */
   cardFetchedOn: string | null;
 }
 
@@ -350,7 +325,6 @@ export class DaemonSettingsRepo {
     else this.db.prepare('INSERT INTO settings (key, value_json) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json').run(key, JSON.stringify(value));
   }
 
-  /** 틀린 값이 저장돼 있으면 기본값으로 읽는다 */
   get(profileId: string): DaemonSettings {
     const k = DAEMON_SETTING_KEYS;
     const day = this.read(k.reminderDay(profileId));
@@ -366,7 +340,6 @@ export class DaemonSettingsRepo {
     };
   }
 
-  /** 빠진 칸은 그대로, undefined 아닌 null은 지움(기본값으로) */
   set(profileId: string, patch: { reminderDay?: number | null; halfYearWithholding?: boolean | null; fiscalYearEndMonth?: number | null; leadDays?: number | null }): DaemonSettings {
     const k = DAEMON_SETTING_KEYS;
     const int = (v: number | null | undefined, lo: number, hi: number, code: string) => need(v === undefined || v === null || (Number.isInteger(v) && v >= lo && v <= hi), code);

@@ -1,6 +1,3 @@
-// 푸시 공급사 어댑터(ADR-015: 공급사 와이어는 이 파일 한 곳). 보내는 것은 내용 없는 깨우기뿐이다(D08 §8.1, ADR-053):
-// iOS는 알림 푸시(문구는 앱 번들의 종류별 현지화 키, Notification Service Extension 없음), Android는 FCM data 메시지. 무음 푸시에 의존하지 않는다.
-// 기본은 MockPushSender(발송 없음). APNs는 토큰 플랫폼으로 주소를 고른다: apns_dev = 샌드박스(개발 빌드), apns = 운영(TestFlight·스토어, PUSH_PROVIDER=apns일 때만).
 import { createPrivateKey, sign, type KeyObject } from 'node:crypto';
 import http2 from 'node:http2';
 
@@ -108,7 +105,6 @@ export class ApnsSender implements PushSender {
       let reply = '';
       req.on('response', (h) => (status = Number(h[':status'])));
       req.on('data', (d: Buffer) => (reply = (reply + d.toString('utf8')).slice(0, 512)));
-      // 410 Unregistered, 400은 토큰 문제(BadDeviceToken·DeviceTokenNotForTopic)일 때만 무효. 그 밖 400(설정 오류)은 토큰을 지우지 않는다.
       req.on('end', () => resolve(status === 200 ? 'ok' : status === 410 || (status === 400 && /BadDeviceToken|DeviceTokenNotForTopic/.test(reply)) ? 'invalid' : 'retry'));
       req.on('error', () => resolve('retry'));
       req.on('close', () => resolve('retry'));
@@ -184,7 +180,7 @@ export class FcmSender implements PushSender {
       const t = await res.text().catch(() => '');
       return /UNREGISTERED|INVALID_ARGUMENT/.test(t) ? 'invalid' : 'retry';
     }
-    if (res.status === 401) this.access = { token: '', until: 0 }; // 접근 토큰 만료·회수: 다음에 새로 받는다
+    if (res.status === 401) this.access = { token: '', until: 0 };
     if (res.status === 429 || res.status >= 500) {
       const ra = Number(res.headers.get('retry-after'));
       this.backoffUntil = this.o.now() + Math.min(Number.isFinite(ra) && ra > 0 ? ra : 30, 300) * 1000;

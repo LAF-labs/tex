@@ -1,5 +1,3 @@
-// 대화 에이전트 main 쪽(apps/desktop/src/agent-chat.ts): 도구 루프·값 공간·슬롯 채우기·진행 표시·오류 문구.
-// 엔진 chat.step은 각본 함수(fakeStep)로 대신한다. 포트는 가짜이고, 목록 밖 이름을 읽으면 적어 둔다(준비·발급 길이 없음을 보인다).
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { CHAT_ADVICE_TEXT, type DomainCall, type ShownReply, type StepParams, type StepResult, type ToolOutput } from '@sax/engine';
@@ -78,7 +76,6 @@ class FakeDrafts {
   }
 }
 
-/** 목록 밖 이름을 읽으면 strays에 적고 undefined를 준다(던지면 AgentChat이 오류로 접어 가려진다). */
 function guarded<T extends object>(o: T, allowed: string[], strays: string[]): T {
   return new Proxy(o, {
     get(t, k, r) {
@@ -153,10 +150,6 @@ const agent = (r: Awaited<ReturnType<AgentChat['turn']>>) => {
   return a;
 };
 const won = (n: number) => `${n.toLocaleString('en-US')}원`;
-/**
- * 답 문장의 금액은 같이 보이는 표·카드의 값 가운데 하나다(부장 지시 2026-11-12: 숫자가 틀린 답이 가장 나쁜 실패).
- * 표: 제목의 금액, 행 합계와 그 공급가. 카드: 지금 장부의 카드 금액과 그 공급가·합계.
- */
 function amountsMatchShown(r: { text: string; show: Array<{ type: 'card'; runId: string } | { type: 'table'; title: string; rows: Array<{ total: number | null }> }> }) {
   const seen = new Set<string>();
   for (const x of r.show) {
@@ -285,7 +278,6 @@ describe('AgentChat 11턴', () => {
     assert.equal(t10.text, '그때는 공급가 1,000,000원, 합계 1,100,000원이었어요.');
     assert.deepEqual(t10.show.map((x) => x.type === 'table' && x.title), ['A상사 발급 기록 2건 · 공급가 3,000,000원 · 합계 3,300,000원'], '슬롯이 가리키는 표는 모델이 show에 넣지 않아도 보인다');
 
-    // 승인번호 슬롯: 원장 값을 main이 채운다(모델에는 슬롯만). 승인번호가 없는 행이면 지어내지 않고 표를 가리킨다.
     const t10a = agent(await say(a, '승인번호 알려줘', () => reply({ text: `가장 최근 건 승인번호는 {${hist}.first.approvalNo}예요.` })));
     assert.equal(t10a.text, '가장 최근 건 승인번호는 20261015-41000012-00000001이에요.', '조사도 받침에 맞춘다');
     const t10b = agent(await say(a, '맨 처음 건은?', () => reply({ text: `그 건 승인번호는 {${hist}.last.approvalNo}예요.` })));
@@ -451,7 +443,6 @@ describe('AgentChat 초안 도구', () => {
     );
     assert.deepEqual(drafts.creates, []);
     drafts.setupGap = true;
-    // 금액·품목이 다 비어 있어도 등록이 빠졌다는 것을 먼저 말한다(묻고 나서 막히지 않게)
     const r = await say(
       a,
       'C테크에 끊어줘',
@@ -574,7 +565,6 @@ describe('AgentChat 진행 표시·오류', () => {
       assert.deepEqual(r, { kind: 'unavailable', code, text: AGENT_ERROR_TEXT[code]!.text, retry }, code);
     }
     assert.equal(AGENT_ERROR_TEXT['chat.turn_limit']!.text, '한 번에 하기엔 일이 많아요. 하나씩 나눠서 말씀해 주세요.');
-    // 모델 답을 못 받은 경우는 원인을 단정하지 않는다(U8-5): 인터넷·연결 탓 문구가 없다
     for (const c of ['chat.unavailable', 'chat.bad_response', 'chat.bad_tool_output']) {
       assert.equal(AGENT_ERROR_TEXT[c]!.text, AGENT_UNAVAILABLE_TEXT, c);
       assert.equal(AGENT_ERROR_TEXT[c]!.retry, true, c);
@@ -627,7 +617,6 @@ describe('AgentChat 낼 돈·돈 흐름(11 §2·§3)', () => {
     assert.deepEqual(t.show[0]!.type === 'table' && t.show[0]!.rows.map((r) => [r.counterparty, r.total]), [['들어온 돈', 3_300_000], ['나간 돈', 1_200_000], ['차이', 2_100_000], ['지금 잔액', null], ['앞으로 한 달 받을 돈', 550_000], ['앞으로 한 달 낼 돈', 440_000]]);
     const t2 = agent(await say(a, '잔액은?', () => reply({ text: '지금 잔액은 {r1.cash.balance}예요.' })));
     assert.equal(t2.text, AGENT_CASH_MISSING_TEXT);
-    // 돈 흐름 결과에 행 슬롯을 쓰면 채우지 않는다
     const t3 = agent(await say(a, '몇 건?', () => reply({ text: '{r1.count}건이에요.' })));
     assert.equal(t3.text, AGENT_SLOT_MISSING_TEXT);
     cash = null;

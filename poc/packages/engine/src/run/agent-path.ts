@@ -1,12 +1,3 @@
-// 에이전트 길 기억(발급 사다리 0원 칸, 2026-11-16): 브라우저 에이전트(jev, 걸음마다 약 11원)가 막힌 묶음을 끝냈고 돌아간 스크립트의 확인 스텝까지
-// 통과하면, 그 걸음들(동작·요소의 역할·접근성 이름·DOM id·값토큰)을 PC에 남긴다. 다음에 같은 스텝이 막히면 판정·에이전트·위치 찾기 전에
-// 그 걸음을 모델 없이 그대로 다시 걷는다(0원). 한 걸음이라도 요소가 없거나 가드가 거부하면 그 길을 버리고 원래 사슬로 간다.
-// 지키는 것:
-// - 값은 남기지 않는다. 값토큰({{inputs.…}})만 남기고, 다시 걸을 때 이번 실행 값으로 바꾼다(BrowserAgent와 같다).
-// - 다시 걷는 동작도 BrowserAgent.exec 하나를 지난다: 실행 사본 사전 임시 항목 → resolveTarget(유일·역할·이름) → GuardedActuator(R-A1·R-A2·정책·비밀 칸),
-//   커밋 요소 거부, 금지 이름 단추는 그 걸음의 목표 click 스텝이 검토된 항목일 때만. 에이전트가 할 수 없던 것은 다시 걷기도 못 한다.
-// - 묶음이 달라지면(패키지가 목표 스텝·항목을 고치면) 길 지문이 달라져 쓰지 않는다. 기한 HEAL_TTL_MS, 패키지당 PATH_MAX개.
-// - 돌아간 확인 스텝(대화상자 대기·되읽기·게이트 본문 대조 등)이 통과해야만 남긴다. 그 확인은 늘 스크립트가 한다.
 import { createHash } from 'node:crypto';
 import { entryFingerprint, HEAL_TTL_MS } from '../core/heal-memory.ts';
 import type { SelectorDict } from '../core/types.ts';
@@ -29,7 +20,6 @@ export interface AgentPath {
   resume: string;
   actions: PathAction[];
   at: number;
-  /** 다시 걷기 연속 실패 수(PATH_MISS_LIMIT이면 버린다). */
   misses?: number;
 }
 
@@ -52,7 +42,6 @@ export class AgentPathMemory {
   private readonly now: () => number;
   private readonly journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
   private file: AgentPathFile;
-  /** 에이전트가 done을 낸 길(돌아간 확인 스텝이 통과해야 남긴다). */
   private pending: { stepId: string; path: AgentPath } | null = null;
   private replayed: { stepId: string; resume: string } | null = null;
 
@@ -69,7 +58,6 @@ export class AgentPathMemory {
     this.file = f && f.v === 1 && f.paths && typeof f.paths === 'object' ? f : { v: 1, paths: {} };
   }
 
-  /** 이 스텝·지문의 쓸 수 있는 길. */
   get(stepId: string, sig: string): AgentPath | null {
     const p = this.file.paths[stepId];
     if (!p || p.sig !== sig || !Array.isArray(p.actions) || !p.actions.length || p.actions.length > PATH_MAX_ACTIONS) return null;
@@ -81,13 +69,11 @@ export class AgentPathMemory {
     return !!this.file.paths[stepId];
   }
 
-  /** 에이전트가 묶음을 끝냈다(done). 돌아간 스텝이 통과하면 confirmed가 남긴다. */
   propose(stepId: string, path: Omit<AgentPath, 'at'>): void {
     if (!path.actions.length || path.actions.length > PATH_MAX_ACTIONS) return;
     this.pending = { stepId, path: { ...path, at: this.now() } };
   }
 
-  /** 실행기 step.finished(코드 없음). 돌아간 확인 스텝이 통과했으면 길을 남긴다. */
   confirmed(stepId: string): void {
     const r = this.replayed;
     if (r?.resume === stepId) {
@@ -111,7 +97,6 @@ export class AgentPathMemory {
     this.flush();
   }
 
-  /** 다시 걷기가 실패했다: 연속 PATH_MISS_LIMIT번이면 버린다. 버렸으면 true. */
   missed(stepId: string, code: string): boolean {
     const p = this.file.paths[stepId];
     if (!p) return false;
@@ -125,7 +110,6 @@ export class AgentPathMemory {
     return false;
   }
 
-  /** 돌아간 스텝이 실패했거나 다시 걷기가 거듭 실패했다: 버린다. */
   forget(stepId: string, code: string): void {
     if (this.pending?.stepId === stepId) this.pending = null;
     if (!this.file.paths[stepId]) return;
@@ -134,12 +118,10 @@ export class AgentPathMemory {
     this.flush();
   }
 
-  /** 다시 걸은 길: 돌아간 스텝이 실패하면 버린다. */
   replaying(stepId: string, resume: string): void {
     this.replayed = { stepId, resume };
   }
 
-  /** 실행기 step.finished(코드 있음): 돌아간 스텝이 실패했다. 기다리던 길은 남기지 않고, 다시 걸은 길은 버린다. */
   failed(stepId: string, code: string): void {
     if (this.pending && this.pending.path.resume === stepId) this.pending = null;
     const r = this.replayed;

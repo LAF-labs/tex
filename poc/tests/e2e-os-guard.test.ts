@@ -1,5 +1,3 @@
-// 시험이 대표 화면에 실제 Finder·브라우저·대화상자를 띄우지 않는다(대표 보고 2026-11-13).
-// 모든 Electron e2e 입구는 os-guard를 맨 먼저 불러오고, Finder를 앞으로 올리는 headful 검사는 플래그 아래에서 창을 만들지 않는 activate만 쓴다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
@@ -19,7 +17,7 @@ describe('e2e는 실제 OS 창을 띄우지 않는다', () => {
       const s = read(f);
       if (!/from 'electron'/.test(s)) continue;
       const first = s.split('\n').find((l) => l.startsWith('import '));
-      assert.equal(first, "import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)", f);
+      assert.equal(first, "import './os-guard.js';", f);
     }
   });
   it('Finder를 앞으로 올리는 검사는 플래그 아래에서만, 창을 만드는 open -a는 쓰지 않는다', () => {

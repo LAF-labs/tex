@@ -1,4 +1,3 @@
-// M7-8 사진 봉투 퍼징: 와이어 바이트 변이·구조 변이·무작위 수신 순서에서 예외 없이 거르고, 틀린 사진을 저장하지 않는다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
@@ -116,8 +115,8 @@ describe('PC 수신 큐 무작위 순서', () => {
       else if (r < 0.9) {
         const idx = ri(p.o.chunkCount);
         let data = p.j.subarray(idx * RECEIPT_CHUNK, Math.min(p.j.length, (idx + 1) * RECEIPT_CHUNK)).slice();
-        if (rnd() < 0.1) data[ri(data.length)] ^= 0xff; // 내용 변조
-        if (rnd() < 0.05) data = data.subarray(0, Math.max(1, data.length - 1)); // 크기 변조
+        if (rnd() < 0.1) data[ri(data.length)] ^= 0xff;
+        if (rnd() < 0.05) data = data.subarray(0, Math.max(1, data.length - 1));
         await q.handle(ch, mk('receipt.chunk', { msgId: p.o.msgId, index: idx, data: b64(data) }));
       } else await q.handle(ch, mk('receipt.chunk', { msgId: ulid(), index: ri(86), data: b64(randomBytes(10)) }));
       assert.ok(q.assembling <= 3);

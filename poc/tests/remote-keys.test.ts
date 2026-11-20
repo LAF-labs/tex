@@ -1,6 +1,3 @@
-// 데스크톱 DesktopKeys ↔ 금고 crypto.*(apps/desktop/src/remote-keys.ts vaultDesktopKeys, remote-ports.ts VaultKeysFactory, D05 §5.1·D08 §4.2·§6).
-// 실제 금고 서비스의 control 포트(main이 쥔 포트)로 붙여, @sax/remote의 받는 쪽 검증기가 금고 키로 만든 결과를 받는지 본다.
-// 개인키는 금고 안에만 있다: 어댑터는 rpc만 부르고, 용도 허용 목록 밖·형식이 틀린 결과는 거부한다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -57,7 +54,6 @@ describe('vaultDesktopKeys(금고 control 포트)', () => {
       assert.deepEqual(k.aik.publicKey, pk.aik);
       assert.deepEqual(k.kvPublic(), pk.kv);
       assert.deepEqual(k.qdPublic, pk.qd);
-      // kvPublic은 사본(바꿔도 다음 값이 그대로)
       k.kvPublic().fill(0);
       assert.deepEqual(k.kvPublic(), pk.kv);
     } finally {
@@ -119,7 +115,6 @@ describe('vaultDesktopKeys(금고 control 포트)', () => {
       const outer = await sealXfer(x, vm, k.qdPublic, 3);
       const opened = await openXfer(outer, { hpkeOpen: k.hpkeOpen, pairId, phoneVm: vm.publicKey, mbxEpoch: 3, now: NOW });
       assert.deepEqual(opened, x);
-      // 다른 우편함 세대(aad)·다른 기기 Vm은 열리지 않는다
       assert.equal(await openXfer(outer, { hpkeOpen: k.hpkeOpen, pairId, phoneVm: vm.publicKey, mbxEpoch: 4, now: NOW }), null);
       assert.ok(v.calls.includes('crypto.hpkeOpen'));
     } finally {
@@ -141,7 +136,6 @@ describe('vaultDesktopKeys(금고 control 포트)', () => {
       await assert.rejects(k.noise.dh(new Uint8Array(32), 'SAX-other-v1' as never), /bad_params/);
       await assert.rejects(k.hpkeOpen({ enc: new Uint8Array(32), ct: new Uint8Array(32), info: new TextEncoder().encode('SAX-other-v1'), aad: new Uint8Array(0) }), /bad_params/);
       assert.deepEqual(v.calls, [], '금고에 닿지 않았다');
-      // 금고 규칙도 그대로(낮은 차수 점)
       await assert.rejects(k.noise.dh(new Uint8Array(32), CTX.pair), /bad_point/);
     } finally {
       await v.close();

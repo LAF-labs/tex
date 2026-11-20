@@ -1,5 +1,3 @@
-// M2-4 D Playwright 드라이버: PageReader·원시 Actuator·이벤트 배선·페이지 세션 CDP 탭.
-// 실제 금고 중계 + Chrome(headless) + 로컬 픽스처(127.0.0.1). 실제 포털 접속 없음.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fsp from 'node:fs/promises';
@@ -243,20 +241,17 @@ describe('Playwright 드라이버(금고 중계 + Chrome)', () => {
     try {
       await s.raw.goto(`${fx.origin}/form`);
       assert.ok(s.interceptor!.hosts.includes(`http://127.0.0.1:${new URL(fx.origin).port}`), s.interceptor!.hosts.join(','));
-      // 가드 우회 시도: GuardedActuator를 거치지 않고 원시 드라이버로 누른다. 네트워크 층이 따로 막는다.
       assert.deepEqual(await s.raw.click(await s.res('f.alias')), { ok: true });
       await run.page.waitForFunction(() => document.getElementById('out')?.textContent === 'blocked', null, { timeout: 5000 });
       assert.equal(fx.posts.filter((p) => p.startsWith('/issue')).length, 0, '서버에 닿지 않음');
       assert.deepEqual(s.security, ['commit_guard.blocked_request']);
       assert.equal(s.enforcer.halted, 'commit_guard.blocked_request');
       assert.deepEqual(await s.act.click(await s.res('f.alert')), { ok: false, code: 'commit_guard.blocked_request' }, '그 뒤 모든 동작 거부');
-      // 커밋이 아닌 요청과 Playwright 자체 동작은 그대로(Fetch 이벤트를 Playwright에 넘기지 않아도 깨지지 않음)
       assert.equal(await run.page.evaluate(() => fetch('/next').then((r) => r.status)), 200);
       assert.ok(s.journal.some(([t]) => t === 'commit_guard.unclassified') === false, '알려진 요청은 미분류 아님');
     } finally {
       await s.wiring.dispose();
     }
-    // 배선을 걷으면 Fetch도 내려 이후 실행에 남지 않는다
     assert.equal(await run.page.evaluate(() => fetch('/issue', { method: 'POST', body: 'x' }).then((r) => r.status)), 200);
   });
 

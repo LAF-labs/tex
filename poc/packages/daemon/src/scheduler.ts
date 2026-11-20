@@ -1,9 +1,3 @@
-// 데몬 스케줄러(D10 §3, notify 모드). main 프로세스가 1분마다 tick()을 부른다. 모든 바깥 일은 주입한 포트로만 한다.
-//   DaemonClock  — 지금 시각(시험은 가짜 시계)
-//   DaemonSource — 엔진 읽기 전용 질의로 모은 스냅숏(main은 DB 키가 없다). 데몬은 DB·네트워크·금고를 직접 만지지 않는다
-//   DaemonSink   — 알림 출력(데스크톱 main: OS 알림 + 이번 달 판 새로 그리기 + 폰 릴레이 큐). 데몬은 받는 쪽이 무엇인지 모른다
-//   DaemonStateStore — 억제 기록·시계 가드 저장(값 없음: 알림 id·날짜·시각만)
-// 실행 요청은 없다. Phase 1 데몬 효과는 알림뿐이다(ADR-026, D03 §12 R-D1의 issue_document 실행도 Phase 2 semi_auto).
 import { POLICY_POLL_MIN, policyFreshness, statusFreshness, type Policy, type PolicyFreshness, type RegistryStatus, type StatusFreshness } from '@sax/engine/core';
 import type { DaemonReason } from './consent.ts';
 import type { DaemonNotification } from './notification.ts';
@@ -38,9 +32,7 @@ export const DAEMON_POLICY_FALLBACK: Readonly<Pick<Policy['daemon'], 'windowJitt
  * `{ policy: { expiresAt: '2026-11-09T00:00:00Z', daemon: policy.daemon }, status: { issuedAt, expiresAt }, profiles: [{ profileId, documents: DocumentRepo.list(), validityRules: [], schedules: [], settings: { reminderDay: 5, halfYearWithholding: false }, bundleSentPeriods: ['2026-09'], missing: missingReport({ month: bundlePeriod(today, 5, false)?.period }) ?? null, cardFetchedOn: '2026-10-20' }] }`
  */
 export interface DaemonSnapshot {
-  /** 엔진이 가진 마지막 유효 정책(서명·클램프를 거친 것) */
   policy: Pick<Policy, 'expiresAt' | 'daemon'> | null;
-  /** 마지막 유효 레지스트리 status */
   status: Pick<RegistryStatus, 'issuedAt' | 'expiresAt'> | null;
   profiles: readonly ProfileSnapshot[];
 }
@@ -56,15 +48,10 @@ export interface DaemonSink {
 }
 export interface DaemonState {
   v: 1;
-  /** 본 시각 중 가장 늦은 것(시계 가드, D07 clock_guard와 같은 뜻) */
   lastSeenAt: number | null;
-  /** 낸 알림 id → 낸 날(한국 시간) */
   delivered: Record<string, string>;
-  /** 주제(kind:docId 또는 kind:profileId) → 마지막으로 낸 날. 같은 주제는 하루 1회 */
   subjectDay: Record<string, string>;
-  /** 오늘 낸 수 */
   dayCount: { day: string; n: number };
-  /** 실패한 알림 id → 시도 수·다음 시도 시각·그날 */
   failures: Record<string, { n: number; retryAt: number; day: string }>;
 }
 export interface DaemonStateStore {
@@ -85,9 +72,7 @@ export class MemoryStateStore implements DaemonStateStore {
 }
 
 export interface DaemonGate {
-  /** 알림은 낸다(로컬 표시뿐이라 포털 접속이 없다) */
   notify: true;
-  /** 실행은 하지 않는다(Phase 1). 정책이 신선하지 않으면 Phase 2에서도 데몬 실행은 멈춘다(D12 §4) */
   run: false;
   policy: PolicyFreshness;
   status: StatusFreshness;
@@ -104,7 +89,6 @@ export interface TickResult {
   deferred: Array<{ id: string; reason: DeferReason }>;
   failed: Array<{ id: string; attempts: number }>;
   gate: DaemonGate | null;
-  /** 원인 코드(D16 daemon.*). 스냅숏을 연달아 못 읽으면 daemon.snapshot_failed */
   cause: 'daemon.snapshot_failed' | null;
 }
 
@@ -113,7 +97,6 @@ export interface SchedulerDeps {
   source: DaemonSource;
   sink: DaemonSink;
   store?: DaemonStateStore;
-  /** 하루 알림 상한(기본 DAEMON_MAX_NOTIFICATIONS_PER_DAY) */
   maxPerDay?: number;
 }
 
@@ -152,19 +135,16 @@ export class DaemonScheduler {
     this.startedAt = deps.clock.now();
   }
 
-  /** 절전 복귀·네트워크 복구·설정 변경(reminderDay 등) 뒤 main이 부른다: 다음 틱에 스냅숏을 다시 읽는다 */
   requestReload(): void {
     this.reloadRequested = true;
     this.nextLoadAt = 0;
   }
 
-  /** 1분 틱을 건다. 돌려준 함수로 멈춘다 */
   start(timers: TimerPort = { setInterval: (f, ms) => setInterval(f, ms), clearInterval: (h) => clearInterval(h as ReturnType<typeof setInterval>) }): () => void {
     const h = timers.setInterval(() => void this.tick(), DAEMON_TICK_MS);
     return () => timers.clearInterval(h);
   }
 
-  /** 지금 상태(시험·진단용 복사본) */
   snapshotState(): DaemonState {
     return structuredClone(this.state);
   }
@@ -183,9 +163,7 @@ export class DaemonScheduler {
 
   private async tickInner(at: number, base: (s: TickStatus, g?: DaemonGate | null, c?: TickResult['cause']) => TickResult): Promise<TickResult> {
     const st = this.state;
-    // 시계 가드: 본 시각보다 허용 폭 넘게 뒤면 아무것도 내지 않고 본 시각도 고치지 않는다
     if (st.lastSeenAt !== null && at < st.lastSeenAt - CLOCK_ROLLBACK_TOLERANCE_MS) return base('clock_rollback');
-    // 절전 복귀: 다시 읽되 실패 백오프는 지킨다(requestReload와 달리 nextLoadAt을 지우지 않는다)
     if (st.lastSeenAt !== null && at - st.lastSeenAt > WAKE_GAP_MS) this.reloadRequested = true;
     st.lastSeenAt = Math.max(st.lastSeenAt ?? at, at);
 
@@ -212,7 +190,6 @@ export class DaemonScheduler {
     }
     const gate = daemonGate(snap, at);
     const pol = { ...DAEMON_POLICY_FALLBACK, ...(snap.policy?.daemon ?? {}) };
-    // 기동 직후 유예(policy.daemon.startupGraceMin): 막 켠 PC에서 알림이 쏟아지지 않게
     if (at - this.startedAt < pol.startupGraceMin * 60_000) {
       this.persist();
       return base('startup_grace', gate, cause);

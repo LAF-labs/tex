@@ -1,10 +1,3 @@
-// save_pdf 포트 구현(M2-3, D02 §4, D05 §3.3, D07 §1). 계약은 core/savepdf.ts PdfPort, 금고 쪽은 #164 protocol.ts "PDF 저장"이다.
-// - print·armDownload·disarmDownload는 금고 엔진 포트 RPC, awaitDownload는 금고 이벤트다. targetId(지금 포털 탭)는 여기서 채운다.
-//   pdf.print 성공 때 같은 fileId로 오는 download.completed는 버린다(무장하지 않았으면 받지 않는다).
-// - store: staging/<fileId>.pdf를 읽어(링크·특수 파일 거부) docparse 추출을 받아 보관함(DocumentService.import)에 넣고 staging 파일을 지운다.
-//   docparse는 main의 렌더러 샌드박스에서 돈다(ADR-014). 그래서 추출은 주입한다(RunService가 main에 잇는다).
-//   텍스트 층이 모자라 needsOcr면 OCR로 한 번 더 읽고 final로 다시 넣는다(사용자 가져오기와 같은 길).
-// - 실패 사유는 열거 코드만 돌려준다. fileId·문서 id·파일 내용은 저널·로그에 남기지 않는다(⑦).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ValidationError } from '@sax/db';
@@ -27,21 +20,12 @@ export interface PdfDocuments {
 
 export interface VaultPdfInput {
   vault: PdfVault;
-  /** 지금 실행 탭의 금고 targetId(connectRunBrowser가 준 값). */
   targetId(): string;
-  /** 금고 staging 폴더(paths.staging). */
   staging: string;
   documents: PdfDocuments;
-  /** docparse 추출(main 샌드박스). ocr: true면 OCR로 읽는다. artifact가 있으면 쓰지 않는다. */
   extract?(bytes: Uint8Array, o: { ocr: boolean }): Promise<PdfText>;
-  /**
-   * 실행 산출물로 바로 보관(DocumentService.importRunArtifact): 방금 발급한 서류라 종류를 알고 글자를 읽지 않는다.
-   * 제품 엔진은 docparse를 main에 부를 통로가 없어 이 길을 쓴다(entry.ts). 있으면 extract·documents.import보다 먼저다.
-   */
   artifact?(bytes: Uint8Array, o: { runId: string; docType: string }): Promise<{ id: string }>;
-  /** 금고 PDF 상한과 같다(15 MiB). */
   maxBytes?: number;
-  /** pdf.print 응답 상한(기본 PRINT_TIMEOUT_MS). 넘으면 timeout으로 실패한다(발급 뒤 사후 스텝이 무한정 멈추지 않게). */
   printTimeoutMs?: number;
   setTimer?: (fn: () => void, ms: number) => () => void;
 }
@@ -58,7 +42,6 @@ const defaultTimer = (fn: () => void, ms: number) => {
 
 export class VaultPdfPort implements PdfPort {
   private readonly i: VaultPdfInput;
-  /** 무장한 다운로드의 결과(무장 뒤 첫 이벤트 1건). 무장 전 이벤트는 버린다. */
   private pending: { result: PdfFileResult | null; wake: (() => void) | null; off: () => void } | null = null;
 
   constructor(i: VaultPdfInput) {
@@ -125,7 +108,6 @@ export class VaultPdfPort implements PdfPort {
     if (!STAGED_FILE_ID.test(r.fileId)) return { ok: false, reason: 'bad_file_id' };
     const file = path.join(this.i.staging, `${r.fileId}.pdf`);
     try {
-      // 경로를 두 번 따라가지 않는다: 확인한 파일과 연 파일이 같은지(bigint dev·ino) 보고 그 핸들에서 상한까지만 읽는다.
       const read = await readRegularFile(file, this.i.maxBytes ?? MAX_BYTES);
       if (!read.ok) {
         if (read.reason === 'missing') return { ok: false, reason: 'staged_missing' };

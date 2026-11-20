@@ -1,5 +1,3 @@
-// 새 PC 연결의 main 쪽 흐름(apps/desktop/src/remote-pclink.ts, ADR-048 결정 3, D08 §4.3): 가장자리 경우를 가짜 우편함으로 본다.
-// 실제 계정 서비스·금고에 붙인 끝에서 끝 시험은 desktop-remote-cloud.test.ts에 있다.
 import assert from 'node:assert/strict';
 import { hkdfSync } from 'node:crypto';
 import { describe, it } from 'node:test';
@@ -11,14 +9,12 @@ import type { DeviceManagerSession } from '../apps/desktop/src/remote-devices.ts
 import { PCLINK_RESTART_MS, PcLinkHost, PcLinkJoin } from '../apps/desktop/src/remote-pclink.ts';
 import type { AccountClient, DeviceAuth, PcLinkRequest, PcLinkVault, ServerDevice } from '../apps/desktop/src/remote-ports.ts';
 
-/** RK → AIK 시드(D08 §3, 금고의 aikSeedFromRk와 같은 식). */
 const aikSeed = (rk: Uint8Array) => new Uint8Array(hkdfSync('sha256', rk, new Uint8Array(0), 'aik', 32));
 
 const fail = (code: string): never => {
   throw Object.assign(new Error(code), { code });
 };
 
-/** 계정 서비스의 연결 우편함 대역(순서 규칙은 서버와 같다). calls에 부른 메서드를 남긴다. */
 function mailbox() {
   const devices: ServerDevice[] = [];
   const links = new Map<string, { hello: PcLinkHello; challenge: PcLinkChallenge | null; reveal: PcLinkReveal | null; grant: PcLinkGrant | null }>();
@@ -80,7 +76,6 @@ function mailbox() {
   return { client, devices, links, calls, serverList: () => list };
 }
 
-/** 쓰던 PC: 계정 열쇠(RK)에서 나온 AIK, 목록, 금고 대역(sealRk). */
 async function oldPc(m: ReturnType<typeof mailbox>, now: () => number) {
   const rk = randomBytes(32);
   const aik = softSigner(aikSeed(rk), AIK_PURPOSES);
@@ -121,7 +116,6 @@ async function oldPc(m: ReturnType<typeof mailbox>, now: () => number) {
   return { rk, aik, deviceId, host, session, logs, records, seals: () => seals, failSeal: (e: Error | null) => void (sealError = e), list: () => list, setList: (l: DeviceListJson) => void (list = l) };
 }
 
-/** 새 PC: 기기 키와 금고 대역(넘겨받기 키는 메모리, importRk는 AIK 대조). */
 function newPc(m: ReturnType<typeof mailbox>, aikPub: string, now: () => number) {
   const keys = { noise: softNoiseStatic(x25519Keygen().secretKey), vd: softSigner(ed25519Keygen().secretKey, VD_PURPOSES) };
   let link = x25519Keygen();
@@ -158,7 +152,6 @@ describe('새 PC 연결(main): 새 PC 쪽', () => {
     const j2 = await n.start();
     assert.equal(j2.deviceId, j1.deviceId);
     assert.deepEqual(m.calls, ['devicesBySession', 'pcLinkHello']);
-    // 폐기된 기록은 다시 쓰지 않는다
     m.devices.find((d) => d.deviceId === j1.deviceId)!.state = 'revoked';
     assert.notEqual((await n.start()).deviceId, j1.deviceId);
   });
@@ -178,7 +171,6 @@ describe('새 PC 연결(main): 새 PC 쪽', () => {
       await assert.rejects(j.poll(), { code: 'account.link_mismatch' });
       assert.equal(m.links.get(j.deviceId)!.reveal, null, '난수를 공개하지 않는다');
     }
-    // 쓰던 PC가 거절해 신청이 사라지면 account.link_not_found
     const j = await n.start();
     m.links.delete(j.deviceId);
     await assert.rejects(j.poll(), { code: 'account.link_not_found' });
@@ -201,13 +193,11 @@ describe('새 PC 연결(main): 새 PC 쪽', () => {
     assert.deepEqual([j.stage, j.code], ['wait', null]);
     assert.notEqual(m.links.get(j.deviceId)!.hello.commit, commit1);
     assert.equal(n.keysMade(), 2, '넘겨받기 키도 새로 만든다');
-    // 쓰던 PC: 앞 승인 상태는 버려지고 새 신청으로 보인다
     assert.deepEqual((await e.host.list()).map((x) => x.stage), ['new']);
     await e.host.begin(j.deviceId);
     await j.poll();
     assert.match(j.code!, /^\d{6}$/);
     assert.ok(code1);
-    // 서버가 쓰던 PC인 척 다른 열쇠를 봉인해 넣으면(목록·인증서는 진짜 AIK로 서명할 수 없으니 여기서는 봉인문만 바꾼다) 금고가 받지 않는다
     assert.equal((await e.host.confirm(j.deviceId, j.code!)).ok, true);
     const l = m.links.get(j.deviceId)!;
     const good = l.grant!;
@@ -218,7 +208,6 @@ describe('새 PC 연결(main): 새 PC 쪽', () => {
     assert.equal(j.stage, 'confirm');
     await assert.rejects(j.accept(), { code: 'account.link_mismatch' });
     assert.equal(n.rk(), null);
-    // 호출자는 여기서 연결을 끝낸다. 다시 신청하면(이미 목록에 있는 PC) 같은 기기 ID로 열쇠만 다시 받는다
     await j.cancel();
     const j2 = await n.start();
     assert.equal(j2.deviceId, j.deviceId);
@@ -250,7 +239,6 @@ describe('새 PC 연결(main): 쓰던 PC 쪽', () => {
     await assert.rejects(e.host.confirm(j.deviceId, j.code!), { code: 'account.link_state' });
     assert.ok(!m.calls.includes('pcLinkDrop'));
     assert.equal(e.seals(), 0);
-    // 새 PC가 다시 신청하면 처음부터
     t += PCLINK_RESTART_MS;
     await j.poll();
     await e.host.begin(j.deviceId);
@@ -263,7 +251,6 @@ describe('새 PC 연결(main): 쓰던 PC 쪽', () => {
     assert.ok(e.logs.includes('code_tries'));
     assert.equal(e.seals(), 0, '열쇠는 봉인하지 않았다');
     await assert.rejects(j.poll(), { code: 'account.link_not_found' });
-    // 형식이 틀린 6자리도 한 번으로 센다(금고·서버에 가지 않는다)
     const j2 = await n.start();
     await e.host.begin(j2.deviceId);
     await j2.poll();
@@ -275,7 +262,6 @@ describe('새 PC 연결(main): 쓰던 PC 쪽', () => {
     const e = await oldPc(m, () => 1);
     const n = newPc(m, e.session.aikPub, () => 1);
     const j = await n.start();
-    // 서버가 수신 키를 자기 키로 바꿨다(약속은 그대로)
     const l = m.links.get(j.deviceId)!;
     l.hello = { ...l.hello, Hx: b64(x25519Keygen().publicKey) };
     await e.host.begin(j.deviceId);
@@ -283,7 +269,6 @@ describe('새 PC 연결(main): 쓰던 PC 쪽', () => {
     assert.deepEqual(await e.host.list(), []);
     assert.ok(e.logs.includes('commit_mismatch'));
     assert.equal(m.links.size, 0);
-    // hello의 기기 ID가 경로와 다른 신청
     const j2 = await n.start();
     const other = pcLinkHello({ deviceId: uuid4(), noisePub: n.keys.noise.publicKey, signPub: n.keys.vd.publicKey, linkPub: x25519Keygen().publicKey }).hello;
     m.links.get(j2.deviceId)!.hello = other;
@@ -298,14 +283,12 @@ describe('새 PC 연결(main): 쓰던 PC 쪽', () => {
     const j = await n.start();
     await e.host.begin(j.deviceId);
     await j.poll();
-    // 서버가 목록을 거절(한도)
     const put = m.client.putDeviceList;
     m.client.putDeviceList = async () => fail('account.device_limit');
     await assert.rejects(e.host.confirm(j.deviceId, j.code!), { code: 'account.device_limit' });
     assert.equal(e.seals(), 0);
     assert.equal(e.list().entries.length, 1, '이 PC의 목록도 그대로다');
     m.client.putDeviceList = put;
-    // 승인 상태는 사라졌다. 새 PC가 다시 신청해 처음부터 한다
     assert.deepEqual(await e.host.list(), []);
     await j.cancel();
     const j2 = await n.start();
@@ -316,7 +299,6 @@ describe('새 PC 연결(main): 쓰던 PC 쪽', () => {
     assert.deepEqual(m.calls.filter((c) => c === 'putDeviceList' || c === 'pcLinkGrant'), ['putDeviceList', 'pcLinkGrant']);
     assert.equal(e.seals(), 1);
     assert.equal(m.serverList()!.entries.length, 2);
-    // 새 PC가 열쇠를 받지 못하고 끊겼다(목록에는 있다): 다시 신청하면 목록은 그대로 두고 열쇠만 다시 보낸다
     const j3 = await n.start();
     assert.equal(j3.deviceId, j2.deviceId);
     await e.host.begin(j3.deviceId);
@@ -327,12 +309,11 @@ describe('새 PC 연결(main): 쓰던 PC 쪽', () => {
     await j3.poll();
     await j3.accept();
     assert.deepEqual(n.rk(), e.rk);
-    // 목록의 PC가 3대면 이 PC에서 막는다(서버에 가기 전)
     let list = e.list();
     list = await addDevice(e.aik, list, { deviceId: uuid4(), role: 'desktop', noisePub: x25519Keygen().publicKey, signPub: ed25519Keygen().publicKey, registeredAt: 2 });
     e.setList(list);
     const n4 = newPc(m, e.session.aikPub, () => 1);
-    m.devices.length = 1; // 서버 쪽 한도는 따로 본다. 여기서는 이 PC의 목록 한도만
+    m.devices.length = 1;
     const j4 = await n4.start();
     await e.host.begin(j4.deviceId);
     await j4.poll();
@@ -347,20 +328,16 @@ describe('새 PC 연결(main): 쓰던 PC 쪽', () => {
     const j = await n.start();
     await e.host.begin(j.deviceId);
     await j.poll();
-    // 금고가 돌려주는 오류는 코드가 없다(2026-11-17: Electron에 없는 암호 이름으로 봉인이 실패했다)
     e.failSeal(new Error('Unknown cipher'));
     m.calls.length = 0;
     await assert.rejects(e.host.confirm(j.deviceId, j.code!), { code: 'account.failed' });
     assert.deepEqual(m.calls.filter((c) => c === 'putDeviceList' || c === 'pcLinkGrant'), ['putDeviceList'], '목록은 올라갔고 열쇠는 보내지 못했다');
     assert.deepEqual(e.records.at(-1), { result: 'account.failed', step: 'seal', cause: 'Unknown_cipher' });
-    // 신청은 사라지지 않고 6자리 칸으로 다시 보인다
     assert.deepEqual((await e.host.list()).map((r) => [r.deviceId, r.stage, r.triesLeft]), [[j.deviceId, 'code', 3]]);
-    // 다시 할 때 틀린 숫자는 받지 않고 횟수를 센다
     const wrong = j.code === '000000' ? '000001' : '000000';
     const bad = await e.host.confirm(j.deviceId, wrong);
     assert.equal(bad.ok, false);
     assert.deepEqual(bad.requests.map((r) => [r.stage, r.triesLeft]), [['code', 2]]);
-    // 보내는 단계에서 서버가 거절하면 step은 send, 원인은 서버 코드. 목록은 다시 올리지 않는다
     e.failSeal(null);
     const grant = m.client.pcLinkGrant;
     m.client.pcLinkGrant = async () => fail('account.link_state');
@@ -369,7 +346,6 @@ describe('새 PC 연결(main): 쓰던 PC 쪽', () => {
     assert.deepEqual(e.records.at(-1), { result: 'account.link_state', step: 'send', cause: 'account.link_state' });
     assert.ok(!m.calls.includes('putDeviceList'));
     m.client.pcLinkGrant = grant;
-    // 같은 6자리로 다시: 새 PC는 그대로 기다리고 있다가 열쇠를 받는다
     m.calls.length = 0;
     assert.equal((await e.host.confirm(j.deviceId, j.code!)).ok, true);
     assert.deepEqual(m.calls.filter((c) => c === 'putDeviceList' || c === 'pcLinkGrant'), ['pcLinkGrant']);
@@ -377,7 +353,6 @@ describe('새 PC 연결(main): 쓰던 PC 쪽', () => {
     await j.poll();
     await j.accept();
     assert.deepEqual(n.rk(), e.rk);
-    // 끝난 신청에 다시 6자리를 넣을 수는 없다
     await assert.rejects(e.host.confirm(j.deviceId, j.code!), { code: 'account.link_state' });
   });
 });

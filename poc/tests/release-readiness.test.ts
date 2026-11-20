@@ -1,5 +1,3 @@
-// release-readiness.json betaDistributable 채널별 판정표(팀장 결정 2026-11-06, apps/desktop/build/SIGNING-SETUP.md §4).
-// unsigned_build는 stable에서만 블로커, windows_run_unverified는 WIN-REALDEVICE.md 요약 표의 `설치·첫 실행` ✅가 있으면 해제.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 // @ts-expect-error 타입 선언 없는 .mjs 스크립트
@@ -16,7 +14,6 @@ const judge = (o: Record<string, unknown>): R => readiness({ ...base, ...o }) as
 const codes = (r: R) => r.blockers.map((b) => b.code);
 
 describe('betaDistributable 채널별 판정표', () => {
-  // [채널, 서명, 실기기 보고서, 기대 betaDistributable, 기대 블로커]
   const table: Array<[string, typeof unsigned | typeof signed, string | null, boolean, string[]]> = [
     ['beta', unsigned, PASS, true, []],
     ['beta', signed, PASS, true, []],

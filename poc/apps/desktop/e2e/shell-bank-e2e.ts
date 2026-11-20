@@ -1,7 +1,4 @@
-// 받을 돈 e2e(09 1단계): 내 계좌 등록(동의) → 홈택스 발급목록 파일 → 은행 거래내역 파일(HTML 표 .xls) 미리보기·넣기 → 자동/후보 맞춤 →
-// [맞아요]·별칭 기억 → [떼기]·[되돌리기] → [받았음 표시](현금) → 판 카드 → 대화 "못 받은 돈 있어?"(로컬 답, 해석기·모델을 부르지 않음).
-// 실행: electron apps/desktop/e2e-dist/shell-bank-e2e.js. 시연 fixture(임시 앱 폴더) 위에서 돈다. 파일은 모두 가짜 값으로 만든다(실제 은행·홈택스 접속 없음).
-import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
+import './os-guard.js';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
@@ -33,7 +30,6 @@ async function until(what: string, fn: () => Promise<boolean>, ms = 8_000): Prom
   console.log(`  (timeout: ${what})`);
   return false;
 }
-// SAX_E2E_SHOTS=<폴더>를 주면 판정에 쓸 화면을 PNG로 남긴다
 const SHOTS = process.env.SAX_E2E_SHOTS;
 const shot = async (name: string) => {
   if (!SHOTS) return;
@@ -47,12 +43,10 @@ const text = (sel: string) => js<string>(`[...document.querySelectorAll(${JSON.s
 const count = (sel: string) => js<number>(`document.querySelectorAll(${JSON.stringify(sel)}).length`);
 const setValue = (sel: string, v: string) => js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); e.value = ${JSON.stringify(v)}; e.dispatchEvent(new Event('input')); e.dispatchEvent(new Event('change')); })()`);
 
-// 해석기·대화 대역: 받을 돈 질문이 여기에 오면 안 된다(로컬 규칙으로 답한다)
 const seen: string[] = [];
 const resolver: IntentResolver = { async resolve(t) { seen.push(t); return { route: { outcome: 'unknown', via: 'model' }, fallback: null }; } };
 const chatter: ChatResponder = { async respond(t) { seen.push(t); return { reply: { reply: '무엇을 도와드릴까요?', kind: 'help', suggest: [], filtered: null } }; } };
 
-// 가짜 파일(실제 값 없음). pick 차례마다 다음 파일을 준다.
 const queue: Uint8Array[] = [];
 const enc = (s: string) => new TextEncoder().encode(s);
 const today = new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10);
@@ -66,7 +60,6 @@ async function flow() {
   check('시연 거래처 둘 이상', !!a && !!b, cps.length);
   if (!a || !b) return;
 
-  // 1) 받을 돈 화면 → 내 계좌 → 동의 → 계좌 추가
   await click('[data-view="bank"]');
   check('레일 "받을 돈" → D-09', await until('bank view', async () => (await count('section[data-view="bank"]')) === 1));
   await click('[data-bank-tab="accounts"]');
@@ -81,7 +74,6 @@ async function flow() {
   check('계좌 목록에 끝 4자리만', await until('account row', async () => (await text('[data-bank-account]')).includes('···6665') && !(await text('[data-bank-account]')).includes('7776665')));
   check('연결 칸: 파일만, 자동 연결 전엔 [최신화] 없음', (await count('[data-bank-account] [data-bank-link="file_only"]')) === 1 && (await count('[data-act="bank-refresh"]')) === 0);
 
-  // 2) 홈택스 발급목록 파일(CSV): 두 건, 기한 지남
   const ap = (i: number) => `20261005-41000000-${String(10000000 + i)}`;
   queue.push(enc(`작성일자,승인번호,발급일자,공급자사업자등록번호,상호,대표자명,공급받는자사업자등록번호,상호,대표자명,합계금액,공급가액,세액,품목명\n${daysAgo(40)},${ap(1)},${daysAgo(40)},1234567890,하늘상회,김하늘,${a.bizNo},${a.name},대표,"3,300,000","3,000,000","300,000",컨설팅\n${daysAgo(35)},${ap(2)},${daysAgo(35)},1234567890,하늘상회,김하늘,${b.bizNo},${b.name},대표,"1,100,000","1,000,000","100,000",납품\n`));
   gesture();
@@ -91,7 +83,6 @@ async function flow() {
   check('발급목록만 있고 거래내역이 없으면 2건 모두 "확인 못 함"(못 받음이라고 하지 않는다)', await until('unknown', async () => (await count('[data-bank-row][data-bank-status="unknown"]')) === 2 && (await text('[data-bank-row]')).split('확인 못 함').length === 3), await text('[data-bank-row]'));
   await shot('01-unknown-status');
 
-  // 3) 은행 거래내역(HTML 표 .xls): a에 330만(입금자 처음 보는 이름), b에 110만(상호 그대로), 이자
   queue.push(enc(`<html><head><meta charset="utf-8"></head><body><table><tr><td>계좌번호 : 999-88-7776665</td></tr><tr><th>거래일시</th><th>적요</th><th>기재내용</th><th>찾으신금액</th><th>맡기신금액</th><th>잔액</th></tr>
 <tr><td>${daysAgo(9).replace(/-/g, '.')} 10:00:00</td><td>타행</td><td>김철수</td><td>0</td><td>3,300,000</td><td>5,300,000</td></tr>
 <tr><td>${daysAgo(8).replace(/-/g, '.')} 11:00:00</td><td>이체</td><td>${b.name}</td><td>0</td><td>1,100,000</td><td>6,400,000</td></tr>
@@ -106,7 +97,6 @@ async function flow() {
   check('새 거래내역을 넣으면 "못 받음"으로 바뀐다', await until('unpaid', async () => (await count('[data-bank-row][data-bank-status="unpaid"]')) === 2), await text('[data-bank-row]'));
   await click('[data-bank-tab="review"]');
 
-  // 4) 후보 [맞아요] → 별칭 제안 → [기억하기]
   const candText = await text('[data-bank-txn]');
   check('김철수 입금의 후보는 a 건(처음 보는 이름)', candText.includes(a.name) && candText.includes('처음 보는 이름'), candText.slice(0, 300));
   await js(`[...document.querySelectorAll('[data-bank-txn]')].find((e) => e.textContent.includes('김철수')).querySelector('[data-act="bank-accept"]').click()`);
@@ -119,15 +109,12 @@ async function flow() {
   await js(`[...document.querySelectorAll('[data-bank-txn]')].find((e) => e.textContent.includes('777')).querySelector('[data-act="bank-ignore"]').click()`);
   check('확인할 입금이 비었다(이자는 상관없는 입금)', await until('review empty', async () => (await count('[data-bank-txn]')) === 0));
 
-  // 5) 받은 돈 → 상세 → [떼기] → [되돌리기]
   await click('[data-bank-tab="received"]');
   check('받은 돈 2건', await until('received', async () => (await count('[data-bank-row]')) === 2));
   await js(`[...document.querySelectorAll('[data-bank-row]')].find((e) => e.textContent.includes(${JSON.stringify(b.name)})).click()`);
   await until('detail', async () => (await count('[data-act="bank-detach"]')) === 1);
-  // 1280×860에서 상세를 열어도 목록 칸이 표 높이 그대로다(머리줄만 남지 않는다)
   S!.win.setContentSize(1280, 860);
   await sleep(150);
-  // 1280×860에서 상세를 열어도 목록의 줄마다 그 줄 가운데 점이 그 줄을 가리킨다(상세 카드가 덮지 않는다)
   const hits = await js<Array<{ row: string; hit: string | null }>>(`[...document.querySelectorAll('[data-view="bank"] [data-bank-row]')].map((r) => {
     r.scrollIntoView({ block: 'nearest' });
     const b = r.getBoundingClientRect();
@@ -143,7 +130,6 @@ async function flow() {
   await click('[data-act="bank-undo"]');
   check('[되돌리기] → 다시 받은 돈', await until('undone', async () => !(await text('[data-bank-row]')).includes(b.name)));
 
-  // 6) 받을 돈 하나 더(현금) → [받았음 표시]
   queue.push(enc(`작성일자,승인번호,공급받는자사업자등록번호,상호,합계금액\n${daysAgo(40)},${ap(3)},${a.bizNo},${a.name},"550,000"\n`));
   gesture();
   await sleep(30);
@@ -156,14 +142,12 @@ async function flow() {
   await click('[data-bank-tab="received"]');
   check('[받았음 표시] → 받음 · 직접(현금)', await until('cash', async () => (await text('[data-bank-row]')).includes('받음 · 직접(현금)')));
 
-  // 7) 거래처 상세에 계좌 칸
   await click('[data-view="cps"]');
   await until('cps', async () => (await count('[data-cp-row]')) > 0);
   await js(`document.querySelector('[data-cp-row="${a.id}"]').click()`);
   check('거래처 상세: 계좌·입금자 이름 칸, 기억한 별칭', await until('cp bank', async () => (await text('[data-bank-cp]')).includes('김철수')));
   check('[기억하기]로 남긴 별칭은 "확인에서 배움"으로 보인다', (await text('[data-bank-cp]')).includes('확인에서 배움'), await text('[data-bank-cp]'));
 
-  // 8) 대화: 받을 돈 화면이 대화 문장을 가로채지 않는다(대화는 해석기·모델 길 하나)
   await click('[data-view="chat"]');
   await until('chat', async () => (await count('#composer')) === 1);
   for (const t of ['세금계산서 보냈어?', '직원 월급 줬어?', '부가세 냈어?', '못 받은 돈 있어?']) {

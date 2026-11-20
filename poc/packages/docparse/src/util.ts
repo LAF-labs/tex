@@ -1,5 +1,3 @@
-// 규칙 파서 공용: 글자 정리, 금액·날짜·사업자번호 읽기, 신뢰도 계산. 판정은 하지 않는다(값과 신뢰도만).
-
 /** NFC, 전각 숫자·기호 → 반각, 공백류 하나로 */
 export function normText(s: string): string {
   return s
@@ -56,7 +54,7 @@ export function isoDate(y: number, m: number, d: number): string | null {
   if (y < 100) y += 2000;
   if (y < 2000 || y > 2099 || m < 1 || m > 12 || d < 1 || d > 31) return null;
   const dt = new Date(Date.UTC(y, m - 1, d));
-  if (dt.getUTCMonth() !== m - 1) return null; // 2월 30일 같은 없는 날
+  if (dt.getUTCMonth() !== m - 1) return null;
   return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
@@ -72,7 +70,6 @@ export interface DateHit {
  */
 export function findDates(s: string, opts: { compactYmd?: boolean } = {}): DateHit[] {
   const out: DateHit[] = [];
-  // OCR이 날짜와 시각을 붙여 읽은 경우("2026-09-0109:00"): 날짜 끝에 공백을 넣는다(같은 길이를 유지하려 시각 앞 글자를 바꾸지 않는다)
   const t = normText(s).replace(/(\d{4}\s*[-./]\s*\d{1,2}\s*[-./]\s*\d{2})(?=\d{1,2}:\d{2})/g, '$1 ');
   const re = /(?<!\d)(\d{4}|\d{2})\s*(?:[-./]|년)\s*(\d{1,2})\s*(?:[-./]|월)\s*(\d{1,2})(?:\s*일|\.)?(?!\d)/g;
   for (let m = re.exec(t); m; m = re.exec(t)) {

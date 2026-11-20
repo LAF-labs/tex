@@ -1,5 +1,3 @@
-// save_pdf(M2-3, D02 §4 표·V-23, D05 §3.3): 금고 #164 계약(pdf.print → staging fileId) → 보관함. 엔진은 바이트·파일 이름을 보지 않는다.
-// 실제 홈택스·금고·Chrome 없음: PdfPort 가짜로 본다.
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';

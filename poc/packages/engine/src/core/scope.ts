@@ -1,12 +1,9 @@
-// 실행 중 값 참조(D02 §4.2): $inputs.X(경로 허용), $vars.X, $human.sN, $profile.X, $readback.F, $intent.id, $artifacts.X.
-// 비밀은 여기 오지 않는다($human.sN의 secret 종류는 금고에만 있다, V-20). 저널·로그에 값을 쓰지 않는다(⑦).
 
 export interface RunScope {
   inputs: Readonly<Record<string, unknown>>;
   profile: Readonly<Record<string, unknown>>;
   intentId: string | null;
   vars: Map<string, string>;
-  /** extract.readback:true로 만든 변수(readback 전용, D02 §4). */
   readbackOnly: Set<string>;
   human: Map<string, string>;
   readback: Map<string, string>;
@@ -30,7 +27,6 @@ export const isRef = (s: string): boolean => s.startsWith('$');
 
 const ROOTS = ['inputs', 'vars', 'human', 'profile', 'readback', 'intent', 'artifacts'] as const;
 
-/** 경로 한 마디: 이름 뒤에 배열 첨자(`items[0]`)를 둘 수 있다(스키마 valueRef 패턴). 그 밖의 모양은 null. */
 const SEGMENT = /^([A-Za-z0-9_]+)((?:\[\d{1,3}\])*)$/;
 
 function walk(v: unknown, path: string[]): unknown {

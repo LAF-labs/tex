@@ -1,5 +1,3 @@
-// 대화 에이전트 배선(apps/desktop/src/agent-wiring.ts): shell-app의 실행·장부·엔진을 AgentChat 포트로 좁힌다.
-// 원장 이력 → 발급 행(승인번호 있는 것만, KST 날짜), 초안 카드 모양, 초안 포트에 준비·발급이 없음, 사업장 미등록이면 만들지 않음.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { describe, it } from 'node:test';
@@ -17,7 +15,6 @@ describe('issuedRows: 원장 이력 → 발급 행', () => {
       { playbookId: 'hometax.invoice.issue', approvalNo: '20261031-1', documentId: 'doc-1', mailConfirmed: false, counterpartyId: 'cpA', counterpartyName: 'A상사', supply: 1_000_000, tax: 100_000, startedAt: '2026-10-31T15:00:00Z', finishedAt: '2026-10-31T15:30:00Z' },
       { playbookId: 'hometax.invoice.issue', approvalNo: null, counterpartyId: 'cpB', counterpartyName: 'B상사', supply: 500_000, tax: 50_000, startedAt: '2026-10-20T01:00:00Z', finishedAt: '2026-10-20T01:10:00Z' },
       { playbookId: 'hometax.invoice.issue', approvalNo: '20261020-2', mailConfirmed: true, counterpartyId: null, counterpartyName: null, supply: null, tax: null, startedAt: '2026-10-20T01:00:00Z', finishedAt: null },
-      // 민원증명 실행(PR #272)도 같은 원장 이력에 접수번호(approvalNo)가 있지만 세금계산서 발급 행이 아니다
       { playbookId: 'hometax.cert.biz_registration', approvalNo: '318-2026-2-1', counterpartyId: null, counterpartyName: null, supply: null, tax: null, startedAt: '2026-10-21T01:00:00Z', finishedAt: '2026-10-21T01:05:00Z' },
     ]);
     assert.deepEqual(rows, [

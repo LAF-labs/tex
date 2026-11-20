@@ -1,4 +1,3 @@
-// 발급 사다리(D03 §4.2).
 export * from './types.ts';
 export { ROUTES, routeSpec, branchOf } from './routes.ts';
 export { verdictOf, routeOfRow, API_PLAYBOOK, MANUAL_PLAYBOOK } from './verdict.ts';

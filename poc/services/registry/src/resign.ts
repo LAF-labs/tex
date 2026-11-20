@@ -1,12 +1,3 @@
-// 타임스탬프 자동 재서명(정리 cron, 팀장 결정 2026-11-06, D09 §8.2 "타임스탬프 역할 = 온라인 키").
-// - 대상: 폐기 목록(24시간), status(48시간), 정책 current·{ver}(48시간), 채널 인덱스(48시간, ADR-043), 채널 릴리스 매니페스트(7일), 투명성 로그 트리 헤드.
-//   릴리스는 판·파일·주소를 사람(release 키)이 서명하고 기간만 서버가 붙인다(부장 결정 2026-11-13: 13일마다 Touch ID를 받지 않는다).
-// - 내용은 바꾸지 않는다. 바뀌는 것은 신선도 필드(issuedAt·expiresAt·timestamp)뿐이다. 내용 서명(루트·정책·긴급·패키지 키)은 신선도 필드를
-//   서명 바이트에서 빼므로 그대로 유효하다(SIGNING.md §2·§4). 내용이 바뀌는 서명은 사람이 서명 의식(#149)으로 한다.
-// - 서명 입력은 엔진 timestampBody(JCS({contentDigest, monotonic, issuedAt, expiresAt}))이고, 게시 전에 게시 관문과 같은 검증
-//   (verifyRevoked·verifyStatus·verifyPolicy·verifyIndex, 저장본 대비 "같은 monotonic·같은 내용")을 통과해야 한다. 못 통과하면 다시 서명하지 않는다.
-//   인덱스가 가리키는 패키지는 다시 보지 않는다(게시 때 관문이 봤고 경로가 불변이다).
-// - 순서: 로그 항목을 먼저 쓰고(공개 전 기록) → 저장본이 그사이 바뀌지 않았는지 다시 읽어 보고 → 공개. 바뀌었으면(운영자 게시가 끼었으면) 이번 회차는 건너뛴다.
 import { sign, type KeyObject } from 'node:crypto';
 import { timestampBody } from '@sax/engine/core';
 import { sha256hex } from '@sax/svc-shared';
@@ -42,9 +33,7 @@ export interface ResignReport {
   revoked_keys: ResignOutcome;
   status: ResignOutcome;
   policy: ResignOutcome;
-  /** 채널마다(ADR-043). 인덱스가 없는 채널은 missing */
   index: Record<Channel, ResignOutcome>;
-  /** 채널 릴리스 매니페스트마다. 게시한 판이 없는 채널은 missing */
   release: Record<Channel, ResignOutcome>;
   head: 'resigned' | 'fresh';
 }
@@ -53,7 +42,6 @@ export interface ResignDeps {
   store: Store;
   trust: TrustRoot;
   log: TransparencyLog;
-  /** 타임스탬프 역할 키(logSigningKey: 공개키가 핀 고정 timestamp 키와 같음을 기동 때 확인했다) */
   signer: { keyId: string; key: KeyObject };
   now: () => number;
   onEvent?: (e: string) => void;
@@ -96,7 +84,6 @@ export async function resignAll(d: ResignDeps): Promise<ResignReport> {
   const now = d.now();
   const due = (doc: Freshness, ttl: number) => Date.parse(doc.expiresAt) - now < ttl / 2;
 
-  /** 로그 → 다시 읽어 그대로인지 → 공개. 대상 키 여럿(정책 {ver}·current)도 같은 바이트 */
   const publish = async (kind: LogKind, targets: { key: string; before: Buffer }[], next: unknown): Promise<ResignOutcome> => {
     const bytes = Buffer.from(JSON.stringify(next));
     for (const t of targets) await d.log.append({ kind, path: t.key, sha256: sha256hex(bytes) });
@@ -149,7 +136,6 @@ export async function resignAll(d: ResignDeps): Promise<ResignReport> {
     const cur = parse<SignedPolicy>(before);
     if (!cur || !before) return 'missing';
     if (!due(cur, RESIGN_TTL.policy)) return 'fresh';
-    // {ver}.json과 current.json은 같은 내용이어야 한다(ADR-023). 다르면 사람이 게시로 맞춘다(재서명이 고치지 않는다)
     const verKey = `policy/${cur.version}.json`;
     const verBefore = await d.store.get(verKey);
     const ver = parse<SignedPolicy>(verBefore);

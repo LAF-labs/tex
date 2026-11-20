@@ -1,5 +1,3 @@
-// 공급사 응답 → BundleAnswers. 위치가 아니라 질문 이름으로 조인한다(D04 §1).
-// 응답은 비신뢰 입력이다(C-24): 이름이 빠지거나 남거나 겹치면, 타입·값이 로컬 번들과 다르면 결과는 unknown이다.
 import type { Answer, BundleAnswers, UnknownReason } from './contract.ts';
 import type { BundleDef } from './bundle/types.ts';
 

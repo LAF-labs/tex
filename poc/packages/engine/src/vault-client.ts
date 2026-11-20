@@ -19,7 +19,6 @@ export class VaultClient {
   private nextId = 1;
   private readonly pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private readonly listeners = new Map<string, Set<(data: Json) => void>>();
-  /** 지금 Playwright에 붙어 있는 transport와 그것을 닫는 함수. */
   private current: { transport: CdpTransport; end: (reason: string) => void } | null = null;
 
   constructor(port: PortLike) {
@@ -37,7 +36,6 @@ export class VaultClient {
       } else if (msg.t === 'ev' && msg.name) {
         for (const fn of this.listeners.get(msg.name) ?? []) fn(msg.data ?? {});
       } else if (msg.t === 'cdp_closed') {
-        // 금고가 Chrome을 내렸다. Playwright에 transport가 닫혔다고 알린다(browser 'disconnected').
         this.current?.end('chrome closed');
       }
     });
@@ -58,7 +56,6 @@ export class VaultClient {
     return () => set!.delete(fn);
   }
 
-  /** 다음 이벤트 한 건(조건 일치)을 기다린다. */
   once(name: string, pred: (d: Json) => boolean = () => true, timeoutMs = 120_000): Promise<Json> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -79,12 +76,11 @@ export class VaultClient {
     const end = (reason: string): void => {
       if (closed) return;
       closed = reason;
-      if (this.current?.transport === t) this.current = null; // 옛 transport를 늦게 닫아도 새 것은 그대로
+      if (this.current?.transport === t) this.current = null;
       t.onclose?.(reason);
     };
     const t: CdpTransport = {
       send: (message) => {
-        // Playwright가 onclose를 달기 전에 닫혔을 수 있다. 닫힌 뒤의 요청은 버리지 않고 닫힘을 다시 알린다(콜백 등록 뒤에 닿게 마이크로태스크로).
         if (closed) return queueMicrotask(() => t.onclose?.(closed!));
         this.port.postMessage({ t: 'cdp', m: JSON.stringify(message) });
       },

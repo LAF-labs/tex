@@ -1,9 +1,3 @@
-// CODEF 토큰 발급(계좌 자동조회, 대표 결정 2026-11-12 "CODEF 공동인증서 방식"). 게이트웨이는 연동 비밀키로 짧은 접근 토큰만 만들어
-// 기기 인증된 PC에 건넨다. 인증서·비밀번호·계좌·거래내역은 PC → CODEF로 바로 가고 이 서버를 지나지 않는다(10-issuance-popbill-fallback §6.2와 같은 원칙).
-// - 클라이언트 ID·시크릿은 서버 환경 변수(CODEF_CLIENT_ID·CODEF_CLIENT_SECRET)만. PC·로그·DB·응답에 가지 않는다.
-// - 토큰은 만료 전까지 메모리에 둔다(인스턴스마다, 동시 요청은 한 번만 받는다). 토큰 값은 로그·이벤트에 남기지 않는다.
-// - 공개키(CODEF_PUBLIC_KEY)는 비밀이 아니다. PC가 인증서 비밀번호를 RSA로 감쌀 때 쓰도록 토큰과 함께 돌려준다.
-// 주소 근거: CODEF 공식 라이브러리 easycodef(github.com/codef-io)의 상수와 developer.codef.io 가이드(PR 본문에 출처).
 
 export const CODEF_ENVS = ['sandbox', 'demo', 'prod'] as const;
 export type CodefEnv = (typeof CODEF_ENVS)[number];
@@ -13,20 +7,16 @@ export const CODEF_OAUTH_URL = 'https://oauth.codef.io/oauth/token';
 
 /** 토큰이 이만큼 남으면 새로 받는다(서버 캐시). PC는 받은 만료 시각 기준으로 스스로 다시 묻는다. */
 export const CODEF_TOKEN_REFRESH_MARGIN_MS = 60 * 60_000;
-/** 응답의 expires_in이 없거나 이상하면 보수적으로 이만큼만 쓴다 */
 const FALLBACK_TTL_MS = 60 * 60_000;
-/** CODEF 문서상 수명은 7일. 그보다 긴 값은 믿지 않는다 */
 const MAX_TTL_MS = 7 * 24 * 60 * 60_000;
 
 export interface CodefToken {
   accessToken: string;
-  /** 만료 시각(ms, 서버 시계) */
   expiresAt: number;
 }
 
 export interface CodefTokenSource {
   readonly env: CodefEnv;
-  /** PC가 비밀번호를 감쌀 공개키(base64 DER SPKI, CODEF 홈페이지 키 관리에 보이는 값) */
   readonly publicKey: string;
   token(): Promise<CodefToken>;
 }
@@ -109,7 +99,6 @@ const B64 = /^[A-Za-z0-9+/]+={0,2}$/;
  * 값이 있는데 형식이 틀리면 기동하지 않는다(조용히 꺼지지 않게).
  */
 export function codefFromEnv(env: NodeJS.ProcessEnv, fail: (name: string) => never): CodefTokenSource | null {
-  // 기본 환경은 demo(대표 데모 사용신청 2026-11-12: 실제 기관·하루 100회·1개월). 키도 환경도 없으면 꺼짐
   const e = env.CODEF_ENV || (env.CODEF_CLIENT_ID ? 'demo' : '');
   if (!e) return null;
   if (e === 'mock') return new MockCodefTokenSource();

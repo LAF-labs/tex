@@ -1,4 +1,3 @@
-// PoC-5 로컬 데이터: 경로·접근 통제(D07 §1.1), 암호화 SQLite(D07 §1.3), 프로필·거래처 CRUD, 진위확인(H-05).
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -40,7 +39,6 @@ describe('경로와 접근 통제', () => {
     assert.equal(first.root.ok, true);
     if (!win) assert.equal((await fs.stat(root)).mode & 0o777, 0o700);
     await fs.writeFile(path.join(first.paths.staging, 'left.pdf'), 'x');
-    // 다른 사용자 읽기 허용으로 망가뜨린 뒤. Windows는 명시 ACE(Users 읽기)를 더한다.
     if (win) await run(windowsTool('icacls.exe'), [root, '/grant', '*S-1-5-32-545:(OI)(CI)R']);
     else await fs.chmod(root, 0o755);
     assert.equal((await dirGuard().checkPrivate(root)).ok, false, '망가진 ACL을 잡는다');
@@ -100,9 +98,7 @@ describe('경로와 접근 통제', () => {
 
   it('사용자 자신에게 권한이 없는 폴더는 no_user_access, 기동 시 제자리에서 고친다', async () => {
     const root = path.join(await tmpRoot(), 'SovereignAX');
-    // 하위 폴더 없는 루트로 시작한다. Windows는 DACL을 쓰면 하위로 전파하는데, 막 나열할 수 없게 된 루트 아래 전파는 시험 대상이 아니다.
     assert.equal((await dirGuard().ensurePrivate(root)).ok, true);
-    // POSIX는 모드 0000. Windows는 ACE가 하나도 없는 보호 DACL(소유자라 READ_CONTROL·WRITE_DAC는 남는다).
     const lockOut = async (dir: string) => {
       if (!win) return fs.chmod(dir, 0o000);
       const script = "$s = New-Object System.Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm('D:P', 'Access'); [System.IO.Directory]::SetAccessControl($env:SAX_ACL_TARGET, $s)";
@@ -113,7 +109,6 @@ describe('경로와 접근 통제', () => {
     const again = await prepareLayout(root);
     assert.equal(again.root.ok, true, '기동 시 복구');
     if (!win) assert.equal((await fs.stat(root)).mode & 0o777, 0o700);
-    // 전용 프로필도 권한 문제라 치우지 않고 제자리에서 고친다.
     await lockOut(again.paths.chromeProfile);
     const profile = await preparePrivateDir(again.paths.chromeProfile);
     assert.deepEqual([profile.check.ok, profile.before, profile.setAside], [true, ['no_user_access'], undefined]);
@@ -130,7 +125,6 @@ describe('경로와 접근 통제', () => {
   });
 
   it('Windows: 다른 계정 소유 폴더는 not_owner', { skip: !win }, async () => {
-    // 비승격 테스트에서는 다른 계정 소유 폴더를 만들 수 없다. TrustedInstaller 소유 시스템 폴더를 읽기만 한다.
     const sysDir = process.env.SystemRoot ?? 'C:\\Windows';
     assert.match(await readOwner(sysDir), /^S-1-5-80-/);
     assert.ok((await dirGuard().checkPrivate(sysDir)).problems.includes('not_owner'));
@@ -139,28 +133,24 @@ describe('경로와 접근 통제', () => {
   it('Windows: 거부 ACE·조건부 ACE도 잡고 기동 시 지운다', { skip: !win }, async () => {
     const root = path.join(await tmpRoot(), 'SovereignAX');
     assert.equal((await prepareLayout(root)).root.ok, true);
-    // 승격 관리자(windows-latest runneradmin)가 만든 폴더의 기본 소유자는 Administrators다(isTrustedOwner).
     assert.match(await readOwner(root), /^(S-1-5-21-.+|S-1-5-32-544)$/, '사용자가 만든 폴더의 소유자는 사용자(승격 관리자면 Administrators)');
-    await run(windowsTool('icacls.exe'), [root, '/deny', '*S-1-5-32-546:(W)']); // Guests 쓰기 거부
+    await run(windowsTool('icacls.exe'), [root, '/deny', '*S-1-5-32-546:(W)']);
     assert.deepEqual((await dirGuard().checkPrivate(root)).problems, ['extra_principal']);
     assert.equal((await prepareLayout(root)).root.ok, true, '거부 ACE 복구');
     const ps = windowsTool('WindowsPowerShell\\v1.0\\powershell.exe');
     const sddl = (await readDacl(root)).aces.map((a) => `(${a.type};${a.flags.join('')};FA;;;${a.sid})`).join('');
-    // Get-Acl 객체는 SACL까지 다시 쓰려 해 SeSecurityPrivilege가 필요하다. DACL만 담은 새 객체로 쓴다.
-    // 경로는 생산 코드처럼 환경 변수로 넘긴다(작은따옴표가 든 사용자 이름에서도 깨지지 않게).
     const script = `$a = New-Object System.Security.AccessControl.DirectorySecurity; $a.SetSecurityDescriptorSddlForm('D:PAI(XA;OICI;FR;;;WD;(Exists Foo))${sddl}', 'Access'); [System.IO.Directory]::SetAccessControl($env:SAX_ACL_TARGET, $a)`;
     await run(ps, ['-NoProfile', '-NonInteractive', '-Command', script], { env: windowsPowerShellEnv({ SAX_ACL_TARGET: root }) });
     assert.ok((await readDacl(root)).aces.some((a) => a.type === 'XA' && a.sid === 'WD'), 'Everyone 조건부 허용이 보인다');
     assert.deepEqual((await dirGuard().checkPrivate(root)).problems, ['extra_principal']);
     assert.equal((await prepareLayout(root)).root.ok, true, '조건부 ACE 복구');
-    await run(windowsTool('icacls.exe'), [root, '/setintegritylevel', '(OI)(CI)L']); // SACL 레이블은 DACL 판정에 섞이지 않는다
+    await run(windowsTool('icacls.exe'), [root, '/setintegritylevel', '(OI)(CI)L']);
     assert.equal((await dirGuard().checkPrivate(root)).ok, true, '무결성 레이블 오탐 없음');
   });
 
   it('재분석 지점(심볼릭 링크·정션)이 경로에 있으면 거부', async () => {
     const base = await tmpRoot();
     await fs.mkdir(path.join(base, 'real'));
-    // Windows 심볼릭 링크는 권한(개발자 모드)이 필요하다. 권한 없이 만들 수 있는 정션으로 확인한다.
     await fs.symlink(path.join(base, 'real'), path.join(base, 'link'), win ? 'junction' : undefined);
     assert.equal(await findReparsePoint(path.join(base, 'link', 'SovereignAX')), path.join(base, 'link'));
     const r = await dirGuard().ensurePrivate(path.join(base, 'link', 'SovereignAX'));
@@ -197,7 +187,7 @@ describe('경로와 접근 통제', () => {
       ensurePrivate: (d) => (ensures++, real.ensurePrivate(d)),
       excludeFromIndex: (d) => real.excludeFromIndex(d),
     };
-    await preparePrivateDir(paths.chromeProfile, spy); // Windows는 여기서 루트에서 받은 상속 ACE를 끊는다
+    await preparePrivateDir(paths.chromeProfile, spy);
     ensures = 0;
     const again = await preparePrivateDir(paths.chromeProfile, spy);
     assert.deepEqual([again.check.ok, again.before, again.setAside, ensures], [true, [], undefined, 0], '맞으면 DACL을 다시 쓰지 않는다');
@@ -231,7 +221,6 @@ describe('경로와 접근 통제', () => {
     await fs.rm(base, { recursive: true, force: true });
   });
 
-  // 비승격·비루트로는 다른 계정 소유 폴더를 만들 수 없다. 표식 파일이 든 폴더를 다른 계정 소유로 보는 대역으로 흐름을 확인한다.
   const NOT_OWNER: AclCheck = { ok: false, problems: ['not_owner'] };
   const planted = (d: string) => fs.access(path.join(d, 'planted')).then(() => true, () => false);
 
@@ -259,7 +248,6 @@ describe('경로와 접근 통제', () => {
     const { paths } = await prepareLayout(path.join(base, 'SovereignAX'));
     const real = dirGuard();
     const denied = () => Promise.reject(new Error('icacls: Access is denied'));
-    // Windows에서 원래 소유자 전용 DACL(복원·계정 재생성)이면 확인이 예외로 끝난다. 우리 소유라도 OW ACE가 막으면 복구가 예외로 끝난다.
     for (const where of ['check', 'ensure'] as const) {
       await fs.writeFile(path.join(paths.chromeProfile, 'planted'), 'x');
       const guard: DirGuard = {
@@ -271,7 +259,6 @@ describe('경로와 접근 통제', () => {
       assert.deepEqual([r.check.ok, r.before, r.reason], [true, [where === 'check' ? 'unreadable' : 'extra_principal'], ['unreadable']], where);
       assert.ok(await planted(path.join(paths.root, r.setAside!)), `${where}: 치운 폴더 내용은 그대로`);
     }
-    // 한 번만 실패한 도구(PowerShell 기동 실패 등)로는 치우지 않는다.
     await fs.writeFile(path.join(paths.chromeProfile, 'keep'), 'x');
     let fails = 1;
     const flaky: DirGuard = {
@@ -301,13 +288,11 @@ describe('경로와 접근 통제', () => {
     assert.deepEqual([parentOpen.check.ok, parentOpen.setAside], [false, undefined], '부모가 사용자 전용이 아니면 치우지 않는다');
     const stillForeign = await preparePrivateDir(child, guard((d) => (d === child ? NOT_OWNER : OK), () => NOT_OWNER));
     assert.deepEqual([stillForeign.check.ok, stillForeign.reason, stillForeign.setAside], [false, ['not_owner'], undefined], '새 폴더도 맞지 않으면 되돌린다');
-    // 쓰기 도구만 막힌 환경(EDR 등): 확인은 되는데 복구가 예외. 새 폴더도 같은 예외면 원래 프로필을 되돌려 놓고 예외를 낸다.
     const aclOff: AclCheck = { ok: false, problems: ['extra_principal'] };
     const writeBlocked = () => Promise.reject(new Error('icacls blocked'));
     await assert.rejects(preparePrivateDir(child, guard((d) => (d === child ? aclOff : OK), writeBlocked)), /icacls blocked/);
     assert.ok(await planted(child), '원래 프로필이 제자리에 있다');
     assert.deepEqual(await untrusted(), [], '되돌렸으므로 쌓이지 않는다');
-    // 치운 뒤 새 폴더를 만들지 못해도(PR #9 Bugbot) 되돌린다. 다음 기동이 빈 프로필로 뜨지 않게.
     const mkdir = fs.mkdir;
     fs.mkdir = (async (p: Parameters<typeof mkdir>[0], o?: Parameters<typeof mkdir>[1]) => {
       if (p === child) throw Object.assign(new Error('mkdir denied'), { code: 'EACCES' });
@@ -320,10 +305,8 @@ describe('경로와 접근 통제', () => {
     }
     assert.ok(await planted(child), '원래 프로필이 제자리에 있다');
     assert.deepEqual(await untrusted(), []);
-    // 제자리 복구가 예외 없이 실패를 돌려주면 새 폴더도 같은 방법으로 고치게 되므로 치우지 않는다.
     const stuck = await preparePrivateDir(child, guard((d) => (d === child ? aclOff : OK), () => aclOff));
     assert.deepEqual([stuck.check.ok, stuck.setAside], [false, undefined]);
-    // 도구가 부모에서도 실패하면(PowerShell 차단 등) 폴더 탓이 아니다. 치우지 않고 예외를 그대로 낸다.
     const broken = () => Promise.reject(new Error('powershell blocked'));
     await assert.rejects(preparePrivateDir(child, guard(broken, () => OK)), /powershell blocked/);
     await assert.rejects(preparePrivateDir(child, guard((d) => (d === child ? broken() : NOT_OWNER), () => OK)), /powershell blocked/, '부모가 사용자 전용이 아니면 원래 예외');
@@ -343,8 +326,6 @@ describe('경로와 접근 통제', () => {
   });
 
   it('macOS: ACL 항목이 없는 새 앱 루트도 준비한다(chmod -N은 지울 항목이 없어도 성공)', { skip: process.platform !== 'darwin' }, async () => {
-    // 첫 기동: 루트가 없고 부모에도 ACL 항목이 없다. chmod -N이 여기서 실패하면 앱이 기동하지 않는다.
-    // ACL은 ls -le의 항목 줄(" 0: …")로 본다. 확장 속성이 있으면 모드 뒤에 '+' 대신 '@'만 찍힌다.
     const base = await tmpRoot();
     const hasAcl = async (p: string) => /^\s*\d+: /m.test((await run('/bin/ls', ['-led', p])).stdout);
     assert.equal(await hasAcl(base), false);
@@ -358,15 +339,13 @@ describe('경로와 접근 통제', () => {
   it('Windows: 우리를 막는 DACL(OWNER RIGHTS로 소유자 권한 제거)인 폴더는 치우고 새로 만든다', { skip: !win }, async () => {
     const base = await tmpRoot();
     const { paths } = await prepareLayout(path.join(base, 'SovereignAX'));
-    // SYSTEM만 전체, 소유자에게는 SYNCHRONIZE·FILE_WRITE_ATTRIBUTES만. 우리 소유여도 READ_CONTROL·WRITE_DAC가 없어 icacls·Get-Acl이 실패한다.
-    // FILE_WRITE_ATTRIBUTES는 정리용이다(libuv 1.48+ rmdir이 이 권한으로 연다). 우리에게 아무것도 주지 않는 실제 다른 계정 폴더는 PoC-1 §5.1 확인 항목.
     const script = "$s = New-Object System.Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm('D:P(A;OICI;FA;;;SY)(A;;0x100100;;;OW)', 'Access'); [System.IO.Directory]::SetAccessControl($env:SAX_ACL_TARGET, $s)";
     await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { env: windowsPowerShellEnv({ SAX_ACL_TARGET: paths.chromeProfile }) });
     await assert.rejects(dirGuard().checkPrivate(paths.chromeProfile), '확인 도구가 이 폴더에서 실패한다');
     const r = await preparePrivateDir(paths.chromeProfile);
     assert.deepEqual([r.check.ok, r.before, r.reason], [true, ['unreadable'], ['unreadable']]);
     assert.ok(r.setAside);
-    await fs.rm(base, { recursive: true, force: true }); // 치운 빈 폴더: DELETE는 부모의 FILE_DELETE_CHILD, 나머지는 OW ACE로
+    await fs.rm(base, { recursive: true, force: true });
   });
 });
 
@@ -436,7 +415,6 @@ describe('암호화 DB와 CRUD', () => {
   });
 
   it('다른 키로는 열리지 않고, 같은 키로 다시 열면 데이터가 남아 있다. 디스크에 평문 없음', async () => {
-    // 표지에 숫자가 있으면 검색이 사업자번호 LIKE로도 맞아 다른 거래처가 섞인다(간헐 실패). 글자만 쓴다
     const marker = '평문표지-' + randomBytes(4).toString('hex').replace(/\d/g, (d) => 'ghijklmnop'[Number(d)]!);
     await svc.handle('counterparty.create', { bizNo: syntheticBizNo(99), name: marker });
     db.close();

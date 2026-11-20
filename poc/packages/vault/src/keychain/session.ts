@@ -1,6 +1,3 @@
-// Windows 세션을 따르는 금고 잠금(ADR-026 결정 3·4, D05 §2).
-// 금고 열림 = 세션 열림 ∧ 유휴 < vault.idleLockSec ∧ 열린 지 < vault.unlockMaxSec (엄격 모드는 ∧ Hello 확인 후 < vault.unlockTtlSec).
-// utilityProcess에는 powerMonitor가 없으므로 이벤트·유휴 시간은 main이 control 포트로 넘긴다. 유휴 보고가 끊기면 잠근다(fail-closed).
 import { SESSION_IDLE_STALE_MS, type SessionEventKind, type VaultLockReason } from '../protocol.ts';
 
 export const VAULT_IDLE_LOCK_SEC = 900;
@@ -36,10 +33,8 @@ export class SessionLock {
   private helloUntil = 0;
   private idle: { sec: number; at: number } | null = null;
   private lastReason: VaultLockReason = 'startup';
-  /** 기동 때 저장된 설정(엄격 모드)을 읽는 동안 닫아 둔다. */
   private held = false;
   strict = false;
-  /** 잠기는 순간(열림 → 닫힘)마다 부른다. 금고는 메모리의 슬롯 KEK를 지운다. */
   onLock: (reason: VaultLockReason) => void = () => {};
 
   constructor(opts: SessionLockOptions = {}) {
@@ -53,7 +48,6 @@ export class SessionLock {
 
   private wasOpen = false;
 
-  /** 상태가 바뀔 수 있는 모든 입력 뒤에 부른다. 열림 → 닫힘이면 onLock. */
   private settle(): OpenVerdict {
     const v = this.evaluate();
     if (this.wasOpen && !v.open) this.onLock(v.reason);
@@ -66,7 +60,6 @@ export class SessionLock {
     if (this.held) return { open: false, reason: 'startup', helloCanOpen: false };
     if (!this.sessionOpen) return { open: false, reason: 'session_locked', helloCanOpen: false };
     if (!this.idle || t - this.idle.at > this.idleStaleMs) return { open: false, reason: 'idle_unknown', helloCanOpen: false };
-    // 보고 이후 흐른 시간도 유휴로 친다(보고 사이에 15분을 넘기면 다음 보고를 기다리지 않는다).
     const idleNow = this.idle.sec + (t - this.idle.at) / 1000;
     if (idleNow >= this.idleLockSec) {
       this.silent = false;
@@ -102,15 +95,12 @@ export class SessionLock {
         this.lastReason = 'session_locked';
         break;
       case 'unlock-screen':
-        // Windows 잠금 해제 = 사람 확인. 프롬프트 없이 다시 연다(유휴 잠금 뒤 포함). 엄격 모드는 여전히 발급마다 Hello.
         this.sessionOpen = true;
         this.silent = true;
         this.openedAt = this.now();
-        // 잠금 해제 직후 유휴는 0이다(main의 다음 보고 전까지 오래된 보고로 다시 잠기지 않게).
         this.idle = { sec: 0, at: this.now() };
         break;
       case 'resume':
-        // 절전에서 깨어나도 Windows 잠금 화면을 거치면 unlock-screen이 따로 온다. 여기서는 열지 않는다.
         break;
     }
     return this.settle();
@@ -118,15 +108,11 @@ export class SessionLock {
 
   reportIdle(idleSec: number): OpenVerdict {
     if (!Number.isFinite(idleSec) || idleSec < 0) return this.settle();
-    // 보고가 끊긴 사이에 유휴 상한을 넘겼을 수 있다. 앞 보고에서 이어 센 유휴가 상한 이상이면 유휴 잠금으로 본다
-    // (그사이 사용자가 있었는지 모르므로 fail-closed: 새 보고가 0이어도 프롬프트 없이 다시 열지 않는다).
     if (this.idle && this.idle.sec + (this.now() - this.idle.at) / 1000 >= this.idleLockSec) {
       this.silent = false;
       this.helloUntil = 0;
       this.lastReason = 'idle';
     } else if (this.idle && this.now() - this.idle.at > this.idleStaleMs) {
-      // 보고가 120초 넘게 끊겼다(main 멈춤 등). 그사이를 모르므로 다시 온 보고만으로는 프롬프트 없이 열지 않는다(fail-closed).
-      // 다시 열기는 Hello 또는 Windows 잠금·해제. 기동 직후 첫 보고(이전 보고 없음)는 여기에 해당하지 않는다.
       this.silent = false;
       this.helloUntil = 0;
       this.lastReason = 'idle_unknown';
@@ -135,7 +121,6 @@ export class SessionLock {
     return this.settle();
   }
 
-  /** Hello 확인 성공(유휴 잠금 뒤·최대 시간 뒤·엄격 모드). 세션이 잠겼거나 유휴 중이면 열지 않는다. */
   helloConfirmed(): OpenVerdict {
     const v = this.evaluate();
     if (v.open || !v.helloCanOpen) return this.settle();
@@ -147,13 +132,11 @@ export class SessionLock {
     return this.settle();
   }
 
-  /** 엄격 모드: 실행이 끝나면 즉시 잠근다. */
   runEnded(): void {
     if (this.strict) this.helloUntil = 0;
     this.settle();
   }
 
-  /** 설정을 다 읽을 때까지 닫아 둔다(HumanSecretVault 기동). */
   hold(): void {
     this.held = true;
     this.settle();

@@ -1,8 +1,3 @@
-// H-04 납세증명서(국세) 발급 패키지(ADR-018 Phase 1 코어, 02 §5.1·§10, D02): 제품 원본 packages/engine/playbooks/hometax.cert.taxpayment와
-// 조회 하위 패키지 hometax.cert.issued_list(민원신청 처리결과). 셀렉터는 실기기 캡처 전이다(playbooks/README.md "캡처 필요").
-// - 정적 검증(스키마 + V-01~V-25)·로더(서명 2-of-3, 조회 결속, 승인 바 요약 표)를 통과한다.
-// - 가짜 화면 리플레이: 양식 → readback → 사업자·입력 대조 → 게이트, 발급 확인 뒤 출력 → PDF 저장. 실제 포털 접속 없음.
-// - 로그인·인증서 비밀은 금고 경로다: sign(then human:secret)만, secret_fill·타이피스트 입력 없음(인증서 비밀번호는 사용자가 직접, ADR-020 결정 2).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { BUNDLE_ALLOWLIST } from '@sax/model';
@@ -36,7 +31,6 @@ describe('H-04 정적 검증', () => {
   });
 
   it('로그인·인증서 비밀은 금고 경로만: human secret(금고 비밀 창), secret_fill·fill 상수 비밀 없음, 비밀 칸은 인증서 창의 cert_password 하나', () => {
-    // 로그인 구간은 H-01 2.3.7 원본(s0~s7g)을 쓴다: 인증서 비밀번호는 human kind secret(금고가 기억한 값을 넣거나 앱 입력 창으로 받음)
     const p = h04();
     const secret = step(p, 's4g') as { type: string; kind?: string; target?: string };
     assert.deepEqual([secret.type, secret.kind, secret.target], ['human', 'secret', 'hometax.cert.password']);
@@ -91,8 +85,6 @@ describe('H-04 로더(D03 §3.1)', () => {
     assert.ok(r.ok, r.ok ? '' : r.code);
     return new Map([[LK, r.pkg]]);
   };
-  // 앱 내장 승인 바 요약 표(ADR-021)의 민원증명 공통 카드 cert.confirm(팀장 결정 2026-11-09: H-03·08·09와 같은 카드, 요약 4칸).
-  // 표 항목은 데이터 세션 PR이 넣는다. 이 PR에서는 주입한다.
   const SUMMARY = new Map([['cert.confirm', ['certDoc', 'certPurpose', 'certSubmitTo', 'rrnDisclosure']]]);
 
   it('서명 2-of-3·조회 결속·정적 검증·요약 표를 통과한다', () => {
@@ -114,9 +106,6 @@ describe('H-04 로더(D03 §3.1)', () => {
   });
 });
 
-// ---- 가짜 화면 리플레이 ----
-
-/** 사전 항목마다 요소 하나: id = 사전 키, 역할·이름 = 첫 role 후보, css = css 후보, 부모 = landmark. 실화면 맞춤으로 css 후보만 남은 항목(양식 틀 #mf_txppWframe 등)도 찾는다. */
 function screenOf(dict: SelectorDict): FEl[] {
   return Object.entries(dict.entries).map(([k, e]) => {
     const role = e.candidates.find((c) => c.kind === 'role') as { role: string; name: string } | undefined;
@@ -125,7 +114,6 @@ function screenOf(dict: SelectorDict): FEl[] {
   });
 }
 
-/** 포털이 고른 값을 DOM 값·접근성 값·보이는 글자에 같이 반영하는 가짜 조작기. stuck이면 그 칸은 선택을 무시한다(포털 미반영). */
 class SelectAct extends FakeAct {
   stuck = new Set<string>();
   private p: FakePage;
@@ -145,7 +133,6 @@ class SelectAct extends FakeAct {
 
 const INPUTS = { purpose: '대금수령', submitTo: '금융기관' };
 const PROFILE = { bizNo: '1068114550', signMethod: 'cert' };
-/** 신청 양식에 포털이 미리 채워 보여 주는 값(fieldKey → 화면 문자열). */
 const PREFILLED: Record<string, string> = { supplierBizNo: '106-81-14550', applicantName: '주식회사 보내는곳', certDoc: '납세증명서(국세완납증명)', certPurpose: '', certSubmitTo: '', rrnDisclosure: '', copies: '1' };
 
 function h04Run(o: { screen?: Partial<Record<string, string>>; stuck?: string[]; inputs?: Record<string, unknown>; alert?: string } = {}) {
@@ -160,7 +147,6 @@ function h04Run(o: { screen?: Partial<Record<string, string>>; stuck?: string[];
     el.text = el.value;
     el.a11y = el.value;
   }
-  // 홈택스 알림창(메뉴 차단 등). 없으면 요소를 지운다(정상 화면에는 알림이 없다).
   if (o.alert === undefined) page.els.delete('hometax.cert.alert');
   else page.els.get('hometax.cert.alert')!.text = o.alert;
   const act = new SelectAct(page);
@@ -169,10 +155,8 @@ function h04Run(o: { screen?: Partial<Record<string, string>>; stuck?: string[];
   const env = stepEnv({ page, act, clock, dict: pkg.selectors, strings: pkg.strings, scope, domains: pkg.manifest.domains, irreversible: new Set(['s21']), defaultTimeoutMs: 1000, pollMs: 100 });
   let card: Record<string, string> | 'none' = 'none';
   const saved: string[] = [];
-  // 체크포인트·번들 판정·게이트·PDF 저장은 실행기 몫(D03)이라 여기서는 흉내만 낸다: 양식 준비됨, 게이트에서 카드를 찍고 멈춤.
   const checkpoint: Handler<'checkpoint'> = async () => ({ t: 'next' });
   const decide: Handler<'decide'> = async (s) => ({ t: 'jump', to: s.on.no_visible_error ?? s.on.logged_in! });
-  // 게이트 카드 = 게이트 앞 readback이 고정한 값(D02 V-03h). 엔진 readbackCard는 H-01 13칸 전용이라 여기서는 고정값을 그대로 본다(후속).
   const gate: Handler<'gate'> = async (_s, e) => {
     card = Object.fromEntries(e.scope.readback);
     return { t: 'jump', to: 'abort' };
@@ -192,7 +176,6 @@ describe('H-04 리플레이(가짜 화면): 양식 → readback → 대조 → �
   it('용도·제출처를 고르고 주민번호 비공개로 두면 게이트에 닿고, 카드는 되읽은 7칸이다(요약 4칸 certDoc·certPurpose·certSubmitTo·rrnDisclosure 포함)', async () => {
     const r = h04Run();
     assert.deepEqual(await r.it.run('s10'), { t: 'abort', at: 's20', code: null });
-    // s11t: 양식 제목 확인(실화면 맞춤에서 더함, 다른 양식이면 사람에게)
     assert.deepEqual(r.events, ['s10', 's11', 's11a', 's11b', 's11t', 's12', 's13', 's14', 's19a', 's19b', 's19c', 's19d', 's19f', 's20']);
     assert.deepEqual(r.card(), { supplierBizNo: '1068114550', applicantName: '주식회사 보내는곳', certDoc: '납세증명서(국세완납증명)', certPurpose: '대금수령', certSubmitTo: '금융기관', rrnDisclosure: '공개안함', copies: '1' });
     assert.ok(!r.act.log.some((l) => l.startsWith('click hometax.cert.taxpayment.form.applyButton')), '게이트 전에 신청하기를 누르지 않는다');

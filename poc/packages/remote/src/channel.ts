@@ -1,5 +1,3 @@
-// 수립된 Noise 전송 위의 봉투 채널. 받은 봉투는 스키마·pairId·방향·ttl·id 중복을 확인하고, 틀리면 조용히 버린다.
-
 import { decodeEnvelope, encodeEnvelope, makeEnvelope, type Bodies, type Envelope, type KnownType, type Role } from './envelope.ts';
 import type { Transport } from './frame.ts';
 import { attachQueue, nextFrame, type Link } from './relay.ts';
@@ -9,7 +7,6 @@ export const CLOCK_SKEW_MS = 5 * 60_000;
 const SEEN_MAX = 4096;
 
 export interface ChannelOptions {
-  /** 없으면 처음 받은 유효 봉투의 pairId로 고정한다(페어링 7단계 pair.ok, PC가 pairId를 정한다). */
   pairId?: string;
   me: Role;
   now?: () => number;
@@ -24,7 +21,6 @@ export class Channel {
   #seq = 0;
   #seen = new Set<string>();
   #now: () => number;
-  /** 버린 프레임 수(로컬 진단용, 원인은 남기지 않는다). */
   dropped = 0;
 
   constructor(link: Link, tx: Transport, o: ChannelOptions) {
@@ -52,12 +48,10 @@ export class Channel {
     return e;
   }
 
-  /** 시험·퍼징 전용: 이미 만든 봉투를 그대로 보낸다(검증 우회 없음). */
   sendRaw(e: Envelope): void {
     this.#link.send(this.#tx.seal(encodeEnvelope(e)));
   }
 
-  /** 다음 유효 봉투. 시간 안에 없으면 null. */
   async recv(timeoutMs: number): Promise<Envelope | null> {
     const deadline = this.#now() + timeoutMs;
     for (;;) {
@@ -70,7 +64,6 @@ export class Channel {
     }
   }
 
-  /** 프레임 하나를 해석한다. 버릴 것이면 null. */
   accept(frame: Uint8Array): Envelope | null {
     const inner = this.#tx.open(frame);
     const e = inner ? decodeEnvelope(inner) : null;

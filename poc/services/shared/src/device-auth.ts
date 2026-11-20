@@ -1,4 +1,3 @@
-// 기기 범위 토큰 + DPoP 인증 미들웨어와 기기 상태 조회(긴급 정지 즉시 반영, D09 §2.2·D08 §9.3).
 import { fromB64 } from './crypto.ts';
 import { fail, type ErrorCode } from './errors.ts';
 import { InternalClient } from './internal-call.ts';
@@ -28,7 +27,6 @@ export class HttpDeviceDirectory implements DeviceDirectory {
   private readonly ttlMs: number;
   private readonly now: () => number;
   constructor(o: { base: string; key: Buffer; ttlMs?: number; now?: () => number; fetchFn?: typeof fetch; timeoutMs?: number }) {
-    // 계정 서비스가 느리거나 멈춰도 요청이 매달리지 않게 기본 3초 제한(넘으면 directory_unavailable → 500, 기기를 통과시키지 않는다)
     this.client = new InternalClient({ base: o.base, key: o.key, fetchFn: o.fetchFn, now: o.now, timeoutMs: o.timeoutMs ?? 3000 });
     this.ttlMs = o.ttlMs ?? 5000;
     this.now = o.now ?? Date.now;
@@ -51,7 +49,6 @@ export class HttpDeviceDirectory implements DeviceDirectory {
 export interface DeviceAuthOpts {
   verifier: TokenVerifier;
   directory: DeviceDirectory;
-  /** 이 서비스가 공개하는 origin(예: https://gw.example). DPoP htu = origin + 경로 */
   publicOrigin: string;
   now: () => number;
   jti?: JtiCache;
@@ -65,15 +62,10 @@ export class DeviceAuth {
     this.jti = o.jti ?? new JtiCache();
   }
 
-  /**
-   * 토큰 서명·만료 → 범위(여럿이면 그중 하나) → DPoP(메서드·URL·시각·jti·ath·Vx 서명) → 계정 서비스의 기기 상태(active, 역할 일치) 순서로 본다.
-   * 실패 코드는 하나(code)로 모은다(어느 단계에서 떨어졌는지 응답으로 알려 주지 않는다). 정지된 기기만 suspendedCode로 구분한다.
-   */
   async check(ctx: { method: string; path: string; headers: Record<string, string | string[] | undefined> }, scope: Scope | readonly Scope[], code: ErrorCode, suspendedCode: ErrorCode = code): Promise<DeviceClaims> {
     const now = this.o.now();
     const token = dpopToken(String(ctx.headers.authorization ?? ''), code);
     const claims = this.o.verifier.verify(token, now, code);
-    // 범위 여럿이면 그중 하나(어느 범위·역할로 무엇을 여는지는 호출한 서비스가 claims로 다시 본다)
     const anyOf: readonly Scope[] = typeof scope === 'string' ? [scope] : scope;
     if (!anyOf.some((x) => claims.scp.includes(x))) fail('account.scope_denied');
     const dpop = ctx.headers.dpop;

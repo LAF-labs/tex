@@ -1,4 +1,3 @@
-// 정정·다음 건: 진행 중인 건이 있어도 사장님께 [중지]를 시키지 않는다(대표 지적 2026-11-19 "100원으로 정정했는데 앞 건이 끝나야 한대, 중지를 눌러야 하는 것도 말이 안 됨").
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
@@ -15,7 +14,7 @@ describe('ShellRuns: 바꿔도 되는 진행 중 실행', () => {
     const runs = mk();
     const r = runs.createDraft(cps[0]!, 100, null, '기타');
     assert.equal(runs.activeRun(), null);
-    assert.equal(runs.replaceable(r.id), false); // 초안은 진행 중이 아니다
+    assert.equal(runs.replaceable(r.id), false);
     r.status = 'preparing';
     assert.equal(runs.activeRun()?.id, r.id);
     assert.equal(runs.replaceable(r.id), true);

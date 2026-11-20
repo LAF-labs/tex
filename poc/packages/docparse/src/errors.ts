@@ -1,5 +1,3 @@
-// docparse 실패는 코드로만 알린다(파일 내용·경로를 남기지 않는다, D17 §3).
-
 export type DocparseErrorCode =
   | 'input_size'
   | 'not_pdf'
@@ -31,7 +29,6 @@ export type DocparseErrorCode =
 
 export class DocparseError extends Error {
   readonly code: string;
-  /** unsupported_format일 때 알아본 형식(사장님 안내 문구용: "xlsx로 다시 저장해 주세요") */
   readonly detail: string | undefined;
   constructor(code: DocparseErrorCode | (string & {}), detail?: string) {
     super(code);

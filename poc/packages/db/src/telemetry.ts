@@ -1,8 +1,3 @@
-// 텔레메트리 형태 검증(D12 §1, D14 M2-6). 값의 뜻은 보지 않고 모양만 본다: 허용 이벤트·허용 필드·필드 형태.
-// - 모르는 이벤트는 거부한다. 허용 목록 밖 필드는 드롭한다(드롭한 필드 이름만 돌려준다).
-// - 허용 필드의 형태가 틀리면 이벤트 전체를 거부한다(형태가 틀린 값은 화면 텍스트·입력값이 섞였을 수 있다).
-// - 건수는 5건 단위 버킷, 시각은 일(date) 또는 시간(hour) 단위만. 기기·계정 식별자 필드는 없다.
-// 송신은 이 트랙이 아니다(@sax/net egress). 송신 직전에 이 함수를 지난 객체만 보낸다.
 
 type Shape = 'code' | 'date' | 'hour' | 'bucket' | 'bucketMap' | 'int' | 'bool' | 'digest' | 'intList' | 'confidence' | { enum: readonly string[] };
 
@@ -91,7 +86,6 @@ export function shapeTelemetry(input: unknown): TelemetryCheck {
     out[k] = o[k];
   }
   const known = new Set(['event', ...Object.keys(spec.required), ...Object.keys(spec.optional ?? {})]);
-  // 드롭한 필드 이름도 형태가 이상할 수 있으니 식별자 모양만 돌려준다
   const dropped = Object.keys(o).filter((k) => !known.has(k)).map((k) => (/^[A-Za-z_][A-Za-z0-9_]{0,39}$/.test(k) ? k : '?'));
   return { ok: true, event: out, dropped };
 }

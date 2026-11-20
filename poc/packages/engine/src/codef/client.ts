@@ -1,5 +1,3 @@
-// CODEF 호출(계좌 자동조회). 토큰은 우리 게이트웨이 /v1/codef/token에서 받고(시크릿은 서버에만), 호출은 Egress.toCodef로 PC → CODEF 직결이다.
-// 토큰·본문(인증서 파일·감싼 비밀번호·계좌·거래내역)은 기록하지 않는다. 응답은 비신뢰 값이라 필요한 칸만 모양을 확인해 꺼낸다.
 import { EgressError, GatewayError, isCodefEnv, type CodefEnv, type CodefPath, type Egress } from '@sax/net';
 import { CODEF_OK, CODEF_TOKEN_CODES, CodefError, failureOf, type CodefBankCode, type CodefClientType } from './codes.ts';
 
@@ -10,7 +8,6 @@ interface CodefGrant {
   publicKey: string;
 }
 
-/** 토큰이 이만큼 남으면 새로 묻는다 */
 const GRANT_MARGIN_MS = 10 * 60_000;
 
 type Json = Record<string, unknown>;
@@ -20,7 +17,6 @@ const str = (v: unknown, max = 200): string => (typeof v === 'string' ? v.slice(
 interface CodefReply {
   code: string;
   data: unknown;
-  /** result.message·extraMessage(원문). 밖으로 내보내지 않고 빠진 파라미터 키 이름을 가를 때만 쓴다 */
   text?: string;
 }
 
@@ -30,11 +26,9 @@ export interface CodefTwoWay {
   threadIndex: number;
   jti: string;
   twoWayTimestamp: number;
-  /** 'sms'만 앱 안에서 받는다(그 밖은 two_way_required) */
   method: 'sms';
 }
 
-/** CODEF data → 추가 인증 정보. continue2Way가 true이고 SMS 인증번호를 요구할 때만 */
 function twoWayOf(data: unknown): CodefTwoWay | null {
   const d = obj(data);
   if (!d || d.continue2Way !== true) return null;
@@ -48,9 +42,7 @@ function twoWayOf(data: unknown): CodefTwoWay | null {
   return { jobIndex, threadIndex, jti, twoWayTimestamp: ts, method: 'sms' };
 }
 
-/** CF-12401(로그인 파라미터 누락)의 조치사항은 "미입력한 파라미터 키"다. 원문에서 계정 등록 입력부 키 이름만 고른다(값은 없다) */
 const LOGIN_KEYS = ['commWithdrawAccountNo', 'withdrawAccountNo', 'reqWithdrawAccountPass', 'withdrawAccountPassword', 'birthDate', 'identity', 'userName', 'id', 'password', 'derFile', 'keyFile', 'certFile', 'certType', 'loginType', 'clientType', 'organization', 'businessType', 'countryCode', 'loginTypeLevel', 'clientTypeLevel', 'cardNo', 'cardPassword', 'add_password'] as const;
-/** CODEF가 한글 이름으로 말할 때(예: "생년월일 누락") */
 const LOGIN_LABELS: ReadonlyArray<[RegExp, string]> = [
   [/생년월일/, 'birthDate'],
   [/주민(등록)?번호|사업자(등록)?번호|실명번호/, 'identity'],
@@ -75,7 +67,6 @@ export function hintOf(text: string | undefined): string | null {
   return t || null;
 }
 
-/** 감싼 로그인(금고 codef.seal 결과): 계정 등록 accountList 원소의 인증서 칸 */
 interface SealedLogin {
   derFile: string;
   keyFile: string;
@@ -83,11 +74,9 @@ interface SealedLogin {
 }
 
 export interface CodefAccount {
-  /** 계좌번호 숫자만(화면·로그에 보내지 않는다. 엔진 안에서 조회·저장에만) */
   number: string;
   display: string;
   name: string;
-  /** 11 수시입출 등 CODEF 분류 */
   depositKind: string;
   balance: number | null;
 }
@@ -107,7 +96,6 @@ export interface CodefTxn {
 
 interface CodefTxnPage {
   txns: CodefTxn[];
-  /** CODEF가 실제로 쓴 기간(은행 한도로 줄였으면 다르다) YYYYMMDD */
   startDate: string;
   endDate: string;
 }
@@ -122,7 +110,6 @@ export class CodefClient {
   private readonly egress: Pick<Egress, 'toGateway' | 'toCodef'>;
   private readonly now: () => number;
   private grant: CodefGrant | null = null;
-  /** 호출 전에 부른다(하루 상한, CodefLink가 넣는다). 던지면 보내지 않는다 */
   private budget: ((path: CodefPath) => void) | null = null;
 
   setBudget(fn: ((path: CodefPath) => void) | null): void {
@@ -134,7 +121,6 @@ export class CodefClient {
     this.now = o.now ?? Date.now;
   }
 
-  /** 게이트웨이에서 토큰을 받는다(만료 10분 전까지 메모리 캐시). */
   async token(): Promise<CodefGrant> {
     const g = this.grant;
     if (g && g.expiresAt - this.now() > GRANT_MARGIN_MS) return g;
@@ -143,7 +129,6 @@ export class CodefClient {
       r = await this.egress.toGateway({ surface: 'codefToken', body: {} });
     } catch (e) {
       if (e instanceof GatewayError && e.code === 'gateway.codef_off') throw new CodefError('codef_off');
-      // 로그인·모델 동의 전이면 main이 헤더를 주지 않는다(gateway.unavailable)
       throw new CodefError('unavailable');
     }
     const j = obj(r);
@@ -159,7 +144,6 @@ export class CodefClient {
     return (await this.token()).publicKey;
   }
 
-  /** 한 번 부르고, 토큰 만료·무효면 토큰을 버리고 한 번만 다시 부른다. 결과 코드와 data를 돌려준다(성공 판정은 부른 쪽). */
   async call(path: CodefPath, body: Json): Promise<CodefReply> {
     let r = await this.once(path, body);
     if (CODEF_TOKEN_CODES.has(r.code)) {
@@ -186,7 +170,6 @@ export class CodefClient {
     return { code, data: j?.data ?? null, text: `${str(rj?.message, 400)} ${str(rj?.extraMessage, 400)}` };
   }
 
-  /** 실패면 CodefError. 계정 등록류는 errorList의 기관 코드가 더 구체적이다 */
   private static ensure(r: CodefReply): Json {
     const d = obj(r.data) ?? {};
     const errs = Array.isArray(d.errorList) ? (d.errorList as unknown[]) : [];
@@ -197,7 +180,6 @@ export class CodefClient {
       const text = `${r.text ?? ''} ${str(first?.message, 400)} ${str(first?.extraMessage, 400)}`;
       const param = cf === 'CF-12401' ? missingParamOf(text) : null;
       const e = new CodefError(failureOf(cf), cf, null, param);
-      // 모르는 거절·누락은 CODEF 안내문 단어를 단서로 남긴다(사람이 원인을 가를 수 있게)
       if (cf === 'CF-12401' || failureOf(cf) === 'rejected') e.hint = hintOf(text);
       throw e;
     }
@@ -207,12 +189,9 @@ export class CodefClient {
   private static loginEntry(org: CodefBankCode, clientType: CodefClientType, login?: SealedLogin, withdraw?: string, withdrawPassword?: string): Json {
     const base: Json = { countryCode: 'KR', businessType: 'BK', clientType, organization: org, loginType: '0' };
     if (!login) return base;
-    // 출금계좌번호: 일부 은행 개인 뱅킹은 인증서 로그인에 그 은행 계좌번호를 함께 요구한다(2026-11-19 실기기: 우리은행 CF-12401 commWithdrawAccountNo).
-    // commWithdrawAccountNo만 보냈을 때 같은 누락으로 거절돼(03:40) CODEF 개인 보유계좌 입력부 이름(withdrawAccountNo)도 같이 보낸다
     return { ...base, certType: '1', derFile: login.derFile, keyFile: login.keyFile, password: login.password, ...(withdraw ? { withdrawAccountNo: withdraw, commWithdrawAccountNo: withdraw } : {}), ...(withdrawPassword ? { withdrawAccountPassword: withdrawPassword } : {}) };
   }
 
-  /** 계정 등록(connectedId 새로 받기): 공동인증서 der·key + 감싼 비밀번호 */
   async createAccount(org: CodefBankCode, clientType: CodefClientType, login: SealedLogin, withdraw?: string, withdrawPassword?: string): Promise<string> {
     const d = CodefClient.ensure(await this.call('/v1/account/create', { accountList: [CodefClient.loginEntry(org, clientType, login, withdraw, withdrawPassword)] }));
     const id = str(d.connectedId, 128);
@@ -220,17 +199,12 @@ export class CodefClient {
     return id;
   }
 
-  /** 계정 삭제. 그 기관 계정이 마지막이면 CODEF가 connectedId도 지운다. 이미 없으면 성공으로 본다 */
   async deleteAccount(connectedId: string, org: CodefBankCode, clientType: CodefClientType): Promise<void> {
     const r = await this.call('/v1/account/delete', { connectedId, accountList: [CodefClient.loginEntry(org, clientType)] });
     if (r.code !== CODEF_OK && failureOf(r.code) === 'session_lost') return;
     CodefClient.ensure(r);
   }
 
-  /**
-   * 보유계좌(예금·신탁 중 수시입출). 계좌번호는 숫자만.
-   * 은행이 SMS 추가 인증을 요구하면(CF-03002, continue2Way) 계좌 대신 { twoWay }를 돌려준다. 받은 인증번호를 answer로 주면 2차 요청을 한다(CodefLink.sms).
-   */
   async accounts(connectedId: string, org: CodefBankCode, clientType: CodefClientType, answer?: { twoWay: CodefTwoWay; smsAuthNo: string }): Promise<CodefAccount[] | { twoWay: CodefTwoWay }> {
     const path = clientType === 'B' ? '/v1/kr/bank/b/account/account-list' : '/v1/kr/bank/p/account/account-list';
     const body: Json = { connectedId, organization: org };
@@ -255,7 +229,6 @@ export class CodefClient {
     return out;
   }
 
-  /** 수시입출 거래내역. startDate·endDate YYYYMMDD, 과거순 */
   async transactions(connectedId: string, org: CodefBankCode, clientType: CodefClientType, account: string, startDate: string, endDate: string): Promise<CodefTxnPage> {
     const path = clientType === 'B' ? '/v1/kr/bank/b/account/transaction-list' : '/v1/kr/bank/p/account/transaction-list';
     const d = CodefClient.ensure(await this.call(path, { connectedId, organization: org, account, startDate, endDate, orderBy: '1', inquiryType: '1' }));

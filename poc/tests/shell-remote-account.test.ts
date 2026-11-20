@@ -1,4 +1,3 @@
-// 데스크톱 계정 로그인·첫 PC 등록·기기 토큰(remote-account.ts, D08 §4.2, D09 §2): 실제 계정 서비스(개발 스택)에 붙여 돌린다.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -13,10 +12,6 @@ import { devStackPasswords, ORIGIN, softDesktopKeys, startDevStack, type DevStac
 
 const EMAIL = 'owner@gyeonbon-test.example';
 
-/**
- * 신원 파일이 사용자만 읽는지. POSIX는 모드 0600. Windows는 모드 비트가 없어(0o666으로 보인다) 제품처럼
- * 앱 루트(userData의 부모) DACL 상속으로 막는다(D07 §1.1): 파일 ACE가 사용자·SYSTEM뿐이어야 한다.
- */
 async function assertUserOnly(file: string): Promise<void> {
   if (process.platform !== 'win32') return assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   const [name = '', me = ''] = execFileSync(windowsTool('whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8' }).trim().split('","').map((f) => f.replace(/"/g, ''));
@@ -46,7 +41,6 @@ describe('데스크톱 계정: 이메일 6자리 → 첫 PC 등록 → 기기 �
   });
   beforeEach(async () => {
     dir = await fsp.mkdtemp(path.join(root, 'u-'));
-    // 제품의 userData는 prepareLayout이 잠근 앱 루트 아래다. 시험 폴더도 같은 상태로 만든다(Windows DACL 판정의 전제).
     assert.equal((await dirGuard().ensurePrivate(dir)).ok, true);
     s = await startDevStack();
     logs = [];
@@ -224,7 +218,6 @@ describe('데스크톱 계정: 이메일 6자리 → 첫 PC 등록 → 기기 �
     assert.deepEqual(await late.setPassword('mangwon-kimchi-12'), { step: 'signed_in', email: other, codeExpiresAt: null, error: 'account.password_later', phones: 0 });
     assert.deepEqual(s.client.calls, ['PUT /v1/password', 'POST /v1/auth/logout']);
 
-    // 코드 로그인(계정 만들기가 아님)은 /v1/me를 부르지 않는다
     const third = 'third@gyeonbon-test.example';
     dir = await fsp.mkdtemp(path.join(root, 'u-'));
     assert.equal((await dirGuard().ensurePrivate(dir)).ok, true);
@@ -235,7 +228,6 @@ describe('데스크톱 계정: 이메일 6자리 → 첫 PC 등록 → 기기 �
     assert.equal((await code.verify(s.mail.lastCode(third)!)).step, 'signed_in');
     assert.ok(!s.client.calls.includes('GET /v1/me'));
 
-    // 이미 비밀번호가 있는 계정이면 계정 만들기 화면에서 왔어도 건너뛴다
     const fourth = 'fourth@gyeonbon-test.example';
     const v0 = await s.svc.verifyEmailCode((await s.svc.startEmailCode(fourth)).loginId, s.mail.lastCode(fourth)!);
     await s.svc.setPassword(await s.svc.session(`Bearer ${v0.session}`), 'mangwon-kimchi-12');
@@ -374,18 +366,15 @@ describe('데스크톱 계정: 이메일 6자리 → 첫 PC 등록 → 기기 �
     const code = s.mail.lastCode(EMAIL)!;
     assert.ok(!raw.includes(code), '코드 자체는 저장하지 않는다');
     await assertUserOnly(file);
-    // 재시작
     const b = mk();
     const v = await b.init();
     assert.deepEqual([v.step, v.email, v.codeExpiresAt], ['code_sent', EMAIL, sent.codeExpiresAt]);
-    // 틀린 코드(서버 거절)는 대기 정보를 지우지 않는다: 다시 켜도 같은 코드로
     assert.equal((await b.verify(code === '000000' ? '111111' : '000000')).error, 'account.code_invalid');
     const c = mk();
     assert.equal((await c.init()).step, 'code_sent');
     assert.equal((await c.verify(code)).step, 'signed_in');
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(fs.existsSync(file), false, '성공하면 지운다');
-    // [뒤로]도 지운다
     const d = new DesktopAccount({ client: s.client, keys: async () => softDesktopKeys(), identity: new RemoteIdentityFile(await fsp.mkdtemp(path.join(root, 'u-'))), pending: new PendingCodeFile(dir), platform: 'windows', deviceName: 'Windows PC', now: s.clock.now });
     await d.init();
     await d.sendCode('other@gyeonbon-test.example');
@@ -394,7 +383,6 @@ describe('데스크톱 계정: 이메일 6자리 → 첫 PC 등록 → 기기 �
     d.back();
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(fs.existsSync(file), false, '[뒤로]면 지운다');
-    // 만료·모양이 틀린 파일은 버린다
     const f = new PendingCodeFile(dir);
     await f.save({ email: EMAIL, loginId: 'L', expiresAt: s.clock.now() - 1, signup: false });
     assert.equal(await f.load(s.clock.now()), null);
@@ -421,10 +409,8 @@ describe('셸 배선(소스 검사)', () => {
     assert.deepEqual(Object.keys(SHELL_METHODS['account.sendCode']), ['email', 'signup']);
     assert.deepEqual(Object.keys(SHELL_METHODS['account.verify']), ['code']);
     assert.match(src, /'account\.sendCode': async \(p\) => \{\s*needGesture\(3_000\);/);
-    // 6자리 확인은 클릭·Enter·Space 또는 메인 창 키 입력(숫자·붙여 넣기) 3초 안(0.1.5 실사용: 칸을 누르고 메일을 보는 사이 3초가 지난다). 다른 명령은 그대로 needGesture.
     assert.match(src, /'account\.verify': async \(p\) => \{[^}]*?needTyping\(3_000\);/);
     assert.match(src, /'account\.finishReset': async \(p\) => \{[^}]*?needTyping\(3_000\);/);
-    // 폰 연결 6칸(pair.submit)도 다 차면 바로 확인한다(같은 규칙)
     assert.match(src, /'pair\.submit': async \(p\) => \{[^}]*?needTyping\(3_000\);/);
     assert.equal((src.match(/needTyping\(/g) ?? []).length, 3, 'account.verify·account.finishReset·pair.submit 셋뿐');
     assert.match(src, /if \(isTypingKey\(i\)\) typing\.note\(performance\.now\(\)\);/);

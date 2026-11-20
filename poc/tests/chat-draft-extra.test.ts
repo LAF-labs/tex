@@ -1,4 +1,3 @@
-// 대화로 작성일자·수량×단가(ADR-049): 날짜·곱 계산(chat-core), main 도구 실행(agent-chat), 초안·준비 막음(shell-runs), 엔진 입력 검사(runs).
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { describe, it } from 'node:test';
@@ -66,7 +65,6 @@ class Drafts {
   discard() {}
 }
 
-/** main 한 턴: 엔진 각본은 도구 호출 하나 → 결과를 받고 끝. 도구 결과를 돌려준다. */
 async function run(call: DomainCall, d = new Drafts(), say = 'x'): Promise<{ out: ToolOutput; d: Drafts }> {
   let out: ToolOutput | null = null;
   const steps: Array<(p: StepParams) => StepResult> = [
@@ -123,7 +121,6 @@ describe('AgentChat: 작성일자·수량×단가', () => {
       assert.deepEqual([out.status, out.needs], ['needs_input', ['date']], say);
       assert.equal(d.creates.length, 0);
     }
-    // 미래 날짜 말이 아니면 그대로(“다음 달에 보낼 거”는 날짜가 아니다, "내일 끊어줘"는 발급 시점이다)
     for (const say of ['다음 달에 또 할게요, 이번 건 끊어줘', '내일 끊어줘']) assert.equal((await run(draft({ amount: { value: 1_000_000 } }), new Drafts(), say)).out.status, 'card_shown', say);
   });
   it('고치기: 작성일자만, 수량×단가로 금액까지', async () => {
@@ -175,7 +172,6 @@ describe('ShellRuns: 작성일자 카드', () => {
     const r = runs.createDraft(CP, 120_000, null, '원두', { writeDate: yesterday, quantity: 10, unitPrice: 12_000 });
     assert.deepEqual([r.writeDate, r.writeDateSet, r.issueDateHeld, r.quantity, r.unitPrice], [yesterday, true, true, 10, 12_000]);
     await assert.rejects(runs.prepare(r.id), /issue_date\.not_supported/);
-    // 오늘로 되돌리면 표시가 빠지고, 금액만 고치면 수량×단가도 빠진다
     runs.updateDraft(r.id, { writeDate: dayOffset(0), amount: 130_000 });
     assert.deepEqual([r.writeDateSet, r.issueDateHeld, r.quantity], [undefined, false, undefined]);
     const host2 = new Host();

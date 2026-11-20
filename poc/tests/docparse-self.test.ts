@@ -1,16 +1,15 @@
-// docparse 샌드박스 자기 점검(정적, Electron 없음): 네트워크 0·eval 0을 코드와 설정에서 본다.
-// 실행 중 점검(창 안에서 fetch·WebSocket·WebRTC·eval 시도 → 0)은 Electron e2e(apps/desktop/src/docparse-e2e.ts)가 한다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+import ts from 'typescript';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const read = (p: string) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const files = (dir: string) => fs.readdirSync(path.join(ROOT, dir)).filter((f) => f.endsWith('.ts')).map((f) => `${dir}/${f}`);
 const SANDBOX = files('packages/docparse/src/sandbox');
 const MAIN = files('packages/docparse/src');
-const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+const strip = (s: string) => ts.transpileModule(s, { compilerOptions: { removeComments: true, target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext } }).outputText;
 
 describe('docparse 자기 점검: 코드', () => {
   it('샌드박스 모듈은 상대 경로 import만(node:·패키지 없음)', () => {

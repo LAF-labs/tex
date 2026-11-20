@@ -1,9 +1,3 @@
-// 폰 → 게이트웨이(ADR-047 결정 2). 폰이 부르는 것은 /v1/run-tokens(chatSessionId)·/v1/respond(chat_phone·chat_digest)·/v1/usage와
-// /v1/decide(대화 판정 chat_route_v1 하나만, ADR-051 대표 결정 2·ADR-057)뿐이다.
-// - 모델 공급사 키는 게이트웨이에만 있다. 폰은 기기 토큰(chat 범위)과 요청별 DPoP 헤더만 붙인다(헤더는 폰 앱의 devauth가 만든다).
-// - 나가는 글은 마스킹 계층이 만든 것만 보낸다(wasMinted, PC egress와 같은 규칙).
-// - 응답은 믿지 않는다: 도구 이름·인자 모양을 표(tables.ts)로 다시 검사한다. 답 문장 검사는 PhoneChat이 한다.
-// - 본문·토큰·헤더를 로그에 남기지 않는다. 오류는 코드만 옮긴다.
 import { wasMinted, type RedactedText } from '@sax/redaction';
 import { CHAT_PHONE_TOOLS, DATE_MONTH_MIN, PHONE_SCREENS, type ChatPhoneToolName } from './tables.ts';
 import { CHAT_ROUTE_BUNDLE, routeAnswersOf, type RouteAnswer } from './turn.ts';
@@ -39,7 +33,6 @@ export type ReplayItem = TaggedItem | { type: 'function_call_output'; call_id: s
 
 export interface PhoneRespondRequest {
   toolset: 'chat_phone' | 'chat_digest';
-  /** user 메시지 하나(가린 글) */
   text: RedactedText;
   replay: ReplayItem[];
   runToken: string;
@@ -54,25 +47,19 @@ export interface PhoneToolCall {
 export type PhoneRespondResult =
   | { status: 'completed'; output: unknown; toolCalls: PhoneToolCall[]; replay: TaggedItem[] }
   | { status: 'refusal' }
-  | { status: 'error'; code: PhoneChatErrorCode; /** 실행 토큰을 새로 받아야 한다 */ tokenInvalid?: boolean };
+  | { status: 'error'; code: PhoneChatErrorCode; tokenInvalid?: boolean };
 
 export interface PhoneUsage {
   usedKrw: number;
   limitKrw: number;
-  /** 다음 초기화 시각(ms) */
   resetAt: number;
   tier: 'trial' | 'paid';
 }
 
 /** PhoneChat이 쓰는 모델 포트. 시험은 가짜로 바꾼다. */
 export interface PhoneModel {
-  /** 대화 세션 범위 실행 토큰. 실패하면 PhoneChatError */
   runToken(chatSessionId: string): Promise<string>;
   respond(req: PhoneRespondRequest): Promise<PhoneRespondResult>;
-  /**
-   * 대화 판정(ADR-057): 가린 판정 입력 하나로 jev를 부른다. 이름 키 답을 돌려준다. 받지 못하면 null.
-   * 실행 토큰이 무효면 PhoneChatError(tokenInvalid는 PhoneChat이 토큰을 버리는 것으로 다룬다). 없으면 판정 없이 돈다.
-   */
   route?(req: { text: RedactedText; runToken: string }): Promise<Record<string, RouteAnswer> | null>;
 }
 
@@ -82,10 +69,8 @@ export interface HttpResponse {
 }
 
 export interface PhoneGatewayOptions {
-  /** 게이트웨이 origin(운영 https://tax.laf-co.com). DPoP htu는 이 origin + 경로다. */
   origin: string;
   fetch(url: string, init: { method: 'GET' | 'POST'; headers: Record<string, string>; body?: string }): Promise<HttpResponse>;
-  /** Authorization(DPoP 기기 토큰)·DPoP 증명 헤더. 폰 앱의 devauth(deviceAuthFor)가 만든다. chat 범위 토큰이어야 한다. */
   authHeaders(method: 'GET' | 'POST', url: string): Promise<Record<string, string>>;
 }
 
@@ -100,13 +85,11 @@ export function phoneErrorOf(code: string | undefined): { code: PhoneChatErrorCo
       return { code: 'chat.quota_exceeded' };
     case 'gateway.daily_limit':
       return { code: 'chat.daily_limit' };
-    // 체험이 끝나고 구독하지 않으면 기기 토큰에 chat 범위가 없다(계정 서비스)
     case 'account.scope_denied':
     case 'account.subscription_required':
       return { code: 'chat.subscription_required' };
     case 'gateway.device_suspended':
       return { code: 'chat.device_suspended' };
-    // 계정 단위 분당 한도(PC와 폰이 같이 센다). 잠깐 뒤에 다시 보내면 된다.
     case 'policy.rate_limited':
       return { code: 'chat.rate_limited' };
     default:
@@ -121,7 +104,6 @@ const keysAre = (o: Record<string, unknown>, keys: readonly string[]) => Object.
 const ARG_MAX = 400;
 const short = (o: Record<string, unknown>) => Object.values(o).every((v) => typeof v !== 'string' || v.length <= ARG_MAX);
 
-/** 카드의 작성일자·수량·단가 칸(ADR-049, tables.ts DRAFT_EXTRA와 같은 모양) */
 const EXTRA_KEYS = ['date_month_offset', 'date_day', 'quantity', 'unit_price'] as const;
 const monthOffset = (v: unknown) => v === null || (typeof v === 'number' && Number.isInteger(v) && v >= DATE_MONTH_MIN && v <= 0);
 const extraOk = (a: Record<string, unknown>) => monthOffset(a.date_month_offset) && nullableString(a.date_day) && nullableString(a.quantity) && nullableString(a.unit_price);
@@ -177,7 +159,6 @@ export function parseRespond(v: unknown): PhoneRespondResult {
     } else if (item.type !== 'reasoning') return bad;
   }
   if (refused) return { status: 'refusal' };
-  // 끝나지 않은 응답(길이 상한 등)은 다시 보낼 턴이다
   if (v.status !== 'completed') return { status: 'error', code: 'chat.unavailable' };
   return { status: 'completed', output, toolCalls, replay };
 }
@@ -220,7 +201,6 @@ export class PhoneGateway implements PhoneModel {
   }
 
   async respond(req: PhoneRespondRequest): Promise<PhoneRespondResult> {
-    // 마스킹 계층을 지나지 않은 글은 보내지 않는다(타입 단언 우회 차단, PC egress와 같다)
     if (!wasMinted(req.text) || req.replay.some((x) => 'output' in x && !wasMinted(x.output))) return { status: 'error', code: 'chat.unavailable' };
     const r = await this.call('POST', '/v1/respond', {
       toolset: req.toolset,
@@ -242,7 +222,6 @@ export class PhoneGateway implements PhoneModel {
     return isObj(r.value) ? routeAnswersOf(r.value.answers) : null;
   }
 
-  /** 오늘 쓴 금액과 한도(계정 단위, PC와 같이 센다). 받지 못하면 null. */
   async usage(): Promise<PhoneUsage | null> {
     const r = await this.call('GET', '/v1/usage');
     if (!r.ok || !isObj(r.value)) return null;

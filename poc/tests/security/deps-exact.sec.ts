@@ -1,5 +1,3 @@
-// RETRO A-14 공급망: 루트 pnpm 작업 공간의 package.json 의존성은 정확 버전(1.2.3, 1.2.3-rc.1) 또는 workspace:*만 쓴다.
-// 범위(^·~·>=·*·x·latest·태그)가 다시 들어오면 잠금 파일을 새로 풀 때 검토 안 된 판이 들어올 수 있다. minimumReleaseAge(pnpm-workspace.yaml)와 짝.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';

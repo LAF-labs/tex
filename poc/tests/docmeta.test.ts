@@ -1,5 +1,3 @@
-// PoC-8 메타 추출(S4)·만료 규칙(D07 §3)·docparse 텍스트 정리. 입력은 pdf.js·OCR이 내는 모양을 흉내 낸 합성 텍스트(가짜 값)다.
-// PDF를 실제로 샌드박스에서 읽는 경로는 Electron e2e(apps/desktop/src/docparse-e2e.ts)가 본다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { formatBizNo, syntheticBizNo } from '@sax/db';
@@ -31,7 +29,6 @@ function taxText(o: { issued?: string; valid?: string; spaced?: boolean; extra?:
   ].join('\n');
 }
 
-/** 연장ㆍ유예 내역의 날짜 줄을 뺀 납세증명서(대체 창에 다른 날짜가 없도록) */
 const noDeferral = (t: string) => t.split('\n').filter((l) => !l.startsWith('징수유예')).join('\n');
 
 function bizText(o: { issued?: string; spaced?: boolean; title?: boolean } = {}): string {
@@ -114,7 +111,6 @@ describe('메타 추출: 납세증명서(국세)', () => {
   });
 
   it("'증명합니다'를 못 읽으면 세무서장 근처 날짜를 쓰되 불확실로 둔다(사용자 확인)", () => {
-    // 납부기한 날짜가 근처에 있으면 둘 중 정하지 않는다(후보만)
     const near = extractDocMeta(taxText().replace('증명합니다', '증멍합니다'));
     assert.deepEqual([near.issuedOn.value, near.issuedOn.reason, near.issuedOn.suggested], [null, 'ambiguous', '2026-11-01']);
     const noRow = noDeferral(taxText());
@@ -203,8 +199,6 @@ describe('doc_meta_check_v1 후보와 L0 규칙(그림자 판정)', () => {
     const m = extractDocMeta(taxText());
     assert.ok(m.candidates.length > 0 && m.candidates.length <= 8);
     assert.ok(m.candidates.every((c) => !c.context.includes(BIZ_F)), '사업자번호가 문맥에 남지 않는다');
-    // 지금 L0 규칙은 ±40자 문맥이 겹쳐(유효기간·발급일 라벨이 여러 후보에 들어간다) 실제 서식 배치에서 답하지 못한다(PoC-8 보고서 §4).
-    // 답하지 못하면(null) 모델 몫이다. 답했다면 추출기와 같아야 한다.
     for (const [q, want] of [['issued_on', '2026-11-01'], ['valid_until', '2026-11-30']] as const) {
       const got = l0ShadowPick(m, q);
       assert.ok(got === null || got === want, `${q}: ${got}`);
@@ -239,10 +233,8 @@ describe('만료 규칙(D07 §3)', () => {
     const amb = (suggested: string) => ({ ...meta(), validUntil: { value: null, reason: 'ambiguous' as const, suggested } });
     assert.deepEqual(decideExpiry(amb('2026-11-20'), TODAY), { expiresOn: '2026-11-20', source: 'document', needsUser: true, reasons: ['valid_until_ambiguous'] });
     for (const late of ['2026-11-30', '2026-12-01', '2026-10-31']) assert.deepEqual(decideExpiry(amb(late), TODAY), { expiresOn: '2026-11-30', source: 'rule', needsUser: true, reasons: ['valid_until_ambiguous'] }, late);
-    // 후보 전부(options)가 있으면 발급일 이후 것 중 가장 이른 날짜(가장 이른 후보가 발급일 앞이어도 규칙 날짜로 돌아가지 않는다)
     const opts = { ...meta(), validUntil: { value: null, reason: 'ambiguous' as const, suggested: '2026-10-20', options: ['2026-10-20', '2026-11-25'] } };
     assert.equal(decideExpiry(opts, TODAY).expiresOn, '2026-11-25');
-    // 후보는 발급일 ~ 발급일 + 30일 안에서만(법정 상한을 넘는 날짜는 넣어도 확인이 거부되므로 내지 않는다)
     const far = { value: null, reason: 'ambiguous' as const, suggested: '2026-10-20', options: ['2026-10-20', '2026-12-31'] };
     assert.deepEqual([validityCandidate(far, '2026-11-01'), validityCandidate(opts.validUntil, '2026-11-01'), validityCandidate(far, null)], [undefined, '2026-11-25', '2026-10-20']);
     assert.equal(validityCandidate({ value: null, reason: 'ambiguous', suggested: '2026-12-02' }, '2026-11-01'), undefined, '하나뿐인 후보도 상한(12-01)을 넘으면 내지 않는다');
@@ -330,12 +322,12 @@ describe('docparse 텍스트 정리(샌드박스 모듈)', () => {
     const h = 200;
     const px = new Uint8ClampedArray(w * h * 4).fill(255);
     const set = (x: number, y: number, v: number) => px.set([v, v, v, 255], (y * w + x) * 4);
-    for (let x = 0; x < w; x++) for (let y = 0; y < h; y++) if (y < 40) set(x, y, 230); // 음영 칸
-    for (let x = 0; x < w; x++) set(x, 100, 0); // 가로 표 선
-    for (let y = 0; y < h; y++) set(300, y, 0); // 세로 표 선
-    for (let x = 50; x < 70; x++) for (let y = 120; y < 150; y++) set(x, y, 0); // 글자 획(20×30)
-    for (let x = 100; x < 160; x++) for (let y = 120; y < 180; y++) px.set([200, 40, 40, 255], (y * w + x) * 4); // 붉은 직인
-    for (let x = 120; x < 130; x++) for (let y = 130; y < 160; y++) set(x, y, 20); // 직인 아래 검은 글자
+    for (let x = 0; x < w; x++) for (let y = 0; y < h; y++) if (y < 40) set(x, y, 230);
+    for (let x = 0; x < w; x++) set(x, 100, 0);
+    for (let y = 0; y < h; y++) set(300, y, 0);
+    for (let x = 50; x < 70; x++) for (let y = 120; y < 150; y++) set(x, y, 0);
+    for (let x = 100; x < 160; x++) for (let y = 120; y < 180; y++) px.set([200, 40, 40, 255], (y * w + x) * 4);
+    for (let x = 120; x < 130; x++) for (let y = 130; y < 160; y++) set(x, y, 20);
     cleanForOcr(px, w, h);
     const at = (x: number, y: number) => px[(y * w + x) * 4];
     assert.deepEqual([at(10, 10), at(10, 100), at(300, 10), at(60, 130), at(105, 125), at(125, 140)], [255, 255, 255, 0, 255, 0]);

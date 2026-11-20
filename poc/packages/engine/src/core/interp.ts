@@ -1,8 +1,3 @@
-// 스텝 실행기(D03 §5.1): plan()은 D02 §4.3 간선 의미론 그대로다. 동적 스텝 생성은 없다.
-//   for step: hooks.beforeStep → step.started → handler → step.finished{code} → resolveNext
-// 실행기가 스스로 처리하는 것: 폴스루, branch 점프, repeat(헤더·본문·max 소진), onFail 재시도(정책 retries, Equal Jitter),
-// checkpoint:<name> 점프, loopGuard, end. 사람·복구가 필요한 것(handoff·recover·human:secret·abort)과 아직 핸들러가 없는 스텝은
-// 멈춤(RunStop)으로 돌려주고, 상태 머신(machine.ts)과 실행 조율(M2-2)이 이어 받는다.
 import { effectiveOnFail, flatten, IRREVERSIBLE_TYPES, type StepInfo } from './cfg.ts';
 import { evalCond } from './conds.ts';
 import type { ActResult } from './page.ts';
@@ -12,61 +7,32 @@ import type { EndStep, OnFailThen, PlaybookIR, Policy, Step } from './types.ts';
 export type RunStop =
   | { t: 'end'; at: string; status: EndStep['status'] }
   | { t: 'abort'; at: string; code: string | null }
-  /** resumeAt: 사용자가 재개하면 이어서 돌 스텝(비가역 스텝의 실패면 그 verify, D03 §2). */
   | { t: 'handoff'; at: string; resumeAt: string; code: string | null }
-  /** 복구 계층(L1·L2, M2-5)이 받는다. 성공하면 실패한 그 스텝부터 다시. */
-  /** cause: 스텝 code로 바뀌기 전의 원래 실패 코드(폴백 사슬이 본다). */
   | { t: 'recover'; at: string; code: string; cause?: string }
-  /** 금고 비밀 창(D05 §3.5). 닫힌 뒤 next부터. */
   | { t: 'human_secret'; at: string; next: string; code: string }
-  /** 이 실행기에 핸들러가 없는 스텝(M2-2·M2-3이 붙인다). 그 스텝은 실행하지 않았다. */
   | { t: 'unhandled'; at: string; type: Step['type'] }
-  /** 최상위 마지막 스텝을 지나 end 없이 떨어짐(정적 검증이 막는다). */
   | { t: 'falloff'; at: string };
 
 export interface InterpHooks {
-  /**
-   * 정책 집행 지점(Actuator.policy.beforeStep, M2-4: 스텝 지연·걸쇠·정지). {ok:false, code}를 돌려주면 스텝을 실행하지 않고 멈춘다:
-   * FORCED_STOPS에 있는 코드는 그 처리(핸드오프·중단), 없는 코드는 중단.
-   */
   beforeStep?(s: Step): Promise<void | ActResult> | void | ActResult;
-  /** 저널. 값 없이 스텝 id·타입·코드·시도 횟수만. */
   event?(name: 'step.started' | 'step.finished' | 'step.retry' | 'step.loop_guard', data: { stepId: string; type: string; code?: string; cause?: string; attempt?: number }): void;
 }
 
 export interface InterpOptions {
   retries: Policy['retries'];
-  /** 재시도 지연 하한(= 정책 stepDelayMs 하한, D02 §5). */
   retryFloorMs: number;
-  /** [0, 1) 난수(시험에서 고정). */
   random?: () => number;
-  /** 실행당 스텝 실행 상한(순환 방어. loopGuard와 별개의 엔진 안전망). */
   maxStepExecutions?: number;
-  /** FORCED_STOPS에 더할 코드(실행 조율기가 스스로 상태를 바꾼 멈춤: 게이트 거부·TTL 등). */
   forcedStops?: ReadonlyMap<string, 'handoff' | 'abort'>;
-  /**
-   * 폴백 사슬(run/fallback.ts): 재시도를 다 쓰고 onFail이 handoff인 실패를 사람에게 넘기기 전에 recover 멈춤으로 바꿀지.
-   * 조율기 recover 훅이 다시 찾기·AI 위치 찾기·체크포인트 재진입을 하고, 다 안 되면 핸드오프한다. 원래 코드(cause)를 받는다.
-   */
   escalate?: (s: Step, cause: string) => boolean;
-  /**
-   * 남은 재시도를 건너뛰고 바로 escalate할 실패(폴백 사슬 0원 칸: 이 스텝에 기억한 길이 있거나 기억한 선택자로 실패). 같은 동작을 다시 해도
-   * 같은 결과일 가능성이 높아 재시도 대기(대상 대기 × 3번)를 아낀다. escalate도 참이어야 한다.
-   */
   fastEscalate?: (s: Step, cause: string, attempt: number) => boolean;
-  /**
-   * [중지] 신호(IrRun.stop). 끊기면 되돌릴 수 있는 화면 스텝(STOPPABLE)의 진행 중 대기와 재시도 지연을 기다리지 않고 run.stopped로 멈춘다.
-   * 없으면 스텝 경계(beforeStep)에서만 멈춘다. 버린 스텝이 뒤늦게 하는 동작은 정책 집행기가 run.stopped로 거부한다(커밋 전).
-   */
   stop?: AbortSignal;
 }
 
-/** [중지]에 진행 중 대기를 버려도 되는 스텝(화면 대기·입력·읽기). 조율기 스텝(checkpoint·human·gate·decide)과 비가역 스텝은 넣지 않는다. */
 const STOPPABLE = new Set<Step['type']>(['goto', 'click', 'fill', 'select', 'press', 'wait', 'assert', 'extract', 'readback', 'pick'] as Step['type'][]);
 
 export const MAX_STEP_EXECUTIONS = 2_000;
 
-/** Equal Jitter(D03 §7): d = min(cap, base·2^(n−1)), 지연 = d/2 + U·d/2, 하한 floor. n은 1부터. */
 /**
  * 재시도·onFail 없이 곧바로 멈추는 실패 코드(D16 처리 열). 보고 코드는 스텝 code로 바꾸지 않고 원래 코드다.
  * - step.commit_shadow: 클릭 안 함, 핸드오프(보안 이벤트).
@@ -88,32 +54,23 @@ export const FORCED_STOPS: ReadonlyMap<string, 'handoff' | 'abort'> = new Map([
   ['portal.mfa_pending', 'handoff'],
   ['portal.captcha', 'handoff'],
   ['portal.busy', 'handoff'],
-  // 포털 점검(IR rev v1.3.7): 폴백·판정·재시도·사람 차례 없이 바로 멈춘다(끝 시각은 걸쇠가 안다).
   ['portal.maintenance', 'abort'],
-  // 커밋 가드(D03 §5.4, D16): 무장 없는 커밋 요청·잡지 못한 커밋 요청·무장 거부는 중단, 본문 불일치는 핸드오프
   ['commit_guard.blocked_request', 'abort'],
   ['commit_guard.unintercepted', 'abort'],
   ['commit_guard.arm_refused', 'abort'],
   ['security.commit_payload_mismatch', 'handoff'],
-  // decide(M2-2 B, D16 decide.*·portal.*): 화면 확인 불가·판정기 불가·중복 로그인은 재시도 없이 핸드오프(자동 재로그인 없음, D03 §10)
   ['portal.unobservable', 'handoff'],
   ['decide.unavailable', 'handoff'],
   ['decide.unknown', 'handoff'],
-  // sign(M2-3, D02 §4): 커밋 구간 안 sign은 중단, 로그인 서명을 엔진이 못 하면 핸드오프(사람이 마저 한다)
   ['sign.refused_in_commit', 'abort'],
   ['sign.method_unknown', 'handoff'],
   ['sign.no_path', 'handoff'],
   ['sign.unsupported', 'handoff'],
-  // save_pdf(M2-3): 아직 없는 strategy는 플레이북 결함이라 재시도 없이 중단(사후 스텝이면 조율기가 CompletedWithIssues로)
   ['save_pdf.unsupported', 'abort'],
   ['portal.logged_out_by_other_session', 'handoff'],
-  // verify 기준선 조회 실패(B-07, D16): 아직 커밋 전이라 게이트를 열지 않고 핸드오프. 다시 조회해도 같은 화면이라 재시도하지 않는다.
   ['verify.baseline_missing', 'handoff'],
-  // 비가역 진입 전 거부(D03 §3 R-G7): 토큰이 맞지 않거나 원장 armed를 쓰지 못했다. 누르지 않았다. 다시 해도 같은 거부라 중단.
   ['gate.token_invalid', 'abort'],
   ['ledger.arm_failed', 'abort'],
-  // 발급 잠금(ADR-048 결정 7): 다른 PC가 발급 중이거나, 겹치는지 확인하지 못했거나, 커밋 직전에 잠금이 없다. 게이트를 열지 않았거나 누르지 않았다.
-  // 재시도 없이 핸드오프(사람이 [다시 시도]하면 게이트 앞부터 다시 잡는다). 진입 전 확인이 던진 경우(commit.precheck_failed)도 같다.
   ['issue.locked_elsewhere', 'handoff'],
   ['issue.lock_unavailable', 'handoff'],
   ['issue.lock_lost', 'handoff'],
@@ -151,13 +108,11 @@ export class Interpreter {
     return this.ir.steps[0]?.id ?? null;
   }
 
-  /** 폴스루 목적지: 다음 원소, 없으면 감싼 repeat 헤더, 최상위 끝이면 null. */
   private fallTarget(id: string): string | null {
     const i = this.info.get(id)!;
     return i.next ?? i.repeats.at(-1) ?? null;
   }
 
-  /** from부터 멈출 때까지 실행한다. */
   async run(from: string | null = this.entry, prev: string | null = null): Promise<RunStop> {
     let cur = from;
     let last = prev;
@@ -169,7 +124,6 @@ export class Interpreter {
         this.hooks.event?.('step.loop_guard', { stepId: s.id, type: s.type });
         return { t: 'abort', at: s.id, code: 'step.loop_guard' };
       }
-      // loopGuard: 순환에 참여하는 스텝의 방문 상한(V-18). 넘으면 다시 돌지 않고 사람에게 넘긴다.
       const n = (this.visits.get(s.id) ?? 0) + 1;
       this.visits.set(s.id, n);
       if (s.loopGuard && n > s.loopGuard.max) {
@@ -185,16 +139,13 @@ export class Interpreter {
     return { t: 'falloff', at: last ?? '' };
   }
 
-  /** 스텝 하나(재시도 포함)를 실행하고 다음 스텝 id 또는 멈춤을 돌려준다. */
   private async exec(s: Step, prev: string | null): Promise<string | RunStop> {
-    // handoff 스텝의 code(있으면)는 사람에게 넘긴 까닭이다(앱이 안내 문구를 고른다, 예: cert.pick_needed).
     if (s.type === 'handoff') return { t: 'handoff', at: s.id, resumeAt: s.resumeAt, code: s.code ?? null };
     if (s.type === 'repeat') return this.repeat(s, prev);
     const h = this.handlers[s.type] as Handler<typeof s.type> | undefined;
     if (!h) return { t: 'unhandled', at: s.id, type: s.type };
 
     const of = effectiveOnFail(this.ir, s);
-    // 비가역 스텝은 재시도하지 않는다(V-03f). 정책 stepMax가 상한.
     const retries = IRREVERSIBLE_TYPES.has(s.type) || this.env.irreversible.has(s.id) ? 0 : Math.max(0, Math.min(of.retry, this.opts.retries.stepMax));
     for (let attempt = 0; ; attempt++) {
       const pre = await this.hooks.beforeStep?.(s);
@@ -205,12 +156,10 @@ export class Interpreter {
         const run = h(s as never, this.env);
         out = this.opts.stop && STOPPABLE.has(s.type) && !this.env.irreversible.has(s.id) ? await this.untilStop(run, { t: 'fail', code: 'run.stopped' }) : await run;
       } catch {
-        // 포트 예외는 값 없이 코드로만 남긴다.
         out = { t: 'fail', code: 'step.port_error' };
       }
       this.hooks.event?.('step.finished', { stepId: s.id, type: s.type, ...(out.t === 'fail' ? this.codes(s, out.code) : {}) });
       if (out.t !== 'fail') return this.after(s, out);
-      // 재시도·onFail을 거치지 않는 코드(D16 처리 열): 같은 동작을 다시 해도 같은 거부라 바로 멈춘다.
       const forced = this.forced(out.code);
       if (forced === 'handoff') return { t: 'handoff', at: s.id, resumeAt: s.id, code: out.code };
       if (forced === 'abort') return { t: 'abort', at: s.id, code: out.code };
@@ -226,7 +175,6 @@ export class Interpreter {
     }
   }
 
-  /** p 또는 [중지] 중 먼저 오는 것. [중지]면 stopped를 돌려주고 p는 버린다(그 뒤 거부·예외는 삼킨다). 신호가 없으면 p 그대로. */
   private untilStop<T>(p: Promise<T>, stopped: T): Promise<T> {
     const sig = this.opts.stop;
     if (!sig) return p;
@@ -252,7 +200,6 @@ export class Interpreter {
     return this.opts.forcedStops?.get(code) ?? FORCED_STOPS.get(code);
   }
 
-  /** 보고 코드: 스텝의 code(D02 §4 공통 필드)가 있으면 그것, 원래 코드는 cause. */
   private codes(s: Step, code: string): { code: string; cause?: string } {
     return s.code && s.code !== code ? { code: s.code, cause: code } : { code };
   }
@@ -281,10 +228,6 @@ export class Interpreter {
     return cp ?? { t: 'abort', at: s.id, code: 'step.unknown_target' };
   }
 
-  /**
-   * repeat(D02 §4.3-1): 헤더에서 until을 매번(첫 진입 포함) 평가한다. 참이면 다음 원소, 본문을 max번 돈 뒤에도 거짓이면 실패(onFail).
-   * 본문 밖에서 헤더로 들어오면 횟수를 0으로 되돌린다.
-   */
   private async repeat(s: Extract<Step, { type: 'repeat' }>, prev: string | null): Promise<string | RunStop> {
     const fromBody = prev !== null && (this.info.get(prev)?.repeats.includes(s.id) ?? false);
     if (!fromBody) this.repeatIter.set(s.id, 0);

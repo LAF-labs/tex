@@ -1,7 +1,3 @@
-// e2e용 계정 서비스 HTTP 앞단: 메모리 가짜 AccountClient를 localhost HTTP로 내놓는다.
-// 셸은 이 앞단에 제품 클라이언트(remote-cloud.ts cloudPorts) + 제품 Egress(허용 목록 그대로, cloudDevLocal)로 닿는다.
-// 그래서 허용 목록에 없는 경로는 e2e에서도 net.path_not_allowed로 실패한다(#224 결함이 e2e를 지난 것의 재발 방지).
-// 응답 모양·상태 코드는 services/account/API.md와 remote-cloud.ts가 기대하는 것과 같다. 기기 범위 호출(토큰·DPoP)은 두지 않는다.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { AccountClient } from '../dist/remote-ports.js';
@@ -30,7 +26,6 @@ const R: Record<string, Route> = {
   'POST /v1/auth/refresh/revoke': async (c, b) => (await c.revokeRefresh(String(b.refreshToken)), [204, null]),
 };
 
-/** 가짜 클라이언트를 HTTP로 띄운다. hits는 앞단이 받은 "메서드 경로"(허용 목록을 지난 요청만 여기 닿는다). */
 export async function serveAccount(client: AccountClient): Promise<{ origin: string; hits: string[]; close(): void }> {
   const hits: string[] = [];
   const srv = http.createServer((req, res) => {

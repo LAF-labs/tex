@@ -1,9 +1,3 @@
-// S9 실호출 스파이크(D04 §9, D13 S9). OPENAI_API_KEY가 있으면 실측(live), 없으면 모의 서버(mock)로 같은 경로를 돈다.
-//   node --conditions=development scripts/s9-decisions.ts [--mock] [--reps=10] [--out=/abs/path.json]
-// 측정: 명시 캐시 적중(cached_tokens·cache_write_tokens), refusal 빈도와 유발 텍스트(합성 화면 20종),
-//       질문 수 2·5·10별 지연 p50/p95, 레이트 리밋 헤더, choice probabilities[] 전체 분포 여부, prompt_cache_key 형식,
-//       Responses store:false 다턴(최대 3) 재생. 입력은 합성 텍스트만. 키는 어디에도 기록하지 않는다.
-// 비용 상한 $2: 호출 전 추정, 호출마다 누적해 $1.5를 넘으면 중단한다. 결과: reports/raw/s9-<mode>.json
 import fs from 'node:fs';
 import {
   BundleCatalog,
@@ -32,7 +26,7 @@ import { S9_SCREENS } from '../tests/fixtures/s9-screens.ts';
 const forceMock = process.argv.includes('--mock');
 const outArg = process.argv.find((a) => a.startsWith('--out='))?.slice(6);
 const reps = Number(process.argv.find((a) => a.startsWith('--reps='))?.slice(7) ?? 10);
-const apiKey = forceMock ? undefined : process.env.OPENAI_API_KEY || undefined; // 빈 문자열은 키 없음으로 본다
+const apiKey = forceMock ? undefined : process.env.OPENAI_API_KEY || undefined;
 const mode: 'live' | 'mock' = apiKey ? 'live' : 'mock';
 const COST_CAP = 2;
 const COST_ABORT = 1.5;
@@ -45,7 +39,6 @@ const terraCost = (u: Usage) => ((u.inputTokens - u.cachedTokens - u.cacheWriteT
 const catalog = BundleCatalog.load();
 const ss = catalog.get('screen_state_v2')!;
 
-// 질문 수별 지연 측정용 탐침 번들(앱 카탈로그·허용 목록에는 없다. 이 하네스의 egress에만 등록).
 function probe(id: string, count: number): LoadedBundle {
   const names = ['has_logout_link', 'has_heading', 'has_textbox', 'has_button', 'has_table', 'has_dialog', 'has_image', 'mentions_date', 'mentions_amount_token', 'mentions_name_token'];
   const def: BundleDef = {
@@ -77,7 +70,6 @@ const pct = (xs: number[], p: number) => {
 
 async function main() {
   const planned = 3 + S9_SCREENS.length + PROBES.length * reps + 3;
-  // 사전 추정: Decisions 호출당 입력 ≤ 4k 토큰(전부 비캐시·쓰기 요율로 보수 계산), Terra 최대 3턴 각 입력 8k·출력 16k(상한)
   const estimate = (planned - 3) * 4000 * PRICE.luna.write / 1e6 + 3 * (8000 * PRICE.terra.in + 16000 * PRICE.terra.out) / 1e6;
   if (planned > MAX_CALLS || estimate > COST_CAP) throw new Error(`계획 호출 ${planned}회, 추정 $${estimate.toFixed(3)}: 상한 초과`);
   console.log(`S9 mode=${mode} planned=${planned} estimate≤$${estimate.toFixed(3)}`);
@@ -88,7 +80,7 @@ async function main() {
     timeoutMs: 30_000,
     modelGuard: { bundles: [...catalog.allowEntries(), ...PROBES.map((p) => ({ id: p.wireId, digest: p.digest, maxInputBytes: p.def.maxInputBytes }))] },
   });
-  const key = apiKey ?? 'sk-mock-not-a-key'; // apiKey는 undefined 또는 비어 있지 않은 키
+  const key = apiKey ?? 'sk-mock-not-a-key';
   const decider = new OpenAIDecisionsAdapter({ apiKey: key, egress });
   const layer = new DefaultModelLayer({ catalog, profiles: ThresholdProfiles.load(), decider });
   const responder = new OpenAIResponsesAdapter({ apiKey: key, egress });
@@ -112,14 +104,12 @@ async function main() {
   };
   const redactor = new Redactor({ runId: 's9' });
 
-  // A. 명시 캐시: 같은 접두, 다른 화면 3회
   const cache = [];
   for (const s of S9_SCREENS.slice(0, 3)) {
     const r = await call(ss, redactor.apply(s.text).redacted);
     cache.push(r ? { screen: s.id, ...r.usage, latencyMs: +r.latencyMs.toFixed(1) } : { screen: s.id, error: true });
   }
 
-  // B. refusal 빈도·유발 텍스트(screen_state_v2 9문항 × 20종) + E. choice 분포
   const refusal = [];
   const choiceDist: Array<{ screen: string; question: string; choices: number; probabilities: number; full: boolean }> = [];
   for (const s of S9_SCREENS) {
@@ -127,7 +117,6 @@ async function main() {
     const r = await call(ss, input);
     if (!r) continue;
     const n = decider.normalize(ss, r);
-    // 같은 응답으로 로컬 매핑만 다시 계산한다(재호출 없음).
     const def = layer.effectiveDef(ss);
     const res = n.ok && typeof def !== 'string' ? evaluateMapping(def, statesOf(def, n.answers)) : null;
     if (n.ok) {
@@ -136,7 +125,6 @@ async function main() {
     refusal.push({ screen: s.id, probe: s.probe, refusals: n.ok ? n.refusals : [`normalize:${n.reason}`], outcome: res?.outcome ?? null, coreRefusal: res?.coreRefusal ?? null });
   }
 
-  // C. 질문 수별 지연
   const latency = [];
   for (const p of PROBES) {
     const ms: number[] = [];
@@ -147,7 +135,6 @@ async function main() {
     latency.push({ questions: p.def.questions.length, n: ms.length, p50: pct(ms, 50), p95: pct(ms, 95), max: ms.length ? +Math.max(...ms).toFixed(1) : null });
   }
 
-  // G. Responses store:false 다턴 재생(최대 3턴). 각 턴의 도구 호출은 로컬 합성 서브트리로 답하고, 구조화 출력이 나오면 멈춘다.
   const ts = selectorRepair(['form.counterpart']);
   const runToken = localRunToken(egress, { runId: 's9-replay' });
   const msg = { role: 'user' as const, content: [{ type: 'input_text' as const, text: apply('스텝 s12(fill, 기대 역할 textbox, 이름 패턴 ^공급받는자 등록번호$)의 셀렉터 후보 3개가 모두 실패했다. 서브트리를 읽고 후보를 제안하라.', { runId: 's9' }, { frame: 'none' }).redacted }] };
@@ -160,7 +147,6 @@ async function main() {
     try {
       t = await responder.respond(ts, { toolset: 'selector_repair', messages: [msg], replay: replayItems, runToken });
     } catch (e) {
-      // 어댑터는 공급사 오류를 incomplete로 돌려주지만, 그 밖의 예외도 턴 기록에 남기고 멈춘다.
       turns.push({ turn, status: 'error', reason: (e as Error).message.slice(0, 200), toolCalls: [], replayItems: [], encryptedReasoning: false, output: null, usage: null });
       errors.push(`selector_repair turn ${turn}: ${(e as Error).message}`);
       break;
@@ -181,7 +167,6 @@ async function main() {
   }
   const replay = { turns, finalOutput: turns.at(-1)?.output ?? null };
 
-  // D. 레이트 리밋 헤더(키 이름과 첫·마지막 값)
   const audit = egress.modelAudit;
   const rateLimit = { headerNames: [...new Set(audit.flatMap((a) => Object.keys(a.rateLimit)))].sort(), first: audit[0]?.rateLimit ?? null, last: audit.at(-1)?.rateLimit ?? null, statuses: audit.reduce<Record<string, number>>((m, a) => ((m[String(a.status)] = (m[String(a.status)] ?? 0) + 1), m), {}) };
 

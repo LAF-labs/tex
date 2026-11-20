@@ -1,5 +1,3 @@
-// M4-1 하드닝 점검(D11 §4 데스크톱 하드닝 체크리스트): 표의 행마다 describe 하나. 이 트랙 범위 밖 행은 todo에 담당 WBS를 적는다.
-// 함수는 가짜 Electron 객체로 돌리고, 배선은 소스를 읽어 본다. 실제 창에서 걸린 값(webPreferences·CSP 헤더·iframe)은 shell-e2e가 본다.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
@@ -14,11 +12,9 @@ const root = path.resolve(import.meta.dirname, '..');
 const read = (p: string) => fs.readFileSync(path.join(root, p), 'utf8');
 const SRC = 'apps/desktop/src';
 const srcFiles = fs.readdirSync(path.join(root, SRC)).filter((f) => f.endsWith('.ts'));
-/** 제품 경로 소스(e2e·시험 도구 제외). */
 const productFiles = srcFiles.filter((f) => !f.includes('e2e') && !['h01-fixture.ts', 'poc8-measure.ts', 'smoke-plan.ts'].includes(f));
 const staticJs = ['shell/shell.js', 'shell/shell-views.js', 'shell/shell-g24.js', 'shell/shell-onboarding.js', 'shell/shell-account.js', 'shell/shell-billing.js', 'shell/shell-devices.js', 'shell/shell-biz.js', 'shell/password-rules.js', 'shell/common-passwords.js', 'shell/shell-pair.js'];
 const directives = (csp: string) => new Map(csp.split(';').map((d) => d.trim().split(/\s+/)).map(([k, ...v]) => [k!, v.join(' ')]));
-/** 생성자 호출 하나의 webPreferences 블록(괄호 짝 맞춰 자른다). */
 function prefsBlocks(src: string, ctor: string): string[] {
   const out: string[] = [];
   for (let i = src.indexOf(ctor); i >= 0; i = src.indexOf(ctor, i + 1)) {
@@ -77,7 +73,7 @@ describe('D11 §4 렌더러: contextIsolation·sandbox·nodeIntegration·좁은 
         assert.ok(!/nodeIntegration: true|contextIsolation: false|webviewTag: true|webSecurity: false/.test(b), f);
       }
     }
-    assert.ok(n >= 5, `${n}`); // 셸 창·승인 바·비밀 창·docparse·시연 씨앗(개발 콘솔 창은 W-1에서 지웠다)
+    assert.ok(n >= 5, `${n}`);
   });
 
   it('devTools: 셸 메인 창은 제품 빌드에서 끄고, 비밀 창·승인 바·docparse는 늘 끈다. 셸은 webview를 끈다', () => {
@@ -94,7 +90,6 @@ describe('D11 §4 렌더러: contextIsolation·sandbox·nodeIntegration·좁은 
     for (const f of productFiles) {
       for (const m of read(`${SRC}/${f}`).matchAll(/loadURL\(([^)]*)\)/g)) {
         const arg = m[1]!;
-        // 시연 PDF 만들기(demo-pdfs·demo-seed, javascript:false 창)만 data: HTML을 쓴다.
         const pdfMaker = ['demo-pdfs.ts', 'demo-seed.ts'].includes(f) && arg.startsWith("'data:text/html") && /javascript: false/.test(read(`${SRC}/${f}`));
         assert.ok(/SCHEME|SHELL_URL|^url$/.test(arg) || pdfMaker, `${f}: loadURL(${arg})`);
       }
@@ -167,7 +162,6 @@ describe('D11 §4 전역 핸들러: 권한 거부, 이동·리디렉트·새 창
     app.enableSandbox = () => void (app.sandboxed = true);
     return app;
   }
-  /** node --test(Node 26)의 execArgv에는 기본값 --inspect-port가 들어 있어 스위치 검사가 걸린다. 부르는 동안만 비운다. */
   function withCleanArgv(fn: () => void): void {
     const saved = process.execArgv;
     process.execArgv = [];
@@ -331,7 +325,6 @@ describe('D11 §4 승인 바(ADR-021)', () => {
     for (const k of ['sandbox: true', 'javascript: false', 'devTools: false', 'focusOnNavigation: false', 'webviewTag: false', 'session: barSession()']) assert.ok(b.includes(k), k);
     assert.ok(!b.includes('preload'));
     assert.ok(src.includes("session.fromPartition('sax-approval')") && !src.includes("'persist:sax-approval'"));
-    // 실제로 걸린 값으로 한 번 더 본다(스크립트가 켜져 있으면 바를 만들지 않는다).
     assert.match(src, /prefs\?\.javascript !== false/);
   });
   it("바 CSP는 default-src 'none'; style-src 'self'(meta와 응답 헤더), 배경색 지정, 메인 창 cursor-changed 감시", () => {
@@ -342,8 +335,6 @@ describe('D11 §4 승인 바(ADR-021)', () => {
   it('메인 창: webviewTag:false·disableDialogs:true, 제품 소스에 sendInputEvent·debugger 없음(e2e만)', () => {
     const shell = read(`${SRC}/shell-app.ts`);
     assert.ok(shell.includes('webviewTag: false') && shell.includes('disableDialogs: true'));
-    // 앱 안 브라우저(embedded-browser.ts)만 webContents.debugger를 쓴다: 그 파일이 만든 홈택스 보기(영구 파티션)의 webContents에만 붙는다.
-    // 메인 창·승인 바·비밀 창에는 닿지 않는다(그 창들의 실제 입력 감시는 그대로 사람 입력만 센다).
     for (const f of productFiles) if (f !== 'embedded-browser.ts') assert.ok(!/sendInputEvent|\.debugger\b/.test(read(`${SRC}/${f}`)), f);
     const eb = read(`${SRC}/embedded-browser.ts`).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
     assert.ok(!/sendInputEvent|win\.webContents|BrowserWindow/.test(eb), 'embedded-browser.ts는 창 webContents·입력 합성을 쓰지 않는다');

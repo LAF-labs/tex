@@ -7,7 +7,6 @@ import { scrubAxNodes, scrubDomNode, scrubDomSnapshot, scrubKnownValues, stripAu
 
 type Json = Record<string, unknown>;
 
-/** 오염 상태 Runtime.getProperties에서 지우는 입력 값 속성. */
 const VALUE_PROPS = new Set(['value', 'defaultValue']);
 
 export interface SecretWindow {
@@ -21,36 +20,25 @@ export interface TargetState {
   type: string;
   url: string;
   openerId?: string;
-  /** 금고 감시 세션(브라우저 수준 자동 부착으로 생긴 세션). 엔진에 노출하지 않는다. */
   vaultSession: string;
-  /** waitForDebuggerOnStart로 멈춰 있는가(금고 세션 기준). */
   paused: boolean;
   exposed: boolean;
   engineSession?: string;
   mainFrameId?: string;
   win?: SecretWindow;
-  /** 금고가 입력한 노드·human:secret 대상 노드. */
   secretBackendIds: Set<number>;
-  /** 목적지를 모르는 팝업: 금고가 숨긴 채 재개하고, 문서 커밋 + getFrameTree로 허용이 확인될 때만 노출한다. */
   pendingPopup?: boolean;
-  /** 허용 밖 이동·커밋이 한 번이라도 확인된 타깃. 이후 어떤 이동에도 다시 노출하지 않는다(영구, 단조). */
   revoked?: boolean;
-  /** expose() 진행 중(await 사이). 이 동안의 허용 밖 이동도 거부로 기록한다. */
   exposing?: boolean;
 }
 
 interface EngineSession {
   targetId: string;
   child: boolean;
-  /** 자식 세션: 부착된 부모 세션(page 또는 다른 자식). */
   parent?: string;
-  /** 자식 세션의 자기 타깃 ID(OOPIF 루트 프레임 ID와 같다). */
   childTargetId?: string;
-  /** 자식 세션의 현재 문서 URL. */
   url?: string;
-  /** 목적지를 모르는 자식 iframe: 금고가 재개하고 첫 커밋 origin을 본 뒤 엔진에 알린다(그 전까지 엔진은 모른다). */
   pending?: { attach: CdpMessage };
-  /** 영구 분리됨(맵에서도 지운다). 진행 중인 보류 해제가 이 표시를 보고 중단한다. */
   revoked?: boolean;
 }
 
@@ -59,10 +47,6 @@ interface PendingEngineRequest {
   sessionId: string;
   method: string;
   params?: Json;
-  /**
-   * 보낼 때의 창 상태. 문서 커밋은 금고 세션에서 바로 처리돼 창을 닫고 비밀 노드를 비우지만, 그 전에 보낸 요청의 응답은
-   * 옛 문서 것이다. 응답 정화는 보낼 때와 받을 때 상태의 합집합으로 한다(이벤트는 받을 때 오염 여부를 이미 떠 둔다).
-   */
   sentTainted: boolean;
   sentSecretIds?: number[];
 }
@@ -71,7 +55,6 @@ export interface RelayOptions {
   conn: CdpConnection;
   policy: RelayPolicy;
   log: EventLog;
-  /** 엔진으로 가는 직렬화된 CDP 프레임. */
   toEngine: (raw: string) => void;
 }
 
@@ -91,26 +74,16 @@ export class Relay {
   private readonly engineSessions = new Map<string, EngineSession>();
   private readonly pending = new Map<number, PendingEngineRequest>();
   private readonly taintedRequests = new Set<string>();
-  /** 타깃별 알려진 값 변형(N-78). 창이 커밋·분리로 끝나면 그 타깃 것을 지운다. */
   private readonly knownVariants = new Map<string, string[]>();
-  /** 누출 의심을 이미 알린 타깃(알려진 값 묶음이 지워지면 다시 알린다). */
   private engineAutoAttach = false;
   private creating = 0;
   private deferred: TargetState[] = [];
   private outQ: Promise<void> = Promise.resolve();
   private version: Json = {};
-  /** 측정용(S6b): 엔진이 보낸 메서드별 판정. */
   readonly methodStats = new Map<string, { forwarded: number; denied: number; synthetic: number; scope: 'root' | 'session' }>();
   readonly onSecretWindowClosed = new Set<(targetId: string) => void>();
-  /**
-   * 사람 입력 활성 창(human·remote) 동안 그 타깃의 엔진행 이벤트·응답을 내보내기 전에 부른다. SecretOps가 금고 세션에서
-   * 지금 값을 읽어 알려진 값(접두사 포함)으로 올린다. 값은 금고 밖으로 나가지 않는다(창 종료 때만 올리면 입력 도중 페이지가
-   * 주소·제목 등으로 흘린 값이 먼저 나간다, S6f 회귀).
-   */
   activeValueHook?: (targetId: string) => Promise<void>;
-  /** R-C1 커밋 본문 대조(금고 서비스가 붙인다). */
   commitGuard: CommitGuard | null = null;
-  /** 브라우저 수준 Browser.downloadWillBegin·downloadProgress(금고 PDF 저장이 붙인다). 엔진에는 가지 않는다. */
   onDownloadEvent?: (method: string, params: Json) => Promise<void>;
 
   constructor(opts: RelayOptions) {
@@ -131,10 +104,7 @@ export class Relay {
     return this.version;
   }
 
-  /** 이번 실행을 위한 page 타깃을 금고가 만든다(엔진의 Target.createTarget은 거부). */
   async createRunPage(): Promise<string> {
-    // 앱 모드 창(launch의 --app 시작 문서)을 실행 탭으로 쓴다: 탭줄·주소창이 없다. Target.createTarget은 일반 창을 새로 연다.
-    // 시작 문서는 about:blank로 바꾼 뒤 노출한다(전처럼 빈 실행 탭에서 시작). 없으면(옛 경로·headless) 새로 만든다.
     for (let i = 0; i < 50 && !this.appStartTarget(); i++) await sleep(20);
     const app = this.appStartTarget();
     if (app) {
@@ -156,7 +126,6 @@ export class Relay {
     } finally {
       this.creating--;
     }
-    // 부착 이벤트가 응답보다 늦게 올 수 있으므로 잠시 기다린다.
     for (let i = 0; i < 50 && !this.targets.has(targetId); i++) await sleep(20);
     const t = this.targets.get(targetId);
     if (!t) throw new Error('run page did not attach');
@@ -167,12 +136,9 @@ export class Relay {
     return targetId;
   }
 
-  /** 금고가 --app으로 연 시작 창(노출 전). 페이지는 최상위 data: 문서를 열 수 없으니 이 꼴의 창은 금고 기동이 연 것뿐이다. */
   private appStartTarget(): TargetState | undefined {
     return [...this.targets.values()].find((t) => t.type === 'page' && !t.exposed && !t.revoked && !t.openerId && t.url.startsWith('data:text/html'));
   }
-
-  // ───────────────────────── 엔진 → Chrome ─────────────────────────
 
   onEngineMessage(raw: string): void {
     let msg: CdpMessage;
@@ -183,7 +149,6 @@ export class Relay {
     }
     if (typeof msg.id !== 'number' || typeof msg.method !== 'string') return;
     if (!msg.sessionId) {
-      // Chrome이 닫히는 중이면 conn.send가 거부된다. 잡지 않으면 금고 프로세스가 처리 안 된 거부로 죽는다. 엔진에는 오류로 답한다.
       void this.onRootCommand(msg).catch((e: Error) => this.enqueue(async () => ({ id: msg.id, error: { code: -32000, message: e.message } })));
       return;
     }
@@ -193,7 +158,6 @@ export class Relay {
       this.reject(msg, { ok: false, reason: 'unknown_session' }, 'session');
       return;
     }
-    // 자식 프레임 감시는 금고가 켠 Page 도메인에 기댄다. 엔진이 끄지 못하게 한다.
     if (es.child && msg.method === 'Page.disable') {
       this.reject(msg, { ok: false, reason: 'child_page_monitor' }, 'session');
       return;
@@ -203,7 +167,6 @@ export class Relay {
       this.reject(msg, verdict, 'session');
       return;
     }
-    // R-C1: 금고가 막은 커밋 요청은 엔진이 이어 보내거나 대신 답하지 못한다.
     if (msg.method.startsWith('Fetch.') && this.commitGuard?.blocked.has(String(msg.params?.requestId))) {
       this.reject(msg, { ok: false, reason: 'commit_blocked' }, 'session');
       return;
@@ -244,7 +207,6 @@ export class Relay {
       case 'Target.getBrowserContexts':
         return reply({ browserContextIds: [] });
       case 'Target.getTargetInfo': {
-        // 인자 없는 호출은 Playwright 연결 장벽(결과 미사용). 브라우저 타깃 정보 대신 가상 루트 정보를 준다.
         if (msg.params?.targetId === undefined) {
           return reply({ targetInfo: { targetId: 'vault-virtual-root', type: 'browser', title: '', url: '', attached: true, canAccessOpener: false } });
         }
@@ -258,7 +220,6 @@ export class Relay {
       case 'Target.activateTarget': {
         const t = this.targets.get(String(msg.params?.targetId));
         if (!t?.exposed) return this.reject(msg, { ok: false, reason: 'target_not_exposed' }, 'root');
-        // 탭 활성화는 Chrome 창을 앱 앞으로 올린다: 어떤 경우에도 하지 않는다(대표 지시 2026-11-14, 사람 차례는 앱 패널에서)
         if (method === 'Target.activateTarget') return this.reject(msg, { ok: false, reason: t.win?.phase === 'active' ? 'secret_window_active' : 'window_front_refused' }, 'root');
         this.stat(method, 'root', 'forwarded');
         const r = await this.conn.send(method, { targetId: t.targetId }).catch((e: Error) => ({ __error: e.message }));
@@ -296,8 +257,6 @@ export class Relay {
     this.methodStats.set(key, s);
   }
 
-  // ───────────────────────── Chrome → 엔진 ─────────────────────────
-
   private onChrome(msg: CdpMessage): void {
     if (msg.id !== undefined) {
       const p = this.pending.get(msg.id);
@@ -316,9 +275,7 @@ export class Relay {
       return;
     }
     if (this.engineSessions.has(msg.sessionId)) {
-      // 받은 시점의 창 상태를 찍어 둔다: 커밋(창 종료)은 금고 세션에서 바로 처리되지만 이 이벤트는 줄 뒤에서 정리된다.
       const t = this.targetOfSession(msg.sessionId);
-      // 비밀 노드도 함께 떠 둔다(커밋이 secretBackendIds를 비워도 옛 문서 이벤트는 정화한다).
       const at = t ? { ...this.stateOf(t), secretIds: t.secretBackendIds.size ? [...t.secretBackendIds] : undefined } : undefined;
       this.enqueue(() => this.sanitizeEvent(msg, at), msg.method);
     }
@@ -330,7 +287,7 @@ export class Relay {
       case 'Target.attachedToTarget': {
         const info = p.targetInfo as Json;
         const targetId = String(info.targetId);
-        if (this.targets.has(targetId)) return; // 엔진용 attachToTarget의 반향
+        if (this.targets.has(targetId)) return;
         const t: TargetState = {
           targetId,
           type: String(info.type),
@@ -343,7 +300,6 @@ export class Relay {
         };
         this.targets.set(targetId, t);
         this.byVaultSession.set(t.vaultSession, t);
-        // 새 창·탭(포털 팝업 window.open): Chrome이 그 창을 앞으로 올리며 앱을 가린다. 금고가 main에 알려 앱을 다시 앞으로 둔다.
         if (t.type === 'page') this.onPageOpened?.(t);
         if (this.creating > 0 && t.type === 'page') this.deferred.push(t);
         else await this.decide(t);
@@ -383,21 +339,13 @@ export class Relay {
     }
   }
 
-  /**
-   * 새 타깃 노출 여부(D05 §3.3 "허용 origin 팝업만"): 노출 타깃이 연 팝업 중 허용 origin인 것만 노출한다.
-   * Chrome은 팝업 부착 때 targetInfo.url을 비워 주므로(실측) 목적지를 모르면 금고가 숨긴 채 재개하고,
-   * 첫 문서 커밋의 origin을 본 뒤에야 엔진에 붙인다. 사용자 탭·워커 타깃은 재개 후 숨긴다.
-   */
   private async decide(t: TargetState): Promise<void> {
     const opener = t.openerId ? this.targets.get(t.openerId) : undefined;
     if (t.type === 'page' && opener?.exposed) {
-      // fail-closed: 부착 정보의 url·시간 경과로는 노출하지 않는다. 빈 URL은 "모름"이다.
       t.pendingPopup = true;
       const wasPaused = t.paused;
       await this.conn.send('Page.enable', {}, t.vaultSession).catch(() => {});
       await this.resume(t);
-      // 앱 안 브라우저는 새 창을 멈춰 세우지 못한다(waitForDebuggerOnStart 없음): 붙기 전에 이미 커밋된 문서는 frameNavigated가 다시 오지 않으니
-      // 지금 문서를 같은 규칙(getFrameTree 재확인)으로 판정한다. 아직 커밋 전이면 다음 frameNavigated에서 판정한다.
       if (!wasPaused) {
         const tree = await this.conn.send<{ frameTree: { frame: Json } }>('Page.getFrameTree', {}, t.vaultSession).catch(() => null);
         const url = String(tree?.frameTree.frame.url ?? '');
@@ -409,22 +357,17 @@ export class Relay {
     await this.resume(t);
   }
 
-  /**
-   * 확인된 문서 URL만 허용한다. 빈 URL·Chrome 오류 페이지는 목적지를 알 수 없으므로 거부하고,
-   * about:blank는 opener·부모가 허용 origin일 때만 통과한다.
-   */
   private confirmedAllowed(url: string, parentUrl: string): boolean {
     if (!url || url.startsWith('chrome-error://')) return false;
     if (url === 'about:blank') return !!parentUrl && parentUrl !== 'about:blank' && urlAllowed(parentUrl, this.policy.allowedHosts);
     return urlAllowed(url, this.policy.allowedHosts);
   }
 
-  /** 팝업 문서 커밋: getFrameTree로 현재 문서를 다시 확인한 뒤에만 노출한다. 허용 밖이면 계속 숨긴다. */
   private async confirmPopup(t: TargetState, committedUrl: string): Promise<void> {
     const tree = await this.conn.send<{ frameTree: { frame: Json } }>('Page.getFrameTree', {}, t.vaultSession).catch(() => null);
     if (!t.pendingPopup || !this.targets.has(t.targetId)) return;
     const current = String(tree?.frameTree.frame.url ?? '');
-    if (current !== committedUrl) return; // 그사이 다시 이동했다: 다음 커밋에서 판정
+    if (current !== committedUrl) return;
     const opener = t.openerId ? this.targets.get(t.openerId) : undefined;
     if (opener?.exposed && this.confirmedAllowed(current, opener.url)) {
       t.pendingPopup = false;
@@ -434,15 +377,10 @@ export class Relay {
     }
   }
 
-  /** 보류 팝업 영구 거부(자식의 revokeChild와 같은 규칙): 비신뢰 origin을 거친 팝업은 허용 host로 와도 노출하지 않는다. */
   private revokePopup(t: TargetState): void {
     void this.revokeTarget(t, 'vault.popup_hidden');
   }
 
-  /**
-   * 타깃 영구 거부. 상태(revoked)를 먼저 단조롭게 기록하고(되돌리지 않음) 그 뒤에 세션을 분리한다.
-   * 진행 중인 expose()·attachEngine()은 await마다 이 표시를 다시 보고 중단한다.
-   */
   private async revokeTarget(t: TargetState, code: 'vault.popup_hidden' | 'vault.origin_left'): Promise<void> {
     const first = !t.revoked;
     t.revoked = true;
@@ -453,7 +391,6 @@ export class Relay {
     if (sid) await this.conn.send('Target.detachFromTarget', { sessionId: sid }).catch(() => {});
   }
 
-  /** 노출 후보(노출 중·노출 진행 중·보류 팝업)의 메인 프레임 판정. page 타깃의 메인 프레임 ID는 타깃 ID와 같다. */
   private isMainFrame(t: TargetState, frameId: unknown): boolean {
     return frameId === t.targetId;
   }
@@ -471,7 +408,7 @@ export class Relay {
       await this.conn.send('Page.enable', {}, t.vaultSession);
       const { frameTree } = await this.conn.send<{ frameTree: { frame: Json } }>('Page.getFrameTree', {}, t.vaultSession);
       t.mainFrameId = String(frameTree.frame.id);
-      if (t.revoked) return; // await 사이에 거부됨
+      if (t.revoked) return;
       t.exposed = true;
       if (this.engineAutoAttach) await this.attachEngine(t);
     } finally {
@@ -490,7 +427,6 @@ export class Relay {
     if (t.revoked) return abandon();
     t.engineSession = sessionId;
     const { targetInfo } = await this.conn.send<{ targetInfo: Json }>('Target.getTargetInfo', { targetId: t.targetId });
-    // 모든 await 뒤 마지막 확인: 거부된 타깃의 부착을 엔진에 알리지 않는다.
     if (t.revoked) return abandon();
     this.engineSessions.set(sessionId, { targetId: t.targetId, child: false });
     this.enqueue(async () => {
@@ -508,11 +444,8 @@ export class Relay {
         if (t.pendingPopup) void this.confirmPopup(t, t.url);
         else if ((t.exposed || t.exposing) && !urlAllowed(t.url, this.policy.allowedHosts)) void this.originLeft(t);
       }
-      // 본 프레임 커밋은 하위 프레임(홈택스 인증서 창 iframe#dscert)의 창도 끝낸다: 문서가 바뀌면 그 iframe도 사라진다(frameDetached가 늘 오지는 않는다).
       if (t.win && (frame.id === t.win.frameId || !frame.parentId)) this.endWindow(t, 'commit');
     } else if (msg.method === 'Page.frameStartedNavigating') {
-      // 커밋 전에 막는다: 메인 프레임이 허용 밖으로 이동을 시작하면 노출 타깃은 엔진 세션을 분리하고,
-      // 보류 팝업은 영구 거부한다(서버 리디렉션으로 허용 host에 커밋돼도 노출하지 않는다).
       const offsite = !urlAllowed(String(p.url ?? ''), this.policy.allowedHosts);
       if (offsite && this.isMainFrame(t, p.frameId)) {
         if (t.pendingPopup) this.revokePopup(t);
@@ -525,16 +458,10 @@ export class Relay {
     }
   }
 
-  /** origin 재집행(D05 §3.3): 노출 타깃이 허용 밖으로 나가면 엔진 세션을 분리한다. */
   private async originLeft(t: TargetState): Promise<void> {
     await this.revokeTarget(t, 'vault.origin_left');
   }
 
-  /**
-   * 엔진행 메시지를 줄에 세운다. 나가기 직전 알려진 비밀 값(금고가 넣은 값의 변형)을 지운다.
-   * 지운 것은 유출이 아니다(엔진에 닿지 않았다): 실행을 끊지 않고 어느 CDP 메서드였는지만 남긴다(대표 실화면 run-fb6d0e95,
-   * ML4Web 가상키보드 칸 값이 s4h 대상 찾기 응답에 섞였다). 엔진 밖(로그·보관 폴더)에서 값이 보이면 자기 스캔이 끊는다(SecretOps.selfScan).
-   */
   private enqueue(produce: () => Promise<CdpMessage | null>, method?: string): void {
     this.outQ = this.outQ.then(async () => {
       let out: CdpMessage | null;
@@ -545,7 +472,6 @@ export class Relay {
       }
       if (!out) return;
       let raw = JSON.stringify(out);
-      // 긴 변형부터 지운다(짧은 변형이 긴 변형의 일부를 먼저 깨지 않게). 적중한 타깃마다 한 번 알린다.
       const all = [...this.knownVariants].flatMap(([targetId, variants]) => variants.map((v) => [targetId, v] as const)).sort((a, b) => b[1].length - a[1].length);
       let total = 0;
       for (const [, v] of all) {
@@ -574,11 +500,9 @@ export class Relay {
     if (!es || !t || !t.exposed) return null;
     if (RELAY_DROPPED_EVENTS.has(String(msg.method))) return null;
     const p = (msg.params ?? {}) as Json;
-    // 받은 시점과 지금 중 엄격한 쪽(오염 표시·요청 바디 제거가 커밋 처리 순서에 밀리지 않게).
     const now = this.stateOf(t);
     const st = { active: now.active || !!at?.active, tainted: now.tainted || !!at?.tainted };
     if (now.active && t.win?.kind !== 'typist') await this.activeValueHook?.(t.targetId).catch(() => {});
-    // 자식 세션의 이동 시작: 허용 밖이면 커밋 전에 그 자식만 분리한다.
     if (es.child && msg.method === 'Page.frameStartedNavigating') {
       if (p.frameId === es.childTargetId && !urlAllowed(String(p.url ?? ''), this.policy.allowedHosts)) {
         this.revokeChild(msg.sessionId!, es);
@@ -586,7 +510,6 @@ export class Relay {
       }
       return es.pending ? null : msg;
     }
-    // 자식 세션(OOPIF)의 문서 커밋: 그 자식만 재검사·분리한다. 부모 page의 originLeft를 부르지 않는다.
     if (es.child && msg.method === 'Page.frameNavigated') {
       const frame = p.frame as Json;
       if (frame.id === es.childTargetId || !frame.parentId) {
@@ -630,7 +553,6 @@ export class Relay {
         return msg;
       case 'Network.requestWillBeSent':
       case 'Fetch.requestPaused':
-        // R-C1: 무장된 커밋 요청은 금고가 본문을 대조한다(헤더 정리 전, Content-Type이 필요). 본문은 엔진에 넘기지 않는다.
         if (this.commitGuard && (await this.commitBody(msg, t, p)) === 'drop') return null;
         stripMessageHeaders(p.request as Json);
         stripMessageHeaders(p.redirectResponse as Json);
@@ -666,8 +588,6 @@ export class Relay {
     return msg;
   }
 
-  /** 부모 세션의 현재 URL(page는 타깃 URL, 자식은 자기 문서 URL). */
-  /** R-C1 대조. hide면 본문을 지우고 그 요청의 본문 조회도 막는다. */
   private async commitBody(msg: CdpMessage, t: TargetState, p: Json): Promise<'pass' | 'hide' | 'drop'> {
     const guard = this.commitGuard!;
     const req = (p.request ?? {}) as Json;
@@ -689,7 +609,6 @@ export class Relay {
     return es.child ? (es.url ?? '') : (this.targets.get(es.targetId)?.url ?? '');
   }
 
-  /** 자식 문서 URL 허용 여부. about:blank·빈 URL은 부모가 허용 origin일 때만. */
   private childUrlAllowed(url: string, parent: string | undefined): boolean {
     const parentOk = !!parent && this.engineSessions.has(parent) && urlAllowed(this.sessionUrl(parent), this.policy.allowedHosts);
     if (!parentOk) return false;
@@ -697,29 +616,26 @@ export class Relay {
     return urlAllowed(url, this.policy.allowedHosts);
   }
 
-  /** 자식 세션과 그 자손만 엔진에서 떼어 낸다(부모 page는 유지). 엔진에는 분리 이벤트를 합성해 준다. */
   private revokeChild(sid: string, es: EngineSession): void {
-    es.revoked = true; // 상태를 먼저 기록(단조), 분리는 그 뒤
+    es.revoked = true;
     const drop = [sid];
     for (let i = 0; i < drop.length; i++) {
       for (const [k, v] of this.engineSessions) if (v.parent === drop[i] && !drop.includes(k)) drop.push(k);
     }
     for (const k of drop) this.engineSessions.delete(k);
     this.log.event(es.pending ? 'vault.child_hidden' : 'vault.child_origin_left', { count: drop.length });
-    // 엔진이 몰랐던(보류 중) 자식이면 분리 이벤트를 만들지 않는다.
     if (!es.pending && es.parent && this.engineSessions.has(es.parent)) {
       this.enqueue(async () => ({ method: 'Target.detachedFromTarget', sessionId: es.parent, params: { sessionId: sid, targetId: es.childTargetId } }));
     }
     void this.conn.send('Target.detachFromTarget', { sessionId: sid }, es.parent).catch(() => {});
   }
 
-  /** 보류 자식의 커밋: getFrameTree로 다시 확인해 허용이 확정될 때만 엔진에 부착을 알린다(fail-closed). */
   private async releasePendingChild(sid: string, es: EngineSession): Promise<CdpMessage | null> {
     if (!es.pending) return null;
     const tree = await this.conn.send<{ frameTree: { frame: Json } }>('Page.getFrameTree', {}, sid).catch(() => null);
     if (!es.pending || es.revoked || this.engineSessions.get(sid) !== es) return null;
     const current = String(tree?.frameTree.frame.url ?? '');
-    if (current !== es.url) return null; // 다시 이동 중: 다음 커밋에서 판정
+    if (current !== es.url) return null;
     if (!this.confirmedAllowed(current, this.sessionUrl(es.parent))) {
       this.revokeChild(sid, es);
       return null;
@@ -730,7 +646,6 @@ export class Relay {
     return { ...attach, params: { ...p, targetInfo: { ...(p.targetInfo as Json), url: current } } };
   }
 
-  /** page 수준 자동 부착의 자식: 워커와 허용 origin iframe만 엔진에 넘긴다. 이후 이동은 금고가 감시한다. */
   private async filterChildAttach(msg: CdpMessage): Promise<CdpMessage | null> {
     const p = msg.params as Json;
     const info = p.targetInfo as Json;
@@ -745,10 +660,8 @@ export class Relay {
       const es: EngineSession = { targetId: parentEs.targetId, child: true, parent, childTargetId: String(info.targetId), url };
       this.engineSessions.set(child, es);
       if (type !== 'iframe') return msg;
-      // 엔진이 Page를 켜지 않아도 금고가 자식 문서 커밋을 볼 수 있게 한다(이벤트는 같은 세션으로 엔진에도 간다).
       await this.conn.send('Page.enable', {}, child).catch(() => {});
       if (url !== '' && url !== 'about:blank') return msg;
-      // 부착 정보의 url이 비어도 이미 커밋된 문서가 있을 수 있다(실측: OOPIF는 커밋 뒤 부착). 자식 루트 프레임 URL을 직접 본다.
       const tree = await this.conn.send<{ frameTree: { frame: Json } }>('Page.getFrameTree', {}, child).catch(() => null);
       const committed = String(tree?.frameTree.frame.url ?? '');
       if (committed && committed !== 'about:blank') {
@@ -759,8 +672,6 @@ export class Relay {
         }
         return { ...msg, params: { ...p, targetInfo: { ...info, url: committed } } };
       }
-      // 목적지를 모른다(빈 URL, 또는 진행 중 이동 앞의 about:blank). 엔진에 알리지 않고 금고가 재개한 뒤
-      // 문서 커밋 + getFrameTree로 허용이 확인될 때만 알린다. 시간이 지나도 노출하지 않는다(fail-closed).
       es.pending = { attach: { ...msg, params: { ...p, waitingForDebugger: false } } };
       await this.conn.send('Runtime.runIfWaitingForDebugger', {}, child).catch(() => {});
       return null;
@@ -800,9 +711,6 @@ export class Relay {
     } else if (p.method === 'DOMSnapshot.captureSnapshot') {
       scrubDomSnapshot(result, this.secretsOf(t, p.sentSecretIds));
     } else if (p.method === 'Runtime.getProperties' && tainted) {
-      // 오염 상태(D05 §3.5, D-17(N-12)): 엔진의 objectId가 비밀 노드에서 왔는지 금고는 모른다(세션마다 다른 객체 ID).
-      // 그래서 이 동안은 모든 응답에서 입력 값 속성(value·defaultValue)의 문자열을 지운다. 창은 다음 문서 커밋까지라 짧다.
-      // RemoteObject는 문자열을 description에도 복사하므로 함께 지운다(짧은 값은 알려진 값 치환에 안 걸린다).
       for (const prop of (result.result as Json[] | undefined) ?? []) {
         const v = prop?.value as Json | undefined;
         if (VALUE_PROPS.has(String(prop?.name)) && v && v.type === 'string') {
@@ -811,19 +719,16 @@ export class Relay {
         }
       }
     } else if ((p.method === 'Network.getRequestPostData' || p.method === 'Fetch.getRequestPostData') && tainted) {
-      // 보낼 때나 응답 도착 때 창이 있었으면 바디를 넘기지 않는다(두 메서드는 D05 거부·정책 검사가 같다).
       out.result = { postData: '' };
     }
     return out;
   }
 
-  /** 정화용 비밀 노드: 지금 아는 것 ∪ 요청을 보낼 때·이벤트를 받을 때 알던 것(그사이 커밋으로 비워졌어도). */
   private secretsOf(t: TargetState, snap?: readonly number[]): SecretNodes {
     if (!snap?.length) return { backendIds: t.secretBackendIds };
     return { backendIds: new Set([...t.secretBackendIds, ...snap]) };
   }
 
-  /** 접근성 응답은 속성이 없어 type=password를 알 수 없으므로, 금고 세션으로 password 노드를 다시 센다. */
   private async secretsWithPasswords(t: TargetState, snap?: readonly number[]): Promise<SecretNodes> {
     const ids = new Set([...t.secretBackendIds, ...(snap ?? [])]);
     try {
@@ -844,8 +749,6 @@ export class Relay {
     return { backendIds: ids };
   }
 
-  // ───────────────────────── 비밀 창(secret/ops.ts가 사용) ─────────────────────────
-
   send<T = Json>(method: string, params: Json, sessionId?: string): Promise<T> {
     return this.conn.send<T>(method, params, sessionId);
   }
@@ -856,22 +759,15 @@ export class Relay {
     this.onWindowActive?.(t, true);
   }
 
-  /** 화면 중계(B3 진행 화면): 금고 감시 세션의 Page.screencastFrame. 금고가 받아 main에 넘긴다(엔진에는 가지 않는다). */
   onScreencastFrame?: (t: TargetState, p: Json) => void;
-  /** 비밀 창이 열리고 닫힐 때(중계 멈춤·다시). */
   onWindowActive?: (t: TargetState, active: boolean) => void;
-  /** 타깃이 사라졌다(탭·창 닫힘, 금고 감시 세션 분리). 금고가 실행 창이 모두 닫혔는지 본다. */
   onTargetGone?: (t: TargetState) => void;
-  /** 새 page 타깃이 붙었다(첫 탭·팝업 창). Chrome이 창을 앞으로 올리므로 main이 앱을 다시 앞으로 둔다. */
   onPageOpened?: (t: TargetState) => void;
-  /** page 타깃의 주소가 바뀌었다(팝업 새 창의 첫 주소 포함). 금고 팝업 장치가 닫을 창을 고른다. */
   onPageUrl?: (t: TargetState) => void;
-  /** 사람에게 보일 실행 page가 하나라도 남았는가(엔진에 노출된 page, 회수·비밀 창 포함). */
   hasExposedPage(): boolean {
     return [...this.targets.values()].some((x) => x.type === 'page' && x.exposed && !x.revoked);
   }
 
-  /** 활성 창 → 오염 상태(D05 §3.5 ②). */
   deactivateWindow(t: TargetState): void {
     if (t.win?.phase === 'active') {
       t.win.phase = 'tainted';
@@ -880,14 +776,11 @@ export class Relay {
     }
   }
 
-  /** 문서 커밋·노드 분리: 창 종료(활성이었다면 닫힘 알림도 보낸다). */
   endWindow(t: TargetState, _why: 'commit' | 'detached' | 'scrubbed'): void {
     if (!t.win) return;
     const wasActive = t.win.phase === 'active';
     t.win = undefined;
     t.secretBackendIds.clear();
-    // 그 창의 알려진 값은 버린다. 열린 창이 하나도 없으면 전부 버린다(N-78). 단 이미 줄에 선 엔진 메시지(커밋 직전의
-    // 요청 바디 등)가 나간 뒤에 버린다: 커밋 이벤트는 금고 세션에서 바로 처리되고 엔진 쪽 정리는 줄 뒤에 돌기 때문이다.
     const stale = this.knownVariants.get(t.targetId);
     this.enqueue(async () => {
       if (this.knownVariants.get(t.targetId) === stale) this.clearKnownSecrets(t.targetId);
@@ -904,7 +797,6 @@ export class Relay {
     this.knownVariants.set(targetId, [...new Set([...(this.knownVariants.get(targetId) ?? []), ...variants])]);
   }
 
-  /** targetId가 없으면 전부 지운다. */
   clearKnownSecrets(targetId?: string): void {
     if (targetId === undefined) {
       this.knownVariants.clear();
@@ -913,18 +805,15 @@ export class Relay {
     }
   }
 
-  /** 지금까지 줄에 선 엔진 메시지가 다 나갈 때까지(시험용). */
   drained(): Promise<void> {
     return this.outQ;
   }
 
-  /** 시험·진단용: 지금 들고 있는 변형 수(값은 내보내지 않는다). */
   knownVariantCount(targetId?: string): number {
     if (targetId !== undefined) return this.knownVariants.get(targetId)?.length ?? 0;
     return [...this.knownVariants.values()].reduce((n, v) => n + v.length, 0);
   }
 
-  /** 열린(활성·오염) 창이 있는 타깃이 있는가. */
   hasOpenWindow(): boolean {
     return [...this.targets.values()].some((t) => t.win);
   }
@@ -933,10 +822,6 @@ export class Relay {
     return [...this.targets.values()].filter((x) => x.type === 'page' && x.exposed && !x.revoked && !x.win && !x.pendingPopup).pop();
   }
 
-  /**
-   * 실행 창을 앱 옆 자리로(main이 정한 화면 좌표, 대표 요청 2026-11-13 "크롬이 앱을 가리지 않게"). 최대화·전체 화면이면 먼저 보통 창으로 돌린다.
-   * 앞으로는 올리지 않는다(대표 지시 2026-11-14). 비밀 입력 창은 고르지 않는다(그 창은 금고가 따로 띄운다).
-   */
   async placeWindow(bounds: { left: number; top: number; width: number; height: number }): Promise<boolean> {
     const t = this.runWindowTarget();
     if (!t) return false;

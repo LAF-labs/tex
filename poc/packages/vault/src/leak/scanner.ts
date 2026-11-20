@@ -1,8 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-// 비밀 누출 스캐너(D13 §6, D05 §8). 테스트 비밀 패턴과 인코딩 변형을 캡처·로그·디스크에서 찾는다.
-
 export interface Variant {
   name: string;
   bytes: Buffer;
@@ -29,7 +27,6 @@ export function variantsOf(secret: string): Variant[] {
     { name: 'hex', bytes: Buffer.from(s.toString('hex')) },
     { name: 'HEX', bytes: Buffer.from(s.toString('hex').toUpperCase()) },
   ];
-  // base64는 앞 바이트 정렬에 따라 달라지므로 세 정렬의 안정된 중간 부분을 찾는다.
   for (let k = 0; k < 3; k++) {
     const b = Buffer.concat([Buffer.alloc(k), s]).toString('base64');
     const core = b.slice(k === 0 ? 0 : 4, b.length - 4);

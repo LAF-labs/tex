@@ -1,8 +1,3 @@
-// 게이트웨이 경로 판정 어댑터(기본 경로, D04 §1·§7). 요청 본문은 gateway-request.schema `decide`
-// {bundleId, bundleDigest, input, runToken}뿐이고, 모델·캐시·safety_identifier·질문은 게이트웨이가 넣는다.
-// 응답은 비신뢰(C-24): 게이트웨이가 질문을 만든 번들 정의의 해시(questionsDigest)를 로컬 번들과 대조하고, 답은 이름 조인 후
-// 로컬 매핑으로만 결과를 낸다. 재시도는 게이트웨이가 공급사에 대해 한다(D09 §3 장애: 백오프 2회). 클라이언트는 재시도하지 않는다
-// (실행 예산이 runToken에 묶여 있어 중복 호출은 예산을 쓴다).
 import { createHash } from 'node:crypto';
 import { GatewayError, ModelGuardError, isDecideResponse, type Egress } from '@sax/net';
 import type { RedactedText, RunToken } from '../contract.ts';
@@ -36,15 +31,12 @@ export const L1_MODEL = 'typesafe/jev-';
 
 export interface GatewayDecideOptions {
   egress: Egress;
-  /** 게이트웨이가 쓰는 공급사 모델(응답 model 접두 확인·임계값 프로필 선택). 기본 gpt-6-luna(시험), 제품은 L1_MODEL */
   model?: string;
 }
 
 export class GatewayDecideAdapter implements DecideAdapter {
-  /** 임계값 프로필의 공급사 칸: OpenAI Decisions(gpt-6-luna)는 openai, OpenRouter decisions(jev 등)는 openai_compat */
   readonly provider: 'openai' | 'openai_compat';
   readonly model: string;
-  /** 게이트웨이 뒤 공급사가 OpenAI Decisions이므로 같은 한도. 입력 한도는 번들 maxInputBytes(≤ 16KB)가 먼저 막는다. */
   readonly limits: AdapterLimits = { maxChoices: 255, maxQuestions: 400, refusals: true, maxRequestBytes: 900_000 };
   private readonly egress: Egress;
 
@@ -74,7 +66,6 @@ export class GatewayDecideAdapter implements DecideAdapter {
     return {
       model: res.model,
       body: res,
-      // cached_tokens는 게이트웨이가 넘기지 않는다(D04 §7, 적중 여부 오라클 차단).
       usage: { inputTokens: u.input_tokens ?? 0, cachedTokens: 0, cacheWriteTokens: 0, outputTokens: u.output_tokens ?? 0 },
       latencyMs: performance.now() - started,
       rateLimit: {},

@@ -1,7 +1,3 @@
-// ADR-039 fixture 포털 H-01 패키지(엔진 M2-3 PR-A2): 골든 s10~s35 + 가짜 H-01 페이지 셀렉터. RunService IR 전환 골든 대조(PR-C)의 입력이다.
-// - 정적: 개발 조건 로더(서명·결속·V-01~V-25·V-03m·V-03n·V-04a·V-22·V-23a)를 통과하고, 골든과의 차이는 FIXTURE_SUBSTITUTIONS뿐이다.
-// - 화면: 가짜 페이지(금고 중계 + Chrome headless, 127.0.0.1)에서 모든 셀렉터가 정확히 한 요소로 풀리고 R-A1(역할·이름)을 통과한다.
-// 실제 포털 접속 없음.
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { connectRunBrowser, fixturePortal, PlaywrightPageReader, type RunBrowser } from '@sax/engine';
@@ -13,7 +9,6 @@ import { FIXTURE_STEP_IDS, FIXTURE_SUBSTITUTIONS, fixtureId, h01FixtureFiles, h0
 
 const ORIGIN = 'http://127.0.0.1:4100';
 const without = (s: Step, keys: readonly string[]) => Object.fromEntries(Object.entries(s).filter(([k]) => !keys.includes(k)));
-/** 골든 스텝에 id 접두·origin만 바꾼 모양(대조 기준). */
 const renamed = (s: Step, origin: string) =>
   JSON.parse(JSON.stringify(s).replaceAll('"https://hometax.go.kr', `"${origin}`).replace(/"(hometax\.invoice\.[A-Za-z0-9_.]+)"/g, (_, id: string) => `"${fixtureId(id)}"`)) as Step;
 
@@ -39,7 +34,6 @@ describe('fixture H-01 패키지: 정적(ADR-039)', () => {
       const gs = renamed(g.find((x) => x.id === s.id)!, ORIGIN);
       const subs = FIXTURE_SUBSTITUTIONS[s.id] ?? [];
       assert.deepEqual(without(s, subs), without(gs, subs), s.id);
-      // 바꾼다고 적은 필드는 실제로 다르다(목록이 낡지 않게).
       for (const k of subs) assert.notDeepEqual((s as Record<string, unknown>)[k], (gs as Record<string, unknown>)[k], `${s.id}.${k}`);
     }
   });

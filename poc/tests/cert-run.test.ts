@@ -1,7 +1,3 @@
-// 민원증명(H-03·H-04·H-08·H-09) 제품 실행 경로(RunService.startCert, engine 'ir'). 가짜 민원증명 페이지(tests/cert-fixture.ts)에서
-// 시작 → 칸 채움 → readback → 승인 카드(cert.confirm, docType cert) → 승인 → 접수 → 처리결과 조회 verify → 원장 committed까지 서류마다 돈다.
-// 거부·시간 초과·개인사업자 로그인·입력 빠짐·같은 의도 두 번·조회 불가(in_doubt)도 본다.
-// 실제 포털 접속 없음: 금고는 프로세스 안(시험 정책 127.0.0.1)·헤드리스 Chrome, 모델 없음(decide는 고정 판정기), PDF는 가짜 포트. 모든 값은 가상이다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -24,14 +20,12 @@ import { startHarness, type Harness } from './harness.ts';
 const SUPPLIER = { bizNo: '1234567891', name: '가나다컴퍼니' };
 const ID = (c: CertCode) => fixtureCertId(CERT_PRODUCT_IDS[c]);
 
-/** 서류별 입력(패키지 선언 키). 모두 가상 값이다. */
 const INPUTS: Readonly<Record<CertCode, Record<string, string>>> = {
   'H-03': { purpose: '금융기관제출용', submitTo: '금융기관', rrnDisclosure: '비공개' },
   'H-04': { purpose: '금융기관 제출', submitTo: '금융기관' },
   'H-08': { purpose: '대출용', submitTo: '금융기관', periodStartYear: '2025', periodStartHalf: '1기', periodEndYear: '2025', periodEndHalf: '2기' },
   'H-09': { purpose: '입찰, 계약용', submitTo: '관공서', fiscalYear: '2024' },
 };
-/** 승인 카드 4칸(certDoc·certPurpose·certSubmitTo·rrnDisclosure)에 기대하는 값. */
 const CARD: Readonly<Record<CertCode, [string, string, string, string]>> = {
   'H-03': [CERT_DOC_NAME['H-03'], '금융기관제출용', '금융기관', '비공개'],
   'H-04': [CERT_DOC_NAME['H-04'], '금융기관 제출', '금융기관', '공개안함'],
@@ -57,8 +51,6 @@ describe('민원증명 제품 실행(run.startCert, 가짜 민원증명 페이�
 
   const svc = (over: Partial<RunServiceDeps> = {}) => {
     const r = new RunService({
-      // 발급 안 됨(not_committed)은 클릭 뒤 0건 조회 2번이 verify 상한 안에 끝나야 나온다. 조회 IR이 [조회] 뒤 요청이 잦아들 때까지
-      // 기다리게 되어(s4b wait idle) 조회 한 번이 느린 macOS 러너에서 1.5초를 넘기므로, fixture 기본 상한 3초로는 unknown(in_doubt)으로 끝난다.
       db, data, ledgerKey, portal: { ...fixturePortal(fx.origin), verify: { ...fixturePortal(fx.origin).verify, maxMs: 20_000 } }, log, engine: 'ir',
       page: async () => (page && !page.isClosed() ? page : (page = (await connectRunBrowser(h.client)).page)),
       postGate: (m) => gateMsgs.push(m),
@@ -84,7 +76,6 @@ describe('민원증명 제품 실행(run.startCert, 가짜 민원증명 페이�
       };
       tick();
     });
-  // 두 번째 카드는 접수 실패 → 발급목록 재확인(요청이 잦아들 때까지 기다림) → 양식 다시 채우기를 거쳐 오므로 느린 CI 러너에서 30초를 넘길 수 있다
   const gateFor = (runId: string, nth = 0) => next(() => (gateMsgs.filter((m) => m.t === 'gate.request' && m.req.runId === runId)[nth] as { req: GateRequest } | undefined)?.req, nth > 0 ? 60_000 : 30_000);
   const endOf = (runId: string) => next(() => events.find((e) => e.runId === runId && e.type === 'end') as Extract<RunEvent, { type: 'end' }> | undefined, 60_000);
   const approval = (req: GateRequest): LocalApproval => ({
@@ -112,7 +103,6 @@ describe('민원증명 제품 실행(run.startCert, 가짜 민원증명 페이�
     pkgs = new Map([...loaded.docs].map(([id, pkg]) => [id, {
       pkg, lookupPackages: loaded.lookups, fixtureGrant: fixtureOriginGrant(pkg), pdf,
       verifyTiming: { minElapsedMs: p.verify.minElapsedMs, lookups: p.verify.lookups, maxMs: p.verify.maxMs },
-      // 모델 없음: form_ready는 늘 "보이는 오류 없음"
       judge: { decide: async () => ({ outcome: 'no_visible_error', confidence: 1, raw: {}, usage: { input_tokens: 0, output_tokens: 0 }, refusals: [], rule: 3, provider: 'openai', model: 'fixture', l0Only: true, injectionHit: false, shadow: [] }) as never },
     } satisfies IrPackage]));
     dir = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-cert-run-'));
@@ -137,7 +127,6 @@ describe('민원증명 제품 실행(run.startCert, 가짜 민원증명 페이�
     if (dir) await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
-  /** 실패 진단(값 없는 궤적만). 그 실행을 멈춰 다음 시험이 busy로 막히지 않게 한다. */
   const diag = async (r: RunService, runId: string) => {
     console.error(runId, JSON.stringify({ events: events.filter((x) => x.runId === runId), journal: r.inspect(runId).journal, steps: traces.get(runId) }));
     try {
@@ -156,7 +145,6 @@ describe('민원증명 제품 실행(run.startCert, 가짜 민원증명 페이�
         assert.equal(gateSelfCheck(req), null);
         const f = card(req);
         assert.deepEqual([f.certDoc, f.certPurpose, f.certSubmitTo, f.rrnDisclosure], CARD[c]);
-        // 첫 신청: 예약 키(중복 경고) 없음, H-01 거래처 키($first.*)도 없음
         assert.deepEqual(req.fields.map((x) => x.fieldKey), ['certDoc', 'certPurpose', 'certSubmitTo', 'rrnDisclosure']);
         assert.equal(fx.posts(), posts, '승인 전에는 접수하지 않는다');
         assert.deepEqual(runs.answer(approval(req)), { ok: true });
@@ -172,7 +160,6 @@ describe('민원증명 제품 실행(run.startCert, 가짜 민원증명 페이�
         for (const t of ['gate.requested', 'gate.approved', 'ledger.armed', 'ledger.committed']) assert.ok(ins.journal.includes(t), t);
         const row = db.prepare('SELECT playbook_id, verify_ref, recipient_email_hmac FROM irreversible_log WHERE run_id = ?').get(runId) as { playbook_id: string; verify_ref: string; recipient_email_hmac: string | null };
         assert.deepEqual([row.playbook_id, row.verify_ref, row.recipient_email_hmac], [ID(c), rec.receiptNo, null]);
-        // 진행 단계: H-01과 같은 이름(양식 → 입력 → 대조 → 승인 → 제출 → 확인)
         const phases = events.filter((e) => e.runId === runId && e.type === 'phase' && e.state === 'now').map((e) => (e as { phase: string }).phase);
         assert.deepEqual(phases, ['login', 'form', 'input', 'readback', 'gate', 'sign', 'verify']);
       } catch (e) {
@@ -285,7 +272,6 @@ describe('민원증명 제품 실행(run.startCert, 가짜 민원증명 페이�
     assert.deepEqual(row.certInputs, { certDoc: '사업자등록증명', certLanguage: '한글', ...INPUTS['H-03'] });
     assert.equal(row.approvalNo, fx.records.find((r) => r.doc === 'H-03')!.receiptNo);
     assert.deepEqual([row.counterpartyId, row.supply, row.tax], [null, null, null]);
-    // 다른 키로는 읽지 못한다(봉인), 모양이 다른 요약은 쓰지 않는다
     assert.equal(runHistory(db, new ColumnCipher(new Uint8Array(randomBytes(32))), 200).find((r) => r.runId === row0.runId)!.certInputs, null);
     recordCertInputs(db, cipher, row0.runId, { 'bad key': 'x' });
     assert.ok(runHistory(db, cipher, 200).find((r) => r.runId === row0.runId)!.certInputs);
@@ -306,10 +292,8 @@ describe('민원증명 제품 실행(run.startCert, 가짜 민원증명 페이�
     refuse({ runId: 'bad id' }, 'bad_run_id');
     refuse({}, 'package.not_loaded', svc({ engine: 'h01' }));
     refuse({}, 'package.not_loaded', svc({ certSource: undefined }));
-    // 입력 값은 엔진 로그에 남지 않는다(입력 이름·코드만)
     assert.deepEqual(certInputs({ a: { type: 'enum', values: ['x'], required: true } }, { a: ' x ' }), { ok: true, inputs: { a: 'x' } });
     assert.deepEqual(certInputs({ a: { type: 'counterparty', required: true } }, {}), { ok: false, code: 'cert.input_invalid', field: 'a' });
-    // 사업자번호 없는 사업자 프로필은 저장되지 않고(invalid_biz_no), 발급 인증 빈 값은 공동인증서 기본(#365)이라 profile_missing은 여기서 만들 수 없다
     assert.equal(runs.activeRunId, null);
   });
 });

@@ -1,6 +1,3 @@
-// 세무사 꾸러미 저장소(D07 §2 bundle_items·bundle_entries·bundle_exports·card_fetches·card_txns·card_txn_memos·receipts·cash_sales, ADR-032·034).
-// 항목 구성(1·2·3층 기본값)·빠진 것·내보내기 같은 규칙은 @sax/bundle이 한다. 여기는 행과 테이블 규칙만 둔다.
-// 금액은 원 단위 정수. 카드 내역은 용도 분류·경비 판단 칸을 두지 않는다(ADR-032 결정 3).
 import { randomUUID } from 'node:crypto';
 import type { Db } from './open.ts';
 import { ValidationError } from './repo.ts';
@@ -15,8 +12,6 @@ const need = (ok: boolean, code: string): void => {
 const isInt = (v: unknown, min = Number.MIN_SAFE_INTEGER): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= min;
 const validDay = (d: string): boolean => DAY.test(d) && new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) === d;
 
-// ---- 항목과 달별 상태 ----
-
 export type BundleTier = 1 | 2 | 3;
 export type BundleCadence = 'monthly' | 'quarterly' | 'once';
 export type BundleItemSource = 'builtin' | 'industry' | 'user' | 'pasted_request';
@@ -26,7 +21,6 @@ export interface BundleItem {
   id: string;
   profileId: string;
   tier: BundleTier;
-  /** tax_invoice, payroll, card, paper_receipt, settlement_delivery, settlement_market, cash_sales, custom */
   kind: string;
   name: string;
   cadence: BundleCadence;
@@ -37,7 +31,6 @@ export interface BundleItem {
 
 export interface BundleEntry {
   itemId: string;
-  /** 'YYYY-MM', 'YYYY-Qn', 한 번(once) 항목은 'once' */
   period: string;
   status: BundleEntryStatus;
   docIds: string[];
@@ -66,7 +59,6 @@ const toEntry = (r: Row): BundleEntry => ({
   updatedAt: String(r.updated_at),
 });
 
-/** 프로필별 설정 키(D07 §2 끝: `profile.<id>.bundle.…`) */
 const cardSlipKey = (profileId: string): string => `profile.${profileId}.bundle.cardSlipEnoughFrom`;
 const includeRrnKey = (profileId: string): string => `profile.${profileId}.bundle.includeRrn`;
 
@@ -76,7 +68,6 @@ export class BundleRepo {
     this.db = db;
   }
 
-  /** 설정 bundle.includeRrn: 꾸러미 급여 시트에 주민번호 전체를 넣는가. 기본 false(가림, R13 D-L3) */
   includeRrn(profileId: string): boolean {
     const v = this.db.prepare('SELECT value_json FROM settings WHERE key = ?').pluck().get(includeRrnKey(profileId)) as string | undefined;
     return v !== undefined && JSON.parse(v) === true;
@@ -88,10 +79,6 @@ export class BundleRepo {
       .run(includeRrnKey(profileId), JSON.stringify(on === true));
   }
 
-  /**
-   * "카드 전표로 충분"(ADR-032, 판정 아님): 사장님이 체크하면 그 다음 달부터 "증빙과 대조 안 된 카드 지출"을 빠진 것에서 뺀다.
-   * 값은 시작 달 'YYYY-MM'. null이면 끈다. 건별(card_txn_memos)이 아니라 프로필 설정 한 칸이다: 체크 한 번으로 끝나게(사장님 클릭을 늘리지 않음)
-   */
   cardSlipEnoughFrom(profileId: string): string | null {
     const v = this.db.prepare('SELECT value_json FROM settings WHERE key = ?').pluck().get(cardSlipKey(profileId)) as string | undefined;
     return v === undefined ? null : (JSON.parse(v) as string);
@@ -145,7 +132,6 @@ export class BundleRepo {
     this.db.prepare('UPDATE bundle_items SET name = ?, cadence = ? WHERE id = ?').run(name.trim(), cadence ?? cur!.cadence, id);
   }
 
-  /** 3층 항목만 지운다. 달별 기록이 있으면 지우지 않고 끈다(지난달 꾸러미가 남아야 한다) */
   removeItem(id: string): 'deleted' | 'disabled' {
     const cur = this.item(id);
     need(!!cur, 'not_found');
@@ -188,14 +174,11 @@ export class BundleRepo {
     return this.entry(e.itemId, e.period)!;
   }
 
-  /** 사장님 표시를 지운다(앱이 기록에서 센 상태로 돌아간다). 있었으면 true */
   clearEntry(itemId: string, period: string): boolean {
     need(PERIOD.test(period), 'invalid_period');
     return this.db.prepare('DELETE FROM bundle_entries WHERE item_id = ? AND period = ?').run(itemId, period).changes > 0;
   }
 }
-
-// ---- 내보내기 기록 ----
 
 export interface BundleExport {
   id: string;
@@ -208,10 +191,8 @@ export interface BundleExport {
   sentTo: string | null;
   sentMarkedAt: string | null;
   sentNote: string | null;
-  /** 사진·PDF 묶음(같은 암호의 AES-256 ZIP). 첨부가 없으면 둘 다 null */
   zipPath: string | null;
   zipSha256: string | null;
-  /** 급여 시트에 주민번호 전체를 넣었는지(기본 가림) */
   rrnIncluded: boolean;
 }
 
@@ -238,7 +219,6 @@ export class BundleExportRepo {
     this.db = db;
   }
 
-  /** 내보내기 한 번 = 한 행. 엑셀(path·sha256)과 첨부 ZIP(zip)은 같은 기록에 둔다(메일 한 통에 둘 다 붙인다) */
   record(
     e: { profileId: string; period: string; sha256: string; path: string; zip?: { path: string; sha256: string } | null; rrnIncluded?: boolean },
     at: string = nowIso(),
@@ -266,18 +246,14 @@ export class BundleExportRepo {
     return rows.map((r) => toExport(r as Row));
   }
 
-  /** 메일 프로그램을 열었거나 폴더를 열었을 때(main이 부른다. 주소는 main이 설정에서 읽은 값) */
   markOpened(id: string, via: 'mail_client' | 'folder', sentTo: string | null): void {
     need(this.db.prepare('UPDATE bundle_exports SET send_via = ?, sent_to = ? WHERE id = ?').run(via, sentTo, id).changes > 0, 'not_found');
   }
 
-  /** 사장님이 "보냈어요"로 표시 */
   markSent(id: string, note: string | null = null, at: string = nowIso()): void {
     need(this.db.prepare('UPDATE bundle_exports SET sent_marked_at = ?, sent_note = ? WHERE id = ?').run(at, note, id).changes > 0, 'not_found');
   }
 }
-
-// ---- 사업용 카드 내역(H-12) ----
 
 export interface CardTxnInput {
   usedOn: string;
@@ -376,13 +352,6 @@ export class CardRepo {
     this.db = db;
   }
 
-  /**
-   * [최신화] 한 번 = 트랜잭션 하나(D07 card_txns 주석):
-   * (1) 이 프로필의 used_on ∈ [from, to] 행을 어느 조회에서 왔든 모두 지운다 (2) 새 결과를 seq 순서로 넣는다 (3) 메모를 match_key로 다시 잇는다.
-   * 같은 구간을 몇 번 눌러도 결과가 같다. 결과의 날짜가 구간 밖이면 거부한다(구간 밖 행을 지우지 않고 남기는 것을 막기 위해).
-   * 다시 잇는 대상은 지금 이어진 행이 없는 메모뿐이다(다른 구간의 살아 있는 행에 붙은 메모는 옮기지 않는다).
-   * 반환: 이번 교체로 행을 잃고 다시 잇지 못한 메모 수("메모 대상 확인 필요"). 예전부터 떠 있던 메모는 세지 않는다(`memos()`의 txnId null로 본다)
-   */
   replaceRange(f: Omit<CardFetch, 'rowCount'>, rows: readonly CardTxnInput[]): { inserted: number; unmatchedMemos: number } {
     need(validDay(f.rangeFrom) && validDay(f.rangeTo) && f.rangeFrom <= f.rangeTo, 'invalid_range');
     for (const t of rows) {
@@ -412,7 +381,6 @@ export class CardRepo {
     })();
   }
 
-  /** "마지막 최신화"(빈 결과도 최신화다) */
   lastFetch(profileId: string): CardFetch | null {
     const r = this.db.prepare('SELECT * FROM card_fetches WHERE profile_id = ? ORDER BY completed_at DESC LIMIT 1').get(profileId) as Row | undefined;
     return r
@@ -420,7 +388,6 @@ export class CardRepo {
       : null;
   }
 
-  /** 기간과 겹치는 조회 기록(달이 다 덮였는지 보려고) */
   fetchesOverlapping(profileId: string, from: string, to: string): CardFetch[] {
     return (this.db.prepare('SELECT * FROM card_fetches WHERE profile_id = ? AND range_from <= ? AND range_to >= ? ORDER BY completed_at').all(profileId, to, from) as Row[]).map((r) => ({
       runId: String(r.run_id),
@@ -439,7 +406,6 @@ export class CardRepo {
       .map((r) => toTxn(r as Row));
   }
 
-  /** 건별 메모. 키는 그 행의 현재 조회 안 match_key */
   setMemo(txnId: string, memo: string, at: string = nowIso()): CardMemo {
     const t = this.db.prepare('SELECT * FROM card_txns WHERE id = ?').get(txnId) as Row | undefined;
     need(!!t, 'not_found');
@@ -458,7 +424,6 @@ export class CardRepo {
     return toMemo(this.db.prepare('SELECT * FROM card_txn_memos WHERE profile_id = ? AND match_key = ?').get(txn.profileId, key) as Row);
   }
 
-  /** 한 행(프로필 확인 포함). 없거나 다른 프로필이면 null */
   txn(profileId: string, txnId: string): CardTxn | null {
     const r = this.db.prepare('SELECT * FROM card_txns WHERE id = ? AND profile_id = ?').get(txnId, profileId) as Row | undefined;
     return r ? toTxn(r) : null;
@@ -469,10 +434,6 @@ export class CardRepo {
     return r ? toMemo(r) : null;
   }
 
-  /**
-   * 떠 있는 메모("확인 필요", txn_id NULL)를 사장님이 고른 행에 다시 잇는다(D14 M6-3). 키는 그 행의 지금 match_key로 바꾼다.
-   * 그 행에 이미 메모가 있으면 memo_exists(덮어쓰지 않는다). 이미 이어진 메모는 memo_not_detached.
-   */
   reattachMemo(profileId: string, memoId: string, txnId: string, at: string = nowIso()): CardMemo {
     return this.db.transaction(() => {
       const m = this.memo(profileId, memoId);
@@ -489,7 +450,6 @@ export class CardRepo {
     })();
   }
 
-  /** 메모 하나를 지운다(떠 있는 메모 정리 포함). 없으면 false */
   deleteMemo(profileId: string, memoId: string): boolean {
     return this.db.prepare('DELETE FROM card_txn_memos WHERE id = ? AND profile_id = ?').run(memoId, profileId).changes > 0;
   }
@@ -498,8 +458,6 @@ export class CardRepo {
     return this.db.prepare('SELECT * FROM card_txn_memos WHERE profile_id = ? ORDER BY updated_at').all(profileId).map((r) => toMemo(r as Row));
   }
 }
-
-// ---- 종이 증빙 ----
 
 export interface Receipt {
   docId: string;
@@ -533,7 +491,6 @@ export class ReceiptRepo {
     this.db = db;
   }
 
-  /** 원본은 documents(doc_type='paper_receipt')에 먼저 넣는다. 폰 메시지 ID가 같으면 이미 받은 것(false) */
   add(r: { docId: string; source: Receipt['source']; phoneMsgId?: string | null; phoneOcr?: unknown; ocr?: unknown }): boolean {
     const doc = this.db.prepare('SELECT doc_type FROM documents WHERE id = ?').get(r.docId) as { doc_type: string } | undefined;
     need(!!doc, 'doc_not_found');
@@ -554,7 +511,6 @@ export class ReceiptRepo {
     need(this.db.prepare('UPDATE receipts SET ocr_json = ? WHERE doc_id = ?').run(JSON.stringify(ocr), docId).changes > 0, 'not_found');
   }
 
-  /** 사장님이 읽어 낸 값을 확인한다 */
   confirm(docId: string, v: { issuedOn: string; merchant: string | null; merchantBizNo: string | null; amount: number }, at: string = nowIso()): Receipt {
     need(validDay(v.issuedOn), 'invalid_issued_on');
     need(isInt(v.amount), 'invalid_amount');
@@ -568,7 +524,6 @@ export class ReceiptRepo {
     return this.get(docId)!;
   }
 
-  /** 프로필의 증빙. 확인한 것은 발행일로, 확인 전 것은 등록일로 기간을 거른다 */
   list(profileId: string, from: string, to: string): Receipt[] {
     return this.db
       .prepare(`SELECT r.* FROM receipts r JOIN documents d ON d.id = r.doc_id WHERE d.profile_id = ?
@@ -577,8 +532,6 @@ export class ReceiptRepo {
       .map((r) => toReceipt(r as Row));
   }
 }
-
-// ---- 현금매출 ----
 
 export interface CashSale {
   profileId: string;
@@ -594,7 +547,6 @@ export class CashSalesRepo {
     this.db = db;
   }
 
-  /** 하루 한 숫자. 같은 날을 다시 넣으면 나중 값으로 바꾸고 이전 값을 돌려준다(화면에 알린다) */
   put(s: Omit<CashSale, 'enteredAt'>, at: string = nowIso()): { replaced: CashSale | null } {
     need(validDay(s.day), 'invalid_day');
     need(isInt(s.amount, 0), 'invalid_amount');

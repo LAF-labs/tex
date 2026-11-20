@@ -1,6 +1,3 @@
-// 임계값 프로필: (번들, 공급사·모델 스냅샷) 단위(D04 §1, ADR-015 결정 1).
-// 번들 매핑 조건 안의 값이 기본(초기값)이고, 프로필은 같은 라벨 코퍼스로 재산정한 값을 행·조건 위치로 덮는다.
-// 덮은 결과도 BV를 다시 통과해야 한다(프로필로 하한을 낮출 수 없다). 번들 다이제스트가 바뀌면 프로필은 무효다.
 import fs from 'node:fs';
 import type { Provider } from './contract.ts';
 import { computeDigest } from './bundle/digest.ts';
@@ -11,9 +8,7 @@ export interface ThresholdProfile {
   bundle: string;
   bundleDigest: string;
   provider: Provider;
-  /** 모델 스냅샷 접두(응답 model이 이 값으로 시작해야 한다) */
   model: string;
-  /** initial: 설계 초기값 그대로(S7 재산정 전), calibrated: 라벨 코퍼스로 재산정, uncalibrated: 쓸 수 없음 */
   status: 'initial' | 'calibrated' | 'uncalibrated';
   corpus?: string;
   overrides: Array<{ rule: number; pred: number; value: number }>;

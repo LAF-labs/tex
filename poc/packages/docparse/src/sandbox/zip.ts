@@ -1,6 +1,3 @@
-// 최소 ZIP 읽기(xlsx 전용). 중앙 디렉터리만 믿고, 이름을 고른 항목만 푼다(매크로·외부 연결 항목은 풀지도 않는다).
-// 푸는 일은 플랫폼 DecompressionStream('deflate-raw')에 맡기고, 푸는 도중에 바이트를 세어 상한에서 끊는다(머리의 크기가 거짓이어도).
-// ZIP64·암호·분할·deflate 밖 압축은 받지 않는다. 같은 이름이 두 번 나오면(파서마다 다른 항목을 읽게 하는 공격) 거부한다.
 import { SandboxError, ZIP_LIMITS } from './limits.ts';
 
 export interface ZipEntry {
@@ -8,7 +5,6 @@ export interface ZipEntry {
   method: number;
   compressedSize: number;
   size: number;
-  /** 로컬 머리 오프셋 */
   offset: number;
 }
 
@@ -37,7 +33,6 @@ export class ZipReader {
     return [...this.entries.keys()];
   }
 
-  /** 항목 하나를 푼다. 없으면 null. */
   async read(name: string): Promise<Uint8Array | null> {
     const e = this.entries.get(name);
     if (!e) return null;
@@ -53,7 +48,6 @@ export class ZipReader {
       if (data.length > cap) throw new SandboxError('zip_bomb');
       out = data.slice();
     } else {
-      // 머리에 적힌 크기 + 여유, 압축률 상한, 남은 총량 중 가장 작은 값에서 끊는다
       out = await inflateCapped(data, Math.min(cap, e.size + 1024 * 1024, e.compressedSize * ZIP_LIMITS.maxRatio + 64 * 1024));
     }
     this.inflated += out.length;
@@ -73,7 +67,6 @@ export class ZipReader {
 
 function readCentralDirectory(b: Uint8Array): Map<string, ZipEntry> {
   if (!isZip(b)) throw new SandboxError('zip_invalid');
-  // 끝 레코드: 끝에서 22 + 주석(최대 65535) 안을 거꾸로 찾는다
   let eocd = -1;
   for (let i = b.length - 22; i >= Math.max(0, b.length - 22 - 65535); i--) {
     if (u32(b, i) === 0x06054b50) {
@@ -86,8 +79,8 @@ function readCentralDirectory(b: Uint8Array): Map<string, ZipEntry> {
   const count = u16(b, eocd + 10);
   const cdSize = u32(b, eocd + 12);
   const cdOff = u32(b, eocd + 16);
-  if (count === 0xffff || cdSize === 0xffffffff || cdOff === 0xffffffff) throw new SandboxError('zip_unsupported'); // ZIP64
-  if (disk !== 0) throw new SandboxError('zip_unsupported'); // 분할
+  if (count === 0xffff || cdSize === 0xffffffff || cdOff === 0xffffffff) throw new SandboxError('zip_unsupported');
+  if (disk !== 0) throw new SandboxError('zip_unsupported');
   if (count > ZIP_LIMITS.maxEntries) throw new SandboxError('zip_bomb');
   if (cdOff + cdSize > eocd) throw new SandboxError('zip_invalid');
   const entries = new Map<string, ZipEntry>();
@@ -106,7 +99,7 @@ function readCentralDirectory(b: Uint8Array): Map<string, ZipEntry> {
     if (p + 46 + nameLen > eocd) throw new SandboxError('zip_invalid');
     const rawName = b.subarray(p + 46, p + 46 + nameLen);
     p += 46 + nameLen + extraLen + commentLen;
-    if (flags & 0x1) throw new SandboxError('zip_unsupported'); // 암호
+    if (flags & 0x1) throw new SandboxError('zip_unsupported');
     if (compressedSize === 0xffffffff || size === 0xffffffff || offset === 0xffffffff) throw new SandboxError('zip_unsupported');
     let name: string;
     try {
@@ -114,11 +107,9 @@ function readCentralDirectory(b: Uint8Array): Map<string, ZipEntry> {
     } catch {
       throw new SandboxError('zip_invalid');
     }
-    // 이름 정규화: 역슬래시·앞 '/'·'..'은 받지 않는다(xlsx 항목 이름에는 없다)
     if (!name || name.includes('\\') || name.startsWith('/') || name.split('/').includes('..') || name.includes('\0')) throw new SandboxError('zip_invalid');
     if (entries.has(name)) throw new SandboxError('zip_invalid');
     if (method !== 0 && method !== 8) {
-      // 다른 압축 방식 항목은 목록에만 두고 읽지 않는다(읽으려 하면 실패)
       entries.set(name, { name, method, compressedSize, size, offset });
       continue;
     }
@@ -131,7 +122,6 @@ function readCentralDirectory(b: Uint8Array): Map<string, ZipEntry> {
   return entries;
 }
 
-/** deflate-raw를 풀되 cap 바이트를 넘으면 바로 끊는다. */
 async function inflateCapped(data: Uint8Array, cap: number): Promise<Uint8Array> {
   const ds = new DecompressionStream('deflate-raw');
   const writer = ds.writable.getWriter();

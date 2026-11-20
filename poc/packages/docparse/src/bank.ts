@@ -1,7 +1,3 @@
-// 은행 거래내역 파일 규칙(09 §3.2·§4.2 A). 사장님이 인터넷뱅킹·앱에서 내려받은 엑셀·CSV를 읽는다(앱은 은행에 접속하지 않는다).
-// 형식 근거: 공개 2차 자료의 열 이름(국민: 거래일시·적요·기재내용·찾으신금액·맡기신금액·잔액, 신한: 거래일자·시간·적요·출금액·입금액·내용·잔액,
-// 우리: 날짜 8자리)로 만든 "추정" 사전이다. 실제 은행 파일을 받으면 사전을 더한다. 모르는 서식은 사람이 열을 고른다(mapping).
-// 판정·맞추기는 하지 않는다. 줄을 원 단위·방향·일시로 다듬어 돌려줄 뿐이다. 계좌번호는 파일에 있어도 끝 4자리만 돌려준다.
 import type { Cell, SheetOutput, SheetTable } from './sandbox/index.ts';
 import { cellText, isTotalRow, roleOf, sheetWarnings, type RoleRule } from './table.ts';
 import { compact, findDates, isoDate, normText, parseWon } from './util.ts';
@@ -9,7 +5,6 @@ import { compact, findDates, isoDate, normText, parseWon } from './util.ts';
 export type BankRole = 'date' | 'time' | 'in' | 'out' | 'amount' | 'kind' | 'balance' | 'payer' | 'memo' | 'counter_account';
 export const BANK_ROLES: readonly BankRole[] = ['date', 'time', 'in', 'out', 'amount', 'kind', 'balance', 'payer', 'memo', 'counter_account'];
 
-// 앞이 우선(roleOf). "입금자명"이 입금 금액 칸이 되지 않게 not을 둔다.
 const RULES: RoleRule<BankRole>[] = [
   { role: 'balance', any: ['거래후잔액', '잔액', '잔고'] },
   { role: 'counter_account', any: ['상대계좌번호', '상대계좌', '상대방계좌', '입금계좌번호', '출금계좌번호'] },
@@ -37,7 +32,6 @@ export interface BankMapping {
 }
 
 export interface BankRow {
-  /** 'YYYY-MM-DD' 또는 'YYYY-MM-DD HH:MM' 또는 'YYYY-MM-DD HH:MM:SS' */
   occurredAt: string;
   day: string;
   direction: 'in' | 'out';
@@ -45,7 +39,6 @@ export interface BankRow {
   balance: number | null;
   payer: string | null;
   memo: string | null;
-  /** 파일에 상대 계좌번호가 있으면 숫자만(엔진이 HMAC·끝 4자리로만 저장한다) */
   counterAccount: string | null;
 }
 
@@ -53,22 +46,16 @@ export type BankWarning = 'header_not_found' | 'no_rows' | 'rows_skipped' | 'no_
 
 export interface BankParse {
   extractor: 'bank-v1';
-  /** 머리글 줄 글자를 이은 것(서식 기억 열쇠). 사람이 고른 열을 다음에 같은 서식에 다시 쓴다 */
   signature: string | null;
   mapping: BankMapping | null;
-  /** 머리글 줄 칸 글자(열 고르기 화면) */
   headers: string[];
   columns: BankColumn[];
   rows: BankRow[];
-  /** 읽지 못해 뺀 줄 수(날짜·금액 없음) */
   skipped: number;
   period: { from: string | null; to: string | null };
   totals: { in: number; out: number; inCount: number; outCount: number };
-  /** 파일 앞쪽에 계좌번호가 보이면 끝 4자리(어느 내 계좌인지 제안) */
   accountLast4: string | null;
-  /** 은행 이름이 보이면(제안용) */
   bankHint: string | null;
-  /** 미리보기: 머리글 아래 원래 칸 글자 앞 8줄 */
   sample: string[][];
   warnings: BankWarning[];
 }
@@ -110,11 +97,9 @@ function accountLast4Of(text: string): string | null {
 
 const pad2 = (s: string | number) => String(s).padStart(2, '0');
 
-/** 시각 글자 → 'HH:MM' 또는 'HH:MM:SS'. '14:22', '14:22:05', '142205', '1422' */
 function timeOf(v: Cell): string | null {
   if (v === null) return null;
   if (typeof v === 'number') {
-    // 엑셀 시각(하루의 분수)
     if (v >= 0 && v < 1) {
       const secs = Math.round(v * 86400);
       return `${pad2(Math.floor(secs / 3600))}:${pad2(Math.floor((secs % 3600) / 60))}:${pad2(secs % 60)}`;
@@ -129,7 +114,6 @@ function timeOf(v: Cell): string | null {
   return null;
 }
 
-/** 일시 칸 → {day, time|null}. 글자('2026.11.03 14:22:05', '20261103'), 날짜 서식 칸('2026-11-03 14:22'), 숫자 20261103 */
 function dateTimeOf(v: Cell): { day: string; time: string | null } | null {
   if (v === null) return null;
   if (typeof v === 'number') {
@@ -137,7 +121,6 @@ function dateTimeOf(v: Cell): { day: string; time: string | null } | null {
       const day = isoDate(Math.floor(v / 10000), Math.floor((v % 10000) / 100), v % 100);
       return day ? { day, time: null } : null;
     }
-    // 날짜 서식이 없는 엑셀 일련번호(1900 체계, 2000~2099년 범위만)
     if (v > 36526 && v < 73051) {
       const ms = Math.round((v - 25569) * 86400000);
       const d = new Date(ms);
@@ -166,7 +149,6 @@ function directionOfKind(v: Cell | undefined): 'in' | 'out' | null {
   return null;
 }
 
-/** 한 줄 머리글만 본다(은행 파일은 한 줄이다. 두 줄로 이어 보면 첫 데이터 줄 "입금"이 머리글로 읽힌다). 필수 역할을 갖고 역할이 가장 많은 줄 */
 function detect(out: SheetOutput): { sheet: SheetTable; headerRow: number; columns: BankColumn[] } | null {
   let best: { sheet: SheetTable; headerRow: number; columns: BankColumn[] } | null = null;
   for (const sheet of out.sheets) {

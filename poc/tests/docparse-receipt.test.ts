@@ -1,5 +1,3 @@
-// M6-4 종이 증빙 규칙 파서(Electron 없음). 입력은 합성 영수증 24장의 OCR 흉내 글자(잡음 0·1·2단계).
-// 실제 그림 → 샌드박스 OCR → 파서 정확도는 Electron e2e(apps/desktop/src/docparse-e2e.ts)가 재고 표로 낸다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { parseReceipt, type ReceiptResult } from '@sax/docparse';
@@ -66,7 +64,6 @@ describe('종이 증빙 규칙 파서: 합성 24장', () => {
     assert.equal(result.cardTail.value, card.cardTail);
     assert.ok(!JSON.stringify(result).includes('9410-12'));
     const kinds = new Set(R.map((r) => parseReceipt({ text: receiptText(r), ocrConfidence: null, today: TODAY }).result.docKind));
-    // POS 영수증은 제목 줄이 없어 unknown이다(내용으로 추측하지 않는다)
     assert.deepEqual([...kinds].sort(), ['card_slip', 'cash_receipt', 'simple_receipt', 'tax_invoice', 'unknown']);
   });
 

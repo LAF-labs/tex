@@ -1,6 +1,3 @@
-// PR-D2(팀장 지시 2026-11-09 2·4): 제품 entry는 홈택스를 레지스트리에서 받은 서명 H-01 패키지로 IR 실행한다.
-// fixture 개발 포털(시연·e2e)은 H01Runner 그대로. 실행이 멈추면 어느 스텝·셀렉터 키인지 결과·저널·로그에 남는다(화면 문구·입력 값 없음, ⑦).
-// 실제 포털·모델 접속 없음.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';

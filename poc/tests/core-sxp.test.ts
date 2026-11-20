@@ -1,4 +1,3 @@
-// .sxp 컨테이너 v1(SIGNING.md §6): 정규형만 받는다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { SXP_MAX_BYTES, decodeSxp, encodeSxp, hotfixIndexName } from '@sax/engine/core';

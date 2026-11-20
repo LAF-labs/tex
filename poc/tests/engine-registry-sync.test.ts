@@ -1,6 +1,3 @@
-// 엔진 레지스트리 동기화(D03 §3.1·§7.1, D09 §8.4, ADR-013·023·028, 데스크톱 #126 "켜려면 필요한 것").
-// 상호 검증 샘플(tests/fixtures/registry, 고정 시드)을 주입한 fetch로 내려 엔진이 다시 검증하는지, 실패하면 그 문서만 버리고 마지막 유효본을 지키는지,
-// main 전용 질의(폐기 목록·신선도·핀 키·status)와 급여 시행일 표 데이터 패키지 수용(DB 트랜잭션)을 본다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -28,7 +25,6 @@ const K = sampleKeys();
 const H = 3_600_000;
 const DATA_PATH = packagePath('payroll.rate-tables', '2026.11.1');
 
-/** 레지스트리 대역: 경로 → 바이트. ETag = sha256 앞 32 hex(API.md), If-None-Match가 같으면 304. 부른 경로를 남긴다. */
 function fakeRegistry(files: Record<string, Uint8Array | (() => Uint8Array) | number | Error>) {
   const calls: Array<{ path: string; etag?: string }> = [];
   const fetch: RegistryFetch = async (p, o) => {
@@ -55,7 +51,6 @@ const baseFiles = () => ({
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sax-regsync-'));
 const opened: Db[] = [];
-// Windows는 열린 DB 파일을 지우지 못한다(EPERM). 닫고 지운다.
 after(() => {
   for (const d of opened) d.close();
   fs.rmSync(tmp, { recursive: true, force: true });
@@ -89,7 +84,6 @@ describe('레지스트리 동기화: 정상 경로(고정 시드 샘플)', () =>
     const inst = s.rates.installedPackage('payroll.rate-tables');
     assert.equal(inst?.version, '2026.11.1');
     assert.deepEqual(s.rates.list().map((t) => t.id), ['nontax-2026']);
-    // 로그에는 코드·개수만(키 id·경로 없음)
     const lines = s.log.lines.join('\n');
     assert.match(lines, /"registry\.synced"/);
     for (const bad of ['package-0', '/registry', '.sxp', 'payroll.rate-tables', 'nontax']) assert.ok(!lines.includes(bad), bad);
@@ -131,18 +125,15 @@ describe('레지스트리 동기화: 실패는 그 문서만 버리고 마지막
     const s = setup();
     await s.sync.sync();
     const good = json<RevokedKeys>('registry/revoked_keys.json');
-    // 서명 한 글자 바꿈
     const bad = structuredClone(good);
     bad.signatures[0]!.sig = (bad.signatures[0]!.sig[0] === 'A' ? 'B' : 'A') + bad.signatures[0]!.sig.slice(1);
     s.reg.files[REGISTRY_PATHS.revoked] = bytes(bad);
     assert.equal((await s.sync.sync()).revoked, 'registry.signature_insufficient');
     assert.deepEqual(s.sync.revocation().keyIds, ['package-0']);
-    // 루트 1개 서명만
     const one = structuredClone(good);
     one.signatures = one.signatures.slice(0, 1);
     s.reg.files[REGISTRY_PATHS.revoked] = bytes(one);
     assert.equal((await s.sync.sync()).revoked, 'registry.signature_insufficient');
-    // 깨진 JSON·너무 큰 응답·404·네트워크 실패
     s.reg.files[REGISTRY_PATHS.revoked] = new Uint8Array(Buffer.from('{"revoked":'));
     assert.equal((await s.sync.sync()).revoked, 'registry.response_invalid');
     s.reg.files[REGISTRY_PATHS.revoked] = new Uint8Array(512 * 1024 + 1);
@@ -165,21 +156,17 @@ describe('레지스트리 동기화: 실패는 그 문서만 버리고 마지막
     now = Date.parse('2026-11-06T00:00:00Z');
     assert.equal(s.sync.revocation().fresh, false, 'expiresAt 시각부터 낡음');
     s.reg.calls.length = 0;
-    // 같은 바이트는 304라 다시 검증하지 않는다. ETag를 지우면 다시 받아 expired_on_arrival.
     s.store.set('etag.revoked', null);
     const r = await s.sync.sync();
     assert.equal(r.revoked, 'registry.expired_on_arrival');
     assert.equal(r.revokedFresh, false);
-    // 새 판(monotonic 2, 다시 서명)이 오면 신선해진다
     const next = resign({ ...json<RevokedKeys>('registry/revoked_keys.json'), monotonic: 2, issuedAt: '2026-11-05T23:30:00Z', expiresAt: '2026-11-06T23:30:00Z' });
     s.reg.files[REGISTRY_PATHS.revoked] = bytes(next);
     assert.equal((await s.sync.sync()).revoked, 'accepted');
     assert.deepEqual(s.sync.revocation(), { keyIds: ['package-0'], fresh: true, monotonic: 2, expiresAt: '2026-11-06T23:30:00Z' });
-    // 폐기는 되돌릴 수 없다: 목록이 줄면 거부
     const shrunk = resign({ ...next, revoked: [], monotonic: 3 });
     s.reg.files[REGISTRY_PATHS.revoked] = bytes(shrunk);
     assert.equal((await s.sync.sync()).revoked, 'registry.revoked_shrunk');
-    // 되감기(monotonic 1)
     s.reg.files[REGISTRY_PATHS.revoked] = file('registry/revoked_keys.json');
     s.store.set('etag.revoked', null);
     now = SAMPLE_NOW + H;
@@ -191,7 +178,6 @@ describe('레지스트리 동기화: 실패는 그 문서만 버리고 마지막
     const db = freshDb();
     const store = memoryRegistryStore();
     const reg = fakeRegistry(baseFiles());
-    // 폐기 목록만 받아 두고 데이터는 아직
     const first = new RegistrySync({ trust: TRUST, fetch: reg.fetch, store, sinks: [], now: () => now });
     await first.sync();
     now = Date.parse('2026-11-06T01:00:00Z');
@@ -219,9 +205,9 @@ describe('레지스트리 동기화: 실패는 그 문서만 버리고 마지막
     forged.monotonic = 12;
     s.reg.files[REGISTRY_PATHS.status] = bytes(forged);
     assert.equal((await s.sync.sync()).status, 'registry.signature_insufficient');
-    now = Date.parse('2026-11-07T00:00:01Z'); // 발행 48시간 넘음
+    now = Date.parse('2026-11-07T00:00:01Z');
     assert.equal(s.sync.status().freshness, 'stale');
-    now = Date.parse('2026-11-08T00:00:01Z'); // 긴급본 72시간 넘음 → 2-of-3(monotonic 10)로
+    now = Date.parse('2026-11-08T00:00:01Z');
     const st = s.sync.status();
     assert.equal(st.emergency, false);
     assert.equal(st.monotonic, 10);
@@ -249,12 +235,10 @@ describe('레지스트리 동기화: 실패는 그 문서만 버리고 마지막
   });
 
   it('데이터 패키지: 인덱스가 가리키는 .sxp가 데이터가 아니면·기술자 서명이 모자라면 거부, 낮은 판은 내리지 않는다', async () => {
-    // 인덱스의 데이터 항목이 플레이북 .sxp를 가리키게(다시 서명)
     const pb = file('packages/hometax.invoice.lookup@1.0.0.sxp');
     const files = { ...baseFiles(), [DATA_PATH]: pb, [REGISTRY_PATHS.index]: reindex((ix) => ({ ...ix, entries: ix.entries.map((e) => (e.kind === 'data' ? { ...e, sxpDigest: sha256Hex(pb), size: pb.length } : e)) })) };
     const s = setup(files);
     assert.equal((await s.sync.sync()).data['payroll.rate-tables'], 'registry.kind_mismatch');
-    // 설치본보다 낮은 판만 가리키면 그대로
     const s3 = setup();
     await s3.sync.sync();
     s3.reg.files[REGISTRY_PATHS.index] = reindex((ix) => ({ ...ix, monotonic: 8, entries: ix.entries.map((e) => (e.kind === 'data' ? { ...e, version: '2026.10.1' } : e)) }));
@@ -316,7 +300,6 @@ describe('인덱스 수용: services/registry verifyIndex와 같은 판정', () 
     ['rollout 101', (ix) => ({ ...ix, entries: [{ ...ix.entries[0]!, rolloutPercent: 101 }] }), false],
     ['빈 항목', (ix) => ({ ...ix, entries: [] }), true],
   ];
-  // 신선도 서명(ADR-043): 내용 서명은 맞고 timestamp만 없거나 틀리면 둘 다 registry.timestamp_invalid
   it('timestamp 없음·다른 키·다른 기간에 한 서명·내용 서명 키로 한 서명 → 거부(registry.timestamp_invalid), 폐기된 타임스탬프 키 → 거부', () => {
     const good = sign(structuredClone(base));
     const noTs = { ...good } as Partial<RegistryIndex>;
@@ -355,13 +338,11 @@ describe('인덱스 수용: services/registry verifyIndex와 같은 판정', () 
     assert.ok(cur.ok);
     const at = (m: (ix: RegistryIndex) => RegistryIndex) => acceptIndex(sign(m(structuredClone(base))), { roots, revoked: new Set(), current: cur.ok ? cur.accepted : null, now: SAMPLE_NOW });
     assert.equal(at((ix) => ix).ok, true);
-    // 같은 내용의 신선도 재서명(새 issuedAt·expiresAt·timestamp)은 같은 monotonic으로 받는다(ADR-043)
     assert.equal(at((ix) => ({ ...ix, issuedAt: '2026-11-05T05:00:00Z', expiresAt: '2026-11-07T05:00:00Z' })).ok, true);
     assert.deepEqual(pick(at((ix) => ({ ...ix, monotonic: 6 }))), 'registry.version_rollback');
     assert.deepEqual(pick(at((ix) => ({ ...ix, entries: [] }))), 'registry.version_rollback');
     assert.deepEqual(pick(at((ix) => ({ ...ix, monotonic: 1008 }))), 'registry.version_jump_rejected');
     assert.equal(at((ix) => ({ ...ix, monotonic: 1007 })).ok, true);
-    // 폐기된 패키지 키의 서명은 세지 않는다
     const rev = acceptIndex(sign(structuredClone(base)), { roots, revoked: new Set(['package-1']), current: null, now: SAMPLE_NOW });
     assert.deepEqual(rev.ok ? null : [rev.code, rev.events], ['registry.signature_insufficient', ['registry.key_revoked']]);
   });
@@ -380,7 +361,6 @@ describe('핀 키·main 통로', () => {
     bad((t) => (t.keys.package!['package-1'] = 'AAAA'));
     bad((t) => (t.keys.package!['package-1'] = t.keys.package!['package-1']!.replace(/=$/, '')));
     bad((t) => {
-      // 역할 사이에 같은 keyId(정책 키 하나를 root-1 이름으로)
       const p3 = t.keys.policy!['policy-3']!;
       delete t.keys.policy!['policy-3'];
       t.keys.policy!['root-1'] = p3;
@@ -413,7 +393,6 @@ describe('핀 키·main 통로', () => {
     assert.deepEqual(await s.sync.handle('db.query.registry.pins'), TRUST);
     assert.deepEqual(await s.sync.handle('db.query.registry.status'), s.sync.status());
     await assert.rejects(s.sync.handle('db.query.registry.other'), /unknown_method/);
-    // 질의 결과는 구조화 복제로 main에 간다(Set·KeyObject 없음)
     for (const m of REGISTRY_READ_QUERIES) {
       const v = await s.sync.handle(m);
       assert.doesNotThrow(() => structuredClone(v), m);
@@ -432,7 +411,6 @@ describe('핀 키·main 통로', () => {
 
 describe('정책 동기화(/policy/current.json, D03 §7.1, 팀장 결정 2026-11-09 ②)', () => {
   const POL = () => json<Policy>('policy/current.json');
-  /** 정책 키 2-of-3(또는 주어진 서명자) + 타임스탬프로 다시 서명. */
   const signPolicy = (p: Policy, signers = K.pol.slice(0, 2)) => bytes(signTimestamped(p, signers, K.ts));
 
   it('status 뒤에 받아 검증·클램프해 저장하고, policy()가 마지막 유효 정책과 신선도를 준다', async () => {
@@ -506,7 +484,6 @@ describe('정책 동기화(/policy/current.json, D03 §7.1, 팀장 결정 2026-1
     const s = setup(files);
     const r0 = await s.sync.sync();
     assert.deepEqual([r0.index, r0.policy], ['accepted', 'accepted']);
-    // 40시간 뒤(정책 원본 만료 2시간 전): 내용은 그대로, 타임스탬프 키가 두 문서의 신선도만 다시 서명했다(같은 monotonic).
     const t1 = SAMPLE_NOW + 40 * H;
     s.setNow(t1);
     const at = (ms: number) => new Date(ms).toISOString().replace('.000Z', 'Z');
@@ -515,10 +492,9 @@ describe('정책 동기화(/policy/current.json, D03 §7.1, 팀장 결정 2026-1
     files[REGISTRY_PATHS.policy] = signPolicy({ ...POL(), issuedAt: at(t1 - H), expiresAt: at(t1 + 47 * H) });
     const r1 = await s.sync.sync();
     assert.deepEqual([r1.index, r1.policy], ['accepted', 'accepted']);
-    s.setNow(SAMPLE_NOW + 60 * H); // 원본 정책이면 stale일 시각
+    s.setNow(SAMPLE_NOW + 60 * H);
     assert.deepEqual([s.sync.policy().freshness, s.sync.policy().monotonic], ['fresh', POL().monotonic], '정책은 새 신선도, 내용·monotonic은 그대로');
 
-    // 인덱스 신선도 서명이 틀리고(다른 기간에 한 서명) 정책은 새 내용: 인덱스만 거부, 정책은 받는다.
     const t2 = SAMPLE_NOW + 61 * H;
     s.setNow(t2);
     const good = sign({ ...ix, issuedAt: at(t2 - H), expiresAt: at(t2 + 7 * 24 * H) });
@@ -531,7 +507,6 @@ describe('정책 동기화(/policy/current.json, D03 §7.1, 팀장 결정 2026-1
     assert.deepEqual([r2.index, r2.policy], ['registry.timestamp_invalid', 'accepted']);
     assert.equal(s.sync.policy().monotonic, POL().monotonic + 1);
 
-    // 반대로 정책의 신선도 서명이 인덱스 것(다른 문서)이면 정책만 거부, 인덱스는 받는다(timestamp 서명은 문서 다이제스트에 묶인다).
     files[REGISTRY_PATHS.index] = bytes(good);
     const p3 = JSON.parse(Buffer.from(signPolicy({ ...tighter, monotonic: tighter.monotonic + 1 })).toString('utf8')) as Policy & { timestamp: unknown };
     files[REGISTRY_PATHS.policy] = bytes({ ...p3, timestamp: good.timestamp });
@@ -552,18 +527,15 @@ describe('정책 동기화(/policy/current.json, D03 §7.1, 팀장 결정 2026-1
   });
 });
 
-// ── 도우미 ──
 function pick(r: { ok: boolean; code?: string }) {
   return r.ok ? 'ok' : r.code;
 }
-/** 인덱스를 패키지 키 1·2(내용) + 타임스탬프 키(신선도)로 다시 서명한다(ADR-043). */
 function sign(ix: RegistryIndex): RegistryIndex {
   return signTimestamped(ix, K.pkg.slice(0, 2), K.ts);
 }
 function reindex(m: (ix: RegistryIndex) => RegistryIndex): Uint8Array {
   return bytes(sign(m(json<RegistryIndex>('registry/stable/index.json'))));
 }
-/** 폐기 목록을 루트 1·2 + 타임스탬프로 다시 서명한다. */
 function resign(list: RevokedKeys): RevokedKeys {
   return signTimestamped(list, K.root.slice(0, 2), K.ts);
 }

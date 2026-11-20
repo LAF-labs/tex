@@ -1,5 +1,3 @@
-// 클라우드 서비스 시험 도구: 기기 키·AIK 서명·DPoP·소프트웨어 패스키·HTTP 클라이언트·시계.
-// 클라이언트 쪽 서명 형식의 참조 구현이기도 하다(services/shared/CONTRACT.md). 레지스트리 서명 키는 여기에도 없다.
 import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign, type KeyObject } from 'node:crypto';
 import { InternalAuth, MemoryNonceStore, athOf, b64u, ed25519RawPublic, jcs, makeDpop, signCtx, signInternalCall, type SigContext } from '../services/shared/src/index.ts';
 import { encodeCbor } from '../services/account/src/cbor.ts';
@@ -15,10 +13,8 @@ export class Clock {
   }
 }
 
-/** 내부 호출 서명 키(시험 프로세스마다 무작위, INTERNAL_CALL_KEY 자리). 서명 시각은 실제 시계(서비스 시험 시계와 따로) */
 export const INTERNAL_KEY = randomBytes(32);
 export const internalAuth = (now?: () => number) => new InternalAuth({ key: INTERNAL_KEY, nonces: new MemoryNonceStore(), now });
-/** 서명 헤더. 본문은 client()가 보내는 것과 같은 JSON.stringify 바이트 */
 export const internalHeaders = (method: string, path: string, body?: unknown, now?: number) => ({ authorization: signInternalCall(INTERNAL_KEY, method, path, body === undefined ? '' : JSON.stringify(body), now) });
 
 export const H = 3600_000;
@@ -103,7 +99,6 @@ export function client(base: string) {
   };
 }
 
-/** 소프트웨어 패스키(ES256, attestation none, UV). 시험 전용. */
 export class SoftPasskey {
   readonly key = generateKeyPairSync('ec', { namedCurve: 'P-256' });
   readonly credId = randomBytes(32);

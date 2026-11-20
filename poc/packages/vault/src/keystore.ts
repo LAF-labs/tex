@@ -1,16 +1,8 @@
 import { randomBytes } from 'node:crypto';
 
-// 무인 등급 앱 내부 키(D05 §2). PoC는 DB 키 하나만 둔다. 사람 비밀은 저장하지 않는다(ADR-017).
-// 읽기와 만들기를 나눈다(N-30): 항목이 없거나 길이가 틀려도 조용히 새 키로 덮지 않는다.
 export interface KeyStore {
-  /** 없으면 null. 길이가 다르면 덮지 않고 Error('vault.keystore_mismatch'). */
   get(name: string, bytes: number): Promise<Uint8Array | null>;
-  /** 새 키를 만들어 기록한다. 부르는 쪽이 "없음"을 확인한 뒤에만 부른다. */
   create(name: string, bytes: number): Promise<Uint8Array>;
-  /**
-   * 정해진 값을 기록한다(있으면 덮는다). 계정 루트 키 넘겨받기(crypto.rkImport) 전용이다:
-   * 부르는 쪽이 쓰던 값을 보관 항목에 먼저 옮긴다. 다른 키에는 쓰지 않는다(N-30: 조용히 덮지 않는다).
-   */
   put(name: string, value: Uint8Array): Promise<void>;
 }
 
@@ -61,12 +53,10 @@ export class MemoryKeyStore implements KeyStore {
     this.keys.set(name, Uint8Array.from(value));
   }
 
-  /** 시험용: 항목을 그대로 넣는다(길이 불일치 재현). */
   set(name: string, value: Uint8Array): void {
     this.keys.set(name, Uint8Array.from(value));
   }
 
-  /** 호환용(시험·픽스처 모드). 앱 경로는 get/create를 쓴다. */
   async getOrCreate(name: string, bytes: number): Promise<Uint8Array> {
     return (await this.get(name, bytes)) ?? this.create(name, bytes);
   }

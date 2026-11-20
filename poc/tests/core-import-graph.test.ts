@@ -1,6 +1,3 @@
-// 엔진 코어(dist/core) import 그래프 가드: 코어는 @sax/db·better-sqlite3를 값으로 가져오지 않는다.
-// @sax/engine/core는 클라우드 레지스트리 함수(services/registry)도 쓴다. 코어가 @sax/db를 값으로 가져오면 그 묶음에 네이티브 모듈이 실린다
-// (#193은 vercel excludeFiles로 막았고, 이 시험이 근본 정리를 지킨다). 타입 import는 빌드에서 지워져 dist에 남지 않는다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,7 +7,6 @@ import { ledgerRejection } from '@sax/engine/core';
 
 const DIST = path.resolve(import.meta.dirname, '../packages/engine/dist/core');
 const SRC = path.resolve(import.meta.dirname, '../packages/engine/src/core');
-/** 코어가 가져와도 되는 바깥 모듈(node: 내장 밖). 늘리려면 레지스트리 묶음에 실려도 되는지 먼저 본다. */
 const ALLOWED_BARE = new Set(['ajv/dist/2020.js']);
 const SPEC = /(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|import\s*\(\s*['"]([^'"]+)['"]\s*\)|^\s*import\s*['"]([^'"]+)['"]/gm;
 

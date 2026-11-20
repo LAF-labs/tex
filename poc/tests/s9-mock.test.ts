@@ -1,4 +1,3 @@
-// S9 스크립트 모의 모드: 키 없이 같은 어댑터·egress 경로로 끝까지 돌고, 결과 파일에 키가 남지 않는다.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -8,7 +7,6 @@ import { it } from 'node:test';
 
 it('scripts/s9-decisions.ts --mock: 측정 항목이 모두 채워지고 비용 상한 안', () => {
   const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'sax-s9-')), 's9.json');
-  // TLS 신뢰를 바꾸는 변수가 있으면 egress가 송신을 거부한다(N-23). 모의 서버(http)만 쓰므로 물려주지 않는다.
   const env: NodeJS.ProcessEnv = { ...process.env, OPENAI_API_KEY: 'sk-should-not-be-used-or-written' };
   delete env.NODE_EXTRA_CA_CERTS;
   delete env.NODE_TLS_REJECT_UNAUTHORIZED;

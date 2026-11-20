@@ -1,9 +1,3 @@
-// 대화상자 정책(D03 §6, §5.3 expectConfirm·V-24). 리스너는 엔진이 항상 등록하고 Playwright 기본 동작에 기대지 않는다.
-// - alert → accept. 문구는 판정 입력(차단 신호 사전 등)과 실행 메모리의 '홈택스 안내'로만 쓴다.
-// - confirm·beforeunload → 무장된 커밋 구간 + 선언된 expectConfirm 패턴(앵커)과 일치할 때만 accept + commit.confirm_accepted{textHash}.
-//   그 밖은 dismiss.
-// - prompt → dismiss.
-// 문구 자체는 저널·텔레메트리·모델에 넣지 않는다(⑦). 저널에는 종류와 (수락한 confirm의) 해시만 남긴다.
 import { sha256Hex } from './canon.ts';
 import { normalizeName } from './constants.ts';
 
@@ -11,9 +5,7 @@ export type DialogKind = 'alert' | 'confirm' | 'prompt' | 'beforeunload';
 
 export interface DialogDecision {
   action: 'accept' | 'dismiss';
-  /** 저널 이벤트. payload에는 종류·해시만 있다. */
   event: { type: 'dialog.alert_accepted' | 'dialog.dismissed' | 'commit.confirm_accepted'; payload: Record<string, string> };
-  /** 실패·핸드오프 카드의 '홈택스 안내: …'(NFKC, 공백 접기, 200자). 실행 메모리에만 둔다. */
   notice: string;
 }
 

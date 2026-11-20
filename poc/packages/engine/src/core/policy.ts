@@ -1,6 +1,3 @@
-// D03 §7.1 정책 적용 규칙: 상한·하한 클램프(필드별, policy.clamped), 범위 역전은 하한 우선(E-17), 포털 키 없음 = postprocess,
-// 신선도(72시간·issuedAt 미래 5분), 만료 뒤 유지·168시간 뒤 전 포털 postprocess, 1인 긴급 키의 '엄격하게 보수적' 판정(C-26, E-04).
-// 서명 검증은 registry.ts가 하고 여기서는 내용만 본다.
 import { CAPTCHA_ORDER, CAPTCHA_RELAY_CEILING, ISSUED_AT_MAX_SKEW_MIN, MODE_ORDER, POLICY_FLOOR, POLICY_MAX_VALIDITY_H, POLICY_STALE_FALLBACK_H, PORTAL_MODE_CEILING } from './constants.ts';
 import { PORTALS, type CaptchaRelay, type Policy, type Portal, type PortalMode } from './types.ts';
 
@@ -8,7 +5,6 @@ const H = 3_600_000;
 
 export interface ClampResult {
   policy: Policy;
-  /** 고정된 필드 경로(값 없음). 저널 policy.clamped{field}로 남긴다. */
   clamped: string[];
 }
 
@@ -35,7 +31,7 @@ export function clampPolicy(input: Policy): ClampResult {
   }
   const range = (path: string, r: [number, number], min: number) => {
     fix(`${path}[0]`, r[0], Math.max(r[0], min), (v) => (r[0] = v));
-    if (r[1] < r[0]) fix(`${path}[1]`, r[1], r[0], (v) => (r[1] = v)); // E-17: 하한 우선
+    if (r[1] < r[0]) fix(`${path}[1]`, r[1], r[0], (v) => (r[1] = v));
   };
   for (const prof of ['interactive', 'daemon'] as const) {
     range(`pace.${prof}.stepDelayMs`, p.pace[prof].stepDelayMs, POLICY_FLOOR.stepDelayMsMin);
@@ -55,15 +51,13 @@ export function clampPolicy(input: Policy): ClampResult {
   fix('verify.minElapsedMs', p.verify.minElapsedMs, Math.max(p.verify.minElapsedMs, POLICY_FLOOR.verifyMinElapsedMsMin), (v) => (p.verify.minElapsedMs = v));
   fix('verify.lookups', p.verify.lookups, Math.max(p.verify.lookups, POLICY_FLOOR.verifyLookupsMin), (v) => (p.verify.lookups = v));
   const maxMs = p.verify.maxMs ?? POLICY_FLOOR.verifyMaxMsMin;
-  if (p.verify.maxMs === undefined) p.verify.maxMs = maxMs; // 기본값 채움은 클램프가 아니다
+  if (p.verify.maxMs === undefined) p.verify.maxMs = maxMs;
   else fix('verify.maxMs', maxMs, Math.max(maxMs, POLICY_FLOOR.verifyMaxMsMin), (v) => (p.verify.maxMs = v));
   return { policy: p, clamped };
 }
 
 /** 포털의 정책상 수준(키가 없으면 postprocess, fail-closed). 실효 수준은 status·만료까지 합친 effectiveMode다. */
 export const policyMode = (p: Policy | null, portal: Portal): PortalMode => lowerMode(p?.portalMode[portal] ?? 'postprocess', PORTAL_MODE_CEILING[portal]);
-
-// ---- 신선도 ----
 
 export type FreshnessProblem = 'policy.validity_too_long' | 'policy.issued_in_future' | 'policy.expired_on_arrival';
 
@@ -90,8 +84,6 @@ export function policyFreshness(p: Pick<Policy, 'expiresAt'> | null, now: number
   return now < exp + POLICY_STALE_FALLBACK_H * H ? 'stale' : 'fallback';
 }
 
-// ---- 1인 긴급 키: 엄격하게 보수적인가(D03 §7.1 표) ----
-
 type Dir = 'le' | 'ge' | 'superset' | 'mode' | 'relay' | 'burstAction' | 'eq';
 const META = new Set(['version', 'monotonic', 'keyEpoch', 'issuedAt', 'expiresAt', 'timestamp', 'signatures']);
 
@@ -116,7 +108,6 @@ export function conservativeDirection(path: string): Dir {
     if (a === 'disabledFeatures' || a === 'notifyOnIrreversible') return 'superset';
   }
   if (head === 'queue') return 'le';
-  // D03 §7.1·policy 스키마 긴급 규칙은 minElapsedMs·lookups만 나열한다. maxMs는 나열되지 않았으므로 같음만 허용.
   if (head === 'verify') return a === 'minElapsedMs' || a === 'lookups' ? 'ge' : 'eq';
   if (head === 'daemon') return a === 'windowJitterMin' || a?.startsWith('gapBetweenRunsMin') || a === 'startupGraceMin' || a === 'retryAfterMin' ? 'ge' : 'eq';
   return 'eq';
@@ -137,7 +128,6 @@ function leaves(o: unknown, prefix: string, out: Map<string, unknown>): void {
   out.set(prefix, o);
 }
 
-/** 각 필드: -1 보수(엄격), 0 같음, 1 완화 또는 표 밖 변경. */
 function compareField(path: string, cur: unknown, next: unknown): -1 | 0 | 1 {
   const dir = conservativeDirection(path.replace(/\[\d+\]/g, ''));
   if (dir === 'superset') {
@@ -147,7 +137,6 @@ function compareField(path: string, cur: unknown, next: unknown): -1 | 0 | 1 {
     return n.size > c.size ? -1 : 0;
   }
   if (cur === next) return 0;
-  // 포털 키가 없으면 postprocess로 본다(fail-closed). 그 밖의 필드가 생기거나 없어지면 표 밖 변경이다.
   if (dir === 'mode') {
     const r = (x: unknown) => (x === undefined ? 0 : MODE_ORDER[x as PortalMode]);
     return r(next) === r(cur) ? 0 : r(next) < r(cur) ? -1 : 1;

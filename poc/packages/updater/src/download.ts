@@ -1,4 +1,3 @@
-// 다운로드 무결성(ADR-028 결정 2, D11 §4). electron-updater도 sha512를 보지만(2차 방어) 설치 직전에 우리가 검증한 매니페스트 값으로 한 번 더 본다.
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
@@ -34,7 +33,6 @@ export async function verifyDownloadedFile(filePath: string, expected: ReleaseFi
     return { ok: true };
   } catch (e) {
     if (e instanceof UpdateError) return { ok: false, code: e.code };
-    // 읽지 못한 파일은 검증 실패로 본다(설치하지 않는다)
     return { ok: false, code: 'update.digest_mismatch' };
   }
 }

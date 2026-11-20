@@ -1,4 +1,3 @@
-// schema/*.json 검증기(ajv). 샌드박스 출력은 main이 쓰기 전에, parse 결과는 내보내기 전에 통과해야 한다.
 import fs from 'node:fs';
 import ajvMain from 'ajv';
 import type { ValidateFunction } from 'ajv';

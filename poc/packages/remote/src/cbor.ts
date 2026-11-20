@@ -1,6 +1,3 @@
-// 결정적 CBOR(RFC 8949 §4.2.1 core deterministic) 부분집합. D08 §6 inner, 서명 입력의 canonical 인코딩.
-// 지원: 정수(안전 정수 범위), 바이트열, 문자열, 배열, 문자열 키 맵, true/false/null. 실수·태그·무한 길이는 거부.
-// 디코더는 엄격하다: 최단 길이 아닌 정수, 정렬되지 않았거나 겹친 키, 남는 바이트를 거부한다(같은 값에 표기 하나).
 
 import { concat, fromUtf8, utf8 } from './bytes.ts';
 

@@ -1,7 +1,3 @@
-// 4대보험 고지내역 형식 규칙(M6-5, S-06 후처리). 사장님이 사회보험 통합징수포털·EDI에서 내려받은 엑셀·CSV를 읽는다.
-// 형식 근거: 공단 안내 화면에 나오는 칸 이름(성명·주민등록번호·보수월액/기준소득월액·산출(고지)보험료·근로자/사업자 부담)으로 만든
-// "추정" 규칙이다(estimated=true). 보험별로 파일이 따로 오는 경우와, 한 줄에 여러 보험 칸이 있는 경우를 모두 받는다.
-// 주민번호는 앞 7자리만 남긴다(생년월일 매칭용). 매칭·차이 판정은 하지 않는다(데이터 트랙, ADR-031 결정 4).
 import type { Cell, SheetOutput } from './sandbox/index.ts';
 import { cellText, findHeader, headText, isTotalRow, roleOf, sheetWarnings, type RoleRule } from './table.ts';
 import type { Extracted, InsuranceKind, InsuranceNoticeResult, InsuranceNoticeRow, WarningCode } from './types.ts';
@@ -32,10 +28,8 @@ function kindOf(text: string): InsuranceKind | null {
   return null;
 }
 
-/** 고지 년월: "2026년 10월", "2026.10", "2026-10" (고지·귀속·부과 라벨 가까이 우선) */
 function monthOf(text: string): Extracted<string> {
   const t = normText(text);
-  // 완전한 날짜(납부기한 2026-11-10, 2026년 11월 10일)는 년월 후보가 아니다
   const re = /(20\d{2})\s*(?:년|[-./])\s*(0?[1-9]|1[0-2])(?!\d)(?!\s*[-./]\s*\d)(?!\s*월\s*\d{1,2}\s*일)\s*월?/g;
   const labeled: string[] = [];
   const any: string[] = [];
@@ -53,7 +47,6 @@ function monthOf(text: string): Extracted<string> {
   return pick(labeled, 0.85) ?? pick(any, 0.6) ?? { value: null, confidence: 0, reason: 'not_found' };
 }
 
-/** 주민번호 칸 → 앞 7자리(뒤 6자리는 버린다). 가린 번호(900101-1******)도 받는다. */
 function rrnFront(c: Cell): { front7: string | null; full: boolean } {
   const s = cellText(c).replace(/\s/g, '');
   const m = /^(\d{6})-?([0-9])([0-9*]{6})$/.exec(s);
@@ -61,7 +54,6 @@ function rrnFront(c: Cell): { front7: string | null; full: boolean } {
   return { front7: null, full: false };
 }
 
-/** 생년월일 칸이 따로 있을 때('1990-01-01', '900101') */
 function birthOf(c: Cell): string | null {
   const s = cellText(c).replace(/\s/g, '');
   const m = /^(19|20)(\d{2})[-./]?(\d{2})[-./]?(\d{2})$/.exec(s);
@@ -81,11 +73,8 @@ export function parseInsuranceNotice(out: SheetOutput): { result: InsuranceNotic
     return { result: null, warnings: [...warnings], confidence: 0 };
   }
   const head = headText(out);
-  // 파일의 보험: 시트 이름, 그다음 머리글 위쪽 줄(제목). 머리글 줄 글자는 보지 않는다(여러 보험 칸이 섞여 있다)
   const title = header.sheet.rows.slice(0, header.headerRow).map((r) => r.map(cellText).join(' ')).join('\n');
   const fileKind = kindOf(header.sheet.name) ?? kindOf(title.split('\n').find((l) => l.trim()) ?? '');
-  // 돈 칸마다 보험 종류: 머리글(두 줄 머리글이면 윗줄 포함)에 이름이 있으면 그것, 없으면 파일의 보험.
-  // 보수월액·기준소득월액 칸에 보험 이름이 없으면 모든 보험에 같이 쓴다('*')
   const money = header.columns
     .filter((c) => c.role === 'base' || c.role === 'total' || c.role === 'employee' || c.role === 'employer')
     .map((c) => ({ ...c, kind: kindOf(c.header) ?? (c.role === 'base' ? ('*' as const) : fileKind) }));
@@ -112,7 +101,6 @@ export function parseInsuranceNotice(out: SheetOutput): { result: InsuranceNotic
       };
       const entry = { base: pick('base'), total: pick('total'), employee: pick('employee'), employer: pick('employer') };
       if (entry.total === null && entry.employee === null && entry.employer === null) continue;
-      // 근로자 + 사업주 = 합계면 확실, 합계만 있으면 보통, 어긋나면 낮게
       const parts = entry.employee !== null && entry.employer !== null ? entry.employee + entry.employer : null;
       const c = entry.total !== null && parts !== null ? (parts === entry.total ? 0.85 : 0.4) : 0.65;
       rows.push({ rowId: `${header.sheet.name}!${header.headerRow + 2 + k}:${kind}`, name: name.slice(0, 40), birthDate: birth, rrnFront7: front7, insurance: kind, ...entry, confidence: conf(c * (birth ? 1 : 0.9)) });

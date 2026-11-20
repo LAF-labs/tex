@@ -1,4 +1,3 @@
-// M6-10 서명 배포 표 → 저장소 반영(순수 부분): 행 변환, 실패 시 저장소 그대로, 계산에 쓸 표 고르기(저장소 먼저, 기본 표는 빈 곳만).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
@@ -10,7 +9,6 @@ const bundled = loadBundledPackage();
 const nontax = bundled.tables.find((t) => t.id === 'nontax-2026')! as RateTable<'nontax_limits'>;
 const D = 'a'.repeat(64);
 
-/** 저장소 흉내: installPackage는 한 번에 다 넣거나 code를 던진다 */
 function memStore(fail?: unknown): RateTableStore & { rows: StoredRateTable[] } {
   let installed: { version: string; digest: string } | null = null;
   const rows: StoredRateTable[] = [];

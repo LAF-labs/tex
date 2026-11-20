@@ -1,5 +1,3 @@
-// 발급 사다리(D03 §4.2): 한 발급 키에 대해 경로 표의 칸을 차례로 돈다. 칸이 끝날 때마다 같은 키의 원장 행으로 판정하고,
-// 발급됨·미종결이면 끝, 홈택스 쪽 실패(fallthrough)일 때만 다음 칸으로 간다. 유료 칸 앞에서는 사장님 동의를 기다린다.
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Ledger } from '@sax/db';
@@ -10,7 +8,6 @@ import type { AttemptEnd, ConsentCard, ConsentToken, Fallthrough, IssueKey, Issu
 import { verdictOf } from './verdict.ts';
 
 export interface IssueLadderDeps {
-  /** 칸들. 경로 표(ROUTES) 순서로 돈다. */
   rungs: readonly Rung[];
   ledger: Pick<Ledger, 'byIssueKey'>;
   log: EventLog;
@@ -28,7 +25,6 @@ export class IssueLadder extends EventEmitter {
   private readonly rungs: readonly Rung[];
   private readonly ledger: IssueLadderDeps['ledger'];
   private readonly log: EventLog;
-  /** 진행 중인 키(칸 실행은 키마다 동시에 하나). */
   private readonly live = new Map<IssueKey, Live>();
   private readonly last = new Map<IssueKey, LadderState>();
 
@@ -40,7 +36,6 @@ export class IssueLadder extends EventEmitter {
     this.log = d.log;
   }
 
-  /** 발급 요청. 같은 키가 진행 중이면 그 상태, 원장에 발급됨·미종결이 있으면 그것을 돌려주고 새 시도를 만들지 않는다. */
   request(req: IssueRequest): LadderState {
     const key = req.issueKey;
     const cur = this.live.get(key);
@@ -54,7 +49,6 @@ export class IssueLadder extends EventEmitter {
     return this.state(key)!;
   }
 
-  /** 동의 카드 답. consent 상태가 아니면 false. */
   consent(key: IssueKey, answer: 'granted' | 'declined'): boolean {
     const f = this.live.get(key)?.answerConsent;
     if (!f) return false;
@@ -63,7 +57,6 @@ export class IssueLadder extends EventEmitter {
     return true;
   }
 
-  /** 홈택스 직접 칸 답: [발급했어요] = issued, [못 해요] = cannot. human 상태가 아니면 false. */
   human(key: IssueKey, answer: 'issued' | 'cannot'): boolean {
     const f = this.live.get(key)?.answerHuman;
     if (!f) return false;
@@ -106,7 +99,6 @@ export class IssueLadder extends EventEmitter {
         let consent: ConsentToken | null = null;
         if (rung.route.costKrw !== 0) {
           const reasonCode = tried.at(-1)?.code ?? 'issue.first_rung';
-          // 카드의 "아무것도 발급되지 않았어요"는 지금 원장으로 다시 확인한 값이다.
           const pre = verdictOf(this.ledger.byIssueKey(key), { code: reasonCode });
           if (pre.kind === 'issued') return void this.settle(key, { s: 'issued', route: pre.route, ref: pre.ref });
           if (pre.kind === 'held') return void this.settle(key, { s: 'held', state: pre.state });
@@ -151,7 +143,6 @@ export class IssueLadder extends EventEmitter {
     }
   }
 
-  /** 다음 칸으로 가는 길은 원장이 "발급 안 됨 + 홈택스 쪽 실패"로 판정한 것뿐이다. */
   private next(route: RouteId, v: Fallthrough): { route: RouteId; code: string } {
     return { route, code: v.code };
   }

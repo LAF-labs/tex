@@ -1,6 +1,3 @@
-// L2 툴셋 정의(D04 §4). effort·max_output_tokens·도구·출력 스키마는 툴셋이 정하고 클라이언트 필드가 아니다(B-20).
-// PoC-7 범위: selector_repair(S9 store:false 재생 측정)와 query_parse. summarize·intent_fill은 PoC-9 이후.
-// chat_reply: 작업으로 분류되지 않은 대화 입력에 짧은 안내 문장(팀장 지시 2026-11-10, D04 §4.1).
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { canonicalJson } from './bundle/digest.ts';
@@ -19,7 +16,6 @@ export interface ToolsetDef {
   tools: ToolDef[];
   output: { name: string; schema: Record<string, unknown> };
   prefixKey: string;
-  /** false면 공통 판정기 머리말(_common)을 붙이지 않는다. 사용자에게 문장을 보여 주는 chat_reply만 쓴다(머리말이 "문장을 보여 주지 않는다"는 판정기 역할이라). */
   commonPrefix?: boolean;
 }
 
@@ -91,7 +87,6 @@ export const CHAT_CAPABILITIES = [
   { id: 'hometax.invoice.issue', label: '전자세금계산서 발급(홈택스)' },
 ] as const;
 export type ChatCapabilityId = (typeof CHAT_CAPABILITIES)[number]['id'];
-/** 답 문장 상한(글자). 공급사 strict 스키마가 maxLength를 받지 않을 수 있어 스키마에는 넣지 않고 엔진이 검사한다. */
 export { CHAT_REPLY_MAX_CHARS } from '@sax/chat-core';
 /** 제안 작업 상한 */
 export const CHAT_SUGGEST_MAX = 3;

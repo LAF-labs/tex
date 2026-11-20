@@ -1,5 +1,3 @@
-// D08 메시지 종류마다: 유효 표본은 와이어(CBOR) 왕복, 무효 표본은 거부. 생성 검증기가 스키마 최신본과 같은지,
-// 바이너리 필드가 CBOR 바이트열로 나가는지, 정규형 아닌 base64를 거부하는지 확인한다.
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -10,7 +8,6 @@ import {
 } from '@sax/remote';
 import { k32 } from './remote-support.ts';
 
-// ajv는 @sax/remote의 개발 의존이다(생성기와 같은 판본).
 const require = createRequire(path.join(import.meta.dirname, '../packages/remote/package.json'));
 const schemaPath = path.join(import.meta.dirname, '../../sovereign-ax/design/schemas/remote-envelope.schema.json');
 const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
@@ -24,7 +21,6 @@ const dl = {
   revoked: [{ device_id: uuid4(), revoked_at: 5, aikSig: sig64 }],
 };
 
-/** [type, from, body, 무효 변형] — 무효 변형은 스키마가 거부해야 한다. */
 const SAMPLES: Record<string, { from: 'desktop' | 'mobile'; body: object; bad: object }> = {
   hello: { from: 'mobile', body: { appVersion: '1.0.0', protocol: 1, suites: ['noise-25519-chachapoly-blake2b'], deviceListVersion: 2, asyncSeqMax: 0, registryHeadHash: H, capabilities: ['receipt.v1'] }, bad: { appVersion: '1', protocol: 0, suites: [], deviceListVersion: 0, asyncSeqMax: 0, registryHeadHash: H, capabilities: [] } },
   'pair.ok': { from: 'desktop', body: { cert: b64(new Uint8Array(200)), aikPub: k32(), kvPub: k32(), kvSig: sig64, deviceList: dl, mbxId: k32(), tokRead: k32(), tokWrite: k32(), mbxEpoch: 0, acctClaim: b64(new Uint8Array(300)), desktopName: '사무실 PC' }, bad: { cert: 'x', aikPub: k32(), kvPub: k32(), kvSig: sig64, deviceList: dl, mbxId: k32(), tokRead: k32(), tokWrite: k32(), mbxEpoch: 0, kek: k32() } },
@@ -84,7 +80,6 @@ const SAMPLES: Record<string, { from: 'desktop' | 'mobile'; body: object; bad: o
     body: { shareSignPub: b64(new Uint8Array(32).fill(7)), shareKeys: [{ epoch: 0, shareKey: b64(new Uint8Array(32).fill(1)) }, { epoch: 1, shareKey: b64(new Uint8Array(32).fill(2)) }] },
     bad: { shareSignPub: b64(new Uint8Array(32)), shareKeys: [{ epoch: 0, shareKey: b64(new Uint8Array(32)), rk: b64(new Uint8Array(32)) }] },
   },
-  // v1.10(ADR-052): 폰 승인 키 등록 알림·답, 승인 요청 다시 받기
   'px.enroll': {
     from: 'mobile',
     body: { pxPub: b64(new Uint8Array(65).fill(4)), hw: 'ios_se', sig: b64(new Uint8Array(64).fill(9)) },
@@ -100,7 +95,6 @@ const SAMPLES: Record<string, { from: 'desktop' | 'mobile'; body: object; bad: o
     body: { runId: '01JD0000000000000000000000', reqId: '01JD0000000000000000000001' },
     bad: { runId: '01JD0000000000000000000000' },
   },
-  // v1.11(sync.v1): 다른 곳에서 닫힌 승인 알리기
   'gate.resolved': {
     from: 'desktop',
     body: { runId: '01JD0000000000000000000000', reqId: '01JD0000000000000000000001', by: 'expired' },
@@ -141,7 +135,6 @@ describe('메시지 종류마다 왕복·거부', () => {
       assert.deepEqual(decodeEnvelope(wire), e);
       assert.equal(validateEnvelope(env(t, s.from, s.bad)), false, `${t} bad should fail`);
       assert.throws(() => encodeEnvelope(env(t, s.from, s.bad)));
-      // 방향이 정해진 종류는 반대 방향을 거부한다(Phase 1 새 종류)
       if (t.startsWith('receipt.') || t.startsWith('cash.') || t === 'share.key' || t.startsWith('px.') || t === 'gate.refresh' || t === 'gate.resolved') assert.equal(validateEnvelope(env(t, s.from === 'mobile' ? 'desktop' : 'mobile', s.body)), false);
     });
   }

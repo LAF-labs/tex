@@ -1,7 +1,3 @@
-// M5-1 게이트 우회 회귀 CE-7~16(D13 §7, D02 §6.2 반례 표). 반례마다 두 반쪽이 있다:
-//   정적: 검증기·핫픽스 CI·내장 상한이 거부한다 — 엔진 M1-4 시험(core-validate·core-selector-ci)이 이미 고정한다. 여기서는 그 시험이
-//         이름 그대로 있고 skip·todo가 아닌지 본다(승격 점검 (가)와 같은 함수). 시험을 지우거나 이름을 바꾸면 이 스위트가 빨개진다.
-//   실행: 검증을 통과한 패키지라도 런타임(스텝 핸들러·Actuator·게이트 토큰)이 같은 우회를 막는다 — 엔진 M2-1~M2-4 뒤. 지금은 todo.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { CAPTCHA_RELAY_CEILING, MODE_ORDER, PORTAL_MODE_CEILING } from '@sax/engine/core';
@@ -12,9 +8,7 @@ interface Ce {
   id: string;
   what: string;
   rule: string;
-  /** 정적 반쪽 시험(`파일 > 이름 일부`). */
   staticTests: string[];
-  /** 실행 반쪽(아직 없는 것): 무엇을, 어느 M 항목 뒤에. */
   runtime: string;
 }
 
@@ -61,8 +55,5 @@ describe('M5-1 게이트 우회 CE-16: 내장 상한(앱 업데이트로만 바�
 });
 
 describe('M5-1 게이트 우회 CE-7~16: 실행 반쪽(엔진 M2 뒤)', () => {
-  // TODO(M5-1): 엔진 M2-1~M2-4가 머지되면 각 항목을 "검증을 우회해 실행기에 직접 넣은 IR"로 바꾼다.
-  //   방법: validatePackage를 거치지 않는 테스트 전용 로더로 반례 IR을 가짜 포털(tests/fixtures/server.ts)에서 돌리고,
-  //   포털이 비가역 요청(/submit)을 받지 않았는지·게이트 원장이 비어 있는지·실행이 어느 코드로 끝났는지 본다.
   for (const ce of CE) it.todo(`${ce.id} 실행: ${ce.runtime}`);
 });

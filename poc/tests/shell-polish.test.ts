@@ -1,4 +1,3 @@
-// 실사용 잔손질(부장 지시 2026-11-11): 내 사업장의 내용 없는 개인 카드, 화면 문구의 내부 코드·개발 용어, 오류 코드가 그대로 보이던 토스트.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
@@ -12,8 +11,6 @@ describe('내 사업장: 저장된 개인 프로필이 없으면 카드를 그�
     assert.match(read('apps/desktop/src/shell-app.ts'), /const NO_PERSONAL: Profile = \{ kind: 'personal', name: '개인', email: '', auth: '', placeholder: true \};/);
     const shell = read('apps/desktop/static/shell/shell.js');
     assert.match(shell, /const personal = p\.personal && !p\.personal\.placeholder \? p\.personal : null;/);
-    // v2.0: 내 사업장 머리의 "프로필 2개 중 n개 사용"은 지웠다(사장님에게 의미 없는 수). 개인 자리는 여전히 건너뛴다.
-    // 제목줄 프로필 메뉴도 저장된 개인 프로필이 있을 때만 "개인"을 보인다
     assert.match(shell, /p\.personal && !p\.personal\.placeholder \? item\('personal', `개인 · \$\{p\.personal\.name\}`\) : null/);
   });
 });

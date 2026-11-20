@@ -1,6 +1,3 @@
-// 세무사 꾸러미 PC 입력(08 D-05, D14 M6-2·M6-4): 현금매출 하루 숫자, 종이 증빙 확인(읽어 낸 값을 사장님이 고침), 항목 상태 표시(해당 없음·파일 칸).
-// 엔진 BundleService가 부른다. 모델을 부르지 않는다. 영수증 사진·파일은 여기서 열지 않는다(OCR·파싱은 docparse 샌드박스 몫, 결과 후보만 기록에 있다).
-// 로그를 남기지 않는다(금액·가게 이름이 섞이지 않게).
 import { BundleRepo, CashSalesRepo, DocumentRepo, ReceiptRepo, type BundleEntry, type BundleEntryStatus, type CashSale, type Db, type Receipt } from '@sax/db';
 import { monthRange, periodFor } from './items.ts';
 
@@ -24,8 +21,6 @@ export const CASH_DAY_MAX = 999_999_999_999;
 export const RECEIPT_MERCHANT_MAX = 100;
 export const ENTRY_NOTE_MAX = 500;
 export const ENTRY_DOCS_MAX = 50;
-
-// ── 현금매출 ──
 
 export interface CashMonthView {
   month: string;
@@ -51,8 +46,6 @@ export function cashRemove(db: Db, profileId: string, dayValue: unknown): { remo
   return { removed: new CashSalesRepo(db).remove(profileId, day(dayValue, 'bad_day')) };
 }
 
-// ── 종이 증빙 ──
-
 /** 화면에 주는 증빙. 폰 메시지 id는 빼고, 읽어 낸 후보(phoneOcr·ocr)는 화면이 입력 칸의 기본값으로만 쓴다(글자로만 그린다) */
 export type ReceiptView = Omit<Receipt, 'phoneMsgId'>;
 
@@ -66,7 +59,6 @@ export function receiptMonthView(db: Db, profileId: string, month: string): { mo
   return { month, receipts, unconfirmed: receipts.filter((r) => !r.confirmedAt).length };
 }
 
-/** 그 프로필의 증빙(다른 프로필 문서면 receipt_not_found) */
 function ownReceipt(db: Db, profileId: string, docId: unknown): Receipt {
   const id = typeof docId === 'string' && docId.length <= 64 ? docId : '';
   const r = id ? new ReceiptRepo(db).get(id) : null;
@@ -89,8 +81,6 @@ export function receiptConfirm(db: Db, profileId: string, p: Record<string, unkn
   }
   return receiptView(new ReceiptRepo(db).confirm(r.docId, { issuedOn, merchant, merchantBizNo: bizNo, amount }, at));
 }
-
-// ── 항목 상태 표시(해당 없음·파일 칸) ──
 
 /**
  * 사장님이 그달 항목에 상태를 표시하고 파일(문서 id)을 붙인다. 기간은 엔진이 항목 주기로 정한다(main이 기간을 짓지 않는다).

@@ -1,7 +1,3 @@
-// 운영 레지스트리 받기·검증 점검(읽기만, 팀장 지시 2026-11-09): 제품 entry와 같은 RegistrySync(앱 핀 REGISTRY_TRUST_PIN, Egress 레지스트리 GET)로
-// 폐기 목록 → status → 정책 → 인덱스 → H-01 패키지(+조회 패키지)를 받아 서명·신선도를 검증하고, 실행 시작 로드(loadInstalled)·IR 공급(installedIrSource)까지 본다.
-// 홈택스 접속 없음. 저장은 메모리(앱 DB를 건드리지 않는다). 출력은 코드·판·신선도뿐이다(비밀 없음).
-// poc/ 에서: node --conditions=development scripts/registry-check.ts
 import { Egress } from '@sax/net';
 import { egressRegistryFetch, HOMETAX_PORTAL, installedIrSource, memoryRegistryStore, PRODUCT_PACKAGE_IDS, PRODUCT_PACKAGES, REGISTRY_TRUST_PIN, RegistrySync } from '@sax/engine';
 import { runPermit } from '@sax/engine/core';

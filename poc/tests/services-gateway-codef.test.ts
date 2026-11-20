@@ -1,4 +1,3 @@
-// 계좌 자동조회 CODEF 토큰 엔드포인트(POST /v1/codef/token, 대표 결정 2026-11-12). CODEF OAuth는 모의 fetch(실제 CODEF를 부르지 않는다).
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
@@ -49,7 +48,6 @@ async function start(codef: CodefTokenSource | null): Promise<Env> {
   return { s, server, req, logs, pc, call };
 }
 
-/** CODEF OAuth 모의 fetch: 받은 요청(헤더·본문)을 남기고 정해진 응답을 준다. */
 function oauthFetch(reply: () => Response) {
   const seen: Array<{ url: string; auth: string; body: string; ct: string }> = [];
   const fn = (async (url: string | URL | Request, init?: RequestInit) => {
@@ -172,7 +170,6 @@ describe('codefFromEnv', () => {
     assert.ok(ok instanceof CodefOAuth);
     assert.equal(ok.env, 'demo');
     assert.equal(ok.publicKey, FAKE_PUBLIC_KEY);
-    // 기본은 demo(키만 넣으면 데모 호스트)
     const dflt = codefFromEnv({ CODEF_CLIENT_ID: 'client-id-0001', CODEF_CLIENT_SECRET: 'secret-0001', CODEF_PUBLIC_KEY: FAKE_PUBLIC_KEY }, fail);
     assert.equal(dflt?.env, 'demo');
   });

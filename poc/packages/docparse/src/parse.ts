@@ -1,6 +1,3 @@
-// parse(bytes, kind, host) → {schema 결과, confidence, warnings}. 이 파일은 main(Node)에서 돈다: 바이트를 해석하지 않고
-// 형식을 머리로 고른 뒤 샌드박스(host)에 넘기고, 돌아온 값을 스키마로 검증해 규칙 파서에 넣는다. 규칙 파서는 순수 함수다.
-// 신뢰하지 않는 바이트를 여는 일(pdf.js·디코더·tesseract·ZIP·XML)은 모두 host = docparse 샌드박스(ADR-014)에서 한다.
 import { extractDocMeta, kstToday, readScore, worthOcr, type DocMetaExtract } from '@sax/engine/docmeta';
 import { DocparseError } from './errors.ts';
 import { parseInsuranceNotice } from './insurance.ts';
@@ -71,7 +68,6 @@ async function certificate(bytes: Uint8Array, format: InputFormat, host: Docpars
   if (format === 'pdf') {
     let r = await pdfVia(host, bytes, { password: o.password, ocrPages: 2, forceOcr: o.forceOcr === true });
     let meta = extractDocMeta(r.text);
-    // 텍스트 층에서 핵심 칸을 못 뽑았으면 같은 PDF를 OCR로 한 번 더 읽고 나은 쪽을 쓴다(engine/docmeta choose 규칙)
     if (r.ocrConfidence === null && r.hasTextLayer && worthOcr(meta, r.text)) {
       const again = await pdfVia(host, bytes, { password: o.password, ocrPages: 2, forceOcr: true });
       const m2 = extractDocMeta(again.text);
@@ -98,7 +94,6 @@ export async function parse(bytes: Uint8Array, kind: DocKind, host: DocparseHost
   const format = sniffed.format;
   if (!ACCEPTS[kind].includes(format)) throw new DocparseError('wrong_kind', format);
   if (format === 'jpeg' || format === 'png') {
-    // 디코드 전에 머리에서 크기를 본다(폭탄은 샌드박스에도 보내지 않는다). 샌드박스도 같은 검사를 다시 한다.
     try {
       imageInfo(bytes);
     } catch (e) {

@@ -1,4 +1,3 @@
-// M1-2 마이그레이션 체계(D07 §7): 버전 테이블, 순방향, 실패 시 통째 되돌림·백업, 새 판 DB 거부, 배포한 판 SQL 변경 거부.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -18,7 +17,6 @@ const key = () => new Uint8Array(randomBytes(32));
 const tables = (db: ReturnType<typeof openDatabase>): string[] =>
   (db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`).all() as Array<{ name: string }>).map((r) => r.name);
 
-// D07 §2 요약 DDL의 테이블 전부
 const D07_TABLES = [
   'bank_accounts', 'bank_imports', 'bank_txns',
   'bundle_entries', 'bundle_exports', 'bundle_items', 'card_fetches', 'card_txn_memos', 'card_txns', 'cash_sales', 'clock_guard', 'consents', 'cooldowns', 'counterparties', 'cp_bank_accounts', 'cp_payer_aliases',
@@ -45,7 +43,6 @@ describe('스키마 마이그레이션(D07 §7)', () => {
     const k = key();
     const v2 = openDatabase(file, k, { migrations: MIGRATIONS.slice(0, 2) });
     v2.prepare(`INSERT INTO settings (key, value_json) VALUES ('x', '1')`).run();
-    // PoC 판은 버전 테이블이 없었다
     v2.exec('DROP TABLE schema_migrations');
     assert.equal(v2.pragma('user_version', { simple: true }), 2);
     v2.close();
@@ -60,7 +57,6 @@ describe('스키마 마이그레이션(D07 §7)', () => {
     assert.match(path.basename(backups[0]!), /^db\.sqlite\.pre-v2-\d{8}T\d{6}Z\.bak$/);
     assert.ok(isEncryptedFile(backups[0]!), '백업도 암호문');
     if (process.platform !== 'win32') assert.equal(fs.statSync(backups[0]!).mode & 0o777, 0o600);
-    // 백업은 같은 키로 열리고 v2 그대로다
     const b = openDatabase(backups[0]!, k, { migrations: MIGRATIONS.slice(0, 2) });
     assert.equal(b.pragma('user_version', { simple: true }), 2);
     assert.ok(!tables(b).includes('employees'));
@@ -84,7 +80,6 @@ describe('스키마 마이그레이션(D07 §7)', () => {
     assert.ok(!tables(db).includes('employees') && !tables(db).includes('ok_part'));
     db.close();
     assert.deepEqual(listBackups(file), before, '실패한 시도는 오래된 복구 지점을 지우지 않고, 사본도 남기지 않는다');
-    // 같은 초에 다시 실패해도 EEXIST가 아니라 MigrationError
     const at = () => new Date(Date.UTC(2026, 10, 5, 12));
     for (let i = 0; i < 2; i++) assert.throws(() => openDatabase(file, k, { migrations: broken, now: at }), (e: unknown) => e instanceof MigrationError && e.code === 'db.migration_failed');
     assert.deepEqual(listBackups(file), before);
@@ -150,7 +145,6 @@ describe('스키마 마이그레이션(D07 §7)', () => {
   it('v1부터 v10까지 한 판씩 같은 파일에 올린다: 앞 판의 sha256은 그대로, v9(돈 맞추기) 뒤 v10이 발급 키를 더하고 옛 원장 행은 키 없이 남는다', () => {
     const file = tmp();
     const k = key();
-    // main에 먼저 들어간 v9(bank_match, #284)의 SQL sha256. 배포한 판은 바이트 하나도 바꾸지 않는다.
     assert.equal(migrationSha256(MIGRATIONS[8]!), '5edef61e8d9494ab2ba3c857a39bec5efe9d725ece0baa4710cebb2f5364bab0');
     assert.deepEqual(MIGRATIONS.slice(8).map((m) => [m.version, m.name]), [[9, 'bank_match'], [10, 'ledger_issue_key'], [11, 'profile_cert_name'], [12, 'ledger_reverify'], [13, 'payables_cashflow'], [14, 'share_log']]);
     for (let n = 1; n <= MIGRATIONS.length; n++) {

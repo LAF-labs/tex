@@ -1,29 +1,11 @@
-// 승격 조건 자동 점검(ADR-035 결정 1.3, W-11).
-//   (가) PR 본문 "D-xx → 시험 이름" 표가 가리키는 시험이 저장소에 있는지 본다. 시험이 통제를 증명하는지는 사람이 본다(RETRO B-11).
-//   (라) `// PoC 폐기 대상` 표지가 첫 줄에 있는 파일을 제품 진입점이 import하지 않는지 본다(정적 import 그래프).
-//
-// 사용:
-//   node scripts/ci-promotion-check.mjs [--pr <번호> | --body-file <파일> | --body-env <변수>] [--require-table] [--entry <경로>]... [--json]
-//   본문 원천이 없으면 (가)는 건너뛰고 (라)만 본다. CI는 pull_request 본문을 환경 변수로 넘긴다(식에 직접 넣지 않는다).
-//
-// 표 형식(PR 본문, 열 이름은 자유. 첫 칸이 AUDIT-D ID, 둘째 칸에 백틱 시험 참조가 하나 이상):
-//   | 통제 | 시험 |
-//   |---|---|
-//   | D-17(N-12) | `tests/vault-relay.test.ts > 누출 스캐너` |
-//   | D-33(N-51) | `packages/vault/test/relay.test.ts` `tests/x.test.ts > 쿠키` |
-//   시험 참조 = `<poc/ 또는 저장소 기준 경로>[ > <it·test·describe 이름의 일부>]`
-//
-// 끝 코드: 0 통과, 1 위반, 2 사용법 오류.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
 const POC = path.resolve(import.meta.dirname, '..');
 const REPO = path.resolve(POC, '..');
-// 보고·비교용 상대 경로는 OS와 무관하게 `/`로 쓴다(Windows `\\`).
 const relPosix = (from, to) => path.relative(from, to).split(path.sep).join('/');
 const MARKER = '// PoC 폐기 대상';
-/** 제품 진입점(ADR-025 결정 8: 실비밀 진입점은 하드닝된 셸 하나 + 그것이 띄우는 금고·엔진 프로세스). 있는 것만 본다. */
 export const DEFAULT_ENTRIES = [
   'apps/desktop/src/shell.ts',
   'packages/vault/src/entry.ts',
@@ -33,9 +15,6 @@ export const DEFAULT_ENTRIES = [
   'services/*/src/server.ts',
 ];
 
-// ───────────── (가) 표 ─────────────
-
-/** PR 본문에서 "D-xx → 시험" 행을 뽑는다. 머리 행에 "시험"·"test"가 있는 표만 본다(08 화면 ID D-01 등을 쓰는 다른 표와 섞지 않는다). */
 export function parsePromotionTable(body) {
   const rows = [];
   const cellsOf = (line) => line.replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
@@ -44,7 +23,6 @@ export function parsePromotionTable(body) {
   let fence = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    // 코드 블록 안의 표(형식 예시·명령 출력)는 읽지 않는다
     if (/^(```|~~~)/.test(line)) {
       fence = !fence;
       inTable = false;
@@ -55,7 +33,6 @@ export function parsePromotionTable(body) {
       inTable = false;
       continue;
     }
-    // 머리 행 + 구분 행(|---|)이면 새 표
     if (/^\|?\s*:?-{3,}/.test(lines[i + 1] ?? '') && !/^\|?\s*:?-{3,}/.test(line)) {
       inTable = cellsOf(line).some((c) => /시험|test/i.test(c));
       i++;
@@ -72,13 +49,11 @@ export function parsePromotionTable(body) {
   return rows;
 }
 
-/** 본문에 언급됐지만 표에 없는 AUDIT-D ID(경고). 08 화면 ID(D-01 문서함 등)와 섞일 수 있어 N-xx가 붙은 것만 본다. */
 export function mentionedIds(body) {
   const prose = body.replace(/^(```|~~~)[\s\S]*?^\1/gm, '');
   return [...new Set([...prose.matchAll(/\b(D-\d{2})\(N-\d{2}\)/g)].map((m) => m[1]))];
 }
 
-/** D19 §3.5 표: ID → 단계. */
 export function auditDIndex(repo = REPO) {
   const f = path.join(repo, 'sovereign-ax/design/19-attack-surface.md');
   const idx = new Map();
@@ -95,7 +70,6 @@ export function auditDIndex(repo = REPO) {
 
 const TEST_CALL = /\b(?:it|test|describe|suite)(?:\.(?:only|skip|todo))?\s*\(\s*(['"`])((?:\\.|(?!\1).)*)\1/g;
 
-/** 시험 참조 하나를 확인한다. */
 export function checkRef(ref, roots = [POC, REPO]) {
   const [file, ...nameParts] = ref.split(/\s+>\s+/);
   const name = nameParts.join(' > ').trim();
@@ -108,7 +82,6 @@ export function checkRef(ref, roots = [POC, REPO]) {
   const names = [...src.matchAll(TEST_CALL)].map((m) => m[2]);
   const hit = names.find((n) => n.includes(name));
   if (!hit) return { ref, ok: false, file: rel, problem: `이름이 "${name}"을 포함하는 it·test·describe 없음` };
-  // B-11: 소스 grep 시험은 증거가 아니다. 이름이 걸린 시험의 skip·todo는 따로 알린다.
   const todo = new RegExp(`\\b(?:it|test|describe)\\.(?:skip|todo)\\s*\\(\\s*(['"\`])${escapeRe(hit)}\\1`).test(src);
   return { ref, ok: !todo, file: rel, test: hit, problem: todo ? 'skip·todo 시험' : undefined };
 }
@@ -134,8 +107,6 @@ export function checkTable(body, { requireTable = false } = {}) {
   return { rows: results, problems, warnings };
 }
 
-// ───────────── (라) 폐기 표지 ─────────────
-
 export function hasMarker(file) {
   let text;
   try {
@@ -148,7 +119,6 @@ export function hasMarker(file) {
   return (first ?? '').trimStart().startsWith(MARKER);
 }
 
-/** 워크스페이스 패키지 이름 → { dir, exports }. */
 function workspacePackages() {
   const map = new Map();
   for (const group of ['packages', 'apps', 'services', 'tests']) {
@@ -171,7 +141,6 @@ function pickExport(target) {
   return null;
 }
 
-/** dist/x.js → src/x.ts 같은 빌드 산출물 경로를 소스로 되돌린다. */
 function toSource(abs) {
   const cands = [abs];
   if (/\.(m?js)$/.test(abs)) cands.push(abs.replace(/\.m?js$/, '.ts'), abs.replace(/\.m?js$/, '.tsx'));
@@ -191,7 +160,7 @@ export function resolveImport(spec, fromFile, pkgs) {
   const m = /^(@[^/]+\/[^/]+|[^@/][^/]*)(\/.*)?$/.exec(spec);
   if (!m) return null;
   const ws = pkgs.get(m[1]);
-  if (!ws) return null; // node: 내장·외부 의존성
+  if (!ws) return null;
   const sub = m[2] ? `.${m[2]}` : '.';
   const exp = ws.pkg.exports;
   let target = null;
@@ -201,13 +170,11 @@ export function resolveImport(spec, fromFile, pkgs) {
   return toSource(path.resolve(ws.dir, target));
 }
 
-/** 런타임 import 목록(type 전용 import·export는 지워지므로 뺀다). */
 export function importsOf(src) {
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`\\])\/\/.*$/gm, '$1');
   const out = [];
   for (const m of code.matchAll(/\b(import|export)\s+(type\s+)?([^'";]*?)\s*from\s*['"]([^'"]+)['"]/g)) {
     if (m[2]) continue;
-    // import { type A, type B } from 'x' 처럼 전부 type이면 지워진다
     const braces = /^\{([\s\S]*)\}$/.exec(m[3].trim());
     if (braces && braces[1].split(',').map((s) => s.trim()).filter(Boolean).every((s) => s.startsWith('type '))) continue;
     out.push(m[4]);
@@ -237,7 +204,6 @@ function expandEntries(entries) {
   return out;
 }
 
-/** 진입점에서 닿는 파일 중 폐기 표지가 있는 것과 그 경로(체인). */
 export function checkMarkers(entries = DEFAULT_ENTRIES) {
   const pkgs = workspacePackages();
   const roots = expandEntries(entries);
@@ -274,7 +240,6 @@ export function checkMarkers(entries = DEFAULT_ENTRIES) {
   return { entries: roots.map((r) => relPosix(POC, r)), files: seen.size, reached };
 }
 
-/** poc/ 아래 표지 파일 전체(git 추적 기준). */
 export function markedFiles() {
   let list;
   try {
@@ -285,12 +250,9 @@ export function markedFiles() {
   return list.filter((f) => /\.(m?[jt]sx?)$/.test(f) && hasMarker(path.join(POC, f)));
 }
 
-// ───────────── CLI ─────────────
-
 function readBody(args) {
   const i = (k) => args.indexOf(k);
   if (i('--body-file') >= 0) return fs.readFileSync(args[i('--body-file') + 1], 'utf8');
-  // 변수가 없으면 본문 원천 없음(건너뜀)으로 본다. 빈 문자열(본문이 빈 PR)은 그대로 점검한다.
   if (i('--body-env') >= 0) return process.env[args[i('--body-env') + 1]] ?? null;
   if (i('--pr') >= 0) {
     const n = args[i('--pr') + 1];

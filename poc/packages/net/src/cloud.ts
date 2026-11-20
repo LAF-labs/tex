@@ -1,7 +1,3 @@
-// 계정·릴레이 서비스 목적지(데스크톱 계정 로그인·기기 토큰·페어링, 팀장 결정 2026-11-06). Egress.cloud()·openCloudSocket()이 이 표만 연다.
-// HTTP origin은 앱 내장 상수 https://tax.laf-co.com 하나(계정·릴레이 HTTPS가 같은 origin, services/deploy/README.md 1절).
-// WSS는 룸 호스트 하나(함수는 WSS를 못 받는다): 페어링 룸과 라이브 우편함. 메서드·경로는 정확히 일치해야 하고 쿼리·조각·인코딩은 받지 않는다.
-// 개발 스택(http/ws://localhost·127.0.0.1)은 Egress 생성 때 cloudDevLocal을 켠 경우에만 연다.
 
 export const CLOUD_ORIGIN = 'https://tax.laf-co.com';
 /** 룸 호스트(QR의 릴레이 호스트, WSS 전용) */
@@ -26,7 +22,6 @@ export const CLOUD_ROUTES: ReadonlyArray<{ name: string; method: CloudMethod; pa
   { name: 'auth.code', method: 'POST', path: /^\/v1\/auth\/code$/ },
   { name: 'auth.verify', method: 'POST', path: /^\/v1\/auth\/code\/verify$/ },
   { name: 'auth.logout', method: 'POST', path: /^\/v1\/auth\/logout$/ },
-  // 계정 화면(ADR-038, services/account/API.md 비밀번호·자동 로그인·재인증). 메서드·경로 정확히 일치, 접두 매칭 없음.
   { name: 'auth.password', method: 'POST', path: /^\/v1\/auth\/password$/ },
   { name: 'auth.reset', method: 'POST', path: /^\/v1\/auth\/password\/reset$/ },
   { name: 'auth.resetVerify', method: 'POST', path: /^\/v1\/auth\/password\/reset\/verify$/ },
@@ -44,10 +39,8 @@ export const CLOUD_ROUTES: ReadonlyArray<{ name: string; method: CloudMethod; pa
   { name: 'deviceTokens', method: 'POST', path: /^\/v1\/device-tokens$/ },
   { name: 'acctClaim', method: 'GET', path: /^\/v1\/acct-claim$/ },
   { name: 'devices.enroll', method: 'POST', path: /^\/v1\/devices\/enroll$/ },
-  // 기기 관리(ADR-048 결정 6): 계정의 기기 상태 보기, 이 PC 나가기. 다른 기기 끊기는 deviceList.put(AIK 폐기 레코드)으로 한다
   { name: 'devices.list', method: 'GET', path: /^\/v1\/devices$/ },
   { name: 'devices.leave', method: 'POST', path: /^\/v1\/devices\/self\/leave$/ },
-  // 새 PC 연결 우편함(ADR-048 결정 3, D08 §4.3): 새 PC는 세션, 쓰던 PC는 기기 토큰. 경로의 ID는 새 PC의 기기 ID(UUIDv4)다
   { name: 'pcLinks.list', method: 'GET', path: /^\/v1\/pc-links$/ },
   { name: 'pcLinks.hello', method: 'PUT', path: new RegExp(`^/v1/pc-links/${UUID4}$`) },
   { name: 'pcLinks.answer', method: 'GET', path: new RegExp(`^/v1/pc-links/${UUID4}$`) },
@@ -55,22 +48,17 @@ export const CLOUD_ROUTES: ReadonlyArray<{ name: string; method: CloudMethod; pa
   { name: 'pcLinks.reveal', method: 'POST', path: new RegExp(`^/v1/pc-links/${UUID4}/reveal$`) },
   { name: 'pcLinks.challenge', method: 'POST', path: new RegExp(`^/v1/pc-links/${UUID4}/challenge$`) },
   { name: 'pcLinks.grant', method: 'POST', path: new RegExp(`^/v1/pc-links/${UUID4}/grant$`) },
-  // 계정 열쇠 맡기기(ADR-050): 로그인된 PC는 기기 토큰으로 맡기고, 새 PC는 세션으로 받아 스스로 목록에 들어간다
   { name: 'keyEscrow.get', method: 'GET', path: /^\/v1\/key-escrow$/ },
   { name: 'keyEscrow.put', method: 'PUT', path: /^\/v1\/key-escrow$/ },
   { name: 'keyEscrow.claim', method: 'POST', path: /^\/v1\/key-escrow\/claim$/ },
   { name: 'keyEscrow.pub', method: 'GET', path: /^\/v1\/key-escrow\/pub$/ },
   { name: 'keyEscrow.reset', method: 'POST', path: /^\/v1\/key-escrow\/reset$/ },
   { name: 'keyEscrow.join', method: 'POST', path: /^\/v1\/key-escrow\/join$/ },
-  // 발급 잠금(ADR-048 결정 7, 데스크톱 기기 토큰): 계정에 하나, 잡은 PC만 홈택스 발급에 들어간다
   { name: 'issueLock.get', method: 'GET', path: /^\/v1\/issue-lock$/ },
   { name: 'issueLock.acquire', method: 'POST', path: /^\/v1\/issue-lock\/acquire$/ },
   { name: 'issueLock.renew', method: 'POST', path: /^\/v1\/issue-lock\/renew$/ },
   { name: 'issueLock.release', method: 'POST', path: /^\/v1\/issue-lock\/release$/ },
-  // 폰 깨우기(ADR-053 결정 2, 데스크톱 기기 토큰 wake 범위): 내용 없는 알림. 본문은 {deviceId, kind}뿐
   { name: 'push.wake', method: 'POST', path: /^\/v1\/wake$/ },
-  // 계정 공유 기록(ADR-048 결정 5, D07 §10, 기기 토큰 share 범위): 암호문 줄 올리기·받기, 맡긴 일 맡기·내려놓기·취소.
-  // 이어 받기는 쿼리가 아니라 경로다(after/<순번>). 경로의 ID는 줄 id(무작위 16B)다
   { name: 'share.put', method: 'PUT', path: new RegExp(`^/v1/share/rows/${ID22}$`) },
   { name: 'share.rows', method: 'GET', path: /^\/v1\/share\/rows$/, maxBytes: CLOUD_SHARE_PAGE_MAX_BYTES },
   { name: 'share.rowsAfter', method: 'GET', path: /^\/v1\/share\/rows\/after\/(0|[1-9][0-9]{0,15})$/, maxBytes: CLOUD_SHARE_PAGE_MAX_BYTES },
@@ -78,20 +66,16 @@ export const CLOUD_ROUTES: ReadonlyArray<{ name: string; method: CloudMethod; pa
   { name: 'share.taskClaim', method: 'POST', path: new RegExp(`^/v1/share/tasks/${ID22}/claim$`) },
   { name: 'share.taskRelease', method: 'POST', path: new RegExp(`^/v1/share/tasks/${ID22}/release$`) },
   { name: 'share.taskCancel', method: 'POST', path: new RegExp(`^/v1/share/tasks/${ID22}/cancel$`) },
-  // 설정 > 구독(기기 토큰, services/account/API.md 구독). 카드 등록 창은 기본 브라우저가 연다(이 egress 밖)
   { name: 'billing.subscription', method: 'GET', path: /^\/v1\/billing\/subscription$/ },
   { name: 'billing.checkout', method: 'POST', path: /^\/v1\/billing\/checkout$/ },
   { name: 'billing.cancel', method: 'POST', path: /^\/v1\/billing\/cancel$/ },
   { name: 'billing.refund', method: 'POST', path: /^\/v1\/billing\/refund$/ },
-  // 탈퇴(F-06, 데스크톱 기기 토큰, 7일 유예)
   { name: 'account.deletion', method: 'GET', path: /^\/v1\/account\/deletion$/ },
   { name: 'account.deleteRequest', method: 'POST', path: /^\/v1\/account\/delete-request$/ },
   { name: 'account.deleteCancel', method: 'POST', path: /^\/v1\/account\/delete-cancel$/ },
   { name: 'rooms.create', method: 'POST', path: /^\/v1\/rooms$/ },
   { name: 'mailboxes.create', method: 'POST', path: /^\/v1\/mailboxes$/ },
   { name: 'mailboxes.delete', method: 'DELETE', path: new RegExp(`^/v1/mailboxes/${ID43}$`) },
-  // 연결된 폰 수신(데스크톱 phone-link.ts): PC가 꺼져 있던 동안 쌓인 HPKE 봉투를 꺼내고 ACK, 큐 번들(Q_D, Vd 서명)을 올린다.
-  // 쿼리(?after=)는 쓰지 않는다(ACK 뒤 다시 읽는다). 봉투 POST는 폰만 한다.
   { name: 'mailboxes.envelopes', method: 'GET', path: new RegExp(`^/v1/mailboxes/${ID43}/envelopes$`), maxBytes: CLOUD_QUEUE_PAGE_MAX_BYTES },
   { name: 'mailboxes.ack', method: 'POST', path: new RegExp(`^/v1/mailboxes/${ID43}/ack$`) },
   { name: 'mailboxes.bundle', method: 'PUT', path: new RegExp(`^/v1/mailboxes/${ID43}/bundle$`) },
@@ -113,7 +97,6 @@ const SAFE = /^[A-Za-z0-9:/._-]+$/;
 export type CloudOriginKind = 'prod' | 'dev' | null;
 
 function parse(url: unknown): URL | null {
-  // 쿼리·조각·퍼센트 인코딩·사용자 정보·백슬래시·공백은 문자 단계에서 거부한다(허용 경로는 이 문자만 쓴다)
   if (typeof url !== 'string' || url.length > 512 || !SAFE.test(url)) return null;
   let u: URL;
   try {
@@ -121,7 +104,6 @@ function parse(url: unknown): URL | null {
   } catch {
     return null;
   }
-  // 정규화로 바뀌는 입력(`..`, 중복 슬래시, 기본 포트 등)은 거부: 원문이 origin + 경로와 같아야 한다
   if (u.search || u.hash || u.username || u.password || u.origin + u.pathname !== url) return null;
   return u;
 }

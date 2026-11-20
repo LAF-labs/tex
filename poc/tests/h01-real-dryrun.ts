@@ -1,9 +1,3 @@
-// H-01 실화면 패키지(hometax.invoice.issue 2.2.0 + 조회 1.2.0) 건조 실행 하네스. 가짜 홈택스(tests/hometax-fake.ts)에 로그인 구간부터 끝까지 돌린다.
-// "가짜 통과 = 실제로 됨"에 가깝게: 패키지는 제품 원본(packages/engine/playbooks)을 그대로 쓰고, 바꾸는 것은 fixtureFiles의 다섯 가지뿐이다
-// (시험 h01-real-dryrun.test.ts가 그 밖에 차이가 없는지 본다).
-//   1) URL origin https://hometax.go.kr → 가짜 화면 origin   2) 엔드포인트 host teet.hometax.go.kr → 가짜 teet host
-//   3) manifest.domains → 127.0.0.1   4) portal → fixture(ADR-039)   5) 서명(시험 키)
-// 셀렉터 id·스텝·signFlow·조회 열은 한 글자도 바꾸지 않는다. 실행에서 바꾸는 시간 값(verifyTiming·verify 정책)은 fixture 허가 뒤에서만 먹는다.
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -22,7 +16,6 @@ export const REAL_ORIGIN = 'https://hometax.go.kr';
 export const REAL_TEET = 'teet.hometax.go.kr';
 export const PACKAGE_IDS = ['hometax.invoice.lookup', 'hometax.invoice.email_status', 'hometax.invoice.issue'] as const;
 
-/** 제품 원본 → 가짜 홈택스용(위 다섯 가지만). */
 export function fixtureFiles(files: PackageFiles, origin: string, teetHost: string): PackageFiles {
   const text = JSON.stringify(files)
     .replaceAll(`"${REAL_ORIGIN}`, `"${origin}`)
@@ -65,53 +58,37 @@ export interface Scenario {
   knobs?: Partial<FakeKnobs>;
   loggedIn?: boolean;
   signMethod?: 'cert' | 'simple_auth';
-  /** 거래처 등록번호(가짜 registry 키). */
   bizNo?: string;
   email?: string | null;
   supply?: number;
-  /** 사람 흉내(실행 중 반복 호출). 기본: 로그인 화면이면 로그인, 인증서 창이면 [확인]. */
   human?: (fx: HometaxFake) => void;
   approve?: boolean;
   maxMs?: number;
   verifyMaxMs?: number;
-  /** 공동인증서 비밀번호 금고(IrPackage.secret, engine-cert B1·B2). 없으면 human:secret은 대역(바로 ttl). */
   secret?: IrPackage['secret'];
-  /** 발급 패키지 파일 고치기(시험이 고른 변형만, 시나리오에 적는다). */
   patchIssue?: (files: PackageFiles) => void;
-  /** 발급 사다리로 돌린다(D03 §4.2): 첫 칸이 이 실행(runId r1)이고, 직접 칸·동의 카드 답은 여기서 준다. */
   ladder?: LadderScenario;
-  /** 실행 Chrome을 주는 함수를 바꾼다(Chrome 없음 갈래). */
   page?: (real: () => Promise<import('playwright-core').Page>) => () => Promise<import('playwright-core').Page>;
-  /** 사람 대기 상한(ms, RunServiceDeps.handoffCapMs). 로그인을 끝내 하지 않는 갈래. */
   handoffCapMs?: number;
-  /** 모델 길(게이트웨이 대역): AI 위치 찾기·판정·에이전트·화면 보기(IrPackage.locate). */
   locate?: IrPackage['locate'];
-  /** 실행 전에 DB에 손대기(앞 실행의 기억 넣기 등). */
   beforeRun?: (db: Database) => void;
-  /** 실행 뒤 DB 닫기 전에(기억 꺼내기 등). */
   afterRun?: (db: Database) => void;
-  /** human을 바꾼 시나리오에서도 사람 차례에 답한다(기본: human을 주면 차례에는 답하지 않는다). */
   answerTurns?: boolean;
 }
 
 export interface LadderScenario {
-  /** 직접 칸 답. 없으면 직접 칸에 닿았을 때 그대로 멈춘다(시험 실패). */
   manual?: 'issued' | 'cannot';
-  /** API 원천(없으면 연결 안 됨). */
   api?: FakeIssueApi;
   consent?: 'granted' | 'declined';
-  /** 끝난 뒤 같은 발급 키로 한 번 더 요청한다(그 답을 again에 담는다). */
   again?: boolean;
 }
 
 export interface LadderOutcome {
   issueKey: IssueKey;
   state: LadderState | null;
-  /** 지나간 상태 이름 순서. */
   seen: string[];
   rows: LedgerRow[];
   again?: LadderState;
-  /** 다시 요청한 뒤 teet 요청 수(늘지 않아야 한다). */
   actionsAfterAgain?: number;
 }
 
@@ -121,15 +98,11 @@ export interface Outcome {
   steps: string[];
   gate: boolean;
   fx: HometaxFake;
-  /** teet로 간 actionId 순서(permission.do는 perm:<screenId>). */
   actions: string[];
   ladder?: LadderOutcome;
 }
 
 export const defaultHuman = (fx: HometaxFake) => {
-  // H-01 2.3.x는 엔진이 공동인증서 로그인을 먼저 하고, 못 하면 간편인증 화면을 열어 사람 차례(handoff login)로 넘긴다.
-  // 사람은 그 차례에서 로그인한다(realDryRun 고리가 handoff를 보고 fx.login() 뒤 [이어서]). 여기서는 스스로 로그인하지 않는다.
-  // 인증서 창이 뜨고 사람이 비밀번호를 넣는 데 시간이 든다.
   if (fx.state.stage === 'cert' && Date.now() - fx.state.certAt > 1500) fx.cert('confirm');
 };
 
@@ -147,7 +120,6 @@ export async function realDryRun(sc: Scenario = {}): Promise<Outcome> {
   try {
     const { pkg, lookups } = loadReal(fx.origin, teetHost, sc.patchIssue);
     const base = fixturePortal(fx.origin);
-    // 가짜 화면은 로드 뒤 renderDelayMs에 그린다. 조회 팝업 한 번에 1~2초라 verify 상한을 늘린다(fixture 허가 뒤에서만).
     const portal = { ...base, verify: { ...base.verify, maxMs: sc.verifyMaxMs ?? 25_000, intervalMs: 300 } };
     const ir: IrPackage = { pkg, lookupPackages: lookups, fixtureGrant: fixtureOriginGrant(pkg), verifyTiming: { minElapsedMs: 600, lookups: 2, maxMs: sc.verifyMaxMs ?? 25_000 }, pdf: PDF, ...(sc.secret ? { secret: sc.secret } : {}), ...(sc.locate ? { locate: sc.locate } : {}) };
     sc.beforeRun?.(db);
@@ -179,8 +151,6 @@ export async function realDryRun(sc: Scenario = {}): Promise<Outcome> {
     const t0 = Date.now();
     let approved = false;
     const human = sc.human ?? defaultHuman;
-    // 사람 차례(handoff)에 사람이 하는 일: 로그인 차례면 로그인하고 [이어서], 서명 차례면 홈택스 서명 창을 마친 뒤(창이 닫힌 뒤) [다 했어요].
-    // human: () => {}인 시나리오(끝내 아무것도 하지 않는 사람)는 차례에도 답하지 않는다.
     const answersTurns = sc.human === undefined || sc.answerTurns === true;
     let answered = 0;
     let signIdleAt = 0;
@@ -188,10 +158,8 @@ export async function realDryRun(sc: Scenario = {}): Promise<Outcome> {
       human(fx);
       const turns = events.filter((e) => e.type === 'handoff');
       const turn = turns.length > answered ? (turns.at(-1) as Extract<RunEvent, { type: 'handoff' }>) : null;
-      // 로그인·서명 차례만 답한다. 그 밖의 차례(예: 되읽기가 맞지 않아 넘긴 화면)는 사람이 보고 판단할 일이라 답하지 않는다.
       if (turn && answersTurns && (turn.phase === 'login' || turn.phase === 'sign')) {
         if (turn.phase === 'sign') {
-          // 홈택스 서명 창을 마쳤다: 창이 넘어갔거나(서명·발급) 사람이 [확인]·[취소]를 눌렀다
           const acted = fx.state.stage !== 'cert' || fx.state.certActedAt > 0;
           if (!acted) signIdleAt = 0;
           else if (!signIdleAt) signIdleAt = Date.now();

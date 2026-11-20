@@ -1,6 +1,3 @@
-// 레지스트리 함수 배포(팀장 결정 2026-11-06): S3 호환 저장소 어댑터(SigV4), 함수 경로 한정·서명 의식 전 503·키 불일치 기동 거부,
-// 타임스탬프 cron 자동 재서명(폐기 목록 24시간, status·정책·인덱스 48시간, 로그 헤드)의 교차 시험(게시 관문 verify·엔진 accept).
-// 키는 공개 시험 시드(tests/registry-samples.ts, 실제 키 아님)다. 저장소·CI에 운영 개인 키는 없다.
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { afterEach, describe, it } from 'node:test';
@@ -42,14 +39,12 @@ const SAMPLES = buildSamples();
 const K = sampleKeys();
 const sampleDoc = <T>(p: string): T => JSON.parse(SAMPLES.get(p)!.toString('utf8')) as T;
 const TRUST = sampleDoc<TrustRoot>('trust.json');
-/** 샘플 타임스탬프 역할 키 시드(0x51, registry-samples.ts). 공개 시험 값 */
 const TS_SEED = '51'.repeat(32);
 const ADMIN = 'a'.repeat(40);
 const CRON = 'c'.repeat(40);
 const ISSUED = Date.parse('2026-11-05T00:00:00Z');
 const FRESH = ['signatures', 'issuedAt', 'expiresAt', 'timestamp'];
 const setAt = (c: Clock, t: number) => c.advance(t - c.now());
-/** 인덱스를 게시하지 않은 재서명 결과(채널마다, ADR-043) */
 const NOIX = { stable: 'missing', beta: 'missing', hotfix: 'missing' };
 
 const env = (o: Record<string, string | undefined> = {}): NodeJS.ProcessEnv => ({
@@ -61,7 +56,6 @@ const env = (o: Record<string, string | undefined> = {}): NodeJS.ProcessEnv => (
   ...o,
 });
 
-/** 단언이 실패해도 서버가 남아 파일이 끝나지 않는 일이 없게 시험마다 닫는다 */
 const servers: http.Server[] = [];
 afterEach(() => {
   for (const s of servers.splice(0)) {
@@ -77,7 +71,6 @@ async function serve(listener: http.RequestListener) {
   return { req, close: () => server.close() };
 }
 
-/** 관문(조립 결과)에 샘플 폐기 목록·정책·status를 게시한다 */
 async function deployed(store: Store = new MemoryStore()) {
   const clock = new Clock(SAMPLE_NOW);
   const logs: string[] = [];
@@ -143,7 +136,6 @@ describe('S3 호환 저장소 어댑터(SigV4, 공급사 중립: 표준 S3 API�
     await s.put('packages/hometax.invoice.issue@2.1.0.sxp', Buffer.from([1, 2, 3]));
     assert.deepEqual(await s.get('registry/status.json'), Buffer.from('{"a":1}'));
     assert.deepEqual(objects.get('/storage/v1/s3/sax-registry/registry/status.json'), { body: Buffer.from('{"a":1}'), type: 'application/json', cache: 'public, max-age=60' });
-    // '@'는 엄격 인코딩
     assert.deepEqual(objects.get('/storage/v1/s3/sax-registry/packages/hometax.invoice.issue%402.1.0.sxp')?.cache, 'public, max-age=31536000, immutable');
     const put = seen.find((x) => x.method === 'PUT')!;
     assert.match(put.headers.authorization!, /^AWS4-HMAC-SHA256 Credential=ak-test\/20261106\/ap-northeast-2\/s3\/aws4_request, SignedHeaders=cache-control;content-type;host;x-amz-content-sha256;x-amz-date, Signature=[0-9a-f]{64}$/);
@@ -152,7 +144,6 @@ describe('S3 호환 저장소 어댑터(SigV4, 공급사 중립: 표준 S3 API�
     for (const x of seen) assert.ok(!JSON.stringify(x).includes('sk-test-value'), '비밀 키는 요청에 나가지 않는다');
     await assert.rejects(s.get('registry/boom.json'), /^Error: store_s3_get_500$/);
     await assert.rejects(s.put('registry/boom.json', Buffer.from('x')), /^Error: store_s3_put_500$/);
-    // 키 형식 밖(경로 탈출)은 보내기 전에 거부
     const before = seen.length;
     await assert.rejects(s.get('../x'));
     assert.equal(seen.length, before);
@@ -198,10 +189,8 @@ describe('레지스트리 함수(api/registry·api/registry-cron)', () => {
       assert.ok(logs.some((l) => l.includes('registry.start_failed.config_REGISTRY_LOG_SIGNING_KEY')), logs.join('\n'));
       assert.ok(!logs.join('\n').includes(seed), '시드는 로그에 없다');
     }
-    // 루트 키 시드(다른 역할)를 타임스탬프 키로 쓰면 거부
     const rootSeed = Buffer.from(K.root[0]!.priv.export({ format: 'der', type: 'pkcs8' })).subarray(-32).toString('hex');
     await assert.rejects(buildRegistryDeploy({ TRUST_ROOT_JSON: JSON.stringify(TRUST), REGISTRY_LOG_SIGNING_KEY: rootSeed, REGISTRY_ADMIN_TOKEN: ADMIN, REGISTRY_STORE: 'memory' }), /config_REGISTRY_LOG_SIGNING_KEY/);
-    // 관리 토큰 32자 미만·저장소 없음도 기동 거부
     await assert.rejects(buildRegistryDeploy({ TRUST_ROOT_JSON: JSON.stringify(TRUST), REGISTRY_LOG_SIGNING_KEY: TS_SEED, REGISTRY_ADMIN_TOKEN: 'short', REGISTRY_STORE: 'memory' }), /config_REGISTRY_ADMIN_TOKEN/);
     await assert.rejects(buildRegistryDeploy({ TRUST_ROOT_JSON: JSON.stringify(TRUST), REGISTRY_LOG_SIGNING_KEY: TS_SEED, REGISTRY_ADMIN_TOKEN: ADMIN }), /config_S3_ENDPOINT/);
   });
@@ -210,7 +199,6 @@ describe('레지스트리 함수(api/registry·api/registry-cron)', () => {
     const f = await serve(registryFunction(env(), { now: () => SAMPLE_NOW }));
     const head = await f.req('GET', '/api/registry?__p=/registry/log/head.json');
     assert.equal(head.status, 200, head.text);
-    // Vercel 재작성이 실제로 넘기는 모양(소스 매개변수 path가 쿼리에 다시 붙음): 200. 경로와 다른 값은 원래 쿼리라 400
     assert.equal((await f.req('GET', '/api/registry?__p=/registry/log/head.json&path=head.json')).status, 200);
     assert.notEqual((await f.req('GET', '/api/registry?__p=/registry/log/proof/consistency&path=proof%2Fconsistency&from=0&to=0')).status, 400);
     assert.equal((await f.req('GET', '/api/registry?__p=/registry/log/head.json&path=x')).status, 400);
@@ -233,7 +221,6 @@ describe('레지스트리 함수(api/registry·api/registry-cron)', () => {
     assert.equal((await on.req('POST', '/api/registry-cron', { headers: { authorization: `Bearer ${CRON}` } })).status, 401);
     const r = await on.req('GET', '/api/registry-cron', { headers: { authorization: `Bearer ${CRON}` } });
     assert.equal(r.status, 200);
-    // 빈 로그의 첫 헤드도 서명한다
     assert.deepEqual(r.json, { ok: true, revoked_keys: 'missing', status: 'missing', policy: 'missing', index: NOIX, release: NOIX, head: 'resigned' });
     on.close();
   });
@@ -246,9 +233,7 @@ describe('타임스탬프 자동 재서명(폐기 목록 24시간, status·정�
     const orig = { rv: await read<EngineRevoked>(e.store, 'registry/revoked_keys.json'), st: await read<EngineStatus>(e.store, 'registry/status.json'), pol: await read<Policy>(e.store, 'policy/current.json') };
     assert.deepEqual(await e.b.resign(), { revoked_keys: 'fresh', status: 'fresh', policy: 'fresh', index: NOIX, release: NOIX, head: 'fresh' });
 
-    // 발행 13시간 뒤: 폐기 목록만 남은 기간 < 12시간
     setAt(e.clock, ISSUED + 13 * H);
-    // 헤드는 재서명 게시의 로그 항목이 이미 새로 서명했다
     assert.deepEqual(await e.b.resign(), { revoked_keys: 'resigned', status: 'fresh', policy: 'fresh', index: NOIX, release: NOIX, head: 'fresh' });
     const rv = await read<EngineRevoked>(e.store, 'registry/revoked_keys.json');
     assert.deepEqual(without(rv, FRESH), without(orig.rv, FRESH));
@@ -258,7 +243,6 @@ describe('타임스탬프 자동 재서명(폐기 목록 24시간, status·정�
     assert.equal(rv.timestamp.keyId, K.ts.keyId);
     assert.notEqual(rv.timestamp.sig, orig.rv.timestamp.sig);
 
-    // 발행 26시간 뒤: 셋 다
     setAt(e.clock, ISSUED + 26 * H);
     assert.deepEqual(await e.b.resign(), { revoked_keys: 'resigned', status: 'resigned', policy: 'resigned', index: NOIX, release: NOIX, head: 'fresh' });
     const st = await read<EngineStatus>(e.store, 'registry/status.json');
@@ -267,9 +251,7 @@ describe('타임스탬프 자동 재서명(폐기 목록 24시간, status·정�
     assert.deepEqual(without(pol, FRESH), without(orig.pol, FRESH));
     assert.equal(Date.parse(st.expiresAt) - Date.parse(st.issuedAt), RESIGN_TTL.status);
     assert.equal(Date.parse(pol.expiresAt) - Date.parse(pol.issuedAt), RESIGN_TTL.policy);
-    // 정책 {ver}.json과 current.json은 같은 바이트
     assert.deepEqual(await e.store.get(`policy/${pol.version}.json`), await e.store.get('policy/current.json'));
-    // 바로 다시 돌리면 할 일 없음
     assert.deepEqual(await e.b.resign(), { revoked_keys: 'fresh', status: 'fresh', policy: 'fresh', index: NOIX, release: NOIX, head: 'fresh' });
     e.close();
     e.b.close();
@@ -292,7 +274,6 @@ describe('타임스탬프 자동 재서명(폐기 목록 24시간, status·정�
     const rv = await read<EngineRevoked>(e.store, 'registry/revoked_keys.json');
     const pol = await read<Policy>(e.store, 'policy/current.json');
     const st = await read<EngineStatus>(e.store, 'registry/status.json');
-    // 원본은 이 시각에 만료(폐기 목록 24시간)이거나 곧 만료이고, 재서명본은 받는다
     assert.equal(acceptRevoked(sampleDoc('registry/revoked_keys.json'), { roots, current: rv0.accepted as AcceptedRevoked, now: at }).ok, false);
     const rv1 = acceptRevoked(rv, { roots, current: rv0.accepted as AcceptedRevoked, now: at });
     assert.ok(rv1.ok, rv1.ok ? '' : rv1.code);
@@ -300,10 +281,8 @@ describe('타임스탬프 자동 재서명(폐기 목록 24시간, status·정�
     assert.ok(pol1.ok, pol1.ok ? '' : pol1.code);
     const st1 = acceptStatus(st, { roots, revoked: rv1.accepted.keyIds, current: st0.accepted as AcceptedStatus, hold: true, now: at });
     assert.ok(st1.ok, st1.ok ? '' : st1.code);
-    // 처음 설치하는 엔진도 받는다
     assert.ok(acceptStatus(st, { roots, revoked: rv1.accepted.keyIds, current: null, now: at }).ok);
 
-    // 원본을 가진 다른 관문(같은 시각)이 재서명본을 받는다(verifyRevoked·verifyPolicy·verifyStatus 재발행 규칙)
     const g = await deployed();
     await publishSamples(g.put);
     setAt(g.clock, at);
@@ -320,7 +299,6 @@ describe('타임스탬프 자동 재서명(폐기 목록 24시간, status·정�
   it('인덱스(ADR-043): timestamp 없이 올리면 관문이 48시간 도장을 찍고, cron은 채널마다 절반 아래에서 같은 내용에 다시 서명하며 엔진이 받는다', async () => {
     const e = await deployed();
     await publishSamples(e.put);
-    // 사람이 서명한 초안: 신선도 필드 없음, 내용(항목·monotonic)에 패키지 키 2개
     const draft: Record<string, unknown> = { channel: 'stable', monotonic: 1, keyEpoch: 1, entries: [] };
     draft.signatures = K.pkg.slice(0, 2).map((k) => sigOf(k, contentBytes(draft)));
     setAt(e.clock, ISSUED + H);
@@ -333,10 +311,8 @@ describe('타임스탬프 자동 재서명(폐기 목록 24시간, status·정�
     assert.equal(ix0.timestamp.keyId, K.ts.keyId);
     const a0 = acceptIndex(ix0, { roots: K.roots, revoked: new Set(), current: null, now: e.clock.now() });
     assert.ok(a0.ok, a0.ok ? '' : a0.code);
-    // 23시간 뒤: 남은 기간 25시간(절반 넘음) → 그대로. 다른 채널은 인덱스가 없다
     setAt(e.clock, ISSUED + 24 * H);
     assert.deepEqual((await e.b.resign()).index, { stable: 'fresh', beta: 'missing', hotfix: 'missing' });
-    // 26시간 뒤: 남은 기간 23시간 → 다시 서명. 내용·내용 서명은 그대로, 같은 monotonic
     setAt(e.clock, ISSUED + 27 * H);
     const h0 = await e.b.log.head();
     assert.equal((await e.b.resign()).index.stable, 'resigned');
@@ -348,12 +324,10 @@ describe('타임스탬프 자동 재서명(폐기 목록 24시간, status·정�
     const last = (await e.b.log.entry((await e.b.log.head()).treeSize - 1))!;
     assert.ok((await e.b.log.head()).treeSize > h0.treeSize);
     assert.equal(last.entry.path, 'registry/stable/index.json');
-    // 엔진: 원본을 받아 둔 PC도(같은 monotonic·같은 내용), 처음 받는 PC도 받는다. 원본은 이제 곧 만료
     const a1 = acceptIndex(ix1, { roots: K.roots, revoked: new Set(), current: a0.ok ? a0.accepted : null, now: e.clock.now() });
     assert.ok(a1.ok, a1.ok ? '' : a1.code);
     assert.ok(acceptIndex(ix1, { roots: K.roots, revoked: new Set(), current: null, now: e.clock.now() }).ok);
     assert.equal(acceptIndex(ix0, { roots: K.roots, revoked: new Set(), current: null, now: ISSUED + 50 * H }).ok, false);
-    // 저장본 내용이 서명 없이 바뀌어 있으면 다시 서명하지 않는다
     const tampered = Buffer.from(JSON.stringify({ ...ix1, monotonic: 2 }));
     await e.store.put('registry/stable/index.json', tampered);
     setAt(e.clock, ISSUED + 60 * H);
@@ -383,7 +357,6 @@ describe('타임스탬프 자동 재서명(폐기 목록 24시간, status·정�
     setAt(e.clock, ISSUED + 26 * H);
     await e.b.resign();
     const h1 = await e.b.log.head();
-    // 폐기 목록 1 + status 1 + 정책 2({ver}·current)
     assert.equal(h1.treeSize, h0.treeSize + 4);
     assert.ok(verifyTreeHead(TRUST.keys.timestamp![K.ts.keyId]!, h1));
     assert.equal(h1.timestamp, ISSUED + 26 * H);
@@ -391,7 +364,6 @@ describe('타임스탬프 자동 재서명(폐기 목록 24시간, status·정�
     assert.equal(last.entry.path, 'policy/current.json');
     const { createHash } = await import('node:crypto');
     assert.equal(last.entry.sha256, createHash('sha256').update((await e.store.get('policy/current.json'))!).digest('hex'));
-    // 항목이 늘지 않아도 헤드가 오래되면(30분) 같은 트리에 다시 서명한다
     e.clock.advance(HEAD_MAX_AGE_MS + 1);
     assert.equal((await e.b.resign()).head, 'resigned');
     const h2 = await e.b.log.head();
@@ -405,11 +377,9 @@ describe('타임스탬프 자동 재서명(폐기 목록 24시간, status·정�
   it('내용이 바뀌는 서명은 하지 않는다: 변조된 저장본·{ver} 불일치는 거부하고 저장본을 그대로 둔다', async () => {
     const e = await deployed();
     await publishSamples(e.put);
-    // status 내용을 서명 없이 바꾼다(저장소 변조)
     const st = await read<EngineStatus>(e.store, 'registry/status.json');
     const tampered = Buffer.from(JSON.stringify({ ...st, portalModeCeiling: { hometax: 'auto', etax: 'auto' } }));
     await e.store.put('registry/status.json', tampered);
-    // 정책 {ver}.json만 다른 monotonic
     const pol = await read<Policy & { monotonic: number }>(e.store, 'policy/current.json');
     const verKey = `policy/${pol.version}.json`;
     const verBytes = Buffer.from(JSON.stringify({ ...pol, monotonic: pol.monotonic - 1 }));

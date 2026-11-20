@@ -1,5 +1,3 @@
-// H-01 리허설 후속(reports/H01-rehearsal-2026-11-11.md F-02·03·04·07·09·10·11·12·13·16 + 핸드오프 끝 안내, 부장 지시 2026-11-11).
-// 판정 모듈은 직접, 렌더러·main 배선은 소스로 본다(Electron 없이). 사람 속도 흐름은 e2e/shell-rehearsal-e2e.ts가 REPRO/FIXED로 본다.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
@@ -41,7 +39,6 @@ describe('F-02·F-03 거래처 없음·장부에 없는 이름', () => {
     const r = interpret('새빛상사요', null, 'business', runs, p);
     assert.deepEqual(r, { kind: 'say', text: UNKNOWN_CP_TEXT('새빛상사'), chips: [{ label: 'A상사', text: 'A상사' }], addCp: { name: '새빛상사' } });
     assert.equal(runs.pending.asked, 'counterparty');
-    // 추가한 뒤 그 이름으로 답하면 앞에서 받은 금액으로 카드
     const B: Counterparty = { ...A, id: 'cp-b', name: '새빛상사', bizNo: '1068114580' };
     runs.counterparties.push(B);
     const d = interpret('새빛상사', null, 'business', runs);
@@ -60,7 +57,7 @@ describe('F-02·F-03 거래처 없음·장부에 없는 이름', () => {
     const s = read('static/shell/shell.js');
     assert.match(s, /if \(r\.addCp\) box\.append\(h\('div', \{ class: 'sx-actions' \}, btn\('거래처 추가', \(\) => addCpFromAsk\(r\.addCp\.name\), 'sx-btn-primary', \{ 'data-act': 'ask-cp-add' \}\)\)\);/);
     assert.match(s, /openPanel\(\{ kind: 'cp-edit', id: null, name: String\(name \?\? ''\), ask: true \}\);/);
-    assert.match(s, /if \(!c && add\?\.ask\) \{\s*\/\/[^\n]*\n\s*await go\('chat'\);\s*fillComposer\(/);
+    assert.match(s, /if \(!c && add\?\.ask\) \{\s*await go\('chat'\);\s*fillComposer\(/);
     assert.match(s, /name: textInput\(\{ name: 'name', value: c\?\.name \?\? add\?\.name,/);
     assert.match(read('src/shell-app.ts'), /answersPending\(local, runs, text\)/);
   });
@@ -86,7 +83,6 @@ describe('F-04 발급 PDF가 이 PC에 없다(화면만)', () => {
     const v = read('static/shell/shell-views.js');
     assert.match(v, /export const NO_FILE_TEXT = '세금계산서 PDF는 홈택스 발급목록에서 확인할 수 있어요\.';/);
     assert.match(v, /r\.noFile \? null : btn\('PDF 열기', \(\) => act\.openRunDoc\(run\)/);
-    // 민원증명(PR #272)은 증명서 다시 출력 안내(CERT_NO_FILE_TEXT), 세금계산서는 그대로 NO_FILE_TEXT
     assert.match(v, /run\.result\.noFile \? line\(run\.cert \? CERT_NO_FILE_TEXT : NO_FILE_TEXT, true\)/);
     assert.match(v, /doc\.noFile \? null : btn\('열기'/);
     assert.match(v, /doc\.source === '앱이 발급' && !doc\.noFile \? btn\('다시 발급'/);

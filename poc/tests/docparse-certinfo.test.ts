@@ -1,13 +1,9 @@
-// docparse certInfo(D17 §3, ADR-014 결정 1, D05 §6 (2)): NPKI signCert.der → {subject, issuer, notBefore, notAfter}.
-// 합성 DER(시험 안 DER 작성기)로 만든다. 서명된 합성 인증서는 node X509Certificate로 따로 읽어 대조한다.
-// 비신뢰 입력이라 BER·비최소 길이·뒤 덧붙임·잘림·깊이·알 수 없는 문자열 형식·잘못된 날짜·표시 위험 문자를 본다.
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign, X509Certificate } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { validateSandboxOutput } from '@sax/docparse';
 import { CERT_LIMITS, CERT_MAX_BYTES, readCertInfo, SANDBOX_ERRORS, SandboxError } from '@sax/docparse/sandbox';
 
-// ── 최소 DER 작성기 ──
 const len = (n: number) => (n < 0x80 ? [n] : n < 0x100 ? [0x81, n] : [0x82, n >> 8, n & 0xff]);
 const T = (tag: number, ...body: Uint8Array[]) => {
   const v = Buffer.concat(body);
@@ -33,7 +29,6 @@ const gen = (s: string) => T(0x18, Buffer.from(s, 'latin1'));
 const atv = (o: string, v: Uint8Array) => set(seq(oid(o), v));
 const OIDS = { C: '2.5.4.6', O: '2.5.4.10', OU: '2.5.4.11', CN: '2.5.4.3', serial: '2.5.4.5', email: '1.2.840.113549.1.9.1' };
 
-/** NPKI 모양 이름: c=kr, o=yessign, ou=개인, ou=XX은행, ou=RA센터, cn=TEST홍길동()… (DER 순서는 C부터) */
 const npkiSubject = () =>
   seq(atv(OIDS.C, printable('kr')), atv(OIDS.O, printable('yessign')), atv(OIDS.OU, utf8s('개인')), atv(OIDS.OU, utf8s('XX은행')), atv(OIDS.OU, utf8s('RA센터')), atv(OIDS.CN, utf8s('TEST홍길동()0001234567890123')));
 const npkiIssuer = () => seq(atv(OIDS.C, printable('kr')), atv(OIDS.O, printable('yessign')), atv(OIDS.OU, printable('AccreditedCA')), atv(OIDS.CN, printable('TEST-yessignCA Class 2')));
@@ -64,7 +59,6 @@ function tbs(p: CertParts = {}): Uint8Array {
   ];
   return seq(...parts);
 }
-/** 서명까지 한 실제 모양 인증서(node가 읽을 수 있다). */
 function certDer(p: CertParts = {}): Uint8Array {
   const t = tbs(p);
   const sig = sign(null, t, keys.privateKey);
@@ -91,7 +85,6 @@ describe('docparse certInfo: 합성 NPKI 인증서', () => {
       notAfter: '2027-01-02T23:59:59Z',
     });
     assert.deepEqual(validateSandboxOutput('certInfo', r), r);
-    // node(OpenSSL)가 따로 읽은 값과 같다
     const x = new X509Certificate(Buffer.from(der));
     const nodeName = (s: string) => s.split('\n').reverse().join(',');
     assert.equal(r.subject, nodeName(x.subject));
@@ -117,7 +110,6 @@ describe('docparse certInfo: 합성 NPKI 인증서', () => {
     assert.equal(cn(utf8s('TEST‮gnp.exe')), 'CN=TEST\\e2\\80\\aegnp.exe', 'RLO');
     assert.equal(cn(utf8s('a\nb\u0000c d﻿')), 'CN=a\\0ab\\00c\\e2\\80\\a8d\\ef\\bb\\bf');
     assert.equal(cn(utf8s('a=b')), 'CN=a=b');
-    // 알 수 없는 속성은 점 표기 OID
     assert.equal(readCertInfo(certDer({ subject: seq(atv('1.2.410.200004.10.1.1', utf8s('x'))) })).subject, '1.2.410.200004.10.1.1=x');
   });
 });
@@ -133,7 +125,7 @@ describe('docparse certInfo: 거부(비신뢰 입력)', () => {
   it('잘림·뒤 덧붙임·무한 길이(BER)·비최소 길이·높은 태그 번호는 cert_invalid', () => {
     for (let n = 1; n < good.length; n += Math.max(1, Math.floor(good.length / 64))) assert.equal(code(() => readCertInfo(good.subarray(0, n))), 'cert_invalid', `잘림 ${n}`);
     assert.equal(code(() => readCertInfo(new Uint8Array([...good, 0]))), 'cert_invalid', '덧붙임');
-    const body = good.subarray(4); // 0x30 0x82 hi lo
+    const body = good.subarray(4);
     assert.equal(code(() => readCertInfo(new Uint8Array([0x30, 0x80, ...body, 0, 0]))), 'cert_invalid', '무한 길이');
     assert.equal(code(() => readCertInfo(new Uint8Array([0x30, 0x83, 0x00, good[2]!, good[3]!, ...body]))), 'cert_invalid', '길이 앞 0');
     const short = seq(T(0x02, Buffer.from([1])));

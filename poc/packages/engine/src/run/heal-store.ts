@@ -1,5 +1,3 @@
-// 사다리 0원 칸들의 PC 저장소: 암호화 DB settings 한 칸(마이그레이션 없음).
-// 고친 선택자 기억(core/heal-memory.ts) `heal.v1.<패키지 id>`, 에이전트 길 기억(run/agent-path.ts) `agentpath.v1.<패키지 id>`.
 import type { Db } from '@sax/db';
 import type { HealFile, HealStore } from '../core/heal-memory.ts';
 

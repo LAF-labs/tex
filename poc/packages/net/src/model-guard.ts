@@ -1,6 +1,3 @@
-// D04 §8 BYOK 로컬 검사 4종(B-21). 게이트웨이가 하는 검사를 공급사 직결 전에 egress에서 다시 한다.
-// (1) 앱 내장 번들 다이제스트 허용 목록 (2) gateway-request.schema.json 검증 (3) 실행당 예산 (4) 2차 PII 트립와이어.
-// 하나라도 실패하면 호출하지 않는다. 실패 기록은 코드·카운트만(본문 무저장, D09·D16).
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import ajv2020 from 'ajv/dist/2020.js';
@@ -34,7 +31,6 @@ export type GuardCode =
   | 'budget_exceeded'
   | 'pii_tripwire'
   | 'image_rejected'
-  /** 마스킹 계층이 발급하지 않은 텍스트(브랜드 단언 우회, D06 §8 런타임 확인) */
   | 'unminted_text'
   | 'run_token_unknown'
   | 'run_token_reissue';
@@ -48,7 +44,6 @@ export const SECURITY_GUARD_CODES: ReadonlySet<GuardCode> = new Set(['pii_tripwi
  */
 export type RunScope = { runId: string } | { chatSessionId: string };
 
-/** 로컬 실행 토큰 수명. 만료 전에는 같은 범위로 재발급하지 않는다. */
 const RUN_TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
 
 export class ModelGuardError extends Error {
@@ -60,15 +55,11 @@ export class ModelGuardError extends Error {
 }
 
 export interface ModelGuardConfig {
-  /** 앱 바이너리에 내장된 목록(BV-06). 앱 업데이트로만 바뀐다. */
   bundles: readonly BundleAllowEntry[];
-  /** D04 §6: L1 ≤ 12, L2 ≤ 2 */
   budget?: { l1: number; l2: number; agent?: number };
-  /** 보안 거부(SECURITY_GUARD_CODES)마다 코드만 알린다. 본문·식별자 없음. */
   onSecurity?: (code: GuardCode, surface: 'decide' | 'respond') => void;
 }
 
-/** D04 §4 selector_repair 턴 상한(첫 호출 포함) */
 const L2_MAX_TURNS = 3;
 
 /** l2Calls = 새 L2(replay 없는 호출) 수, l2Turns = 이어지는 턴(replay 있는 호출) 수. 둘은 따로 예산과 비교한다. */
@@ -76,11 +67,9 @@ export interface L2Usage {
   l1: number;
   l2Calls: number;
   l2Turns: number;
-  /** 예상 밖 화면 판정·브라우저 에이전트 호출 수(page_judge·browser_agent, 실행당 따로 센다). */
   agent: number;
 }
 
-/** 판정·에이전트 툴셋(게이트웨이 GATEWAY.agentPerRun과 같은 예산). */
 const AGENT_TOOLSETS: ReadonlySet<string> = new Set(['page_judge', 'browser_agent', 'computer_use', 'decision_pick']);
 /**
  * 화면 사진은 computer_use 툴셋의 메시지에만, 요청당 한 장, 가린 JPEG data URL로만(대표 결정 2026-11-16, B-18 예외).
@@ -92,8 +81,6 @@ const SHOT_RE = /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/;
 /** 실행당 판정·에이전트 호출 상한(에이전트 25걸음 + 판정 몇 번). */
 export const AGENT_CALLS_PER_RUN = 32;
 
-// gateway-request.schema.json 규칙 (6): 주민번호·사업자번호·카드·계좌(+법인번호). 마스킹을 통과한 텍스트에 다시 돌린다.
-// 규칙 원천은 @sax/redaction entities.ts 하나다(트립와이어가 잡는 것은 마스킹이 먼저 잡는다). 한글 숫자 사본도 본다.
 export function piiTripwire(text: string): boolean {
   return identifierTripwire(normalizeForRedaction(text)) !== null;
 }
@@ -102,7 +89,6 @@ let validators: { decide: ValidateFunction; respond: ValidateFunction } | null =
 
 function loadValidators(): NonNullable<typeof validators> {
   if (validators) return validators;
-  // src·dist 모두 패키지 루트 한 단계 아래라 같은 상대 경로로 닿는다.
   const schema = JSON.parse(fs.readFileSync(new URL('../schemas/gateway-request.schema.json', import.meta.url), 'utf8')) as { $defs: Record<string, object> };
   const Ajv2020 = ajv2020.default as typeof import('ajv').default;
   const ajv = new Ajv2020({ allErrors: false, strict: false });
@@ -116,7 +102,6 @@ function hasImage(v: unknown): boolean {
   return imageCount(v) > 0;
 }
 
-/** 본문 속 이미지·파일 조각 수(공급사로 실제 나갈 본문에서 센다). */
 function imageCount(v: unknown, depth = 0): number {
   if (depth > 32) return 1;
   if (Array.isArray(v)) return v.reduce((n: number, x) => n + imageCount(x, depth + 1), 0);
@@ -131,14 +116,12 @@ function imageCount(v: unknown, depth = 0): number {
 export class ModelGuard {
   private readonly allow: Map<string, BundleAllowEntry>;
   private readonly budget: { l1: number; l2: number; agent: number };
-  /** 예산은 범위 키(run:/chat:)에 묶는다. 토큰을 새로 받아도 같은 범위면 같은 예산이다. */
   private readonly used = new Map<string, L2Usage>();
   private readonly tokens = new Map<string, { scope: string; expiresAt: number }>();
   private readonly active = new Map<string, string>();
   private readonly now: () => number;
   private readonly onSecurity: ModelGuardConfig['onSecurity'];
   private surface: 'decide' | 'respond' = 'decide';
-  /** 거부 카운트만(본문·식별자 없음). */
   readonly refusals: Partial<Record<GuardCode, number>> = {};
 
   constructor(cfg: ModelGuardConfig, now: () => number = Date.now) {
@@ -148,10 +131,6 @@ export class ModelGuard {
     this.onSecurity = cfg.onSecurity;
   }
 
-  /**
-   * BYOK 경로의 실행 토큰(게이트웨이 runToken 대신, D04 §8 (3)). 범위당 하나만 발급하고 만료·endRun 전에는 재발급을 거부한다.
-   * 예산은 토큰이 아니라 범위에 쌓이므로 재발급해도 초기화되지 않는다.
-   */
   issueRunToken(scope: RunScope): string {
     const key = 'runId' in scope ? `run:${scope.runId}` : `chat:${scope.chatSessionId}`;
     const cur = this.active.get(key);
@@ -163,7 +142,6 @@ export class ModelGuard {
     return token;
   }
 
-  /** 실행 종료: 토큰을 폐기한다(예산 기록은 남긴다). */
   endRun(scope: RunScope): void {
     const key = 'runId' in scope ? `run:${scope.runId}` : `chat:${scope.chatSessionId}`;
     const cur = this.active.get(key);
@@ -182,10 +160,6 @@ export class ModelGuard {
     throw new ModelGuardError(code);
   }
 
-  /**
-   * 게이트웨이 경로의 로컬 검사(D04 §7 앞단): 스키마·앱 내장 번들 허용 목록·입력 한도·이미지 금지·트립와이어·발급 영수증.
-   * 실행 예산은 게이트웨이가 서명한 runToken으로 서버가 집행하므로 여기서 세지 않는다.
-   */
   inspect(surface: 'decide', body: GatewayDecideBody, providerBody?: unknown): void;
   inspect(surface: 'respond', body: GatewayRespondBody, providerBody?: unknown): void;
   inspect(surface: 'decide' | 'respond', body: GatewayDecideBody | GatewayRespondBody, providerBody: unknown = body): void {
@@ -214,7 +188,6 @@ export class ModelGuard {
       }
       for (const r of b.replay ?? []) if ('output' in r) texts.push(r.output);
       if (shots > 1 || hasImage(b.replay ?? [])) this.fail('image_rejected');
-      // 공급사로 나갈 본문의 이미지는 위에서 센 가린 사진 그 장뿐이어야 한다.
       if (imageCount(providerBody) !== shots) this.fail('image_rejected');
       if (texts.some(piiTripwire)) this.fail('pii_tripwire');
       if (!texts.every(wasMinted)) this.fail('unminted_text');
@@ -225,7 +198,6 @@ export class ModelGuard {
     if (!texts.every(wasMinted)) this.fail('unminted_text');
   }
 
-  /** BYOK 검사 4종(+ 이미지·발급 영수증)을 모두 통과하면 예산 1회를 소비한다. providerBody는 공급사로 실제 나갈 본문. */
   check(surface: 'decide', body: GatewayDecideBody, providerBody: unknown): void;
   check(surface: 'respond', body: GatewayRespondBody, providerBody: unknown): void;
   check(surface: 'decide' | 'respond', body: GatewayDecideBody | GatewayRespondBody, providerBody: unknown): void {
@@ -241,11 +213,9 @@ export class ModelGuard {
       if (u.l1 >= this.budget.l1) this.fail('budget_exceeded');
       u.l1++;
     } else if (!(body as GatewayRespondBody).replay?.length) {
-      // "L2 ≤ 2회(턴 포함 토큰 상한 별도)"(D04 §6): replay 없는 호출이 새 L2 1회다.
       if (u.l2Calls >= this.budget.l2) this.fail('budget_exceeded');
       u.l2Calls++;
     } else {
-      // 이어지는 턴: 열린 L2가 있어야 하고, 실행 전체에서 L2 × (턴 상한 − 1)까지.
       if (u.l2Calls === 0 || u.l2Turns >= this.budget.l2 * (L2_MAX_TURNS - 1)) this.fail('budget_exceeded');
       u.l2Turns++;
     }

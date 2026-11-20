@@ -1,4 +1,3 @@
-// doc_meta_check_v1 L0 그림자 판정: 규칙 추출기가 만든 후보로 L0 규칙이 고르는 날짜. 기록·측정용이고 만료일 결정에는 쓰지 않는다.
 import { RULES } from '../l0/rules.ts';
 import type { DocMetaExtract } from './extract.ts';
 

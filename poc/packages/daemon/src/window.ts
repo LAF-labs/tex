@@ -1,13 +1,8 @@
-// 실행 창(D10 §3: 요일·시간대)과 시각 지터(서명 정책 policy.daemon.windowJitterMin, ±30분).
-// notify 모드에서는 창이 "알림을 띄워도 되는 때"다. 지터는 같은 시각에 알림이 몰리지 않게 키·날짜마다 결정적으로 고른다.
 import { fnv1a, kstMinute, kstWeekday } from './time.ts';
 
 export interface RunWindow {
-  /** 한국 시간 요일(0=일 ~ 6=토) */
   days: number[];
-  /** 시작 분(0~1439, 포함) */
   fromMin: number;
-  /** 끝 분(1~1440, 제외). fromMin보다 커야 한다(자정을 넘는 창은 받지 않는다) */
   toMin: number;
 }
 

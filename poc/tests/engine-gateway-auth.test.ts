@@ -1,5 +1,3 @@
-// 엔진 게이트웨이 인증(ADR-040 결정 3·5): main auth 포트로 요청마다 헤더를 받는 portGatewayAuth와 Egress.toGateway의 401 1회 재시도.
-// 포트 건너편은 데스크톱 GatewayAuthHost(결정 2의 공통 계약)를 그대로 붙인다. 게이트웨이는 tests/fixtures/gateway-mock.ts 합성.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -19,7 +17,6 @@ const catalog = BundleCatalog.load();
 const RUN = { runId: 'run_0123456789ab' };
 const gwCode = (p: Promise<unknown>, c: string) => assert.rejects(p, (e: unknown) => e instanceof GatewayError && e.code === c, c);
 
-/** 메모리 포트 한 쌍(비동기 전달, 실제 MessagePort처럼). sent는 엔진 쪽이 보낸 것. */
 function portPair() {
   const ls: Array<Array<(m: unknown) => void>> = [[], []];
   const sent: unknown[] = [];
@@ -34,7 +31,6 @@ function portPair() {
   return { engine: mk(0), main: mk(1), sent };
 }
 
-/** 데스크톱 호스트를 붙인 auth 포트. device를 바꿔 로그인 안 됨 등을 만든다. */
 function wired(o: { device?: () => GatewayDevice | null; timeoutMs?: number; answer?: boolean } = {}) {
   const pair = portPair();
   const stats = { auth: 0, cleared: 0 };
@@ -46,8 +42,6 @@ function wired(o: { device?: () => GatewayDevice | null; timeoutMs?: number; ans
     clearGatewayToken: () => void stats.cleared++,
   };
   const host = new GatewayAuthHost({ device: o.device ?? (() => device) });
-  // main은 auth 포트 메시지를 받은 순서대로 하나씩 처리해야 한다. 그래야 invalidate가 다음 gw.auth보다 먼저 캐시를 지운다
-  // (동시에 처리하면 재시도가 지우기 전의 옛 토큰을 받아 두 번째도 401이다. 데스크톱 EngineHost.onAuth 후속).
   let q: Promise<unknown> = Promise.resolve();
   if (o.answer !== false) pair.main.onMessage((m) => void (q = q.then(() => host.handle(m)).then((r) => r && pair.main.postMessage(r))));
   const auth = portGatewayAuth(pair.engine, { timeoutMs: o.timeoutMs });
@@ -128,7 +122,6 @@ describe('Egress.toGateway 오류 의미(ADR-040 결정 5)', () => {
     const { auth, pair, stats } = wired();
     mock.opts = { fail: { '/v1/run-tokens': { status: 401, code: 'gateway.unauthorized' } } };
     const host = { clear: 0 };
-    // 새 토큰이면 통과하는 게이트웨이: invalidate가 오면 다음 요청부터 401을 거둔다.
     pair.main.onMessage((m) => {
       if ((m as { t: string }).t === 'gw.auth.invalidate') {
         host.clear++;
@@ -203,7 +196,6 @@ describe('entry 배선', () => {
   const entry = readFileSync(path.join(import.meta.dirname, '../packages/engine/src/entry.ts'), 'utf8');
   it('init 셋째 포트(auth)가 있으면 portGatewayAuth로 Egress 게이트웨이를 구성하고, 없으면 게이트웨이 없이 둔다', () => {
     assert.match(entry, /init\(msg as unknown as EngineInit, e\.ports\[0\], e\.ports\[1\], e\.ports\[2\]\)/);
-    // auth 포트는 한 번만 감싸서 게이트웨이 인증과 발급 잠금(ADR-048 결정 7)이 같이 쓴다.
     assert.match(entry, /const auth = authPort \? wrapPort\(authPort, 'electron'\) : null;/);
     assert.match(entry, /new Egress\(auth \? \{ gateway: \{ auth: portGatewayAuth\(auth\), bundles: BundleCatalog\.load\(\)\.allowEntries\(\) \} \} : \{\}\)/);
   });

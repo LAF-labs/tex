@@ -1,13 +1,8 @@
-// 근무표 계산(D14 M6-15, ADR-034 결정 8): 근무 시작·끝·휴게 → 분 단위 근무 시간 → 달 합계 → 시급제 기본급.
-// 연장·야간·휴일 가산과 주휴는 계산하지 않는다(yulmu 확답 2026-11-05: 사장님이 세전 금액에 반영). 근무 합계는 세전 제안값(suggestGross)까지만.
 import { roundRational } from './money.ts';
 
 export interface ShiftLike {
-  /** 'YYYY-MM-DD'. 자정을 넘긴 근무는 시작한 날에 센다 */
   workDay: string;
-  /** 'HH:MM' */
   startsAt: string;
-  /** 'HH:MM'. 시작보다 이르면 다음 날 끝난 것으로 본다 */
   endsAt: string;
   breakMinutes: number;
 }
@@ -39,10 +34,8 @@ export function shiftMinutes(s: ShiftLike): number {
 }
 
 export interface MonthHours {
-  /** 그달 근무일 수(근무가 있는 서로 다른 날) */
   workDays: number;
   workMinutes: number;
-  /** 날짜별 분 */
   byDay: Record<string, number>;
 }
 

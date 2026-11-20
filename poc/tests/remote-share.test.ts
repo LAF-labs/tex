@@ -1,5 +1,3 @@
-// 계정 공유 기록(ADR-048 결정 5, D07 §10): 줄 봉인·서명·검증과 읽는 쪽 합치기.
-// 서버가 줄을 바꾸거나, 끊긴 폰이 옛 세대 키로 쓰거나, 폰이 PC 줄을 지어내는 경우를 따로 본다.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { describe, it } from 'node:test';
@@ -12,7 +10,6 @@ import {
 } from '@sax/remote';
 import { SHARE } from '../services/account/src/constants.ts';
 
-/** 금고가 하는 일의 시험용 대역: RK에서 K_share(e)와 Ws를 만든다 */
 function account() {
   const rk = randomBytes(32);
   const ws = softSigner(deriveShareSignSeed(rk), [CTX.share]);
@@ -36,7 +33,6 @@ const task = (a: ReturnType<typeof account>): ShareRowCore<'task'> => ({
 const pcRow = <K extends 'party' | 'self' | 'money'>(a: ReturnType<typeof account>, kind: K, body: ShareRowCore<K>['body'], at = 1_800_000_000_000, dev = a.pc): ShareRowCore<K> => ({
   v: 1, row_id: newShareRowId(), kind, epoch: 0, at, dev, by: 'desktop', body,
 });
-/** 은행 자료가 있는 PC가 올리는 요약의 보기. 모르는 값은 null이다 */
 const moneyBody = (over: Partial<ShareMoney> = {}): ShareMoney => ({
   asOf: '2026-11-17T03:00:00.000Z', latestDay: '2026-11-16', stale: false,
   recv: {
@@ -88,7 +84,6 @@ describe('계정 공유 기록: 줄 봉인과 열기', () => {
     assert.ok(!wire.body.includes('1234567890') && !Buffer.from(fromB64url(wire.body)).includes('가나다상사'));
     const got = openShareRow(a.key(0), wire, a.keys);
     assert.deepEqual(got, { ok: true, row });
-    // 작은 줄은 가장 작은 버킷
     const small = await sealShareRow(a.key(0), { v: 1, row_id: newShareRowId(), kind: 'task_result', epoch: 0, at: 5, dev: a.pc, by: 'desktop', body: { taskRow: newShareRowId(), outcome: 'cancelled' } }, a.pcSign);
     assert.equal(fromB64url(small.body).length, SHARE_PAD_BUCKETS[0] + 40);
   });
@@ -104,12 +99,9 @@ describe('계정 공유 기록: 줄 봉인과 열기', () => {
 
   it('폰은 PC 줄을 지어낼 수 없다: K_share가 있어도 Ws 서명이 없으면 signature, 폰 이름으로 PC 종류를 쓰면 봉인부터 막힌다', async () => {
     const a = account();
-    // 폰이 by: desktop인 발급 기록을 자기 키로 서명해 올린다
     const forged = await sealShareRow(a.key(0), issue(a), a.phoneSign);
     assert.deepEqual(openShareRow(a.key(0), forged, a.keys), { ok: false, reason: 'signature' });
-    // by: mobile로는 발급 기록·거래처·결과를 만들 수 없다
     await assert.rejects(sealShareRow(a.key(0), { ...issue(a), dev: a.phone, by: 'mobile' }, a.phoneSign), /row shape/);
-    // 봉인 검사를 건너뛴 구현이 만든 줄도 여는 쪽이 모양에서 버린다
     const core = { ...issue(a), dev: a.phone, by: 'mobile' as const };
     const sig = await a.phoneSign(jcsBytes(core));
     const padded = new Uint8Array(1024);
@@ -131,7 +123,6 @@ describe('계정 공유 기록: 줄 봉인과 열기', () => {
     const raw = fromB64url(wire.body);
     raw[40] ^= 1;
     assert.deepEqual(openShareRow(a.key(0), { ...wire, body: b64url(raw) }, a.keys), { ok: false, reason: 'key' });
-    // 다른 줄의 본문을 이 줄 자리에 끼워도 같다
     const other = await sealShareRow(a.key(0), issue(a, { approvalNo: '202611174100000099999999' }), a.pcSign);
     assert.deepEqual(openShareRow(a.key(0), { ...wire, body: other.body }, a.keys), { ok: false, reason: 'key' });
     for (const bad of ['', 'AAAA', '!!!', 'A'.repeat(SHARE_MAX_BODY_CHARS + 1)]) assert.equal(openShareRow(a.key(0), { ...wire, body: bad }, a.keys).ok, false);
@@ -144,7 +135,6 @@ describe('계정 공유 기록: 줄 봉인과 열기', () => {
     assert.deepEqual(openShareRow(a.key(0), fresh, a.keys), { ok: false, reason: 'key' });
     assert.equal(openShareRow(a.key(1), fresh, a.keys).ok, true);
     assert.equal(openShareRow(a.key(0), old, a.keys).ok, true);
-    // 세대 1 키로 봉인했는데 속의 세대가 0이면 바깥과 달라서 버린다
     const core = issue(a);
     await assert.rejects(sealShareRow(a.key(1), { ...core, epoch: 70 }, a.pcSign), /row shape/);
   });
@@ -272,7 +262,6 @@ describe('계정 공유 기록: 읽는 쪽 합치기', () => {
     const names = (rows: ShareRowCore<'party'>[]) => rows.map((r) => r.body.name).sort();
     assert.deepEqual(names(mergeShareParties([a1, a2, b1, c1, c2])), ['둘째', '새 이름']);
     assert.deepEqual(names(mergeShareParties([c2, b1, a2, c1, a1])), ['둘째', '새 이름']);
-    // 같은 시각이면 기기 id가 큰 쪽(어느 기기에서 합쳐도 같은 결과)
     const x = party('4444444444', 'ㄱ', 7, '00000000-0000-4000-8000-000000000001');
     const y = party('4444444444', 'ㄴ', 7, '00000000-0000-4000-8000-000000000002');
     assert.deepEqual(names(mergeShareParties([x, y])), ['ㄴ']);
@@ -309,7 +298,6 @@ describe('계정 공유 기록: 폰에 열쇠 주기(share.key, remote-envelope 
     const verify: ShareVerifyKeys = { sharePub: got.signPub, mobileSignPub: () => null };
     assert.equal(openShareRow(got.keys[old.epoch]!, old, verify).ok, true);
     assert.equal(openShareRow(got.keys[fresh.epoch]!, fresh, verify).ok, true);
-    // 폰은 RK가 없어 다음 세대 열쇠를 스스로 만들지 못한다(받은 묶음에 없다)
     assert.equal(got.keys[3], undefined);
   });
 

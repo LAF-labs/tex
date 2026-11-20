@@ -1,6 +1,3 @@
-// S-L0 규칙 측정(합성 코퍼스). 결과: reports/raw/s-l0-synthetic.json
-// node --conditions=development scripts/s-l0-measure.ts
-// 합성 수치는 규칙 논리 검증용이다. 승격(≥ 99.5%, n ≥ 300)은 PoC-3 이후 홈택스 실화면 라벨 코퍼스로만 한다.
 import fs from 'node:fs';
 import { L0_TABLE, accuracy, measureL0, qualifies } from '@sax/engine';
 import { fullCorpus } from '../tests/fixtures/l0-corpus.ts';

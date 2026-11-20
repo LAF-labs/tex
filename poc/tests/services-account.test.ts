@@ -1,4 +1,3 @@
-// M4-5 계정·구독 서비스(D09 §2·§2.1·§2.2·§10): 요청 검증·권한·한도마다 시험한다. DB는 node:sqlite 메모리, PG·메일은 모의.
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
@@ -80,7 +79,6 @@ async function login(e: Env, email: string): Promise<string> {
   return v.json.session as string;
 }
 
-/** 첫 데스크톱 + AIK 고정 + 기기 토큰까지 */
 async function desktop(e: Env, session: string): Promise<{ aik: EdKey; d: Device; token: () => Promise<string>; call: (m: string, p: string, body?: unknown) => ReturnType<Env['req']> }> {
   const aik = edKey();
   const d = device('desktop', e.clock.now());
@@ -99,7 +97,6 @@ async function desktop(e: Env, session: string): Promise<{ aik: EdKey; d: Device
   return { aik, d, token, call };
 }
 
-/** 그 기기의 인증서(AIK 서명)로 기기 토큰을 받아 부른다. 데스크톱·폰 공통 */
 function caller(e: Env, aik: EdKey, d: Device) {
   return async (m: string, p: string, body?: unknown) => {
     const c = cert(aik, d, e.clock.now() + 90 * D);
@@ -110,11 +107,10 @@ function caller(e: Env, aik: EdKey, d: Device) {
   };
 }
 
-/** 첫 PC + 두 번째 PC + 폰 n대를 모두 활성으로(목록 v2). */
 async function fleet(e: Env, email: string, phones = 2): Promise<{ s: string; pc: Awaited<ReturnType<typeof desktop>>; d2: Device; ps: Device[]; state: (id: string) => Promise<Record<string, unknown>> }> {
   const s = await login(e, email);
   const pc = await desktop(e, s);
-  e.clock.advance(60_000); // 두 번째 PC는 AIK 고정 뒤에 붙는다(첫 PC와 등록 시각이 같을 수 없다)
+  e.clock.advance(60_000);
   const d2 = device('desktop', e.clock.now());
   const ps = Array.from({ length: phones }, () => device('mobile', e.clock.now()));
   assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: d2.id, role: 'desktop', platform: 'macos', name: '집 PC', Sx: d2.S.b64, Vx: d2.V.b64 } })).status, 201);
@@ -214,7 +210,6 @@ describe('M4-5 계정: 데스크톱 루프백 + PKCE(RFC 8252, 디바이스 플�
     const code = u.searchParams.get('code')!;
     const wrong = await e.req('POST', '/v1/oauth/token', { body: { grant_type: 'authorization_code', code, code_verifier: randomBytes(32).toString('base64url'), redirect_uri: 'http://127.0.0.1:51234/cb', client_id: 'sax-desktop' } });
     assert.equal(wrong.json.error, 'account.pkce_invalid');
-    // 틀린 시도로 코드는 이미 소진됐다.
     const again = await e.req('POST', '/v1/oauth/token', { body: { grant_type: 'authorization_code', code, code_verifier: verifier, redirect_uri: 'http://127.0.0.1:51234/cb', client_id: 'sax-desktop' } });
     assert.equal(again.json.error, 'account.pkce_invalid');
 
@@ -312,17 +307,14 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
       const r = await e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: d.id, role: 'desktop', platform: 'windows', name: 'PC', Sx: d.S.b64, Vx: d.V.b64 } });
       assert.equal(r.status, 201, r.text);
     }
-    // 신청했던 같은 기기가 고정: pending 행을 대신한다
     const aik = edKey();
     const r = await e.req('POST', '/v1/aik', { headers: bearer(s), body: { aikPub: aik.b64, deviceList: { listVersion: 1, entries: [entry(aik, same, 1)], revoked: [] }, platform: 'windows', name: 'PC' } });
     assert.equal(r.status, 201, r.text);
     const list = (await e.req('GET', '/v1/devices', { headers: bearer(s) })).json.devices as Array<Record<string, unknown>>;
     assert.equal(list.find((x) => x.deviceId === same.id)!.state, 'active');
     assert.equal(list.find((x) => x.deviceId === other.id)!.state, 'pending');
-    // 신청 때 센 등록 이력을 고정이 다시 세지 않는다(30일 데스크톱 등록 이력 = 신청 2건)
     const adds = await e.db.one<{ n: number }>("SELECT COUNT(*) AS n FROM device_events WHERE kind = 'add' AND role = 'desktop'");
     assert.equal(Number(adds!.n), 2);
-    // 이제는 고정된 계정
     const again = edKey();
     assert.equal((await e.req('POST', '/v1/aik', { headers: bearer(s), body: { aikPub: again.b64, deviceList: { listVersion: 1, entries: [entry(again, other, 1)], revoked: [] }, platform: 'windows', name: 'PC' } })).json.error, 'account.aik_already_pinned');
   });
@@ -341,13 +333,10 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     assert.deepEqual(g.json.scopes, ['gateway']);
     const v = new TokenVerifier({ k1: e.verifyKey }).verify(g.json.token as string, e.clock.now(), 'account.unauthorized');
     assert.deepEqual(v.scp, ['gateway']);
-    // 순서는 역할 범위 순서로
     assert.deepEqual((await ask(['devlist', 'gateway'])).json.scopes, ['gateway', 'devlist']);
-    // 역할의 전체를 다 고르면 전체와 같다
     assert.deepEqual((await ask(['share', 'acct_op', 'devlist', 'slots', 'wake', 'relay', 'gateway'])).json.scopes, ['gateway', 'relay', 'wake', 'slots', 'devlist', 'acct_op', 'share']);
     for (const bad of [[], ['gateway', 'gateway'], ['admin'], 'gateway', [1], ['push']]) assert.equal((await ask(bad)).json.error, 'request.param_rejected', JSON.stringify(bad));
     assert.deepEqual(e.events, ['account.device_token_issued.desktop.gateway', 'account.device_token_issued.desktop.gateway-devlist', 'account.device_token_issued.desktop.all']);
-    // 범위 없는 요청은 전체(하위 호환)
     const c = cert(aik, d, e.clock.now() + 90 * D);
     const all = await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', htu, jcs(c), d.V, e.clock.now()) }, body: { cert: c } });
     assert.deepEqual(all.json.scopes, ['gateway', 'relay', 'wake', 'slots', 'devlist', 'acct_op', 'share']);
@@ -404,11 +393,9 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
       assert.equal(r.status, 409);
       assert.deepEqual(r.json, { error: 'account.device_limit' });
     }
-    // 자동으로 끊긴 기기가 없다: 여섯 대가 그대로 있다
     const list = (await e.req('GET', '/v1/devices', { headers: bearer(s) })).json.devices as Array<{ deviceId: string; state: string }>;
     assert.deepEqual(list.map((d) => d.deviceId).sort(), [...pcs, ...phones].map((d) => d.id).sort());
     assert.ok(list.every((d) => d.state === 'pending'));
-    // PC 하나가 폐기되면 PC 자리만 하나 빈다
     await e.db.run("UPDATE devices SET state = 'revoked' WHERE device_id = $1", [pcs[0]!.id]);
     assert.equal((await enroll(device('mobile', 0))).json.error, 'account.device_limit');
     assert.equal((await enroll(device('desktop', 0))).status, 201);
@@ -439,7 +426,6 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     }
     const c = cert(aik, d, now + 90 * D);
     assert.equal((await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', htu, jcs(c), d.V, now) }, body: { cert: c } })).status, 200);
-    // 검증을 통과한 요청은 기기당 60회/시
     for (let i = 1; i < 60; i++) assert.equal((await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', htu, jcs(c), d.V, now) }, body: { cert: c } })).status, 200);
     assert.equal((await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', htu, jcs(c), d.V, now) }, body: { cert: c } })).status, 429);
   });
@@ -451,11 +437,9 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     const en = await e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: phone.id, role: 'mobile', platform: 'android', name: '내 폰', Sx: phone.S.b64, Vx: phone.V.b64 } });
     assert.equal(en.status, 201);
     assert.equal(en.json.holdUntil, e.clock.now() + 72 * H);
-    // 대기 중(활성 전)에는 인증서가 있어도 토큰을 받지 못한다.
     const c = cert(pc.aik, phone, e.clock.now() + 90 * D);
     const early = await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c), phone.V, e.clock.now()) }, body: { cert: c } });
     assert.equal(early.json.error, 'account.device_suspended');
-    // 목록 키가 등록 신청과 다르면 거부
     const imposter = { ...phone, V: edKey() };
     const badList = await pc.call('PUT', '/v1/device-list', { deviceList: { listVersion: 2, entries: [entry(pc.aik, pc.d, 1), entry(pc.aik, imposter, 2)], revoked: [] } });
     assert.equal(badList.json.error, 'request.param_rejected');
@@ -464,14 +448,11 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     const tok = await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c), phone.V, e.clock.now()) }, body: { cert: c } });
     assert.equal(tok.status, 200, tok.text);
     assert.deepEqual(tok.json.scopes, ['relay', 'push', 'chat', 'devices', 'share']);
-    // 폰은 gateway 범위를 달라고 할 수 없다(역할 범위 밖)
     const gw = await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c), phone.V, e.clock.now()) }, body: { cert: c, scopes: ['gateway'] } });
     assert.equal(gw.json.error, 'request.param_rejected');
-    // 폰 토큰으로 데스크톱 범위(slots·devlist) 호출 불가
     const t = tok.json.token as string;
     const slot = await e.req('POST', '/v1/slots', { headers: { authorization: `DPoP ${t}`, dpop: dpop('POST', ORIGIN + '/v1/slots', t, phone.V, e.clock.now()) } });
     assert.equal(slot.json.error, 'account.scope_denied');
-    // 폰도 서버의 AIK 서명 목록을 받을 수 있다(페어링 3단계, 세션으로)
     const dl = await e.req('GET', '/v1/device-list', { headers: bearer(s) });
     assert.equal(dl.json.aikPub, pc.aik.b64);
   });
@@ -504,7 +485,6 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     assert.ok(!e.mail.outbox.some((m) => m.kind === 'device_suspended'));
     const c1 = cert(pc.aik, p1, e.clock.now() + 90 * D);
     assert.equal((await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c1), p1.V, e.clock.now()) }, body: { cert: c1 } })).status >= 400, true);
-    // 같은 폐기 레코드를 다시 올려도 그대로다
     assert.equal((await call2('PUT', '/v1/device-list', { deviceList: { listVersion: 4, entries: [...keep, entry(pc.aik, p2, 2)], revoked: [revokeRec(pc.aik, p1.id, e.clock.now())] } })).status, 200);
     assert.equal((await state(p1.id)).state, 'revoked');
   });
@@ -514,7 +494,6 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     const [p1, p2] = ps as [Device, Device];
     const call2 = caller(e, pc.aik, d2);
     const keep = [entry(pc.aik, pc.d, 1), entry(pc.aik, d2, 2)];
-    // 예전 규칙이 남긴 상태를 흉내 낸다: 정지 + 7일 뒤 폐기 예약
     await e.db.run("UPDATE devices SET state = 'suspended', delete_after = $1 WHERE device_id = $2", [e.clock.now() + 7 * D, p1.id]);
     const r = await call2('PUT', '/v1/device-list', { deviceList: { listVersion: 3, entries: [...keep, entry(pc.aik, p2, 2)], revoked: [revokeRec(pc.aik, p1.id, e.clock.now())] } });
     assert.equal(r.status, 200, r.text);
@@ -552,7 +531,6 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     assert.equal((await state(p1.id)).deleteAfter, null);
     assert.deepEqual(e.stopped, [p1.id]);
     assert.ok(e.mail.outbox.some((m) => m.kind === 'device_revoked'));
-    // 자리가 바로 빈다: 새 폰을 받는다
     const s = await login(e, 'rev1@example.com');
     const np = device('mobile', 0);
     assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: np.id, role: 'mobile', platform: 'ios', name: '새 폰', Sx: np.S.b64, Vx: np.V.b64 } })).status, 201);
@@ -564,7 +542,7 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     const r = await call2('PUT', '/v1/device-list', { deviceList: { listVersion: 3, entries: [entry(pc.aik, d2, 2), entry(pc.aik, ps[0]!, 2)], revoked: [revokeRec(pc.aik, pc.d.id, e.clock.now())] } });
     assert.equal(r.status, 200, r.text);
     assert.deepEqual(e.stopped, []);
-    const st = await state(pc.d.id); // 첫 PC의 토큰이 아직 살아 있다
+    const st = await state(pc.d.id);
     assert.equal(st.state, 'active');
     assert.equal(st.deleteAfter, e.clock.now() + 7 * D);
   });
@@ -586,13 +564,11 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     assert.ok(e.mail.outbox.some((m) => m.kind === 'device_suspended'));
     const c = cert(pc.aik, phone, e.clock.now() + 90 * D);
     assert.equal((await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c), phone.V, e.clock.now()) }, body: { cert: c } })).json.error, 'account.device_suspended');
-    // 계정 세션으로는 재활성화 경로가 없다(정지만)
     assert.equal((await e.req('POST', `/v1/devices/${phone.id}/reactivate`, { headers: bearer(s), body: acctOp(pc.aik, 'device.reactivate', 'x', phone.id, e.clock.now()) })).json.error, 'account.unauthorized');
     const accountId = (await e.db.one<{ id: string }>('SELECT id FROM accounts WHERE email = $1', ['stop@example.com']))!.id;
     assert.equal((await pc.call('POST', `/v1/devices/${phone.id}/reactivate`, acctOp(edKey(), 'device.reactivate', accountId, phone.id, e.clock.now()))).json.error, 'account.aik_signature_invalid');
     assert.equal((await pc.call('POST', `/v1/devices/${phone.id}/reactivate`, acctOp(pc.aik, 'device.reactivate', accountId, phone.id, e.clock.now() - 10 * 60_000))).json.error, 'account.aik_signature_invalid');
     assert.equal((await pc.call('POST', `/v1/devices/${phone.id}/reactivate`, acctOp(pc.aik, 'device.reactivate', accountId, pc.d.id, e.clock.now()))).json.error, 'account.aik_signature_invalid');
-    // 정지된 폰은 자리를 막지 않는다: 그동안 새 폰 3대가 자리를 채우면 되살릴 수 없다(2026-11-19)
     const fill = [device('mobile', 0), device('mobile', 0), device('mobile', 0)];
     for (const p of fill) assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: p.id, role: 'mobile', platform: 'ios', name: '새 폰', Sx: p.S.b64, Vx: p.V.b64 } })).status, 201);
     assert.equal((await pc.call('POST', `/v1/devices/${phone.id}/reactivate`, acctOp(pc.aik, 'device.reactivate', accountId, phone.id, e.clock.now()))).json.error, 'account.device_limit');
@@ -605,7 +581,6 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     const { s, pc, d2, ps, state } = await fleet(e, 'leave@example.com', 3);
     const [p1, p2, p3] = ps as [Device, Device, Device];
     const phone = caller(e, pc.aik, p1);
-    // 폰은 기기 목록을 본다(devices 범위). 목록을 바꾸는 호출은 못 한다
     const seen = (await phone('GET', '/v1/devices')).json.devices as Array<Record<string, unknown>>;
     assert.equal(seen.length, 5);
     assert.equal((await phone('PUT', '/v1/device-list', { deviceList: { listVersion: 3, entries: [], revoked: [] } })).json.error, 'account.scope_denied');
@@ -615,10 +590,8 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     assert.ok(e.mail.outbox.some((m) => m.kind === 'device_revoked'));
     const c1 = cert(pc.aik, p1, e.clock.now() + 90 * D);
     assert.equal((await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c1), p1.V, e.clock.now()) }, body: { cert: c1 } })).json.error, 'account.device_suspended');
-    // 자리가 바로 빈다
     const np = device('mobile', 0);
     assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: np.id, role: 'mobile', platform: 'android', name: '새 폰', Sx: np.S.b64, Vx: np.V.b64 } })).status, 201);
-    // PC는 나간 폰을 항목에 둔 채로는 목록을 올리지 못하고, 폐기 레코드로 옮기면 받는다
     const rest = [entry(pc.aik, pc.d, 1), entry(pc.aik, d2, 2), entry(pc.aik, p2, 2), entry(pc.aik, p3, 2)];
     assert.equal((await pc.call('PUT', '/v1/device-list', { deviceList: { listVersion: 3, entries: [...rest, entry(pc.aik, p1, 2)], revoked: [] } })).json.error, 'request.param_rejected');
     assert.equal((await pc.call('PUT', '/v1/device-list', { deviceList: { listVersion: 3, entries: rest, revoked: [revokeRec(pc.aik, p1.id, e.clock.now())] } })).status, 200);
@@ -639,31 +612,25 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     const { pc, d2, ps, state } = await fleet(e, 'halt@example.com', 2);
     const [p1, p2] = ps as [Device, Device];
     const phone = caller(e, pc.aik, p1);
-    // 폰은 devices 범위로 기기 목록(서버 상태)과 AIK 서명 목록을 읽는다. 목록을 바꾸지는 못한다
     assert.equal(((await phone('GET', '/v1/devices')).json.devices as unknown[]).length, 4);
     const dl = await phone('GET', '/v1/device-list');
     assert.equal(dl.json.aikPub, pc.aik.b64);
     assert.equal(dl.json.deviceList.listVersion, 2);
     assert.equal((await phone('PUT', '/v1/device-list', { deviceList: dl.json.deviceList })).json.error, 'account.scope_denied');
-    // 잃어버린 폰
     const r = await phone('POST', `/v1/devices/${p2.id}/stop`);
     assert.equal(r.status, 202, r.text);
     assert.equal(r.json.deleteAfter, e.clock.now() + 7 * D);
     assert.equal((await state(p2.id)).state, 'suspended');
     assert.deepEqual(e.stopped, [p2.id]);
     assert.ok(e.mail.outbox.some((m) => m.kind === 'device_suspended'));
-    // 자기 자신·없는 기기·다른 계정 기기
     assert.equal((await phone('POST', `/v1/devices/${p1.id}/stop`)).json.error, 'request.param_rejected');
     assert.equal((await phone('POST', `/v1/devices/${device('mobile', 0).id}/stop`)).json.error, 'account.device_not_found');
-    // PC가 재활성화하면 폐기 예약도 사라진다
     const accountId = (await e.db.one<{ id: string }>('SELECT id FROM accounts WHERE email = $1', ['halt@example.com']))!.id;
     assert.equal((await pc.call('POST', `/v1/devices/${p2.id}/reactivate`, acctOp(pc.aik, 'device.reactivate', accountId, p2.id, e.clock.now()))).status, 204);
     assert.equal((await state(p2.id)).state, 'active');
     assert.equal((await state(p2.id)).deleteAfter, null);
-    // 잃어버린 PC: 다른 PC가 남아 있으면 정지된다. 되돌리지 않으면 7일 뒤 폐기
     assert.equal((await phone('POST', `/v1/devices/${d2.id}/stop`)).status, 202);
     assert.equal((await state(d2.id)).state, 'suspended');
-    // 마지막 남은 활성 PC는 폰이 정지할 수 없다
     const last = await phone('POST', `/v1/devices/${pc.d.id}/stop`);
     assert.equal(last.status, 409);
     assert.equal(last.json.error, 'account.last_desktop');
@@ -691,40 +658,32 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     assert.match(a.json.lockId, /^[A-Za-z0-9_-]{43}$/);
     assert.equal(a.json.expiresAt, e.clock.now() + ISSUE_LOCK.ttlMs);
     const id1 = a.json.lockId as string;
-    // 다른 PC는 못 잡고, 누가 잡았는지는 본다(잠금 값은 보이지 않는다)
     const b = await pc2('POST', '/v1/issue-lock/acquire');
     assert.deepEqual([b.status, b.json], [409, { error: 'account.issue_locked' }]);
     assert.deepEqual((await pc2('GET', '/v1/issue-lock')).json, { held: true, deviceId: pc.d.id, expiresAt: a.json.expiresAt, mine: false });
     assert.equal((await pc.call('GET', '/v1/issue-lock')).json.mine, true);
-    // 다른 PC·다른 값으로는 갱신·놓기가 안 된다(놓기는 조용히 아무 일도 없다)
     assert.equal((await pc2('POST', '/v1/issue-lock/renew', { lockId: id1 })).json.error, 'account.issue_lock_lost');
     assert.equal((await pc2('POST', '/v1/issue-lock/release', { lockId: id1 })).status, 204);
     assert.equal((await pc.call('GET', '/v1/issue-lock')).json.held, true);
     assert.equal((await pc.call('POST', '/v1/issue-lock/renew', { lockId: 'x'.repeat(43) })).json.error, 'account.issue_lock_lost');
     assert.equal((await pc.call('POST', '/v1/issue-lock/renew', {})).json.error, 'request.param_rejected');
-    // 갱신하면 그때부터 90초
     e.clock.advance(30_000);
     assert.deepEqual((await pc.call('POST', '/v1/issue-lock/renew', { lockId: id1 })).json, { expiresAt: e.clock.now() + ISSUE_LOCK.ttlMs });
-    // 갱신이 끊기면(PC가 죽음) 90초 뒤 다른 PC가 잡고, 앞 PC의 갱신은 거부된다(커밋 직전 갱신 실패 = 커밋하지 않음)
     e.clock.advance(ISSUE_LOCK.ttlMs);
     assert.equal((await pc.call('POST', '/v1/issue-lock/renew', { lockId: id1 })).json.error, 'account.issue_lock_lost');
     const c = await pc2('POST', '/v1/issue-lock/acquire');
     assert.equal(c.status, 200);
     assert.notEqual(c.json.lockId, id1);
     assert.equal((await pc.call('POST', '/v1/issue-lock/acquire')).json.error, 'account.issue_locked');
-    // 놓으면 줄이 지워지고(횟수가 남지 않는다) 바로 다른 PC가 잡는다
     assert.equal((await pc2('POST', '/v1/issue-lock/release', { lockId: c.json.lockId })).status, 204);
     assert.equal(await rows(), 0);
     const d = await pc.call('POST', '/v1/issue-lock/acquire');
-    // 같은 PC가 다시 잡으면 새 값이고 앞 값은 죽는다
     const f = await pc.call('POST', '/v1/issue-lock/acquire');
     assert.notEqual(f.json.lockId, d.json.lockId);
     assert.equal((await pc.call('POST', '/v1/issue-lock/renew', { lockId: d.json.lockId })).json.error, 'account.issue_lock_lost');
-    // 만료된 줄은 정리가 지운다
     e.clock.advance(ISSUE_LOCK.ttlMs + 1);
     await e.svc.sweep();
     assert.equal(await rows(), 0);
-    // 폰 토큰은 범위 밖
     assert.equal((await phone('POST', '/v1/issue-lock/acquire')).json.error, 'account.scope_denied');
     assert.equal((await phone('GET', '/v1/issue-lock')).json.error, 'account.scope_denied');
   });
@@ -734,44 +693,34 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     const pc2 = caller(e, pc.aik, d2);
     const phone = caller(e, pc.aik, ps[0]!);
     const k = () => randomBytes(32).toString('base64');
-    // 새 PC(d3)가 로그인하고 신청한다(pending)
     const d3 = device('desktop', e.clock.now());
     const base = `/v1/pc-links/${d3.id}`;
     const hello = { v: 1, device_id: d3.id, Sx: d3.S.b64, Vx: d3.V.b64, Hx: k(), commit: k() };
-    // 신청(enroll) 전에는 우편함을 열 수 없다
     assert.deepEqual([(await e.req('PUT', base, { headers: bearer(s), body: { hello } })).status], [404]);
     assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: d3.id, role: 'desktop', platform: 'windows', name: '새 노트북', Sx: d3.S.b64, Vx: d3.V.b64 } })).status, 201);
-    // 세션 없이, 신청한 키와 다른 키로, 모양이 틀리면 거부
     assert.equal((await e.req('PUT', base, { body: { hello } })).status, 401);
     assert.equal((await e.req('PUT', base, { headers: bearer(s), body: { hello: { ...hello, Sx: k() } } })).json.error, 'request.param_rejected');
     assert.equal((await e.req('PUT', base, { headers: bearer(s), body: { hello: { ...hello, extra: 1 } } })).json.error, 'request.param_rejected');
     assert.equal((await e.req('PUT', '/v1/pc-links/not-a-uuid', { headers: bearer(s), body: { hello } })).json.error, 'request.param_rejected');
-    // 폰이나 남의 기기 ID로는 못 연다
     assert.equal((await e.req('PUT', `/v1/pc-links/${ps[0]!.id}`, { headers: bearer(s), body: { hello: { ...hello, device_id: ps[0]!.id, Sx: ps[0]!.S.b64, Vx: ps[0]!.V.b64 } } })).status, 404);
     assert.equal((await e.req('PUT', base, { headers: bearer(s), body: { hello } })).status, 204);
-    // 다른 계정은 보지 못한다
     const other = await login(e, 'link-other@example.com');
     assert.deepEqual([(await e.req('GET', base, { headers: bearer(other) })).status, (await e.req('GET', base, { headers: bearer(other) })).json], [404, { error: 'account.link_not_found' }]);
-    // 기존 PC가 신청을 본다. 폰은 못 본다(범위)
     assert.equal((await phone('GET', '/v1/pc-links')).status, 403);
     const seen = await pc.call('GET', '/v1/pc-links');
     assert.deepEqual(seen.json, { links: [{ deviceId: d3.id, name: '새 노트북', platform: 'windows', createdAt: e.clock.now(), hello, challengedBy: null, reveal: null }] });
     assert.deepEqual((await e.req('GET', base, { headers: bearer(s) })).json, { challenge: null, grant: null });
-    // 순서: challenge 전에 reveal·grant는 안 된다
     const reveal = { v: 1, nonce: k() };
     assert.equal((await e.req('POST', `${base}/reveal`, { headers: bearer(s), body: { reveal } })).json.error, 'account.link_state');
     const challenge = { v: 1, device_id: pc.d.id, aik_pub: pc.aik.b64, nonce: k() };
-    // challenge의 기기 ID는 부르는 기기여야 한다
     assert.equal((await pc2('POST', `${base}/challenge`, { challenge })).json.error, 'request.param_rejected');
     assert.equal((await pc.call('POST', `${base}/challenge`, { challenge })).status, 204);
-    // 먼저 답한 PC가 승인한다. 두 번째 답은 거부
     assert.equal((await pc2('POST', `${base}/challenge`, { challenge: { ...challenge, device_id: d2.id } })).json.error, 'account.link_state');
     assert.deepEqual((await e.req('GET', base, { headers: bearer(s) })).json, { challenge, grant: null });
     assert.equal((await e.req('POST', `${base}/reveal`, { headers: bearer(s), body: { reveal } })).status, 204);
     assert.equal((await e.req('POST', `${base}/reveal`, { headers: bearer(s), body: { reveal } })).json.error, 'account.link_state');
     const l = ((await pc2('GET', '/v1/pc-links')).json.links as Array<Record<string, unknown>>)[0]!;
     assert.deepEqual([l.challengedBy, l.reveal], [pc.d.id, reveal]);
-    // grant: 새 PC가 목록으로 활성화되기 전에는 안 된다, 답한 PC만 된다
     const list = { listVersion: 3, entries: [entry(pc.aik, pc.d, 1), entry(pc.aik, d2, 2), entry(pc.aik, ps[0]!, 2), entry(pc.aik, d3, 3)], revoked: [] };
     const grant = { v: 1, cert: cert(pc.aik, d3, e.clock.now() + 90 * D), deviceList: list, enc: k(), ct: randomBytes(48).toString('base64') };
     assert.equal((await pc.call('POST', `${base}/grant`, { grant })).json.error, 'account.link_state');
@@ -780,18 +729,15 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     assert.equal((await pc.call('POST', `${base}/grant`, { grant: { ...grant, ct: 'AAAA' } })).json.error, 'request.param_rejected');
     assert.equal((await pc.call('POST', `${base}/grant`, { grant })).status, 204);
     assert.equal((await pc.call('POST', `${base}/grant`, { grant })).json.error, 'account.link_state');
-    // 끝난 신청은 기존 PC 목록에서 빠지고, 새 PC가 받아 간 뒤 지운다
     assert.deepEqual((await pc.call('GET', '/v1/pc-links')).json, { links: [] });
     assert.deepEqual((await e.req('GET', base, { headers: bearer(s) })).json, { challenge, grant });
     assert.equal((await e.req('DELETE', base, { headers: bearer(s) })).status, 204);
     assert.equal((await e.req('GET', base, { headers: bearer(s) })).status, 404);
     assert.equal((await e.req('DELETE', base, { headers: bearer(s) })).status, 204);
-    // 활성이 된 PC도 다시 신청할 수 있다(RK를 받지 못하고 끊긴 경우). 쓰던 PC 목록에 다시 보인다
     assert.equal((await e.req('PUT', base, { headers: bearer(s), body: { hello } })).status, 204);
     assert.deepEqual(((await pc.call('GET', '/v1/pc-links')).json.links as Array<{ deviceId: string }>).map((x) => x.deviceId), [d3.id]);
     assert.equal((await e.req('DELETE', base, { headers: bearer(s) })).status, 204);
 
-    // 기존 PC가 거절하면(6자리가 틀림) 지워진다. 7일이 지난 신청은 정리가 지운다
     const s2 = await login(e, 'link2@example.com');
     const pcB = await desktop(e, s2);
     e.clock.advance(60_000);
@@ -799,11 +745,9 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     const h4 = { v: 1, device_id: d4.id, Sx: d4.S.b64, Vx: d4.V.b64, Hx: k(), commit: k() };
     assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s2), body: { deviceId: d4.id, role: 'desktop', platform: 'macos', name: '또 다른 PC', Sx: d4.S.b64, Vx: d4.V.b64 } })).status, 201);
     assert.equal((await e.req('PUT', `/v1/pc-links/${d4.id}`, { headers: bearer(s2), body: { hello: h4 } })).status, 204);
-    // 새 PC가 그만두면 우편함만 비고 신청 중인 기기 기록은 남는다(다시 시도할 때 쓴다)
     assert.equal((await e.req('DELETE', `/v1/pc-links/${d4.id}`, { headers: bearer(s2) })).status, 204);
     assert.equal(((await pcB.call('GET', '/v1/devices')).json.devices as Array<{ deviceId: string; state: string }>).find((x) => x.deviceId === d4.id)?.state, 'pending');
     assert.equal((await e.req('PUT', `/v1/pc-links/${d4.id}`, { headers: bearer(s2), body: { hello: h4 } })).status, 204);
-    // 쓰던 PC가 거절하면 신청 기록까지 지워 자리가 빈다. 활성 기기는 이 경로로 지워지지 않는다
     assert.equal((await pcB.call('DELETE', `/v1/pc-links/${d4.id}`)).status, 204);
     assert.equal((await e.req('GET', `/v1/pc-links/${d4.id}`, { headers: bearer(s2) })).status, 404);
     assert.equal(((await pcB.call('GET', '/v1/devices')).json.devices as Array<{ deviceId: string }>).some((x) => x.deviceId === d4.id), false);
@@ -811,7 +755,6 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     assert.equal(((await pcB.call('GET', '/v1/devices')).json.devices as Array<{ deviceId: string; state: string }>).find((x) => x.deviceId === pcB.d.id)?.state, 'active');
     assert.equal((await e.req('PUT', `/v1/pc-links/${d4.id}`, { headers: bearer(s2), body: { hello: h4 } })).status, 404);
     assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s2), body: { deviceId: d4.id, role: 'desktop', platform: 'macos', name: '또 다른 PC', Sx: d4.S.b64, Vx: d4.V.b64 } })).status, 201);
-    // 다시 올리면 앞 단계가 지워지고 새로 시작한다
     assert.equal((await e.req('PUT', `/v1/pc-links/${d4.id}`, { headers: bearer(s2), body: { hello: h4 } })).status, 204);
     assert.equal((await pcB.call('POST', `/v1/pc-links/${d4.id}/challenge`, { challenge: { ...challenge, device_id: pcB.d.id, aik_pub: pcB.aik.b64 } })).status, 204);
     assert.equal((await e.req('PUT', `/v1/pc-links/${d4.id}`, { headers: bearer(s2), body: { hello: { ...h4, commit: k() } } })).status, 204);
@@ -829,7 +772,6 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     assert.equal((await e.req('POST', `/v1/devices/${d2.id}/suspend`, { headers: bearer(s) })).status, 204);
     assert.equal((await pc.call('GET', '/v1/issue-lock')).json.held, false);
     assert.equal((await pc.call('POST', '/v1/issue-lock/acquire')).status, 200);
-    // 다른 계정의 잠금과는 무관하다
     const other = await desktop(e, await login(e, 'lock3@example.com'));
     assert.equal((await other.call('POST', '/v1/issue-lock/acquire')).status, 200);
     assert.ok(ps.length === 1);
@@ -849,11 +791,9 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     e.clock.advance(1000);
     const r2 = id();
     assert.deepEqual((await pc2('PUT', `/v1/share/rows/${r2}`, { kind: 'party', epoch: 0, body: body('B') })).json, { seq: 2 });
-    // 응답이 끊겨 다시 올리면 처음 순번 그대로(줄이 늘지 않는다). 같은 id에 다른 내용·다른 기기는 거부
     assert.deepEqual((await pc.call('PUT', `/v1/share/rows/${r1}`, { kind: 'issue', epoch: 0, body: body('A') })).json, { seq: 1 });
     assert.equal((await pc.call('PUT', `/v1/share/rows/${r1}`, { kind: 'issue', epoch: 0, body: body('C') })).json.error, 'account.share_row_conflict');
     assert.equal((await pc2('PUT', `/v1/share/rows/${r1}`, { kind: 'issue', epoch: 0, body: body('A') })).json.error, 'account.share_row_conflict');
-    // 폰도 받는다. 서버가 주는 것은 순번·종류·세대·올린 기기·받은 시각·암호문뿐이다
     const got = await phone('GET', '/v1/share/rows');
     assert.deepEqual(got.json, {
       rows: [
@@ -867,11 +807,9 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     assert.deepEqual((await phone('GET', '/v1/share/rows/after/1')).json.rows.map((r: { seq: number }) => r.seq), [2]);
     assert.deepEqual((await phone('GET', '/v1/share/rows/after/2')).json.rows, []);
     assert.deepEqual((await phone('GET', '/v1/share/rows/after/0')).json.rows.length, 2);
-    // 폰은 맡긴 일만 올린다. 발급 기록·거래처·결과는 PC만
     for (const kind of ['issue', 'party']) assert.equal((await phone('PUT', `/v1/share/rows/${id()}`, { kind, epoch: 0, body: body('D') })).json.error, 'account.scope_denied');
     assert.equal((await phone('PUT', `/v1/share/rows/${id()}`, { kind: 'task_result', epoch: 0, body: body('D'), taskId: id() })).json.error, 'account.scope_denied');
     assert.deepEqual((await phone('PUT', `/v1/share/rows/${id()}`, { kind: 'task', epoch: 0, body: body('D') })).json, { seq: 3 });
-    // 모양 검사: 줄 id, 종류, 세대, 본문(b64url·크기), 모르는 필드·쿼리, 결과 줄의 taskId
     const bad: Array<[string, unknown]> = [
       [`/v1/share/rows/short`, { kind: 'issue', epoch: 0, body: body('A') }],
       [`/v1/share/rows/${id()}`, { kind: 'chat', epoch: 0, body: body('A') }],
@@ -887,11 +825,9 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     for (const [path, b] of bad) assert.equal((await pc.call('PUT', path, b)).json.error, 'request.param_rejected', JSON.stringify(b).slice(0, 80));
     assert.equal((await pc.call('PUT', `/v1/share/rows/${id()}`, { kind: 'issue', epoch: 0, body: 'A'.repeat(SHARE.maxBodyChars) })).status, 200);
     for (const q of ['/after/-1', '/after/1.5', '/after/abc', '/after/01', '/after/99999999999999999', '?after=1', '?limit=5', '/after/1?x=1']) assert.equal((await pc.call('GET', `/v1/share/rows${q}`)).json.error, 'request.param_rejected', q);
-    // 다른 계정의 줄은 보이지 않고, 같은 줄 id도 계정마다 따로다
     const o = await fleet(e, 'share-other@example.com', 0);
     assert.deepEqual((await o.pc.call('GET', '/v1/share/rows')).json.rows, []);
     assert.deepEqual((await o.pc.call('PUT', `/v1/share/rows/${r1}`, { kind: 'issue', epoch: 0, body: body('Z') })).json, { seq: 1 });
-    // 계정 세션으로는 부를 수 없다(기기 토큰 share 범위)
     assert.equal((await e.req('GET', '/v1/share/rows', { headers: bearer(o.s) })).json.error, 'account.unauthorized');
   });
 
@@ -904,7 +840,6 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     const { pc, d2, ps } = await fleet(e, 'share-epoch@example.com', 1);
     const pc2 = caller(e, pc.aik, d2);
     assert.equal((await pc.call('PUT', `/v1/share/rows/${id()}`, row(0))).status, 200);
-    // 폰을 끊은 PC가 세대 1로 올리면 그 뒤로 세대 0 줄은 거부된다(끊긴 폰이 아는 키로는 더 쓰지 않는다)
     assert.deepEqual((await pc.call('PUT', `/v1/share/rows/${id()}`, row(1))).json, { seq: 2 });
     assert.equal((await pc2('PUT', `/v1/share/rows/${id()}`, row(0))).json.error, 'account.share_epoch_stale');
     assert.equal((await pc2('PUT', `/v1/share/rows/${id()}`, row(1))).status, 200);
@@ -932,7 +867,6 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     assert.deepEqual(await kinds(phone), ['1:self', '3:issue', '4:money']);
     assert.deepEqual((await put(pc.call, 'self', 'T')).json, { seq: 5 });
     assert.deepEqual(await kinds(phone), ['1:self', '3:issue', '4:money', '5:self']);
-    // 지워진 요약을 다시 올리면 새 줄로 들어가고 앞 요약을 밀어낸다(읽는 쪽은 (at, dev)로 고른다, D07 §10)
     assert.deepEqual((await put(pc.call, 'money', 'A', m1)).json, { seq: 6 });
     assert.deepEqual(await kinds(pc2), ['1:self', '3:issue', '5:self', '6:money']);
     assert.deepEqual(await kinds(o.pc.call), ['1:money']);
@@ -963,33 +897,26 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     assert.equal((await phone('PUT', `/v1/share/rows/${task}`, { kind: 'task', epoch: 0, body })).status, 200);
     const view = async () => ((await phone('GET', '/v1/share/tasks')).json.tasks as Array<Record<string, unknown>>).find((t) => t.taskId === task)!;
     assert.deepEqual(await view(), { taskId: task, state: 'open', createdBy: ps[0]!.id, claimedBy: null, claimExpiresAt: null, createdAt: t0, updatedAt: t0 });
-    // 폰은 맡지 못한다. 없는 일·모양이 틀린 id
     assert.equal((await phone('POST', `/v1/share/tasks/${task}/claim`)).json.error, 'account.scope_denied');
     assert.equal((await pc.call('POST', `/v1/share/tasks/${id()}/claim`)).json.error, 'account.task_not_found');
     assert.equal((await pc.call('POST', '/v1/share/tasks/x/claim')).json.error, 'request.param_rejected');
-    // 첫 PC가 맡으면 둘째는 거부된다
     const c1 = await pc.call('POST', `/v1/share/tasks/${task}/claim`);
     assert.deepEqual([c1.status, c1.json], [200, { claimExpiresAt: e.clock.now() + SHARE.claimMs }]);
     assert.equal((await pc2('POST', `/v1/share/tasks/${task}/claim`)).json.error, 'account.task_claimed');
     assert.deepEqual([(await view()).state, (await view()).claimedBy], ['claimed', pc.d.id]);
-    // 맡은 PC가 다시 부르면 만료가 늘어난다
     e.clock.advance(5 * 60_000);
     assert.deepEqual((await pc.call('POST', `/v1/share/tasks/${task}/claim`)).json, { claimExpiresAt: e.clock.now() + SHARE.claimMs });
-    // 맡지 않은 PC는 결과를 올리지 못한다(일은 그대로)
     assert.equal((await pc2('PUT', `/v1/share/rows/${id()}`, { kind: 'task_result', epoch: 0, body, taskId: task })).json.error, 'account.task_not_claimed');
-    // 맡은 PC가 죽어 늘리지 못하면 15분 뒤 다시 열린 것으로 보이고 다른 PC가 맡는다
     e.clock.advance(SHARE.claimMs);
     assert.deepEqual([(await view()).state, (await view()).claimedBy], ['open', null]);
     assert.equal((await pc2('POST', `/v1/share/tasks/${task}/claim`)).status, 200);
     assert.equal((await pc.call('POST', `/v1/share/tasks/${task}/claim`)).json.error, 'account.task_claimed');
     assert.equal((await pc.call('PUT', `/v1/share/rows/${id()}`, { kind: 'task_result', epoch: 0, body, taskId: task })).json.error, 'account.task_not_claimed');
-    // 맡은 PC가 결과를 올리면 끝난다. 끝난 일은 다시 맡거나 취소할 수 없다
     const done = id();
     assert.equal((await pc2('PUT', `/v1/share/rows/${done}`, { kind: 'task_result', epoch: 0, body, taskId: task })).status, 200);
     assert.equal((await view()).state, 'done');
     assert.equal((await pc.call('POST', `/v1/share/tasks/${task}/claim`)).json.error, 'account.task_closed');
     assert.equal((await phone('POST', `/v1/share/tasks/${task}/cancel`)).json.error, 'account.task_closed');
-    // 결과를 다시 올려도(응답이 끊긴 경우) 같은 줄이다
     assert.equal((await pc2('PUT', `/v1/share/rows/${done}`, { kind: 'task_result', epoch: 0, body, taskId: task })).status, 200);
     assert.equal((await pc2('PUT', `/v1/share/rows/${id()}`, { kind: 'task_result', epoch: 0, body, taskId: task })).json.error, 'account.task_not_claimed');
   });
@@ -1005,7 +932,6 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
       return t;
     };
     const state = async (t: string) => ((await pc.call('GET', '/v1/share/tasks')).json.tasks as Array<{ taskId: string; state: string }>).find((x) => x.taskId === t)!.state;
-    // 내려놓으면 다시 열린다. 남의 맡김은 내려놓지 못한다(오류 없이 그대로)
     const a = await put();
     assert.equal((await pc.call('POST', `/v1/share/tasks/${a}/claim`)).status, 200);
     assert.equal((await pc2('POST', `/v1/share/tasks/${a}/release`)).status, 204);
@@ -1013,7 +939,6 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     assert.equal((await pc.call('POST', `/v1/share/tasks/${a}/release`)).status, 204);
     assert.equal(await state(a), 'open');
     assert.equal((await pc2('POST', `/v1/share/tasks/${a}/claim`)).status, 200);
-    // 다른 기기가 돌리는 중이면 취소하지 못한다. 열려 있으면 폰이든 PC든 취소한다. 취소된 일은 맡지 못한다
     assert.equal((await phone('POST', `/v1/share/tasks/${a}/cancel`)).json.error, 'account.task_claimed');
     assert.equal((await pc2('POST', `/v1/share/tasks/${a}/cancel`)).status, 204);
     assert.equal(await state(a), 'cancelled');
@@ -1022,7 +947,6 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     const b = await put();
     assert.equal((await phone('POST', `/v1/share/tasks/${b}/cancel`)).status, 204);
     assert.equal(await state(b), 'cancelled');
-    // 72시간이 지난 일은 새로 맡지 못한다. 이미 맡아 돌리는 PC는 끝까지 늘리고 결과를 올린다
     const c = await put();
     const d = await put();
     e.clock.advance(SHARE.taskTtlMs - 60_000);
@@ -1049,7 +973,6 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     assert.equal((await e.req('POST', `/v1/devices/${d2.id}/suspend`, { headers: bearer(s) })).status, 204);
     const tasks = async () => (await pc.call('GET', '/v1/share/tasks')).json.tasks as Array<{ taskId: string; state: string; claimedBy: string | null }>;
     assert.deepEqual((await tasks()).map((t) => [t.state, t.claimedBy]), [['open', null], ['open', null]]);
-    // 첫 PC가 a를 맡아 끝내고, b는 그대로 둔다
     assert.equal((await pc.call('POST', `/v1/share/tasks/${a}/claim`)).status, 200);
     assert.equal((await pc.call('PUT', `/v1/share/rows/${id()}`, { kind: 'task_result', epoch: 0, body, taskId: a })).status, 200);
     const kinds = async () => ((await pc.call('GET', '/v1/share/rows')).json.rows as Array<{ kind: string }>).map((r) => r.kind);
@@ -1057,7 +980,6 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     e.clock.advance(SHARE.closedTaskDays * D - 1000);
     await e.svc.sweep();
     assert.equal((await tasks()).length, 2);
-    // 30일 뒤: 끝난 일 a와 그 줄 둘이 지워진다. b는 유효 시간이 지난 날부터 30일을 더 둔다
     e.clock.advance(2000);
     await e.svc.sweep();
     assert.deepEqual((await tasks()).map((t) => [t.taskId, t.state]), [[b, 'expired']]);
@@ -1066,7 +988,6 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     await e.svc.sweep();
     assert.deepEqual(await tasks(), []);
     assert.deepEqual(await kinds(), ['issue']);
-    // 지운 줄의 순번은 다시 쓰지 않는다
     assert.deepEqual((await pc.call('PUT', `/v1/share/rows/${id()}`, { kind: 'party', epoch: 0, body })).json, { seq: 5 });
   });
 
@@ -1090,7 +1011,7 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     e.clock.advance(8 * D);
     await e.svc.sweep();
     assert.deepEqual(e.stopped, []);
-    s = await login(e, 'del@example.com'); // 세션 1시간(ADR-038 (f))
+    s = await login(e, 'del@example.com');
     await e.req('POST', `/v1/devices/${pc.d.id}/delete-request`, { headers: bearer(s) });
     e.clock.advance(7 * D - 1);
     await e.svc.sweep();
@@ -1106,7 +1027,7 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     const phone = device('mobile', 0);
     await e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: phone.id, role: 'mobile', platform: 'android', name: '폰', Sx: phone.S.b64, Vx: phone.V.b64 } });
     e.clock.advance(72 * H - 1000);
-    s = await login(e, 'hold@example.com'); // 세션 1시간(ADR-038 (f))
+    s = await login(e, 'hold@example.com');
     const early = await e.req('POST', `/v1/devices/${phone.id}/activate`, { headers: bearer(s) });
     assert.equal(early.json.error, 'account.device_hold');
     assert.ok(Number(early.headers.get('retry-after')) >= 1);
@@ -1124,10 +1045,8 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     assert.equal((await enroll(device('mobile', 0))).json.error, 'account.device_limit');
     assert.equal((await enroll(ps[0]!)).json.error, 'account.device_limit');
     for (const p of ps) await e.req('POST', `/v1/devices/${p.id}/suspend`, { headers: bearer(s) });
-    // 정지된 폰은 자리를 막지 않는다(목록에 보이지 않고 끊을 수도 없다, 2026-11-19). 되살릴 때 자리를 다시 본다
     assert.equal((await enroll(device('mobile', 0))).status, 201);
     assert.equal((await enroll(device('mobile', 0))).status, 201);
-    // 폰은 30일 추가 횟수를 세지 않는다(2026-11-19 대표: "30일 5번 제한 삭제"): 6번째 추가도 자리만 있으면 된다
     assert.equal((await enroll(device('mobile', 0))).status, 201);
     assert.equal((await enroll(device('mobile', 0), 'windows')).json.error, 'request.param_rejected');
   });
@@ -1152,16 +1071,13 @@ describe('M4-5 계정: 프로필 슬롯·사업자 HMAC 재바인딩 90일(B-28)
     assert.deepEqual((await pc.call('PUT', `/v1/slots/${a}/biz`, { bizHmac: h1 })).json, { changed: false });
     const tooSoon = await pc.call('PUT', `/v1/slots/${a}/biz`, { bizHmac: h2 });
     assert.equal(tooSoon.json.error, 'account.rebind_too_soon');
-    // RK 교체 재등록(AIK 서명)은 횟수에 세지 않는다. 대상은 slot:hmac에 결속.
     assert.equal((await pc.call('PUT', `/v1/slots/${a}/biz`, { bizHmac: h2, rkOp: acctOp(pc.aik, 'slot.rebind_rk', accountId, `${a}:${h1}`, e.clock.now()) })).json.error, 'account.aik_signature_invalid');
     assert.deepEqual((await pc.call('PUT', `/v1/slots/${a}/biz`, { bizHmac: h2, rkOp: acctOp(pc.aik, 'slot.rebind_rk', accountId, `${a}:${h2}`, e.clock.now()) })).json, { changed: true });
     e.clock.advance(90 * D);
     assert.deepEqual((await pc.call('PUT', `/v1/slots/${a}/biz`, { bizHmac: h1 })).json, { changed: true });
-    // 바인딩된 슬롯을 지우고 다른 슬롯에 새로 바인딩해 90일 규칙을 피할 수 없다
     e.clock.advance(91 * D);
     assert.equal((await pc.call('DELETE', `/v1/slots/${a}`)).status, 204);
     assert.equal((await pc.call('PUT', `/v1/slots/${b}/biz`, { bizHmac: h2 })).json.error, 'account.rebind_too_soon');
-    // 세션은 1시간이라 시계를 181일 돌린 뒤엔 다시 로그인한다
     const s2 = await login(e, 'slot@example.com');
     const slots = await e.req('GET', '/v1/slots', { headers: bearer(s2) });
     assert.equal(slots.status, 200, slots.text);
@@ -1216,13 +1132,11 @@ describe('M4-5 계정: 구독(19,900원 한 플랜, 모의 PG)', () => {
     assert.equal(r.json.deleteAfter, t0 + 7 * D);
     assert.ok(e.pg.canceled.includes(ref), '다음 결제가 없게 구독을 바로 해지');
     assert.ok(e.mail.outbox.some((m) => m.to === 'bye@example.com' && m.kind === 'account_delete_pending'));
-    // 다시 눌러도 같은 예정 시각
     assert.equal((await e.req('POST', '/v1/account/delete-request', { headers: bearer(s) })).json.deleteAfter, t0 + 7 * D);
     assert.equal((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.deleteAfter, t0 + 7 * D);
     assert.deepEqual((await e.req('GET', '/v1/account/deletion', { headers: bearer(s) })).json, { deleteAfter: t0 + 7 * D });
     assert.equal((await e.req('POST', '/v1/account/delete-cancel', { headers: bearer(s) })).status, 204);
     assert.equal((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.deleteAfter, null);
-    // 데스크톱은 세션 없이 기기 토큰으로 요청한다(등록 뒤 세션을 버린다)
     assert.equal((await pc.call('POST', '/v1/account/delete-request')).status, 202);
     assert.equal((await pc.call('GET', '/v1/account/deletion')).json.deleteAfter, e.clock.now() + 7 * D);
     e.clock.advance(7 * D - 60_000);
@@ -1244,20 +1158,16 @@ describe('M4-5 계정: 구독(19,900원 한 플랜, 모의 PG)', () => {
       return e.req('POST', '/v1/billing/webhook', { raw, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(raw)) } });
     };
     const status = async () => (await e.req('GET', '/v1/billing/subscription', { headers: bearer(s) })).json.subscription as Record<string, unknown>;
-    // 동시에 두 번 눌러도 같은 참조
     const [a, b] = await Promise.all([e.req('POST', '/v1/billing/checkout', { headers: bearer(s) }), e.req('POST', '/v1/billing/checkout', { headers: bearer(s) })]);
     assert.equal(a.json.checkoutUrl, b.json.checkoutUrl);
     const ref = e.pg.checkouts.at(-1)!.pgCustomerRef;
     await hook({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: t0 + 30 * D, at: t0 + 10 });
     await hook({ type: 'payment.failed', pgCustomerRef: ref, at: t0 + 20 });
     assert.equal((await status()).status, 'past_due');
-    // 재전송된 옛 활성 이벤트(at이 이전)는 무시
     await hook({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: t0 + 30 * D, at: t0 + 10 });
     assert.equal((await status()).status, 'past_due');
-    // 같은 기간(같은 renewAt)을 확정하는 재결제 성공은 더 늦은 이벤트라 active
     await hook({ type: 'subscription.renewed', pgCustomerRef: ref, renewAt: t0 + 30 * D, at: t0 + 30 });
     assert.deepEqual([(await status()).status, (await status()).renewAt], ['active', t0 + 30 * D]);
-    // 순서가 뒤바뀐 옛 결제 실패는 무시
     await hook({ type: 'payment.failed', pgCustomerRef: ref, at: t0 + 25 });
     assert.equal((await status()).status, 'active');
     assert.equal((await e.req('POST', '/v1/billing/cancel', { headers: bearer(s) })).status, 204);
@@ -1268,7 +1178,6 @@ describe('M4-5 계정: 구독(19,900원 한 플랜, 모의 PG)', () => {
     ])
       await hook(ev);
     assert.equal((await status()).status, 'canceled');
-    // 다시 구독: 새 PG 참조(동시 클릭도 같은 참조). 옛 참조 이벤트는 새 구독에 닿지 않는다
     const [c1, c2] = await Promise.all([e.req('POST', '/v1/billing/checkout', { headers: bearer(s) }), e.req('POST', '/v1/billing/checkout', { headers: bearer(s) })]);
     assert.equal(c1.json.checkoutUrl, c2.json.checkoutUrl);
     const ref2 = e.pg.checkouts.at(-1)!.pgCustomerRef;
@@ -1277,7 +1186,6 @@ describe('M4-5 계정: 구독(19,900원 한 플랜, 모의 PG)', () => {
     assert.equal((await status()).status, 'pending');
     await hook({ type: 'subscription.activated', pgCustomerRef: ref2, renewAt: t0 + 30 * D, at: t0 + 201 });
     assert.equal((await status()).status, 'active');
-    // 옛 참조의 해지 재전송(시각이 더 늦어도)은 새 구독을 해지하지 않는다. 같은 참조 안에서는 해지 뒤 활성이 없으므로 해지에 최신성 필터가 필요 없다
     await hook({ type: 'subscription.canceled', pgCustomerRef: ref, at: t0 + 300 });
     assert.equal((await status()).status, 'active');
   });
@@ -1291,7 +1199,6 @@ describe('유료 기능 권리(체험 1달): 체험이 끝나고 구독이 없�
   it('체험 중 전체 범위 → 체험 뒤 게이트웨이만 빠짐, 게이트웨이만 요청하면 402, 구독하면 다시', async () => {
     const s = await login(e, 'gate@example.com');
     const { aik, d, call } = await desktop(e, s);
-    // 데스크톱은 기기 토큰(devlist)으로 구독 경로를 부른다(기기 등록 뒤 계정 세션을 버린다)
     assert.equal((await call('GET', '/v1/billing/entitlement')).json.state, 'trial');
     assert.equal((await call('GET', '/v1/billing/subscription')).json.subscription, null);
     const tok = async (scopes?: string[]) => {
@@ -1299,7 +1206,6 @@ describe('유료 기능 권리(체험 1달): 체험이 끝나고 구독이 없�
       return e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c), d.V, e.clock.now()) }, body: scopes ? { cert: c, scopes } : { cert: c } });
     };
     assert.ok(((await tok()).json.scopes as string[]).includes('gateway'));
-    // 같은 계정의 폰: 체험 중에는 chat 범위와 등급(tier)이 실린다
     const phone = device('mobile', e.clock.now());
     assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: phone.id, role: 'mobile', platform: 'ios', name: '폰', Sx: phone.S.b64, Vx: phone.V.b64 } })).status, 201);
     assert.equal((await call('PUT', '/v1/device-list', { deviceList: { listVersion: 2, entries: [entry(aik, d, 1), entry(aik, phone, 2)], revoked: [] } })).status, 200);
@@ -1317,12 +1223,10 @@ describe('유료 기능 권리(체험 1달): 체험이 끝나고 구독이 없�
     assert.ok((t.json.scopes as string[]).includes('relay'));
     const g = await tok(['gateway']);
     assert.deepEqual([g.status, g.json.error], [402, 'account.subscription_required']);
-    // 폰 대화(chat 범위, ADR-047)도 유료 기능이다: 체험 뒤에는 빠지고 relay·push·devices(기기 끊기, ADR-048)는 남는다. chat만 달라면 402
     const pt = await ptok();
     assert.deepEqual(pt.json.scopes, ['relay', 'push', 'devices', 'share']);
     const pg = await ptok(['chat']);
     assert.deepEqual([pg.status, pg.json.error], [402, 'account.subscription_required']);
-    // 모의 PG로 구독 활성
     const s2 = await login(e, 'gate@example.com');
     await e.req('POST', '/v1/billing/checkout', { headers: bearer(s2) });
     const ref = e.pg.checkouts.at(-1)!.pgCustomerRef;
@@ -1351,7 +1255,6 @@ describe('M4-5 계정: 내부 API·로그·저장 컬럼(D09 §1.1)', () => {
     const r = await e.req('GET', dev, { headers: internalHeaders('GET', dev) });
     assert.equal(r.json.state, 'active');
     assert.equal(r.json.role, 'desktop');
-    // 게이트웨이 자동 정지(D09 §3): 서명 필요, 정지 훅·알림, 두 번째는 변화 없음
     assert.equal((await e.req('POST', sus)).status, 401);
     const a = await e.req('POST', sus, { headers: internalHeaders('POST', sus) });
     assert.deepEqual(a.json, { suspended: true });

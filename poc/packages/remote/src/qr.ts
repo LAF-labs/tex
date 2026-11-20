@@ -1,5 +1,3 @@
-// D08 §4.2 QR 페이로드(바이너리, URL 아님): SAXP | v1 | intent | 릴레이 호스트 | room_id(16B) | Sd(32B) | ps(32B) | exp.
-// QR에는 이 바이트열의 base64url 텍스트를 싣는다(스캐너가 문자열로 돌려주므로). 딥링크·URL 스킴은 쓰지 않는다.
 
 import { b64url, concat, fromB64url, fromUtf8, readU64be, u64be, utf8 } from './bytes.ts';
 
@@ -15,7 +13,6 @@ export interface QrPayload {
   roomId: Uint8Array;
   desktopStatic: Uint8Array;
   psk: Uint8Array;
-  /** 만료(유닉스 초) */
   exp: number;
 }
 

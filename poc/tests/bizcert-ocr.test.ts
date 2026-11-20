@@ -1,11 +1,3 @@
-// 사업자등록증 그림 → 칸 6개(2026-11-10 설치본 "대표자가 안 들어간다", 로그 blanks 4). 견본은 국세청 양식을 본뜬 합성 그림(가상 값, bizcert-synth.ts).
-// 경로는 제품과 같다: 그림 → 샌드박스와 같은 전처리·tesseract kor → 엔진 parseBizCert → readBizCert(bizFieldsOf) → 온보딩·거래처 칸.
-// 원인(재현): ① 폰 촬영 JPEG는 종이가 회색이라 고정 임계 흑백(cleanForOcr)이 그늘진 아래쪽을 통째로 검게 만들어 대표자·주소·업태·종목이 비었다.
-// ② 개인 양식 "성명 : 이가나 생년월일 : …" 한 줄에서 대표자가 "이가나생년"으로 잘못 채워졌다(파서). ③ 흑백 자르기가 등록번호 "100"을 "190"으로 읽게 했다.
-// 판정(세 OS 같은 규칙): 칸 뽑기가 맞았는가를 본다. 채운 칸은 정답과 편집 거리 ≤ max(1, 길이/8)(OS 글꼴에 따른 낱글자 오인식 "박다라→박하라"·"2층→2 증"은 OCR 몫,
-// 다른 칸이 섞인 "이가나생년"은 걸린다), 체크섬 맞는 번호는 정답과 같다, 6칸 중 5칸 이상 채운다. macOS(실측 기준 글꼴)는 6칸 모두 정답.
-// 2026-11-10 #265 첫 CI: Linux 70/72·Windows 66/72·macOS 72/72 정확 일치, 틀린 칸은 모두 낱글자 하나.
-// CI는 견본을 줄인다(깨끗한 PNG·그늘진 촬영 JPEG·흐린 것): tesseract가 CPU를 많이 써 러너가 느려진다. 로컬은 전부 돈다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -38,7 +30,6 @@ const KEYS = ['name', 'bizNo', 'rep', 'address', 'bizType', 'bizItem'] as const;
 const expected = (s: CertSample): Record<(typeof KEYS)[number], string> => ({ name: s.name, bizNo: s.bizNo, rep: s.rep, address: s.addr, bizType: s.types[0]!, bizItem: s.items[0]! });
 const squash = (a: string) => a.replace(/\s/g, '');
 const same = (a: string, b: string) => squash(a) === squash(b);
-/** 편집 거리(공백 무시) */
 function editDistance(x: string, y: string): number {
   const a = [...squash(x)];
   const b = [...squash(y)];
@@ -50,7 +41,6 @@ function editDistance(x: string, y: string): number {
   }
   return prev[b.length]!;
 }
-/** 같은 칸을 뽑았다(낱글자 오인식만 허용) */
 const close = (got: string, exp: string) => editDistance(got, exp) <= Math.max(1, Math.floor(squash(exp).length / 8));
 const MEASURED_OS = process.platform === 'darwin';
 
@@ -100,14 +90,12 @@ describe('사업자등록증 합성 그림 → 칸 6개(샌드박스 전처리·
         await appendMeasure('bizcert-ocr.jsonl', { sample: `${s.kind}-${v}-${fmt}`, confidence: Math.round(confidence), verdict });
         try {
           assert.ok(got, `읽지 못함(신뢰도 ${Math.round(confidence)})`);
-          // 세 OS: 채운 칸은 같은 칸(낱글자 오인식만), 체크섬 맞는 번호는 정답, 6칸 중 5칸 이상
           for (const k of KEYS) if (got[k]) assert.ok(close(got[k], exp[k]), `${k} 다른 값을 채움: ${got[k]} ≠ ${exp[k]}`);
           if (isValidBizNo(got.bizNo)) assert.equal(got.bizNo, exp.bizNo);
           assert.ok(KEYS.filter((k) => got[k]).length >= 5, `빈 칸이 많다: ${KEYS.filter((k) => !got[k]).join(',')}`);
           if (MEASURED_OS) for (const k of KEYS) assert.ok(same(got[k], exp[k]), `${k}: ${got[k] || '(빈 칸)'} ≠ ${exp[k]}`);
           assert.deepEqual(logs, [['main.bizcert_read', { format: fmt, via: 'ocr', result: 'ok', blanks: KEYS.filter((k) => !got[k]).length }]]);
         } catch (e) {
-          // 실패하면 입력 그림과 OCR 원문을 측정 폴더에 남긴다(가상 값 견본)
           const dir = path.dirname(await writeMeasure(`bizcert-fail/${s.kind}-${v}-${fmt}.txt`, `confidence ${confidence}\n${text}`));
           await fs.writeFile(measurePath(`bizcert-fail/${s.kind}-${v}-${fmt}.${fmt}`), img);
           console.error(`등록증 OCR 실패 입력·원문: ${dir}`);
@@ -145,11 +133,11 @@ describe('증명서 그림 전처리(cleanDocumentForOcr)·OCR 배율(ocrScale)'
     const w = 400;
     const h = 200;
     const { px, set, at } = page(w, h, 255);
-    for (let x = 0; x < w; x++) set(x, 100, [20, 20, 20]); // 표 선
-    for (let x = 50; x < 70; x++) for (let y = 20; y < 50; y++) set(x, y, [10, 10, 10]); // 글자 획
-    for (let y = 20; y < 50; y++) set(70, y, [130, 130, 130]); // 획 가장자리(회색)
-    for (let x = 100; x < 160; x++) for (let y = 120; y < 180; y++) set(x, y, [200, 40, 40]); // 붉은 직인
-    for (let x = 200; x < 260; x++) for (let y = 20; y < 60; y++) set(x, y, [235, 235, 235]); // 바탕무늬
+    for (let x = 0; x < w; x++) set(x, 100, [20, 20, 20]);
+    for (let x = 50; x < 70; x++) for (let y = 20; y < 50; y++) set(x, y, [10, 10, 10]);
+    for (let y = 20; y < 50; y++) set(70, y, [130, 130, 130]);
+    for (let x = 100; x < 160; x++) for (let y = 120; y < 180; y++) set(x, y, [200, 40, 40]);
+    for (let x = 200; x < 260; x++) for (let y = 20; y < 60; y++) set(x, y, [235, 235, 235]);
     assert.deepEqual(cleanDocumentForOcr(px, w, h), { photo: false });
     assert.deepEqual([at(60, 30), at(70, 30), at(10, 100), at(120, 150), at(220, 40), at(300, 150)], [10, 130, 255, 255, 255, 255]);
   });

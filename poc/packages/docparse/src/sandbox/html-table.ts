@@ -1,13 +1,9 @@
-// 확장자만 .xls인 HTML 표 읽기(국내 은행·홈택스 "엑셀 내려받기"에 흔하다). <table>마다 시트 하나(table1, table2…).
-// 정규식 없이 한 번 훑는 스캐너다(백트래킹 폭탄 없음). <script>·<style>·주석 내용은 버린다. 그림·링크·스타일은 따라가지 않는다.
-// colspan은 오른쪽 칸을 null로, rowspan은 아래 행 같은 열을 null로 채운다(같은 값을 되풀이하지 않는다).
 import { decodeText } from './csv.ts';
 import { SandboxError, SHEET_LIMITS } from './limits.ts';
 import { emptyFlags, looksLikeFormula, trimRow, type Cell, type SheetOutput, type SheetTable } from './sheet.ts';
 
 const EUC_KR_NAMES = new Set(['euc-kr', 'euckr', 'ks_c_5601-1987', 'ks_c_5601', 'ksc5601', 'cp949', 'windows-949', 'x-windows-949', 'ms949', 'uhc']);
 const UTF8_NAMES = new Set(['utf-8', 'utf8']);
-/** 칸 글자는 공백 정리 전 이만큼까지만 모은다 */
 const MAX_RAW_CELL = SHEET_LIMITS.maxCellChars * 4;
 
 /** 앞 4KB의 <meta … charset=…>(http-equiv content 안의 charset= 포함) */
@@ -78,14 +74,13 @@ interface Tag {
   end: number;
 }
 
-/** text[at] === '<' 인 태그 하나. 따옴표 안의 '>'는 끝으로 보지 않는다 */
 function readTag(text: string, at: number): Tag | null {
   let p = at + 1;
   const close = text.charCodeAt(p) === 0x2f;
   if (close) p++;
   const s = p;
   while (p < text.length && isNameChar(text.charCodeAt(p))) p++;
-  if (p === s) return null; // '<' 뒤가 이름이 아니면 글자다
+  if (p === s) return null;
   const name = text.slice(s, p).toLowerCase();
   const attrs: Record<string, string> = {};
   for (;;) {
@@ -94,7 +89,7 @@ function readTag(text: string, at: number): Tag | null {
     if (text.charCodeAt(p) === 0x3e) return { name, close, attrs, end: p + 1 };
     const ns = p;
     while (p < text.length && !isSpace(text.charCodeAt(p)) && text[p] !== '=' && text[p] !== '>' && text[p] !== '/') p++;
-    if (p === ns) p++; // 이름이 될 수 없는 글자 하나 건너뜀
+    if (p === ns) p++;
     const an = text.slice(ns, p).toLowerCase();
     while (p < text.length && isSpace(text.charCodeAt(p))) p++;
     let val = '';
@@ -116,7 +111,6 @@ function readTag(text: string, at: number): Tag | null {
   }
 }
 
-/** '</name' 을 대소문자 무시로 찾는다(없으면 끝) */
 function findClose(text: string, from: number, name: string): number {
   for (let p = text.indexOf('</', from); p >= 0; p = text.indexOf('</', p + 2)) {
     if (text.slice(p + 2, p + 2 + name.length).toLowerCase() === name && !isNameChar(text.charCodeAt(p + 2 + name.length))) return p;
@@ -132,9 +126,7 @@ const span = (v: string | undefined, max: number) => {
 interface TableCtx {
   index: number;
   rows: Cell[][];
-  /** 열마다 rowspan으로 아래 몇 행을 더 차지하는지 */
   spans: number[];
-  /** 지금 행에서 rowspan이 차지한 열 */
   occupied: Set<number>;
   row: Cell[] | null;
   col: number;
@@ -267,7 +259,6 @@ export function parseHtmlTables(text: string): { sheets: SheetTable[]; truncated
     } else if (top.cell && (name === 'br' || name === 'p' || name === 'div' || name === 'li')) top.cell.parts.push(' ');
   }
   while (stack.length) finishTable();
-  // 문서 순서(바깥 표가 먼저)로 정렬: 안쪽 표가 먼저 닫혀 먼저 들어간다
   sheets.sort((a, b) => Number(a.name.slice(5)) - Number(b.name.slice(5)));
   return { sheets, truncated, formulaLike };
 }

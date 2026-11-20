@@ -1,18 +1,10 @@
-// 온보딩 O-03 공동인증서 목록(D05 §6 (1)~(3), ADR-014 결정 1, D17 §3). 금고 control `npki.list`(#93)가 열거만 하고,
-// 공개 인증서(signCert.der) 해석은 docparse 샌드박스 `certInfo`(#95)가 한다. main은 결과를 스키마로 검증해 표시 행으로만 바꾼다.
-// - 경로(dir·certFile)·주체 전체(subject)는 렌더러·로그·텔레메트리·모델로 보내지 않는다. 렌더러에는 id·소유자 이름·발급자·만료일만 간다.
-// - CN 전체는 names(main 안의 표)에만 담는다. 온보딩에서 고른 인증서의 CN이 프로필 cert_name(DB)으로 간다.
-// - 개인키 파일이 없는 인증서(hasKey=false)·만료된 인증서는 보이되 고를 수 없다.
-// - 로그에는 개수만 남긴다(값 없음).
 import type { CertInfo } from '@sax/docparse';
 import type { NpkiCert } from './onboarding.ts';
 
 export type VaultControl = (method: string, params: Record<string, unknown>) => Promise<unknown>;
-/** der → 고정 4필드(샌드박스 certInfo, 스키마 검증 뒤). 못 읽으면 던진다. */
 type CertInfoReader = (der: Uint8Array) => Promise<CertInfo>;
 type NpkiLog = (name: string, data: Record<string, number>) => void;
 
-/** 한 번에 보일 상한(금고도 상한이 있다, 그보다 많으면 앞에서부터). */
 export const NPKI_SHOW_MAX = 50;
 const DER_MAX = 8192;
 const ID_RE = /^[0-9a-f]{16}$/;
@@ -24,7 +16,6 @@ interface Entry {
   hasKey: boolean;
 }
 
-/** 금고 응답에서 필요한 칸만 꺼낸다(dir·certFile은 꺼내지 않는다). 모양이 틀린 항목은 버린다. */
 function entries(r: unknown): { ok: Entry[]; bad: number } {
   const certs = (r as { certs?: unknown } | null)?.certs;
   if (!Array.isArray(certs)) return { ok: [], bad: 0 };
@@ -46,11 +37,9 @@ function entries(r: unknown): { ok: Entry[]; bad: number } {
   return { ok, bad };
 }
 
-/** RFC 4514 이름에서 첫 속성 값(가장 구체적인 RDN부터). 이스케이프(\, \+ \XX)를 푼다. 없으면 ''. */
 export function rdnValue(name: string, type: string): string {
   let i = 0;
   while (i < name.length) {
-    // 속성 하나: type=value (값 안의 이스케이프된 , + 는 구분자가 아니다)
     let j = i;
     let raw = '';
     while (j < name.length && name[j] !== ',' && name[j] !== '+') {
@@ -87,12 +76,7 @@ function unescapeRdn(v: string): string {
   return out.join('');
 }
 
-/** NPKI CN(`홍길동()0012345…`)에서 사람이 읽는 이름만. 뒤의 식별 번호는 보이지 않는다. */
 export const certOwner = (subject: string): string => rdnValue(subject, 'CN').replace(/\(\)[0-9A-Za-z]*$/, '').trim().slice(0, 60);
-/**
- * 인증서 주체의 OU로 개인용·법인(사업자)용을 가른다(값은 보지 않고 종류만). 은행 자동 연결이 어느 뱅킹을 먼저 해 볼지 정하는 데 쓴다.
- * 예: yessign 개인 `OU=personal4IB`, 법인 `OU=corporation4EC`, 다른 CA는 `OU=개인`·`OU=법인`. 모르면 null.
- */
 export function certKind(subject: string): 'corp' | 'personal' | null {
   const ous = subject.split(/,(?=\s*[A-Za-z]+=)/).map((x) => x.trim()).filter((x) => /^OU=/i.test(x)).map((x) => x.slice(3));
   if (ous.some((v) => /corporat|법인|기업|사업자/i.test(v))) return 'corp';
@@ -100,13 +84,8 @@ export function certKind(subject: string): 'corp' | 'personal' | null {
   return null;
 }
 
-/** 발급자 이름(issuer O=, 없으면 CA 폴더 이름). */
 const certIssuer = (issuer: string, ca: string): string => (rdnValue(issuer, 'O') || ca).trim().slice(0, 40);
 
-/**
- * 금고 열거 → 샌드박스 해석 → 표시 행. today(YYYY-MM-DD)보다 이전에 만료된 인증서는 고를 수 없다.
- * 금고가 실패하면 빈 목록(온보딩은 "찾지 못했어요"로 이어 간다).
- */
 export async function listNpkiCerts(control: VaultControl, readInfo: CertInfoReader, opts: { today: string; log?: NpkiLog; names?: Map<string, string> }): Promise<NpkiCert[]> {
   const r = await control('npki.list', {});
   const { ok, bad } = entries(r);
@@ -127,7 +106,6 @@ export async function listNpkiCerts(control: VaultControl, readInfo: CertInfoRea
       continue;
     }
     const why = !e.hasKey ? 'no_key' : expiresOn < opts.today ? 'expired' : undefined;
-    // 홈택스 인증서 창 목록의 소유자 칸 글(CN 전체). main 안에서만 들고, 고른 인증서의 것만 프로필 cert_name에 쓴다(H-01 2.3.0이 이 이름으로 행을 고른다)
     opts.names?.set(e.id, rdnValue(info.subject, 'CN').trim().slice(0, 100));
     const kind = certKind(info.subject);
     out.push({ id: e.id, owner, usage: certIssuer(info.issuer, e.ca), expiresOn, usable: !why, ...(why ? { why } : {}), ...(kind ? { kind } : {}) });

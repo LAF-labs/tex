@@ -1,19 +1,9 @@
-// 설정 > 기기 연결의 계정 기기 목록과 새 PC 연결 요청(ADR-048 결정 1·3·6). 쓰던 PC 쪽 화면이다(새 PC 쪽은 shell-account.js 로그인 화면).
-// - 목록: PC 묶음·폰 묶음(각 3대까지). 다른 기기는 [연결 끊기], 이 PC는 [이 PC 연결 끊기](계정에 남은 마지막 PC면 안내만). 끊기·승인 끄기는 메인 창 안 모달(modal())로 한 번 묻는다.
-// - 끊은 폰은 목록에서 바로 빠진다(서버도 바로 폐기하고 자리를 비운다, ADR-048 결정 6 2026-11-19 개정). 서버가 아직 정지로 둔 폰도 보이지 않는다.
-// - 화면 문구에 가운뎃점을 쓰지 않는다(2026-11-19 대표). 상태는 줄을 나눠 보인다.
-// - 새 PC 요청: [연결] → 새 PC 화면의 6자리를 넣고 [확인]. 6자리는 이 렌더러에 미리 오지 않는다(사람이 새 PC 화면을 보고 넣는다).
-// - 이 PC가 다른 기기에서 끊겼거나 정지됐으면(account.device_suspended) 목록 대신 안내와 [다시 로그인].
-// - 폰 승인(ADR-052): 승인 키를 받은 폰은 [승인 끄기](모달로 확인 한 번), 꺼 둔 폰은 "폰 승인이 꺼져 있어요" + [다시 허용].
-//   끄면 연결은 그대로 두고 승인 키만 지운다(phone-link revokePx). 다시 허용하면 폰이 청한 키를 바로 받는다(allowPx).
-// 문구는 폰 앱의 연결된 기기 화면(taxoff-mobile src/devices.ts)과 맞춘다. 값은 모두 textContent로 넣는다.
 import { btn, h, icon } from './shell-views.js';
 
 export const MAX_PER_ROLE = 3;
 export const FULL_NOTE = '3대까지 연결할 수 있어요. 새 기기를 연결하려면 하나를 끊어 주세요.';
 const LAST_PC = '계정에 남은 마지막 PC는 연결을 끊을 수 없어요.';
 const DAY = 86_400_000;
-/** 새 PC 요청을 다시 읽는 간격(새 PC의 응답·새 요청). 화면이 보일 때만 읽는다. */
 const POLL_MS = 3_000;
 
 const ERR = {
@@ -36,18 +26,12 @@ export const devicesErrText = (code) => ERR[code] ?? (String(code).startsWith('n
 
 const kindName = (d) => (d.role === 'desktop' ? (d.platform === 'macos' ? 'Mac' : d.platform === 'windows' ? 'Windows PC' : 'PC') : d.platform === 'ios' ? 'iPhone' : d.platform === 'android' ? 'Android 폰' : '폰');
 
-/**
- * 상태 한 줄(폰 앱과 같은 말). linking: 이 기기에 열린 새 PC 연결 요청이 있다(pclink.list에 같은 deviceId, 끝나지 않은 단계).
- * 새 PC는 로그인하면 목록에 먼저 오르고(active) 금고 키를 받기 전까지 요청이 열려 있다. 그동안 '쓰는 중'이 아니라 '연결하는 중'이다.
- */
-/** "2026.11.19 마지막 접속"(오늘이어도 날짜로). 모르면 null. */
 export const lastSeenText = (at) => {
   if (!Number.isFinite(at)) return null;
   const t = new Date(at);
   return `${t.getFullYear()}.${String(t.getMonth() + 1).padStart(2, '0')}.${String(t.getDate()).padStart(2, '0')} 마지막 접속`;
 };
 
-/** 줄 아래 보조 글씨 하나(2026-11-19 대표: 기기 이름과 마지막 접속일만). 연결 중이거나 끊기 예약된 PC만 그 상태를 쓴다. */
 export function deviceSub(d, now, linking = false) {
   if (d.state === 'pending' || linking) return '연결하는 중';
   if (d.state === 'suspended') {
@@ -58,23 +42,18 @@ export function deviceSub(d, now, linking = false) {
   return lastSeenText(d.self ? now : d.lastSeenAt);
 }
 
-/** 목록에 보일 기기: 끊었거나 막아 둔 폰은 바로 뺀다(PC는 새로 붙은 PC가 밀어내지 못하게 남는 날짜를 보인다). */
 export const shownDevices = (list) => list.filter((d) => !(d.role === 'mobile' && d.state === 'suspended'));
 
-/** ctx: { call, rerender, errText, toast, visible(), signedIn(), onAccount(view), relogin() } */
 export function createDevices(ctx) {
   const s = {
     loading: false,
     list: null,
     err: null,
     msg: null,
-    /** 확인 중인 줄: 기기 ID 또는 'self' */
     confirm: null,
-    /** 폰 승인 끄기를 확인 중인 폰의 기기 ID */
     pxConfirm: null,
     busy: false,
     reqs: [],
-    /** 요청마다 넣는 중인 6자리와 그 줄의 안내({ text, bad }) */
     codes: {},
     notes: {},
   };
@@ -95,7 +74,6 @@ export function createDevices(ctx) {
     watch();
   }
 
-  /** 요청이 바뀌었을 때만 다시 그린다(6자리를 넣는 칸이 다시 만들어지지 않게). */
   async function poll() {
     if (!ctx.visible() || !ctx.signedIn() || s.busy || s.err) return;
     try {
@@ -103,7 +81,6 @@ export function createDevices(ctx) {
       if (JSON.stringify(r.requests) === JSON.stringify(s.reqs)) return;
       const doneBefore = new Set(s.reqs.filter((x) => x.stage === 'done').map((x) => x.deviceId));
       s.reqs = r.requests;
-      // 다른 PC가 받았거나 새 PC가 연결을 마쳤으면 목록도 다시 읽는다
       if (r.requests.some((x) => x.stage === 'done' && !doneBefore.has(x.deviceId))) s.list = (await ctx.call('devices.list', {})).devices;
       ctx.rerender();
     } catch {
@@ -145,7 +122,6 @@ export function createDevices(ctx) {
       }
     });
 
-  /** 폰 승인 끄기·다시 허용. 연결은 그대로다. */
   const setPx = (d, on) =>
     act(async () => {
       const name = d.name || kindName(d);
@@ -211,15 +187,12 @@ export function createDevices(ctx) {
         }
         const now = res.requests.find((x) => x.deviceId === r.deviceId);
         if (now?.stage === 'code') note(r.deviceId, `숫자가 맞지 않아요. 새 PC 화면의 6자리를 다시 봐 주세요. ${now.triesLeft}번 더 넣을 수 있어요.`, true);
-        // 요청이 목록에서 빠졌다: 횟수를 다 썼거나(마지막 기회였다) 10분이 지났다
         else s.msg = { text: before !== null && before <= 1 ? '3번 틀려서 이 요청을 지웠어요. 새 PC에서 다시 로그인하면 새 요청이 와요.' : '10분이 지나 이 요청이 끝났어요. 새 PC가 다시 요청하면 여기에 떠요.', bad: true };
       } catch (e) {
         note(r.deviceId, devicesErrText(code(e)), true);
         s.reqs = (await ctx.call('pclink.list', {}).catch(() => ({ requests: s.reqs }))).requests;
       }
     });
-
-  // ── 그리기 ──
 
   const row = (attrs, name, sub, attention, ...acts) =>
     h(
@@ -234,7 +207,6 @@ export function createDevices(ctx) {
     const linking = s.reqs.some((x) => x.deviceId === d.deviceId && x.stage !== 'done');
     const sub = deviceSub(d, Date.now(), linking);
     const attrs = { 'data-device': d.deviceId, 'data-device-state': linking ? 'linking' : d.state, ...(d.self ? { 'data-device-self': '' } : {}) };
-    // 폰 승인 상태(이 PC와 연결한 폰만): 켜짐 → [승인 끄기], 꺼 둠 → [다시 허용]. 상태 글은 두지 않는다(단추로만 드러난다)
     const px = d.role === 'mobile' && d.state === 'active' ? d.approval : undefined;
     const pxAct =
       px === 'on'
@@ -254,7 +226,6 @@ export function createDevices(ctx) {
 
   function group(title, list, activePcs, role) {
     const full = list.length >= MAX_PER_ROLE;
-    // 주 단추는 칸에 하나: 꺼 둔 폰이 여럿이면 다시 켜 달라고 청한 폰, 없으면 첫 폰의 [다시 허용]만 채운다
     const off = list.filter((d) => d.state === 'active' && (d.approval === 'paused' || d.approval === 'asked'));
     const firstPaused = (off.find((d) => d.approval === 'asked') ?? off[0])?.deviceId;
     return h(
@@ -319,7 +290,6 @@ export function createDevices(ctx) {
     );
   }
 
-  /** 설정 > 기기 연결의 계정 카드 아래에 놓을 것들. 로그인 전이면 없다. */
   function view() {
     if (!ctx.signedIn()) return [];
     if (s.err === 'account.device_suspended') return [goneCard()];
@@ -338,15 +308,10 @@ export function createDevices(ctx) {
     const pcs = s.list.filter((d) => d.role === 'desktop');
     const phones = shownDevices(s.list).filter((d) => d.role === 'mobile');
     const activePcs = pcs.filter((d) => d.state === 'active').length;
-    // 이 PC가 맨 위, 나머지는 연결한 순서(main이 등록 순으로 준다)
     pcs.sort((a, b) => (a.self === b.self ? 0 : a.self ? -1 : 1));
     return [requestsCard(), msg, group('PC', pcs, activePcs, 'desktop'), group('폰', phones, activePcs, 'mobile')];
   }
 
-  /**
-   * 끊기·승인 끄기 확인(메인 창 안 모달, 배경 흐림). 띄울 것이 없으면 null. Esc·[취소]는 close().
-   * 이 PC 끊기는 로그아웃되니 그 말을 같이 한다.
-   */
   function modal() {
     const d = s.pxConfirm ? s.list?.find((x) => x.deviceId === s.pxConfirm) : s.confirm ? s.list?.find((x) => (s.confirm === 'self' ? x.self : x.deviceId === s.confirm)) : null;
     if (!d) return null;
@@ -365,7 +330,6 @@ export function createDevices(ctx) {
       h('div', { class: 'modal-hd' }, h('div', { class: 'modal-title' }, h('h2', { class: 'title-screen', id: 'dev-m-title' }, T[0]), h('p', { class: 'sx-body-sm is-muted', id: 'dev-m-body' }, T[1], h('br'), T[2]))),
       h('div', { class: 'modal-acts' }, btn('취소', close, 'sx-btn-lg', { 'data-act': px ? 'px-confirm-back' : 'device-confirm-back' }), btn(s.busy ? (px ? '끄는 중…' : '끊는 중…') : T[3], go, 'sx-btn-primary sx-btn-lg', { disabled: s.busy, 'data-act': T[4] })),
     );
-    // Tab이 모달 밖으로 나가지 않게
     box.addEventListener('keydown', (e) => {
       if (e.key !== 'Tab') return;
       const f = [...box.querySelectorAll('button')].filter((x) => !x.disabled);
@@ -378,17 +342,14 @@ export function createDevices(ctx) {
     });
     return h('div', { class: 'modal-scrim is-blur' }, box);
   }
-  /** 모달 닫기(Esc·[취소]). 끊는 중에는 닫지 않는다. */
   function close() {
     if (s.busy || (!s.confirm && !s.pxConfirm)) return false;
     const back = s.pxConfirm ? `[data-device="${s.pxConfirm}"] [data-act=px-off-open]` : s.confirm === 'self' ? '[data-act=device-leave-open]' : `[data-device="${s.confirm}"] [data-act=device-unlink-open]`;
     set({ confirm: null, pxConfirm: null });
-    // 연 단추로 초점을 돌려준다
     document.querySelector(back)?.focus();
     return true;
   }
 
-  /** 이 PC가 다른 기기에서 끊겼다(목록 대신 안내, 계정 카드도 숨긴다) */
   const gone = () => ctx.signedIn() && s.err === 'account.device_suspended';
   return { load, view, gone, modal, close, state: s };
 }

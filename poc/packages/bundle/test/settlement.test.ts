@@ -1,5 +1,3 @@
-// 정산내역 넣기(D14 M6-5, J-01·J-02): settlement.store가 docparse 결과 요약만 남기고, 꾸러미 '정산·현금매출' 시트에 "파일에서 읽은 값"으로 적는다.
-// 파일 칸 doc_type은 D07 §2(서버 색인을 끈 채 고정)를 따른다: 정산 settlement_file, 급여대장 payroll_ledger, 그 밖 bundle_file.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -25,7 +23,6 @@ const docCount = () => db.prepare('SELECT count(*) FROM documents').pluck().get(
 const xlsx = () => Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), randomBytes(48)]);
 const csv = () => Buffer.from(`일자,주문금액,수수료,정산금액\n2026-10-01,10000,1000,9000\n#${randomBytes(4).toString('hex')}\n`, 'utf8');
 
-/** docparse SettlementResult 모양(extractor settlement-v1). 행·열 이름은 요약에 들어가지 않는다 */
 function parsed(over: Record<string, unknown> = {}) {
   return {
     extractor: 'settlement-v1',

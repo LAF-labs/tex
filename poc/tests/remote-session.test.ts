@@ -1,4 +1,3 @@
-// D08 §5 상시 세션(Noise_IK) + hello. PC는 미폐기·단조 타임스탬프가 아니면 무응답으로 버린다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { CAP, acceptDesktopSession, fromB64, monotonicClock, openMobileSession, type PairRecord } from '@sax/remote';
@@ -94,7 +93,6 @@ describe('상시 세션 IK', () => {
   it('IK 뒤 hello가 오지 않으면 채널과 링크를 닫는다(우편함 자리를 놓는다)', async () => {
     const s = await setup();
     let n = 0;
-    // msg1·msg2만 통과시키고 hello부터 버린다
     s.w.relay.faults = { drop: 0.5, rand: () => (++n <= 2 ? 1 : 0) };
     const pcLink = await s.w.relay.joinMailbox(s.pc.mbxId, { read: s.pc.tokRead, write: s.pc.tokWrite }, 'desktop');
     const phLink = await s.w.relay.joinMailbox(fromB64(s.phone.mbxId), { read: fromB64(s.phone.tokRead), write: fromB64(s.phone.tokWrite) }, 'mobile');
@@ -107,7 +105,6 @@ describe('상시 세션 IK', () => {
     assert.equal(phLink.closed, true);
     assert.equal(pcLink.closed, true);
     s.w.relay.faults = {};
-    // 자리가 비었으니 다시 들어갈 수 있다
     const again = await s.w.relay.joinMailbox(fromB64(s.phone.mbxId), { read: fromB64(s.phone.tokRead), write: fromB64(s.phone.tokWrite) }, 'mobile');
     assert.equal(again.closed, false);
     again.close();

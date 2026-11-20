@@ -1,5 +1,3 @@
-// 품목이 비어 H-01이 실행에서야 멈추던 것(리허설 세션 발견 2026-11-11, 부장 지시): 저장 품목이 없는 거래처는 카드 전에 품목을 묻고,
-// 문장에 품목이 있으면 그것을 쓰고, 카드에서 품목·받는 이메일을 고치고, 품목 없이는 준비하지 않으며, 처음 쓴 품목은 저장 품목으로 남긴다.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';

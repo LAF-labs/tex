@@ -1,5 +1,3 @@
-// 번들 다이제스트 = sha256(정규 JSON(digest 필드를 뺀 정의 + 조립된 고정 접두 텍스트)).
-// 접두를 포함하는 이유: 접두(라벨 정의)가 바뀌면 판정이 바뀌므로 같은 다이제스트로 배포될 수 없어야 한다.
 import { createHash } from 'node:crypto';
 import type { BundleDef } from './types.ts';
 

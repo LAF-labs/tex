@@ -1,21 +1,3 @@
-// 가짜 홈택스(H-01 실화면 흉내, 2026-11-11 부장 캡처 기준). 시험 전용(ADR-039): 실제 홈택스에 접속하지 않고, 값은 전부 가짜다.
-// 근거: ~/sax-capture/hometax-20261111/notes.md·issue-1000/log.md(레포 밖, 읽기만). 캡처에 없는 동작은 "가정"으로 표시했다(PR 본문 가정 목록).
-//
-// 흉내 내는 것(실화면과 같게):
-// - 주소 꼴: /websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&tmIdx=46&tm2lIdx=…&tm3lIdx=<메뉴> → 건별발급은 &menuCd=UTEETBAA01로 바뀜.
-//   로그인 화면 &menuCd=index3, 로그인 뒤 메인 &menuCd=index4.
-// - 화면은 로드 뒤 renderDelayMs(실화면 약 5~8초)가 지나야 그려진다. 그 전에는 #mf_wrap이 비어 있다.
-// - id: mf_wfHeader_*, mf_txppWframe_* 그대로. 버튼은 input type=button(value가 이름).
-// - 등록번호 [확인] → 조회 요청 3개 → 네이티브 alert("정상적인 사업자번호입니다.")(비정상 문구 변형은 registry 값). 정상이면 번호가 ###-##-#####로 바뀌고
-//   공급받는자 칸이 편집 가능해진다(그 전에는 readonly).
-// - 공급가액은 blur 뒤에야 쉼표·세액·합계가 계산된다.
-// - [발급미리보기] → 같은 문서 안 창 #…isnPreviewPopup(값은 span 글) → [발급하기] → 확인 창 #…UTEETZZA89 → [확인(인증 화면 이동)] →
-//   인증유형 창 #…UTEETZZA08(li 3개, 안의 button id는 매번 바뀌는 wq_uuid_NNNN) → 공동∙금융 인증: C04 요청 뒤 화면 전체를 덮는 iframe#dscert
-//   (같은 출처 iframe, 비밀번호 칸 #input_cert_pw) → 인증서 [확인] → C05 → C08 → 완료 창 #…isnCmplPopup(승인번호 8-8-8). iframe은 src를 둔 채 0x0으로 접힌다.
-// - 요청은 다른 호스트(teetOrigin, 실제 teet.hometax.go.kr의 대역)로 wqAction.do?actionId=…&screenId=… XHR(POST, 가정)을 실제 순서대로 낸다.
-// - 발급 목록조회(tm3lIdx=4609050100): [조회](~trigger50)를 눌러야 그리드(td data-col_id)에 행이 나온다. 메일 내역(4601030100): [조회](~trigger45).
-//
-// 시험 손잡이(knobs): 비정상 사업자번호 문구, 미리보기 값 바꿔치기, 인증서 창 동작(사람이 [확인]/[취소]), C05 무응답, 목록 반영 지연, 메일 발송중.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -30,7 +12,6 @@ export interface FakeInvoice {
   sumSplCftStr: string;
   sumTxamtStr: string;
   dmnrEmail: string;
-  /** 목록에 보이기 시작하는 시각(ms). */
   visibleAt: number;
 }
 
@@ -45,58 +26,22 @@ export interface FakeRequest {
 }
 
 export interface FakeKnobs {
-  /** 화면을 그리기까지(ms). 실화면 약 5~8초. */
   renderDelayMs: number;
-  /** teet 응답 지연(ms). */
   xhrDelayMs: number;
-  /** 등록번호 → [확인] 뒤 alert 문구. 없으면 "등록되어 있지 않은 사업자등록번호입니다."(가정). */
   registry: Record<string, string>;
-  /** 미리보기 창의 공급받는자 등록번호를 다른 값으로 보인다(값 대조 실패 갈래). */
   tamperPreview: boolean;
-  /** C05(발급 요청)에 응답하지 않는다(서명 뒤 응답 없음 갈래). 발급은 되지 않는다. */
   hangC05: boolean;
-  /** 발급한 건이 목록에 보이기까지(ms). */
   listLagMs: number;
-  /** 메일 발송 상태: done = 발송완료/성공, sending = 발송중/(빈칸). */
   mail: 'done' | 'sending';
-  /**
-   * 등록번호 [확인]의 alert를 클릭 처리 안에서 바로(동기) 띄운다(실화면 가설, 0.1.19 예행 s13 step.timeout). 대화상자가 닫힐 때까지
-   * 그 클릭의 CDP Input.dispatchMouseEvent가 돌아오지 않는다. 결과(번호 형식·칸 열기)는 그 뒤 조회로 채운다.
-   */
   syncConfirmAlert: boolean;
-  /** 칸 앞에 표 머리 글을 `<label for>`로 붙인다(접근성 이름이 title이 아니라 label 글이 된다. 2026-11-13 s12 사람 차례 가설). */
   fieldLabels: boolean;
-  /** 인증서 창(dscert)의 가짜 인증서 비밀번호(시험 값). 금고가 이 값을 넣고 [확인]하면 로그인·서명이 된다. */
   certPassword: string;
-  /** 발급 서명 때만 다른 비밀번호(인증서 갱신으로 기억값이 서명에서 틀린 경우). 없으면 certPassword. */
   signPassword?: string;
-  /**
-   * 비밀번호 칸 모양. password(기본) 또는 보안키보드형 text 가림 칸(-webkit-text-security, 대표 실화면 run-fb6d0e95 가설:
-   * 값이 AX·DOM·Runtime 읽기에 그대로 보인다).
-   */
   certPwType: 'password' | 'masked_text';
-  /** 인증서 목록(소유자명 Cn·용도). 0번 행이 처음에 골라져 있다(jqx DataTable selectRow 0). */
   certs: Array<{ cn: string; policy: string }>;
-  /**
-   * [공동·금융인증서]를 누르면 새 창(안내 팝업)이 뜬다(2026-11-11 실화면: 제목 "크롬,엣지 이용자에 대한 공동인증서 로그인 시 팝업").
-   * 커밋 없는 안내 창이다. 열린 창을 닫았는지 state.noticeClosed로 본다.
-   */
   certNoticePopup: boolean;
-  /**
-   * 메인·폼을 그릴 때마다 공지 레이어가 뜬다(2026-11-13 실화면 headless 탐침: 창 `mf_txppWframe_A_<숫자>` w2popup_window,
-   * "시스템 점검을 위한 서비스 일시 중단 안내", [닫기] INPUT 둘 `<창 id>_wframe_trigger2`·`<창 id>_wframe_btnClose`, X 없음).
-   * 머리말 [로그인]으로 연 로그인 화면에는 없었다. 실화면처럼 덮개(모달 마스크)는 없다(2026-11-13 탐침). 닫힌 횟수는 state.layerClosed.
-   */
   mainNotice: boolean;
-  /**
-   * 실화면 로그인 길(2026-11-13 headless 탐침): 직접 주소 `menuCd=index3`은 메인을 그린다(제목 "국세청 홈택스 - 메인").
-   * 로그인 화면은 머리말 [로그인]을 눌러야 그 자리에서 그려진다. false면 옛 가짜처럼 직접 주소가 로그인 화면이다.
-   */
   realLoginNav: boolean;
-  /**
-   * 홈택스 시스템 점검(2026-11-14 실화면): 모든 주소가 307로 /info_page.html에 간다. 글은 실제 안내와 같은 꼴
-   * "홈택스 시스템 점검 안내 … 중단일시 : <날짜>(요일) 00:00 ~ 06:00".
-   */
   maintenance: boolean;
 }
 
@@ -106,38 +51,26 @@ export interface HometaxFake {
   knobs: FakeKnobs;
   state: {
     loggedIn: boolean;
-    /** 지금 단계(서버가 본 마지막 요청 기준). cert = C04 뒤 인증서 창 차례. */
     stage: 'idle' | 'cert' | 'signed' | 'issued' | 'cancelled';
     invoices: FakeInvoice[];
-    /** 마지막으로 내준 화면과 그 시각. */
     lastScreen: { screen: string; at: number } | null;
-    /** 인증서 창 차례가 시작된 시각(C04). */
     certAt: number;
-    /** 사람 흉내(fx.cert)가 인증서 창에 [확인]·[취소]를 마친 시각(창이 받아 간 때). 없으면 0. */
     certActedAt: number;
-    /** 인증서 창 [확인] 기록. typed = 창의 비밀번호 칸 값이 맞아 통과(금고 입력), human = 시험 손잡이(사람 흉내). */
     certUses: Array<{ mode: 'login' | 'sign'; how: 'typed' | 'human'; cn: string }>;
-    /** 틀린 비밀번호로 [확인]한 횟수. */
     wrongPw: number;
-    /** 안내 팝업을 연 횟수와 닫힌 횟수(창이 닫힌 것을 여는 쪽 화면이 알린다). */
     noticeOpened: number;
     noticeClosed: number;
-    /** 공지 레이어를 띄운 횟수와 닫힌 횟수. */
     layerShown: number;
     layerClosed: number;
   };
-  /** 사람: 로그인을 마쳤다(로그인 화면이 메인으로 넘어간다). */
   login(): void;
-  /** 사람: 인증서 창에서 비밀번호를 넣고 [확인] / [취소]. 인증서 창이 뜬 뒤에 먹는다. */
   cert(action: 'confirm' | 'cancel'): void;
-  /** teet로 간 요청(순서대로). */
   requests(): FakeRequest[];
   close(): Promise<void>;
 }
 
 const W2 = '/websquare/websquare.html';
 const pad = (n: number, w = 2) => String(n).padStart(w, '0');
-/** KST 오늘(YYYY-MM-DD). */
 export function kstToday(now = Date.now()): string {
   const d = new Date(now + 9 * 3600_000);
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
@@ -145,7 +78,6 @@ export function kstToday(now = Date.now()): string {
 
 type Screen = 'main' | 'login' | 'issue' | 'list' | 'mail';
 
-/** 주소 → 화면. 로그인이 필요한 화면을 로그아웃 상태로 열면 로그인 화면(가정: 실화면 미확인). */
 function screenOf(q: URLSearchParams, loggedIn: boolean, realLoginNav = false): Screen {
   const menu = q.get('menuCd');
   const m3 = q.get('tm3lIdx');
@@ -175,7 +107,6 @@ body{font-family:sans-serif;margin:0}.w2window{position:absolute;top:40px;left:4
 <script>${CLIENT}</script></body></html>`;
 }
 
-// ---- 브라우저 쪽 스크립트(한 파일에 화면 넷) ----
 const CLIENT = String.raw`
 (() => {
   const P = 'mf_txppWframe_';
@@ -521,11 +452,6 @@ const CLIENT = String.raw`
 })();
 `;
 
-// 인증서 창(MagicLine4 ML4Web 흉내, 2026-11-13 공개 정적 파일 UI/ML4Web_Main.html·ML4Web_Draw.js·MLjquidatatable.js에서 읽은 id·구조).
-// 실화면처럼 같은 출처 iframe(hometax.go.kr/MagicLine4XML)이다. 엔진은 CDP 프레임(이름 dscert)으로 보고, 금고는 iframe#dscert의 하위 프레임에서 비밀번호 칸을 찾는다.
-// - 저장 위치 a#stg_web·a#stg_hdd, 목록 div#dataTable 안 tr#row{N}dataTable(role=row, 0번 행이 골라진 채 시작), td role=gridcell 4열
-// - 비밀번호 input#input_cert_pw(title "인증서 비밀번호 입력"), [확인] button#btn_confirm_iframe, [취소] button#btn_cancel, 경고 #popup_alert·#alert_msg·button#btn_alert_confirm
-// - [확인]: 칸 값이 가짜 비밀번호와 같으면 통과(서버에 기록), 다르면 경고. 사람 흉내(fx.cert())는 칸 값과 상관없이 통과.
 const CHILD = (main: string, certs: Array<{ cn: string; policy: string }>, browserFirst = false, pwType: 'password' | 'masked_text' = 'password') => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>인증서 선택창</title>
 <style>td.MLjqui-grid-cell-selected{background:#cde}#popup_alert{display:none}</style></head><body>
 <div id="form1"><div id="selectCertContainer"><div id="ML_window" role="dialog"><div id="ML_container">
@@ -585,7 +511,6 @@ const t = setInterval(() => fetch(MAIN + '/_fx/cert').then((r) => r.json()).then
 }).catch(() => {}), 150);
 </script></body></html>`;
 
-/** 가짜 홈택스 두 호스트(화면·teet)를 띄운다. */
 export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: boolean; supplier?: Partial<typeof SUPPLIER> } = {}): Promise<HometaxFake> {
   const knobs: FakeKnobs = {
     renderDelayMs: 1500, xhrDelayMs: 120, registry: { '2148651233': '정상적인 사업자번호입니다.' }, tamperPreview: false, hangC05: false, listLagMs: 0, mail: 'done', fieldLabels: false, syncConfirmAlert: false,
@@ -641,7 +566,6 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
     }
     if (u.pathname === '/MagicLine4XML/ML4Web/Child.html') return send(res, 200, 'text/html; charset=utf-8', CHILD(origin, knobs.certs, knobs.realLoginNav, knobs.certPwType));
     if (u.pathname === '/_fx/certpw') {
-      // 비밀번호 대조만(값은 기록하지 않는다).
       const ok = u.searchParams.get('pw') === (u.searchParams.get('mode') === 'sign' && knobs.signPassword ? knobs.signPassword : knobs.certPassword);
       if (!ok) state.wrongPw++;
       return json(res, { ok });

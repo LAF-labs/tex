@@ -1,5 +1,3 @@
-// 공동인증서(NPKI) 탐지(D05 §6 허용 동작, A-28): 열거, signCert.der 바이트만, signPri.key 열기·stat 0회(파일 접근 감사),
-// 링크·하드링크·바꿔치기·크기·개수 상한, 로그에 경로·CA·이름 없음, control 포트 npki.list.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -25,7 +23,6 @@ async function tmpRoot(): Promise<string> {
   return fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-npki-'));
 }
 
-/** <root>/<ca>/USER/<cn>/{signCert.der, signPri.key?} */
 async function cert(root: string, ca: string, cn: string, o: { key?: boolean; bytes?: Buffer; user?: string; certName?: string } = {}) {
   const dir = path.join(root, ca, o.user ?? 'USER', cn);
   await fs.mkdir(dir, { recursive: true });
@@ -35,7 +32,6 @@ async function cert(root: string, ca: string, cn: string, o: { key?: boolean; by
   return { dir, bytes };
 }
 
-/** 모든 파일 접근을 남기는 fs(감사). */
 function auditFs(base: NpkiFs = nodeNpkiFs) {
   const calls: Array<{ op: 'lstat' | 'readdir' | 'open'; p: string }> = [];
   const fs: NpkiFs = {
@@ -54,10 +50,8 @@ function noKeyAccess(calls: Array<{ op: string; p: string }>) {
 
 const roots = (dir: string, kind: NpkiRoot['kind'] = 'locallow'): NpkiRoot[] => [{ kind, dir }];
 
-// Windows는 개발자 모드·관리자가 아니면 심볼릭 링크를 만들 수 없다(EPERM). 디렉터리 링크는 정션으로 만든다(재분석 지점이라 lstat·Dirent에서 링크로 보인다).
 const dirLink = process.platform === 'win32' ? 'junction' : 'dir';
 
-/** 파일 심볼릭 링크. Windows에서 권한이 없으면 false(정션은 파일에 못 쓴다). */
 async function fileLink(target: string, p: string): Promise<boolean> {
   try {
     await fs.symlink(target, p, 'file');
@@ -91,9 +85,9 @@ describe('NPKI 열거·읽기(D05 §6)', () => {
     try {
       const a = await cert(root, 'yessign', 'cn=TEST홍길동()0001234567890,ou=RA센터,ou=XX은행,ou=개인,o=yessign,c=kr');
       const b = await cert(root, 'CrossCert', 'cn=TEST가나다컴퍼니()0009876543210', { key: false });
-      const c = await cert(root, 'SignKorea', 'cn=TEST이름', { user: 'user', certName: 'SIGNCERT.DER' }); // 대소문자 섞임
-      await fs.mkdir(path.join(root, 'KICA', 'USER', 'cn=빈폴더'), { recursive: true }); // 인증서 없음
-      await fs.mkdir(path.join(root, 'TradeSign'), { recursive: true }); // USER 없음
+      const c = await cert(root, 'SignKorea', 'cn=TEST이름', { user: 'user', certName: 'SIGNCERT.DER' });
+      await fs.mkdir(path.join(root, 'KICA', 'USER', 'cn=빈폴더'), { recursive: true });
+      await fs.mkdir(path.join(root, 'TradeSign'), { recursive: true });
       await fs.writeFile(path.join(root, 'stray.txt'), 'x');
       const audit = auditFs();
       const r = await scanNpki({ roots: roots(root), fs: audit.fs });
@@ -113,10 +107,8 @@ describe('NPKI 열거·읽기(D05 §6)', () => {
       assert.equal(new Set(r.certs.map((x) => x.id)).size, 3);
       noKeyAccess(audit.calls);
       assert.equal(audit.calls.filter((x) => x.op === 'open').length, 3);
-      // 다시 불러도 id가 같다
       const again = await scanNpki({ roots: roots(root) });
       assert.deepEqual(again.certs.map((x) => x.id), r.certs.map((x) => x.id));
-      // 결과 어디에도 개인키 내용이 없다
       assert.ok(!JSON.stringify(r, (_k, v) => (v instanceof Uint8Array ? Buffer.from(v).toString('latin1') : v)).includes(KEY_SENTINEL));
     } finally {
       await fs.rm(root, { recursive: true, force: true });
@@ -144,13 +136,10 @@ describe('NPKI 열거·읽기(D05 §6)', () => {
     const root = await tmpRoot();
     const outside = await tmpRoot();
     try {
-      // signCert.der가 개인키를 가리키는 링크(낮은 무결성 프로세스가 심을 수 있다)
       const d1 = path.join(root, 'yessign', 'USER', 'cn=TEST링크');
       await fs.mkdir(d1, { recursive: true });
       await fs.writeFile(path.join(d1, 'signPri.key'), KEY_SENTINEL);
-      // Windows 표준 사용자는 파일 링크를 만들 수 없다. 그때는 이 경우만 빠지고 폴더 링크 셋은 그대로 본다.
       const madeFileLink = await fileLink(path.join(d1, 'signPri.key'), path.join(d1, 'signCert.der'));
-      // 밖을 가리키는 cn·USER·CA 링크
       const ext = await cert(outside, 'yessign', 'cn=TEST밖');
       await fs.symlink(ext.dir, path.join(root, 'yessign', 'USER', 'cn=TEST밖링크'), dirLink);
       await fs.mkdir(path.join(root, 'CrossCert'), { recursive: true });
@@ -185,7 +174,6 @@ describe('NPKI 열거·읽기(D05 §6)', () => {
       assert.deepEqual(r.skipped, { linked: 1, not_file: 1, empty: 1, too_large: 1 });
       assert.equal(r.certs.length, 1);
       assert.deepEqual(Buffer.from(r.certs[0]!.certDer), edge.bytes, '8192B는 받는다');
-      // 하드링크는 열었지만(signCert.der 이름) 내용을 돌려주지 않는다. 0바이트·초과는 열지도 않는다.
       assert.deepEqual(audit.calls.filter((x) => x.op === 'open').map((x) => path.basename(path.dirname(x.p))).sort(), ['cn=TEST경계', 'cn=TEST하드링크']);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
@@ -198,10 +186,8 @@ describe('NPKI 열거·읽기(D05 §6)', () => {
       const a = await cert(root, 'yessign', 'cn=TEST바꿔치기');
       const other = path.join(root, 'other.der');
       await fs.writeFile(other, der());
-      // open 시점에 다른 파일이 열리는 경우(rename 경쟁 모사)
       const swap: NpkiFs = { ...nodeNpkiFs, open: (p, f) => nodeNpkiFs.open(p.endsWith('signCert.der') ? other : p, f) };
       assert.deepEqual(await scanNpki({ roots: roots(root), fs: swap }), { certs: [], skipped: { changed: 1 } });
-      // lstat 뒤 커진 파일
       const grow: NpkiFs = {
         ...nodeNpkiFs,
         open: async (p, f) => {
@@ -220,7 +206,6 @@ describe('NPKI 열거·읽기(D05 §6)', () => {
     const root = await tmpRoot();
     try {
       await cert(root, 'yessign', 'cn=TEST큰ID');
-      // 열거 때와 연 뒤의 파일 ID를 고정한다. 둘은 Number로 바꾸면 같은 값이 된다.
       const idAt = (ino: bigint): NpkiFs => ({
         ...nodeNpkiFs,
         lstat: async (p) => {
@@ -254,7 +239,6 @@ describe('NPKI 열거·읽기(D05 §6)', () => {
       assert.equal(r.certs.length, NPKI_LIMITS.certsPerCa);
       assert.equal(r.certs.at(-1)!.dir.endsWith(`cn=TEST${String(NPKI_LIMITS.certsPerCa - 1).padStart(3, '0')}`), true, '정렬 순서로 앞에서부터');
       assert.deepEqual(r.skipped, { bad_name: 2 });
-      // 전체 상한: 위치 세 개에 64개씩
       const r3 = await scanNpki({ roots: [{ kind: 'home', dir: root }, { kind: 'documents', dir: root }, { kind: 'preferences', dir: root }] });
       assert.equal(r3.certs.length, NPKI_LIMITS.certsPerCa, '같은 폴더는 한 번만(id 중복 제거)');
     } finally {

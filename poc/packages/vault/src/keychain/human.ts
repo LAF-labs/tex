@@ -1,9 +1,3 @@
-// 사람 비밀(세션 결박) 저장소(D05 §2, ADR-026 결정 2·3·4·7, ADR-020 결정 2).
-// - 칸 단위 항목: portal/<scope>/pw(포털 아이디는 비밀이 아니라 두지 않는다, D05 §2·ADR-035). 각 항목은 슬롯 KEK로 AES-256-GCM(AAD = 항목 이름).
-// - 슬롯 KEK(32B 무작위)는 기기 결박 래핑(kek/<slot>/device: TPM → DPAPI)과, Hello가 있으면 Hello 사본(kek/<slot>/hello)으로 둔다.
-// - 발급 1회에 요청된 칸만 복호한다. 금고가 잠기면 메모리의 슬롯 KEK를 지운다.
-// - 인증서 비밀번호: cert/<scope>/pw(대표 지시 2026-11-13, ADR-020 결정 2 고침). 이 모듈은 STORABLE_KINDS 밖을 받지 않는다.
-// - 보안카드는 지원하지 않는다(대표 결정 2026-11-19). 옛 판이 남긴 securitycard/<scope>/<row> 슬롯은 기동 때 한 번 지운다(purgeRetiredCard).
 import { randomBytes } from 'node:crypto';
 import type { EventLog } from '@sax/platform';
 import {
@@ -19,7 +13,6 @@ import { SessionLock, type SessionLockOptions } from './session.ts';
 export const HUMAN_SECRET_MAX_BYTES = 256;
 
 const INDEX_ITEM = 'index/human';
-/** 엄격 모드 설정(값 없음, 1바이트). 기기 결박 사본을 지운 상태가 재시작 뒤에도 이어지게 키체인에 둔다. */
 const STRICT_ITEM = 'settings/strict';
 
 /**
@@ -60,13 +53,10 @@ export class HumanSecretVault {
   private readonly b: KeychainBackend;
   private readonly log: EventLog;
   readonly lock: SessionLock;
-  /** 열린 동안만 들고 있는 슬롯 KEK. 잠기면 0으로 덮고 지운다. */
   private readonly keks = new Map<string, Uint8Array>();
   private indexP: Promise<Map<string, SlotIndex>> | null = null;
   private readonly readyP: Promise<void>;
-  /** 계정 갱신 토큰(ADR-038 (f)). 같은 키체인·같은 잠금을 쓰지만 사이트 비밀 슬롯·색인과는 따로다. */
   readonly account: AccountRefreshStore;
-  /** 계좌 자동조회 인증서 비밀번호 기억(사장님이 고른 때만, codef.seal만 읽는다) */
   readonly codef: CodefPasswordStore;
 
   constructor(opts: HumanVaultOptions) {
@@ -74,24 +64,20 @@ export class HumanSecretVault {
     this.log = opts.log;
     this.lock = new SessionLock(opts);
     this.lock.onLock = (reason) => this.wipeKeks(reason);
-    // 기동 직후 엄격 모드 설정을 읽는다. 다 읽을 때까지 잠금은 닫힌 채(startup)라 세션·유휴 보고가 먼저 와도 열리지 않는다.
     this.lock.hold();
     this.readyP = this.b.items.get(STRICT_ITEM).then(
       (raw) => {
         if (raw?.[0] === 1) this.lock.setStrict(true);
       },
       () => {
-        // 읽기 실패: 엄격 모드로 본다(fail-closed). 기기 사본이 있어도 Hello로만 연다.
         this.lock.setStrict(true);
       },
     ).finally(() => this.lock.release());
     this.account = new AccountRefreshStore({ backend: this.b, lock: this.lock, ready: () => this.readyP, log: this.log });
     this.codef = new CodefPasswordStore({ backend: this.b, lock: this.lock, ready: () => this.readyP, log: this.log });
-    // 기동 때 색인을 한 번 읽는다: 옛 판의 보안카드 슬롯이 있으면 이때 지운다(purgeRetiredCard). 읽기 실패는 다음 연산이 다시 읽는다.
     this.index().catch(() => {});
   }
 
-  /** 모든 공개 비동기 연산 앞에서 기다린다(엄격 모드 설정을 읽은 뒤에 판정). */
   ready(): Promise<void> {
     return this.readyP;
   }
@@ -105,8 +91,6 @@ export class HumanSecretVault {
     if (this.keks.size) this.log.event('vault.locked', { reason, slots: this.keks.size });
     this.keks.clear();
   }
-
-  // ───────────── 색인(값 없음: 슬롯·칸 이름·등급·suspect만) ─────────────
 
   private index(): Promise<Map<string, SlotIndex>> {
     this.indexP ??= (async () => {
@@ -127,8 +111,6 @@ export class HumanSecretVault {
       if (retired.length) await this.purgeRetiredCard(m, retired);
       return m;
     })();
-    // 읽기 실패(키체인 잠김·권한 등 일시 오류)를 캐시하지 않는다. 다음 연산에서 다시 읽는다.
-    // (항목이 없을 때는 getSecret이 null로 끝난다: @napi-rs/keyring 2.1.2, macOS 실측. Windows 실측 필요.)
     const p = this.indexP;
     p.catch(() => {
       if (this.indexP === p) this.indexP = null;
@@ -140,10 +122,6 @@ export class HumanSecretVault {
     await this.b.items.set(INDEX_ITEM, new TextEncoder().encode(JSON.stringify([...m.values()])));
   }
 
-  /**
-   * 옛 판이 남긴 보안카드 슬롯을 지운다(대표 결정 2026-11-19). 칸 전부·KEK 사본·동의 레코드를 지운 뒤 색인을 그 슬롯 없이 다시 쓴다.
-   * 색인을 다시 쓴 뒤로는 찾을 것이 없어 한 번만 돈다. 지우다 실패하면 색인을 그대로 두고 다음 기동에 다시 한다. 로그는 칸 수만 남긴다.
-   */
   private async purgeRetiredCard(m: Map<string, SlotIndex>, retired: ReadonlyArray<{ scope: ProfileScope; cells: number }>): Promise<void> {
     try {
       for (const { scope } of retired) {
@@ -158,12 +136,6 @@ export class HumanSecretVault {
     }
   }
 
-  // ───────────── 저장(등록 창 T-06 전용) ─────────────
-
-  /**
-   * 한 슬롯을 통째로 다시 등록한다(옛 칸·KEK는 지운다). entries의 바이트는 부르는 쪽이 넘긴 뒤 여기서 0으로 덮는다.
-   * 기기 결박 래핑이 안 되면(네이티브 헬퍼 없음) 저장하지 않는다. 약한 등급으로 조용히 내려가지 않는다.
-   */
   async store(kind: StorableKind, scope: ProfileScope, entries: Array<{ field?: PortalField; bytes: Uint8Array }>, notice: { version: string }): Promise<ConsentRecord> {
     const wipe = () => entries.forEach((e) => e.bytes?.fill?.(0));
     try {
@@ -174,20 +146,15 @@ export class HumanSecretVault {
       for (const e of entries) if (!(e.bytes instanceof Uint8Array) || e.bytes.length === 0 || e.bytes.length > HUMAN_SECRET_MAX_BYTES) throw new Error('bad_value');
       if (kind === 'portal_password' && !names.some((n) => n.endsWith('/pw'))) throw new Error('portal_pw_required');
       await this.readyP;
-      // 금고가 열려 있을 때만 저장한다(잠금 사유 무관, readOne과 같은 판정). 유휴·최대 시간 잠금 뒤는 main이 vault.unlock(Hello)
-      // 또는 Windows 잠금·해제로 먼저 연다. 엄격 모드는 Hello 확인 뒤 300초 안에만 저장된다.
       const v = this.lock.check();
       if (!v.open) throw new Error('vault_locked');
 
       const slot = slotName(kind, scope);
-      // 다시 등록: 옛 슬롯을 지우기 전에 암호문 그대로 떠 둔다. 새 슬롯을 다 쓰기 전에 실패하면 되돌린다(평문은 다루지 않는다).
       const backup = await this.snapshotSlot(kind, scope);
       const kek = new Uint8Array(randomBytes(32));
       try {
-        // forget도 되돌리기 범위 안이다(색인 저장 실패 등으로 던져도 옛 슬롯을 되돌린다).
         await this.forget(kind, scope, 'replace');
         const helloOk = await this.b.hello.available().catch(() => false);
-        // 엄격 모드는 무프롬프트 래핑을 두지 않는다(Hello 사본만). Hello가 없으면 엄격 모드로 저장할 수 없다.
         if (this.lock.strict && !helloOk) throw new Error('vault.hello_unavailable');
         if (!this.lock.strict) await this.b.items.set(`kek/${slot}/device`, await this.b.wrapper.wrap(kek, slot));
         if (helloOk) await this.b.items.set(`kek/${slot}/hello`, await this.b.hello.wrap(kek, slot));
@@ -207,7 +174,6 @@ export class HumanSecretVault {
         this.log.event('vault.secret_stored', { kind, items: entries.length, tier: this.tier, hello: helloOk });
         return consent;
       } catch (e) {
-        // 반쯤 쓴 슬롯을 남기지 않고, 옛 슬롯이 있었으면 그대로 되돌린다.
         await this.forget(kind, scope, 'replace').catch(() => {});
         await this.restoreSlot(kind, scope, backup).catch(() => this.log.event('vault.restore_failed', { kind }));
         throw e;
@@ -219,7 +185,6 @@ export class HumanSecretVault {
     }
   }
 
-  /** 슬롯의 키체인 항목(암호문·래핑된 KEK·동의 레코드)과 색인 항목을 그대로 떠 둔다. */
   private async snapshotSlot(kind: StorableKind, scope: ProfileScope): Promise<{ info: SlotIndex; items: Array<[string, Uint8Array]> } | null> {
     const slot = slotName(kind, scope);
     const info = (await this.index()).get(slot);
@@ -240,9 +205,6 @@ export class HumanSecretVault {
     await this.saveIndex(idx);
   }
 
-  // ───────────── 꺼내기(타이피스트 전용, 칸 하나) ─────────────
-
-  /** 칸 하나를 복호한다. 금고가 닫혔거나 suspect면 꺼내지 않는다. 받은 쪽이 다 쓴 뒤 0으로 덮는다. */
   async readOne(kind: StorableKind, scope: ProfileScope, cell: { field?: PortalField }): Promise<ReadResult> {
     let name: string;
     try {
@@ -270,11 +232,9 @@ export class HumanSecretVault {
     }
   }
 
-  /** 열린 금고에서 슬롯 KEK. 엄격 모드면 Hello 확인 때 이미 들어와 있어야 한다(기기 사본이 없다). */
   private async slotKek(slot: string, info: SlotIndex): Promise<{ kek: Uint8Array } | { reason: 'vault_locked' | 'kek_unavailable' }> {
     const cached = this.keks.get(slot);
     if (cached) return { kek: cached };
-    // 엄격 모드는 기기 사본이 없다: Hello로 열어야 한다(닫힌 것과 같다).
     if (this.lock.strict) return { reason: 'vault_locked' };
     const wrapped = await this.b.items.get(`kek/${slot}/device`);
     if (!wrapped) {
@@ -288,7 +248,6 @@ export class HumanSecretVault {
       this.log.event('vault.kek_unwrap_failed', { tier: info.tier, why: 'unwrap' });
       return { reason: 'kek_unavailable' };
     }
-    // 그사이 잠겼으면 들고 있지 않는다.
     if (!this.lock.check().open) {
       kek.fill(0);
       return { reason: 'vault_locked' };
@@ -297,10 +256,6 @@ export class HumanSecretVault {
     return { kek };
   }
 
-  /**
-   * Hello로 연다(유휴 잠금 뒤·최대 시간 뒤·엄격 모드 발급). 저장된 슬롯의 Hello 사본을 한 번의 프롬프트로 연다.
-   * Phase 1 저장 슬롯은 대개 1~2개(인증서·포털)이므로 첫 사본으로 사람 확인을 받고, 나머지는 같은 확인 안에서 연다.
-   */
   async unlockWithHello(prompt: HelloPrompt): Promise<{ ok: boolean; presence: boolean; reason?: 'hello_unavailable' | 'hello_cancelled' | 'no_stored_secret' | 'session_locked' }> {
     await this.readyP;
     const v = this.lock.check();
@@ -320,7 +275,6 @@ export class HumanSecretVault {
       }
       opened.push([slot, kek]);
     }
-    // presence는 실제로 Hello 프롬프트를 거쳐 사본을 연 때만이다. 색인에만 있고 사본이 없으면 사람 확인이 없었다.
     if (!opened.length) {
       this.log.event('vault.item_corrupt', { item: 'hello' });
       return { ok: false, presence: false, reason: 'no_stored_secret' };
@@ -337,27 +291,20 @@ export class HumanSecretVault {
     return { ok: true, presence: true };
   }
 
-  /**
-   * 엄격 모드 전환(설정 S-02). 켜면 기기 결박 사본(무프롬프트)을 지운다: Hello 사본이 없는 슬롯이 있으면 거부한다.
-   * 끄면 기기 사본을 다시 만든다: 열린 금고(메모리의 KEK)가 있어야 한다.
-   */
   async setStrict(on: boolean): Promise<{ ok: boolean; reason?: 'hello_unavailable' | 'unlock_required' }> {
     await this.readyP;
     const idx = await this.index();
     if (on) {
       if ([...idx.values()].some((s) => !s.hello)) return { ok: false, reason: 'hello_unavailable' };
-      // 설정을 먼저 남기고 기기 사본을 지운다(중간에 끊겨도 재시작 뒤 엄격 모드: Hello로만 연다).
       await this.b.items.set(STRICT_ITEM, Uint8Array.of(1));
       this.lock.setStrict(true);
       for (const s of idx.values()) await this.b.items.delete(`kek/${slotName(s.kind, s.scope)}/device`);
       return { ok: true };
     }
     for (const s of idx.values()) if (!this.keks.has(slotName(s.kind, s.scope))) return { ok: false, reason: 'unlock_required' };
-    // 기기 사본을 다 만든 뒤에 설정을 끈다(중간에 끊기면 엄격 모드로 남는다).
     for (const s of idx.values()) {
       const slot = slotName(s.kind, s.scope);
       const kek = this.keks.get(slot);
-      // 그사이 잠겨 KEK를 지웠으면 멈춘다(설정은 엄격 모드로 남는다).
       if (!kek) return { ok: false, reason: 'unlock_required' };
       await this.b.items.set(`kek/${slot}/device`, await this.b.wrapper.wrap(kek, slot));
     }
@@ -365,8 +312,6 @@ export class HumanSecretVault {
     this.lock.setStrict(false);
     return { ok: true };
   }
-
-  // ───────────── 목록·삭제·suspect ─────────────
 
   async has(kind: StorableKind, scope: ProfileScope): Promise<boolean> {
     return (await this.index()).has(slotName(kind, scope));
@@ -393,14 +338,11 @@ export class HumanSecretVault {
     return JSON.parse(Buffer.from(raw).toString('utf8')) as ConsentRecord;
   }
 
-  /** 슬롯 삭제(설정 "저장된 비밀"의 개별 삭제, 또는 다시 등록 직전). 칸·KEK·동의 레코드를 모두 지운다. */
   async forget(kind: StorableKind, scope: ProfileScope, why: 'user' | 'replace' = 'user'): Promise<boolean> {
     const slot = slotName(kind, scope);
     const idx = await this.index();
     const info = idx.get(slot);
-    // 색인에 없어도 이름이 정해진 항목은 지운다(반쯤 쓴 슬롯 정리).
     const names = new Set(info?.cells ?? []);
-    // 'id'는 ADR-035 이전 PoC가 남겼을 수 있는 항목을 함께 지운다.
     for (const f of ['id', 'pw']) names.add(`${slot}/${f}`);
     for (const n of [...names, `kek/${slot}/device`, `kek/${slot}/hello`, `consent/${slot}`]) await this.b.items.delete(n);
     this.keks.get(slot)?.fill(0);
@@ -413,12 +355,10 @@ export class HumanSecretVault {
     return !!info;
   }
 
-  /** 포털의 명시적 인증 실패 1회 뒤(ADR-026 결정 7). 다시 등록하기 전에는 꺼내지 않는다. */
   async markSuspect(kind: StorableKind, scope: ProfileScope): Promise<boolean> {
     const idx = await this.index();
     const info = idx.get(slotName(kind, scope));
     if (!info || info.suspect) return false;
-    // 키체인에 저장한 뒤에야 suspect다(첫 저장이 실패하면 메모리에만 남아 재시도가 성공처럼 끝나고, 재시작하면 같은 값을 다시 친다)
     info.suspect = true;
     try {
       await this.saveIndex(idx);

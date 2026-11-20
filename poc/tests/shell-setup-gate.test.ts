@@ -1,5 +1,3 @@
-// 발급에 필요한 등록이 빠졌을 때(0.1.5 실사용: 사업자를 건너뛴 채 세금계산서 카드가 "멈췄어요(profile_missing)"):
-// 카드 전에 막는 검사(setupMissing·setupText·setupGate 배선), 건너뛴 단계 다시 열기(OnboardingFlow.reopen), 멈춤 문구에 내부 코드 없음.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
@@ -12,7 +10,6 @@ const NOW = () => new Date('2026-11-10T01:00:00.000Z');
 const walk = async (f: OnboardingFlow, as: OnbAnswer[]) => {
   for (const a of as) await f.answer(a);
 };
-/** 사업자·인증을 둘 다 건너뛰고 끝낸 온보딩 */
 async function skippedBoth() {
   const profiles: OnbProfile[] = [];
   const ports = Object.assign(new MockOnboardingPorts({ saveProfile: async (p) => void profiles.push(p) }), { profiles });
@@ -23,8 +20,6 @@ async function skippedBoth() {
     { step: 'auth', choice: 'later' },
     { step: 'first', choice: 'later' },
   ]);
-  // 지금은 인증을 [나중에]로 넘겨도 공동인증서로 둔다(대표 지시 2026-11-14). 인증까지 빠진 상태는
-  // 그 전 설치에서 저장된 기록에만 있으므로, 그 기록 모양(인증 없음·할 일에 auth)으로 다시 연다.
   assert.deepEqual(flow.state.skipped, ['biz']);
   const legacy = { ...flow.state, auth: null, certId: null, skipped: ['biz', 'auth'] } as unknown as typeof flow.state;
   return { ports, flow: new OnboardingFlow(ports, legacy, NOW) };
@@ -53,7 +48,6 @@ describe('카드 전 검사: 무엇이 빠졌는지', () => {
     assert.match(setupText('invoice', ['biz', 'auth']), /사업자 정보와 발급 인증/);
     assert.match(setupText('cert', ['auth']), /^증명서를 떼려면 .*인증/);
     assert.deepEqual(SETUP_LABEL, { biz: '사업자 등록 마치기', auth: '발급 인증 고르기', chrome: 'Chrome 설치하기', security: '보안 프로그램 설치하기' });
-    // 보안 프로그램(B4): 홈택스가 설치 안내로 멈추기 전에 앱이 말한다
     assert.equal(setupText('invoice', ['security']), '세금계산서를 발급하려면 먼저 홈택스 공동인증서 프로그램(MagicLine4NX)을 설치하거나 켜 주세요.');
     assert.match(setupText('invoice', ['chrome', 'security']), /Chrome을 설치해 주세요\..*MagicLine4NX\)도 켜 주세요\.$/);
   });
@@ -67,11 +61,9 @@ describe('카드 전 검사: 무엇이 빠졌는지', () => {
     assert.match(src, /const chromeReady = opts\.chromeReady \?\? \(\(\) => (?:embedded \|\| )?findInstalledChrome\(\) !== null\);/);
     assert.match(src, /new ShellRuns\(host, \{ [^}]*chromeReady, /);
     assert.match(src, /profile === 'business' && !chromeReady\(\) \? \[\{ id: 'chrome', label: SETUP_LABEL\.chrome, view: 'chrome' as const \}\]/);
-    // 민원증명(PR #272)도 같은 홈택스 로그인이라 Chrome·보안 프로그램이 필요하다. 떼지 않는 증명서(cert 없음)·숨긴 서류(hidden)는 설치를 시키지 않는다.
     assert.match(src, /const needsHometax = parsed\.intent !== 'cert' \|\| \(!!parsed\.cert && !certDocByCode\(parsed\.cert\)\?\.hidden\);/);
     assert.match(src, /const needsChrome = needsHometax && !chromeReady\(\);/);
     assert.match(src, /const missing: SetupItem\[\] = \[\.\.\.setupMissing\(profiles\(\)\.business\), \.\.\.\(needsChrome \? \(\['chrome'\] as const\) : \[\]\), \.\.\.\(needsSecurity \? \(\['security'\] as const\) : \[\]\)\];/);
-    // 보안 프로그램(B4): 공동인증서 사업자만, 판의 할 일·첫 발급 요청이 같은 점검
     assert.match(src, /const securityMissing = \(\) => profile === 'business' && profiles\(\)\.business\.auth === SIGN_LABEL\.cert && securityBlocks\(securityNow\(\)\);/);
     assert.match(src, /const needsSecurity = needsHometax && securityMissing\(\);/);
     const check = src.slice(src.indexOf("'chrome.check': async"), src.indexOf("'onboarding.reopen': async"));
@@ -84,7 +76,6 @@ describe('카드 전 검사: 무엇이 빠졌는지', () => {
   it('배선: 세 경로(제품·시연 모델·시연 정규식) 모두 카드(interpret) 전에 setupGate, 렌더러는 kind setup → [사업자 등록 마치기] → onboarding.reopen', () => {
     const src = fs.readFileSync(new URL('../apps/desktop/src/shell-app.ts', import.meta.url), 'utf8');
     const send = src.slice(src.indexOf("'request.send': async"), src.indexOf("'draft.update':"));
-    // 네 번째: 민원증명 이름이면 모델·게이트웨이 없이 바로(PR #272). 숨긴 서류는 setupGate를 거치지 않는다
     assert.equal((send.match(/setupGate\(/g) ?? []).length, 4);
     assert.match(send, /if \(profile === 'business' && local\.cert\) return \(certDocByCode\(local\.cert\)\?\.hidden \? null : setupGate\(local\)\) \?\? finishReply\(interpret\(/);
     assert.match(send, /const gate = setupGate\(to\.parsed\);\s*if \(gate\) return \{ \.\.\.gate, via, note: to\.note, sent \};\s*return finishReply\(interpret\(/);
@@ -99,7 +90,6 @@ describe('카드 전 검사: 무엇이 빠졌는지', () => {
     const shell = fs.readFileSync(new URL('../apps/desktop/static/shell/shell.js', import.meta.url), 'utf8');
     const views = fs.readFileSync(new URL('../apps/desktop/static/shell/shell-views.js', import.meta.url), 'utf8');
     assert.equal((shell.match(/'run\.prepare'/g) ?? []).length, 1);
-    // 세금계산서 [홈택스에서 준비]와 민원증명 [홈택스에서 떼기](PR #272) 두 자리뿐
     assert.equal((views.match(/act\.prepare\(/g) ?? []).length, 2);
     assert.match(views, /btn\('홈택스에서 준비', \(\) => act\.prepare\(run\.id\)/);
     assert.match(views, /btn\('홈택스에서 떼기', \(\) => act\.prepare\(run\.id\)/);
@@ -132,7 +122,6 @@ describe('건너뛴 사업자·인증 다시 열기(reopen)', () => {
     assert.equal(ports.profiles.at(-1)?.signMethod, 'simple_auth');
     assert.ok(ports.profiles.at(-1)?.bizNo);
     assert.deepEqual(onboardingTodos(flow.state).map((t) => t.id), []);
-    // 저장된 상태도 다시 읽힌다
     assert.ok(parseOnbState(JSON.parse(JSON.stringify(flow.state))));
   });
   it('인증만: O-03 → 금융인증서도 바로 끝(① 위임 없음), 보안카드는 고를 수 없다(대표 결정 2026-11-19)', async () => {
@@ -160,9 +149,7 @@ describe('건너뛴 사업자·인증 다시 열기(reopen)', () => {
     const { flow: f2 } = await skippedBoth();
     await f2.reopen('auth');
     await f2.answer({ step: 'auth', choice: 'simple' });
-    // biz는 아직 건너뜀 → 프로필 저장 없이 done
     assert.equal(f2.state.step, 'done');
-    // 이미 고른 인증은 바꾸려고 다시 열 수 있다(내 사업장 [바꾸기], tests/shell-profile-edit.test.ts). 사업자는 빠졌을 때만.
     assert.deepEqual((await f2.reopen('auth')).state.redoPrev, { auth: 'simple', certId: null });
     assert.equal(parseOnbState({ ...f2.state, redo: 'x' }), null);
     assert.equal(parseOnbState({ ...f2.state, redoFrom: -1 }), null);
@@ -171,7 +158,6 @@ describe('건너뛴 사업자·인증 다시 열기(reopen)', () => {
 
 describe('멈춤 문구에 내부 코드가 보이지 않는다', () => {
   it('엔진이 던지는 RunEnd 코드는 표에 사람 말로 있고, 모르는 코드는 일반 문구', () => {
-    // browser.ts: 실행 창을 열지 못한 이유(Chrome 없음 chrome.not_installed 등, customer-dist)
     const engine = ['runs.ts', 'h01/runner.ts', 'policy.ts', 'ir/runner.ts', 'browser.ts']
       .map((f) => new URL(`../packages/engine/src/${f}`, import.meta.url))
       .filter((u) => fs.existsSync(u))
@@ -182,12 +168,10 @@ describe('멈춤 문구에 내부 코드가 보이지 않는다', () => {
     const missing = [...codes].filter((c) => !NOTE[c]);
     assert.deepEqual(missing, [], '표에 없는 엔진 코드');
     for (const [k, v] of Object.entries(NOTE)) assert.ok(!/[a-z]+[._][a-z]/.test(v!), `${k}: 문구에 코드 모양이 있다 → ${v}`);
-    // 민원증명 실행 전용 문구(CERT_NOTE)도 같은 검사
     assert.ok(Object.keys(CERT_NOTE).length > 0);
     for (const [k, v] of Object.entries(CERT_NOTE)) assert.ok(!/[a-z]+[._][a-z]/.test(v), `${k}: 민원증명 문구에 코드 모양이 있다 → ${v}`);
     assert.ok(!/[a-z_]+\.[a-z_]+|\(/.test(UNKNOWN_STOP_NOTE));
     const src = fs.readFileSync(new URL('../apps/desktop/src/shell-runs.ts', import.meta.url), 'utf8');
-    // 모르는 코드는 UNKNOWN_STOP_NOTE(코드 글자를 화면에 내지 않는다). 민원증명 실행이면 CERT_NOTE를 먼저 본다
     assert.match(src, /const note = \(code\?: string, r\?: RunView\) => \(code && \(\(r\?\.cert && CERT_NOTE\[code\]\) \|\| NOTE\[code\]\)\) \|\| UNKNOWN_STOP_NOTE;/);
     assert.doesNotMatch(src, /멈췄어요\(\$\{code\}\)/);
   });

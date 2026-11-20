@@ -1,5 +1,3 @@
-// PostgreSQL TLS 고정 앵커(팀장 결정 2026-11-06, D09 §9.1): 앵커 없음이면 거절, 앵커 있음이면 연결. 검증을 끄는 설정은 없다.
-// 가짜 PG 서버가 SSLRequest에 'S'로 답하고 TLS를 연다. 연결되면 시작 메시지에 ErrorResponse('tls-ok')로 끊는다(클라이언트는 그 메시지로 실패한다).
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { generateKeyPairSync, randomBytes, X509Certificate } from 'node:crypto';
@@ -57,17 +55,9 @@ describe('DATABASE_URL → TLS 설정(문자열의 ssl 매개변수는 빼고 ss
   });
 });
 
-/**
- * 시험용 PKI(openssl CLI): 루트 둘(앵커·다른 루트), localhost용·다른 이름용 서버 인증서(체인 포함).
- * openssl 판마다 기본값이 다르다: LibreSSL(/usr/bin)은 EC 서명 SHA-1·곡선 명시 매개변수·SKI·AKI 없음, OpenSSL 1.1.1은 확장 중복(아래).
- * 키·설정·다이제스트·키 식별자·keyUsage·일련번호를 모두 명시해 OpenSSL 1.1·3·4, LibreSSL에서 같은 체인을 만든다.
- */
 function pki(dir: string) {
   const run = (...a: string[]) => execFileSync('openssl', a, { cwd: dir, stdio: 'pipe' });
-  // 키는 Node가 만든다(이름 붙은 곡선 P-256). LibreSSL `-newkey ec`는 곡선을 명시 매개변수로 써 Node가 거부한다.
   const key = (name: string) => fs.writeFileSync(path.join(dir, `${name}.key`), generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ type: 'pkcs8', format: 'pem' }));
-  // 설정 파일을 직접 준다. OpenSSL 1.1.1(macOS 러너의 Homebrew openssl)은 `-addext`에 기본 설정(v3_ca)의 basicConstraints·SKI를
-  // 한 번 더 붙여 확장이 중복되고, Node(OpenSSL 3)는 그 루트를 발급자로 쓰지 않는다("unable to verify the first certificate").
   const cnf = (name: string, cn: string, ext: string) =>
     fs.writeFileSync(path.join(dir, `${name}.cnf`), `[req]\ndistinguished_name=dn\nprompt=no\n[dn]\nCN=${cn}\n[v3]\n${ext}`);
   const root = (name: string) => {
@@ -90,7 +80,6 @@ function pki(dir: string) {
   return { anchor: r('anchor.pem'), other: r('other.pem'), srv: { key: r('srv.key'), cert: r('srv.pem') + r('anchor.pem') }, wrong: { key: r('wrong.key'), cert: r('wrong.pem') + r('anchor.pem') } };
 }
 
-/** 가짜 PG: SSLRequest → 'S' → TLS. 시작 메시지가 오면 ErrorResponse('tls-ok') */
 async function fakePg(id: { key: string; cert: string }): Promise<{ port: number; secured: () => number; close: () => void }> {
   let secured = 0;
   const msg = (text: string) => {
@@ -103,7 +92,7 @@ async function fakePg(id: { key: string; cert: string }): Promise<{ port: number
   const server = net.createServer((sock) => {
     sock.on('error', () => {});
     sock.once('data', (b) => {
-      if (b.length < 8 || b.readInt32BE(4) !== 80877103) return void sock.destroy(); // TLS 없는 시작은 받지 않는다
+      if (b.length < 8 || b.readInt32BE(4) !== 80877103) return void sock.destroy();
       sock.write('S');
       const t = new tls.TLSSocket(sock, { isServer: true, key: id.key, cert: id.cert });
       t.on('error', () => {});

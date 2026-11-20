@@ -1,10 +1,3 @@
-// main이 금고·엔진을 띄우고 잇는다(D01 §2.1). main↔엔진은 두 통로다(ADR-021).
-// - 중계 통로(엔진 parentPort): main 질의·렌더러 명령·실행 명령, 엔진 → main 실행 이벤트.
-// - 게이트 포트(MessageChannelMain): 게이트 요청·닫힘과 InDoubt 증언 요청·철회(엔진 → main), LocalApproval·LocalAttestation(main → 엔진)만.
-//   answerGate()·answerAttest() 둘로만 쓴다.
-// - auth 포트(MessageChannelMain, 세 번째 전달 포트): 엔진 → 게이트웨이 요청 헤더(gateway-auth.ts). 엔진 init 포트 순서는 [중계, 게이트, auth]다.
-//   답하는 쪽은 setGatewayAuth로 붙인다. 붙기 전에는 account.signed_out으로 답한다(엔진은 decide.unavailable, 대화는 연결 안 됨).
-// 렌더러 IPC 처리기는 answerGate·answerAttest를 부르지 않는다(tests/h01-guards.test.ts가 소스로 확인한다).
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
 import { MessageChannelMain, utilityProcess, type MessagePortMain, type UtilityProcess } from 'electron';
@@ -16,55 +9,30 @@ import { authPortResponder, type GwAuthResult } from './gateway-auth.ts';
 import { isIssueLockMessage, issueLockResponder, type IssueLockResult } from './issue-lock-host.ts';
 import type { SecretInputBind as OneShotInputBind } from './secret-labels.ts';
 import type { CodefNeeded } from './bank-auto.ts';
-/** 1회용 결속 또는 계좌 자동조회 비밀번호 창 결속(금고 protocol SecretInputBind의 main 쪽 부분) */
 type SecretInputBind = OneShotInputBind | CodefNeeded | { mode: 'store'; kind: 'cert_password'; scope: 'business' | 'personal'; notice: { version: string } };
 
 const require = createRequire(import.meta.url);
 
-/** main 프로세스 안에서 도는 금고(시험 정책·메모리 키, fixture 시연·e2e 전용). 앱 금고 entry는 설정을 받지 않는다. */
 export interface InlineVault {
-  /** secretInput 포트는 결속값(I-1)과 함께 붙인다. 금고는 그 값으로 한 번만 받는다. */
   attachPort(kind: 'engine' | 'control' | 'secretInput' | 'browser', port: PortLike, bind?: SecretInputBind): void;
   shutdown(): Promise<void>;
 }
 
 interface EngineHostOptions {
-  /** 'process'면 utilityProcess 금고(앱 폴더·OS 키체인). */
   vault: 'process' | InlineVault;
-  /** 엔진 앱 폴더. 없으면 기본 위치. */
   root?: string;
   portal: EnginePortal;
   log: EventLog;
-  /**
-   * 앱 판(app.getVersion(), semver). 엔진이 레지스트리 항목 minAppVersion과 대조한다(엔진 #243, D09 §8).
-   * 없으면 minAppVersion이 있는 패키지는 받지도 돌리지도 않는다(엔진 fail-closed).
-   */
   appVersion?: string;
-  /**
-   * 앱 안 브라우저(embedded-browser.ts): 금고에 'browser' 포트를 준다. 금고는 설치 Chrome을 띄우지 않고 main이 흉내 내는
-   * 브라우저 수준 CDP에 중계를 붙인다. 포트 메시지는 'browser' 이벤트로 나가고 browserPost로 들어간다. false면 옛 길(설치 Chrome).
-   */
   embeddedBrowser?: boolean;
 }
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
 
-/**
- * 게이트 답의 결과. verdict가 판정의 출처다.
- * - engine: 엔진이 보낸 판정(gate.answer.result).
- * - not_sent: 보내기 전에 막았다(엔진·금고가 이미 끝남). 엔진은 근거를 받지 않았다.
- * - unknown: 보낸 뒤 판정을 받지 못했다(엔진·금고 종료, 같은 게이트 다시 보냄). 엔진이 받았는지 모른다.
- */
 export type GateAnswerResult = { ok: boolean; code?: string; verdict: 'engine' | 'not_sent' | 'unknown' };
-/** 증언 판정(attest.answer.result). code는 엔진 거부 코드(AttestRejectCode)이거나 보내지 못한 이유다. */
 export type AttestAnswerResult = { ok: boolean; code?: AttestRejectCode | string; verdict: 'engine' | 'not_sent' | 'unknown' };
 export type AttestWithdrawn = { runId: string; attestReqId: string; reason: AttestWithdrawReason };
 
-/**
- * 이벤트: 'run'(엔진 실행 이벤트 data) · 'gate'(GateRequest) · 'gate-closed'({runId, reqId, reason})
- * · 'attest'(AttestRequest) · 'attest-withdrawn'(AttestWithdrawn) · 'exit'(who, code)
- * · 'vault-event'(name, data: 금고 control 포트의 {t:'ev'}, I-2) · 'browser'(금고 'browser' 포트 메시지). 끝난 뒤의 호출은 바로 실패한다.
- */
 export class EngineHost extends EventEmitter {
   readonly ready: Promise<void>;
   private readonly opts: EngineHostOptions;
@@ -80,7 +48,6 @@ export class EngineHost extends EventEmitter {
   private readonly answers = new Map<string, (r: GateAnswerResult) => void>();
   private readonly attestAnswers = new Map<string, (r: AttestAnswerResult) => void>();
   private nextId = 1;
-  /** 엔진·금고가 끝났으면 그 이유. 이후 호출은 기다리지 않고 바로 실패한다. */
   private dead: string | null = null;
   private failReady: ((e: Error) => void) | null = null;
 
@@ -95,7 +62,6 @@ export class EngineHost extends EventEmitter {
     this.controlPort = ctl.port2;
     this.controlPort.on('message', (e) => {
       const m = e.data as { t?: string; name?: unknown; data?: unknown };
-      // 금고가 main에 알리는 것(secret.needed 등). 판단은 받는 쪽(shell-app)이 main 내장 표로 한다.
       if (m?.t === 'ev' && typeof m.name === 'string') this.emit('vault-event', m.name, m.data);
       else this.onReply(e.data);
     });
@@ -104,14 +70,12 @@ export class EngineHost extends EventEmitter {
     this.gatePort.on('message', (e) => this.onGate(e.data as GatePortMessage));
     this.gatePort.start();
     this.authPort = auth.port2;
-    // 받은 순서대로 하나씩(invalidate가 다음 gw.auth보다 먼저 토큰을 지운다).
     const onAuth = authPortResponder(
       () => this.gatewayAuth,
       (r) => {
         if (!this.dead) this.authPort.postMessage(r);
       },
     );
-    // 발급 잠금(lock.*, ADR-048 결정 7)은 같은 포트로 오지만 gw.auth 줄과 따로 답한다(잠금 호출이 게이트웨이 인증을 막지 않게).
     const onLock = issueLockResponder(
       () => this.issueLock,
       (r) => {
@@ -145,9 +109,7 @@ export class EngineHost extends EventEmitter {
         else this.onReply(m);
       });
     });
-    // 기다리는 쪽이 없을 때 엔진 fatal이 처리되지 않은 거부로 남지 않게 한다(부르는 쪽은 ready를 await한다).
     this.ready.catch((e: Error) => opts.log.event('main.engine_fatal', { code: e.message.slice(0, 60).replace(/[^A-Za-z0-9_.:-]/g, '_') }));
-    // appVersion은 엔진 #243의 EngineInit 칸이다(그 전 엔진은 모르는 칸을 무시한다)
     const init: EngineInit & { appVersion?: string } = { t: 'init', root: opts.root, portal: opts.portal, ...(opts.appVersion ? { appVersion: opts.appVersion } : {}) };
     this.engine.postMessage(init, [relay.port2, gate.port1, auth.port1]);
     this.engine.on('exit', (c) => this.exited('engine', c));
@@ -156,10 +118,7 @@ export class EngineHost extends EventEmitter {
   private exited(who: 'engine' | 'vault', code: number): void {
     this.opts.log.event(`main.${who}_exit`, { code });
     this.dead ??= `${who}_exit`;
-    // ready 전에 끝났으면 기다리는 쪽이 영영 멈추지 않게 실패로 끝낸다(이미 정해졌으면 아무 일도 없다).
     this.failReady?.(new Error(`${who}_exit`));
-    // 금고가 끝나면 엔진도 끝낸다. 이 호스트는 이미 호출을 막았으니(dead) 엔진이 남아 있으면 열린 게이트·실행을 아무도 멈추지 못한다.
-    // 엔진이 끝나면 'exit'('engine')이 다시 와서 실행을 끝낸다(ShellRuns).
     if (who === 'vault') this.engine.kill();
     for (const p of this.pending.values()) p.reject(new Error(`${who}_exit`));
     this.pending.clear();
@@ -170,12 +129,10 @@ export class EngineHost extends EventEmitter {
     this.emit('exit', who, code);
   }
 
-  /** auth 포트에 답하는 쪽(shell-app이 계정을 만든 뒤 GatewayAuthHost.handle을 붙인다). */
   setGatewayAuth(handler: (m: unknown) => Promise<GwAuthResult | null>): void {
     this.gatewayAuth = handler;
   }
 
-  /** auth 포트의 lock.*에 답하는 쪽(shell-app이 IssueLockHost.handle을 붙인다). 붙기 전의 요청은 issue.lock_unavailable로 답한다(엔진은 승인을 열지 않는다). */
   setIssueLock(handler: (m: unknown) => Promise<IssueLockResult | null>): void {
     this.issueLock = handler;
   }
@@ -216,32 +173,24 @@ export class EngineHost extends EventEmitter {
     });
   }
 
-  /** 중계 통로 RPC(질의·명령). 승인·증언을 여기로 보내면 엔진이 거부한다. */
   async rpc(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
     await this.ready;
     return this.call('engine', method, params);
   }
 
-  /** 금고 제어 포트(run.begin 등). */
   control(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
     return this.call('control', method, params);
   }
 
-  /** 승인 바가 발급한 근거를 게이트 포트로 보낸다. 엔진의 판정(gate.answer.result)을 돌려준다. */
   answerGate(approval: LocalApproval): Promise<GateAnswerResult> {
     if (this.dead) return Promise.resolve({ ok: false, code: this.dead, verdict: 'not_sent' });
     return new Promise((resolve) => {
-      // 같은 게이트로 두 번 보내면 앞의 기다림은 풀어 준다(엔진은 두 번째를 거부한다). 앞 것의 판정은 모른다.
       this.answers.get(approval.reqId)?.({ ok: false, code: 'superseded', verdict: 'unknown' });
       this.answers.set(approval.reqId, resolve);
       this.gatePort.postMessage({ t: 'gate.answer', approval } satisfies GatePortMessage);
     });
   }
 
-  /**
-   * 증언 바가 발급한 LocalAttestation을 게이트 포트로 보낸다(ADR-021 결정 5). 엔진의 판정(attest.answer.result)을 돌려준다.
-   * note는 로컬 저널에만 남는다(텔레메트리 금지). 중계 통로로는 보내지 않는다(엔진이 security.gate_answer_from_relay로 거부).
-   */
   answerAttest(attestation: LocalAttestation, note?: string): Promise<AttestAnswerResult> {
     if (this.dead) return Promise.resolve({ ok: false, code: this.dead, verdict: 'not_sent' });
     return new Promise((resolve) => {
@@ -251,9 +200,6 @@ export class EngineHost extends EventEmitter {
     });
   }
 
-  // ---- 비밀 입력 포트: secretInputPort() 아래로는 게이트 포트를 쓰지 않는다(tests/h01-guards.test.ts가 이 경계를 본다) ----
-
-  /** 비밀 입력 창용 금고 직결 포트(I-1). 결속값과 함께 넘긴다. main은 포트를 넘기기만 하고 내용을 읽지 않는다. */
   secretInputPort(bind: SecretInputBind): MessagePortMain {
     const ch = new MessageChannelMain();
     if (this.vaultProc) this.vaultProc.postMessage({ ports: ['secretInput'], bind }, [ch.port1]);
@@ -261,12 +207,10 @@ export class EngineHost extends EventEmitter {
     return ch.port2;
   }
 
-  /** 앱 안 브라우저 → 금고('browser' 포트, CDP 프레임·닫힘). */
   browserPost(m: unknown): void {
     if (!this.dead) this.browserPort?.postMessage(m);
   }
 
-  /** 엔진(과 금고)을 끝내고 엔진이 실제로 끝날 때까지(최대 3초) 기다린다. 그 뒤에야 앱 폴더를 지워도 DB·WAL이 열려 있지 않다. */
   async shutdown(): Promise<void> {
     const gone = this.dead ? Promise.resolve() : new Promise<void>((r) => this.engine.once('exit', () => r()));
     this.dead ??= 'shutdown';

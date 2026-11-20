@@ -1,5 +1,3 @@
-// 연결된 폰 수신(apps/desktop/src/phone-link.ts): 페어링 결과 보관 → 라이브 우편함 IK 세션으로 사진·현금 받기 → 꺼져 있던 동안의 HTTPS 큐 비우기.
-// 릴레이는 @sax/remote MemoryRelay(라이브)와 메모리 큐(services/relay 큐 의미: seq, ack = seq까지 삭제, 번들 슬롯)다.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
@@ -36,7 +34,6 @@ class MemOutbox implements OutboxStore {
   }
 }
 
-/** 릴레이 큐 하나(우편함당). */
 class MemQueue {
   envs: { seq: number; env: OuterEnv }[] = [];
   seq = 0;
@@ -61,7 +58,6 @@ class MemQueue {
   }
 }
 
-/** 엔진 대역: receipt.phoneHas·phoneStore·cash.phonePut(@sax/bundle PhoneIntake 응답 모양) */
 function fakeEngine() {
   const receipts = new Map<string, string>();
   const cash: { day: string; amount: number }[] = [];
@@ -82,14 +78,11 @@ function fakeEngine() {
 }
 
 const asRelayLink = (l: Link): RelayLink => Object.assign(l, { onEnv() {}, closeCode: null }) as unknown as RelayLink;
-/** 시험용 봉인: 앞에 표시를 붙인 b64(실제는 safeStorage). 파일에 토큰 원문 b64가 그대로 남지 않는지 본다 */
 const seal: TokenSeal = { seal: (p) => `sealed:${b64(p.map((x) => x ^ 0x5a))}`, open: (s) => fromB64(s.slice(7)).map((x) => x ^ 0x5a) };
 
 let dirs: string[] = [];
 let links: PhoneLink[] = [];
 afterEach(async () => {
-  // 폴더를 지우기 전에 링크를 멈추고 늦은 저장(멈춘 뒤 끝나는 lastSeenAt 등)까지 기다린다.
-  // 기다리지 않으면 지우는 사이 저장이 임시 파일을 새로 만들어 Windows에서 ENOTEMPTY로 떨어졌다.
   for (const l of links) {
     l.stop();
     await l.idle();
@@ -143,7 +136,6 @@ describe('PC 폰 수신(phone-link)', () => {
     const link = x.mk();
     await link.start();
     await link.add(x.pc);
-    // 파일: 폰 공개키·우편함 ID는 있고 토큰 원문은 없다
     const raw = await fs.readFile(x.file, 'utf8');
     assert.ok(!raw.includes(b64(x.pc.tokRead)) && !raw.includes(b64(x.pc.tokWrite)), '토큰 원문 없음');
     if (process.platform !== 'win32') assert.equal((await fs.stat(x.file)).mode & 0o777, 0o600, 'POSIX 권한(Windows는 사용자 폴더 ACL)');
@@ -151,14 +143,12 @@ describe('PC 폰 수신(phone-link)', () => {
     assert.equal(rec.mbxId, b64(x.pc.mbxId));
     assert.equal(rec.name, x.w.phone.keys.name);
     assert.deepEqual(unpackTok(seal.open(rec.tok)), { read: x.pc.tokRead, write: x.pc.tokWrite });
-    // 큐 번들(Q_D, Vd 서명)이 슬롯에 올라갔다
     await until(() => x.queueOf(x.pc.mbxId).bundle !== null);
     const bundle = verifyQBundle(x.queueOf(x.pc.mbxId).bundle!, x.w.desk.keys.vd.publicKey, { now: Date.now() });
     assert.ok(bundle && toHex(bundle.Qx) === toHex(x.qd.publicKey));
 
-    // 폰: 라이브 우편함 → IK 세션 → 보관함(사진 1 + 현금 1) 보내기
     await until(() => x.relay.observed.length >= 0 && link.list().length === 1);
-    await new Promise((r) => setTimeout(r, 20)); // PC가 우편함에 먼저 붙을 시간
+    await new Promise((r) => setTimeout(r, 20));
     const phLink = await x.relay.joinMailbox(fromB64(x.phone.mbxId), { read: fromB64(x.phone.tokRead), write: fromB64(x.phone.tokWrite) }, 'mobile');
     const sess = await openMobileSession(phLink, {
       pairId: x.phone.pairId, noise: x.w.phone.keys.noise, desktopStatic: x.phone.desktopStatic, nextTimestamp: monotonicClock(0),
@@ -177,7 +167,6 @@ describe('PC 폰 수신(phone-link)', () => {
     assert.deepEqual(x.eng.cash, [{ day: '2026-11-15', amount: 120_000 }]);
     await until(() => link.list()[0]!.online);
     assert.ok(link.list()[0]!.lastSeenAt);
-    // IK 타임스탬프 최고값이 파일에 남는다(재전송 방지)
     assert.ok(JSON.parse(await fs.readFile(x.file, 'utf8')).phones[0].ikTsMax > 0);
     sess.channel.close();
     phLink.close();
@@ -190,8 +179,6 @@ describe('PC 폰 수신(phone-link)', () => {
     await first.start();
     await first.add(x.pc);
     await until(() => x.queueOf(x.pc.mbxId).bundle !== null);
-    // 번들 유효 기간이 파일에 남은 뒤 끈다(올린 직후 끄면 다음 기동이 다시 올린다)
-    // 2ms마다 열면 Windows에서 rename을 계속 막으므로 50ms 간격으로 본다
     for (let i = 0; ; i++) {
       let ok = false;
       try {
@@ -204,7 +191,6 @@ describe('PC 폰 수신(phone-link)', () => {
       await new Promise((r) => setTimeout(r, 50));
     }
     first.stop();
-    // 폰: PC 없음 → 큐로 보낸다
     const q = x.queueOf(fromB64(x.phone.mbxId));
     const bundle = verifyQBundle(q.bundle!, x.w.desk.keys.vd.publicKey, { now: Date.now() })!;
     const outbox = new MemOutbox();
@@ -215,11 +201,10 @@ describe('PC 폰 수신(phone-link)', () => {
     let seq = 0;
     await queueOutbox(outbox, { queue: q, pairId: x.phone.pairId, vm: x.w.phone.vm, bundle, mbxEpoch: x.phone.mbxEpoch, nextSeq: () => ++seq });
     assert.ok(q.envs.length > 0);
-    // 같은 봉투를 한 번 더(릴레이 재전송 흉내) → 두 번째는 seq가 같아 버린다
     q.envs.push({ seq: ++q.seq, env: q.envs[0]!.env });
 
     const second = x.mk(false);
-    await second.start(); // 파일에서 복원 → 바로 드레인
+    await second.start();
     await until(() => x.eng.receipts.has(offer.msgId) && x.eng.cash.length === 1);
     assert.equal(x.eng.receipts.get(offer.msgId), toHex(sha256Hash(jpeg)));
     await until(() => q.envs.length === 0);
@@ -247,7 +232,6 @@ describe('PC 폰 수신(phone-link)', () => {
     assert.equal(saved.trash.length, 1);
     assert.ok(!JSON.stringify(saved.trash).includes(b64(x.pc.tokWrite)), '토큰은 봉인된 채');
     link.stop();
-    // 다음에 켜면 다시 지우고, 지웠으면 남기지 않는다
     fail = false;
     const again = x.mk(false, { deleteMailbox: del });
     await again.start();
@@ -268,7 +252,6 @@ describe('PC 폰 수신(phone-link)', () => {
     assert.equal(link.list().length, 0);
     assert.deepEqual(JSON.parse(await fs.readFile(x.file, 'utf8')).phones, []);
     assert.equal(await link.remove('p2'), false);
-    // 새 우편함으로 다시 연결하면 옛 우편함을 지운다
     x.deleted.length = 0;
     await link.add({ ...x.pc, pairId: 'p3' });
     const mbx2 = new Uint8Array(32).fill(9);
@@ -300,7 +283,6 @@ describe('PC 폰 수신(phone-link)', () => {
         joins++;
         throw Object.assign(new Error('down'), { code: 'relay.down' });
       },
-      // 큐 폴링(60초)은 멈춰 두고 재시도 대기만 바로 끝낸다
       sleep: (ms, signal) => (ms === 60_000 ? new Promise((r) => signal.addEventListener('abort', () => r(), { once: true })) : (waits.push(ms), new Promise((r) => setTimeout(r, 1)))),
     });
     await link.start();
@@ -326,7 +308,6 @@ describe('PC 폰 수신(phone-link)', () => {
         links.push(l);
         return l;
       },
-      // 릴레이가 안 될 때 재시도 대기는 시간으로 끝나지 않는다(오래 잠든 것처럼): wake만 깨운다
       sleep: (ms, signal) => (ms === 60_000 ? hold(signal) : (waits.push(ms), fail ? hold(signal) : new Promise((r) => setTimeout(r, 1)))),
     });
     await link.start();
@@ -335,7 +316,6 @@ describe('PC 폰 수신(phone-link)', () => {
     link.wake('unlock');
     await until(() => joins === 2 && waits.length === 2);
     assert.deepEqual(waits, [1000, 1000], 'wake가 끊은 대기는 백오프를 늘리지 않는다');
-    // 연결된 뒤 잠자기에서 깨어나면 열린 연결을 닫고 다시 붙는다
     fail = false;
     link.wake('unlock');
     await until(() => links.length === 1);
@@ -355,7 +335,6 @@ describe('PC 폰 수신(phone-link)', () => {
     let epochs = 1;
     let allow = true;
     const body = () => makeShareKeyBody({ signPub: ed25519Public(deriveShareSignSeed(rk)), keys: Array.from({ length: epochs }, (_, e) => deriveShareKey(rk, e)) });
-    /** PC 한 대와 폰 한 대. give = PC가 열쇠를 줄 길이 있는가, caps = 폰이 hello에서 알리는 기능 */
     const setup = async (give: boolean, caps: string[]) => {
       const x = await world();
       const asked: string[] = [];
@@ -367,7 +346,7 @@ describe('PC 폰 수신(phone-link)', () => {
       await link.start();
       await link.add(x.pc);
       await until(() => link.list().length === 1);
-      await new Promise((r) => setTimeout(r, 20)); // PC가 우편함에 먼저 붙을 시간
+      await new Promise((r) => setTimeout(r, 20));
       const phLink = await x.relay.joinMailbox(fromB64(x.phone.mbxId), { read: fromB64(x.phone.tokRead), write: fromB64(x.phone.tokWrite) }, 'mobile');
       const sess = await openMobileSession(phLink, {
         pairId: x.phone.pairId, noise: x.w.phone.keys.noise, desktopStatic: x.phone.desktopStatic, nextTimestamp: monotonicClock(0),
@@ -382,18 +361,15 @@ describe('PC 폰 수신(phone-link)', () => {
       };
       return { x, link, sess, asked, logs, end };
     };
-    // 받겠다고 알리지 않은 폰(옛 앱)에는 묻지도 보내지도 않는다. PC는 줄 수 있다고 알린다
     const oldApp = await setup(true, [CAP.receipt, CAP.cash]);
     assert.ok(oldApp.sess.peerHello.capabilities.includes(CAP.share));
     assert.equal(await oldApp.sess.channel.recv(150), null);
     assert.deepEqual([oldApp.asked, await oldApp.link.pushShareKeys(), oldApp.logs], [[], 0, []]);
     oldApp.end();
-    // 열쇠를 줄 길이 없는 PC(옵션 없음)는 share.v1을 알리지 않고 보내지도 않는다
     const plain = await setup(false, [CAP.share]);
     assert.ok(!plain.sess.peerHello.capabilities.includes(CAP.share));
     assert.equal(await plain.sess.channel.recv(150), null);
     plain.end();
-    // 받겠다고 알린 폰: 세션을 열자마자 온다
     const a = await setup(true, [CAP.receipt, CAP.cash, CAP.share]);
     const first = await a.sess.channel.recv(2000);
     assert.equal(first?.type, 'share.key');
@@ -401,12 +377,10 @@ describe('PC 폰 수신(phone-link)', () => {
     assert.ok(have && have.keys.length === 1);
     assert.deepEqual(have.keys[0], deriveShareKey(rk, 0));
     assert.deepEqual(a.asked, [a.x.pc.phone.deviceId]);
-    // 세대가 올랐다(기기를 끊었다): 연결된 폰에 새 묶음을 다시 준다
     epochs = 2;
     assert.equal(await a.link.pushShareKeys(), 1);
     const second = await a.sess.channel.recv(2000);
     assert.equal(readShareKeyBody(second!.body as ShareKeyBody, have)?.keys.length, 2);
-    // 이 폰이 목록에 없다고 하면(null) 보내지 않는다. 세션은 그대로 산다
     allow = false;
     assert.equal(await a.link.pushShareKeys(), 0);
     assert.equal(await a.sess.channel.recv(150), null);
@@ -418,7 +392,6 @@ describe('PC 폰 수신(phone-link)', () => {
   });
 
   it('폰이 세션을 닫고 나갔다 다시 와도(60초마다 동기화) 새 세션을 받는다. 닫기 없이 사라졌다 와도 같다(2026-11-18 실기기: 첫 세션만 "PC 켜짐")', async () => {
-    // 실제 릴레이 의미: 폰이 나가도 PC 우편함 연결은 그대로다(예전 MemoryRelay는 양쪽을 닫아 이 버그가 시험에 안 보였다)
     const x = await world({ mailboxKeepsPeer: true });
     const logs: string[] = [];
     const link = x.mk(true, { log: (n, d) => void (n === 'main.phone_live' && logs.push(String(d?.step))) });
@@ -434,14 +407,11 @@ describe('PC 폰 수신(phone-link)', () => {
       });
       return { l, s };
     };
-    // 1) 폰 pc.ts처럼: 열고 → close 봉투로 닫고 나간다
     const a = await open();
     assert.ok(a.s, '첫 세션');
     a.s.channel.close();
-    // 2) 다음 동기화: 같은 우편함에 다시 와 새 IK
     const b = await open();
     assert.ok(b.s, '닫고 나간 뒤 다시 온 폰의 세션');
-    // 3) 닫기 없이 사라졌다(앱이 꺼지거나 망이 끊김): 서버의 peer offline으로 세션을 끝낸다(승인 요청을 푸시로 깨우게, 실기기 11/19)
     b.l.close();
     await until(() => logs.includes('peer_gone'));
     const c = await open();
@@ -455,7 +425,6 @@ describe('PC 폰 수신(phone-link)', () => {
   it('지키기 전에 연결을 더해도 바로 우편함을 지킨다(2026-11-18 실기기: 기록만 저장되고 폰에 "PC 꺼짐")', async () => {
     const x = await world();
     const link = x.mk(true);
-    // start() 없이 add(): 앱을 로그아웃 상태로 켜고 같은 실행에서 로그인한 뒤 바로 [폰 연결]을 끝낸 순서
     await link.add(x.pc);
     assert.equal(link.list().length, 1);
     await new Promise((r) => setTimeout(r, 20));
@@ -472,7 +441,6 @@ describe('PC 폰 수신(phone-link)', () => {
 
   it('같은 실행에서 로그아웃 → 다시 로그인하면 저장된 폰을 다시 지킨다(전에는 앱을 다시 켤 때까지 폰에 "PC 꺼짐")', async () => {
     const x = await world();
-    // shell-app watchLink와 같은 순서: 로그인 → 수신 켜기, 로그아웃 → 멈추고 버리기, 다시 로그인 → 다시 켜기
     let running: PhoneLink | null = null;
     let signedIn = true;
     const onAccount = async () => {
@@ -483,21 +451,18 @@ describe('PC 폰 수신(phone-link)', () => {
     };
     await onAccount();
     await running!.add(x.pc);
-    // 로그아웃(account.signOut): 멈추고 버린다. 기록 파일은 남는다
     running!.stop();
     await running!.idle();
     running = null;
     signedIn = false;
     await onAccount();
     assert.equal(running, null, '로그아웃 중에는 켜지 않는다');
-    // 다시 로그인: 저장된 폰을 다시 읽어 우편함을 지킨다
     signedIn = true;
     await onAccount();
     const again = running as PhoneLink | null;
     assert.ok(again, '다시 로그인하면 켠다');
     assert.equal(again.list().length, 1);
     assert.equal(again.list()[0]!.pairId, x.pc.pairId);
-    // 폰이 우편함에 붙으면 다시 켜진 PC가 IK 세션을 받는다("PC 켜짐")
     await new Promise((r) => setTimeout(r, 20));
     const phLink = await x.relay.joinMailbox(fromB64(x.phone.mbxId), { read: fromB64(x.phone.tokRead), write: fromB64(x.phone.tokWrite) }, 'mobile');
     const sess = await openMobileSession(phLink, {
@@ -507,7 +472,6 @@ describe('PC 폰 수신(phone-link)', () => {
     assert.ok(sess, '다시 로그인한 PC와 세션이 열린다');
     sess.channel.close();
     phLink.close();
-    // 이미 켜져 있으면 또 만들지 않는다
     await onAccount();
     assert.equal(running, again);
     assert.equal(shouldStartPhones({ signedIn: true, running: true }), false);

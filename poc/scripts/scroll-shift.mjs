@@ -1,22 +1,4 @@
 #!/usr/bin/env node
-// 스크롤 밀림 재기: 녹화(영상 또는 프레임 PNG 폴더)를 프레임으로 잘라, 사건(새 말, 키보드) 앞 프레임과 비교해
-// 대화 내용이 "가장 많이 밀린 거리(px)"를 재고 프레임을 한 장(sheet.png)에 늘어놓는다. 멈춘 뒤 사진 한 장으로는 지나가는 튐이 안 보여서 만들었다.
-// 의존성은 ffmpeg 하나(brew install ffmpeg). 같은 파일이 taxoff-mobile scripts/scroll-shift.mjs에도 있다(폰 갤러리·시뮬레이터 녹화용).
-//
-// 쓰기:
-//   node scroll-shift.mjs --video rec.mov --crop 0,120,1179,1900 --scale 3 --event 0.5 --out out/kb
-//   node scroll-shift.mjs --frames out/frames --fps 60 --crop 300,60,900,700 --scale 2 --out out/new-reply
-// --crop x,y,w,h   잴 곳(원본 픽셀). 대화 목록만 잡는다(머리 바·입력 줄 빼고).
-// --scale n        원본 픽셀 / 화면 점(px). 결과는 화면 점으로 낸다(레티나 2, 아이폰 3).
-// --event s|#n     사건 직전 시각(초) 또는 프레임 번호(#12). 그 프레임이 기준이다. 기본 0.
-// --until s       이 시각(초)까지만 잰다(뒤에 단추 누르기처럼 일부러 내리는 장면이 이어질 때)
-// --marker x,y     사건 순간 녹화 도구가 빨갛게 바꾸는 점(원본 픽셀, 잰 곳 밖). 주면 --event 대신 그 점이 빨개지기 바로 앞 프레임이 기준이다(쪽 시계와 녹화 시계가 어긋나도 맞는다)
-// --span s         기준 프레임부터 몇 초를 잴지(--marker와 같이 쓴다, 기본 1)
-// --label 이름      sheet와 JSON에 적을 이름
-// 결과: <out>/shift.json { maxShiftPx, lost, perFrame[] }, <out>/sheet.png(프레임 + 밀린 거리 막대와 숫자)
-//
-// 재는 법: 각 프레임의 줄별 평균 밝기(행 윤곽)를 기준 프레임 윤곽과 위아래로 밀어 맞춰 가장 잘 맞는 거리를 고른다(글자 줄 무늬가 지문 역할).
-// 겹치는 부분이 20% 아래로 줄면(화면 하나 넘게 튐) 바로 앞 프레임과의 거리를 더해 이어 잰다. 그래도 못 맞추면 lost로 적는다(화면 대부분이 바뀔 만큼 튐, 거리는 지어내지 않는다).
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -42,19 +24,16 @@ const input = video ? ['-i', video] : ['-framerate', String(fps), '-pattern_type
 const probe = spawnSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,r_frame_rate', '-of', 'json', video ?? fs.readdirSync(framesDir).filter((f) => f.endsWith('.png')).sort().map((f) => path.join(framesDir, f))[0]], { encoding: 'utf8' });
 const st = JSON.parse(probe.stdout).streams[0];
 const [cx, cy, cw0, ch0] = (opt('crop') ?? `0,0,${st.width},${st.height}`).split(',').map(Number);
-// 영상은 짝수 폭으로 저장될 수 있다(393 → 392). 잰 곳을 영상 안으로 줄이지 않으면 줄이 비껴 읽힌다.
 const cw = Math.min(cw0, st.width - cx);
 const ch = Math.min(ch0, st.height - cy);
-// 영상은 고정 프레임으로 다시 뽑는다(시뮬레이터·화면 녹화는 멈춘 화면을 건너뛰는 가변 프레임이라 시각과 번호가 어긋난다)
 const rate = video ? Number(opt('fps', 30)) : fps;
 const resample = video ? `fps=${rate},` : '';
 
-// 분석용: 잰 곳만 회색 원본 크기
 const gray = spawnSync('ffmpeg', ['-v', 'error', ...input, '-vf', `${resample}crop=${cw}:${ch}:${cx}:${cy},format=gray`, '-f', 'rawvideo', '-'], { maxBuffer: 2 ** 31 });
 if (gray.status !== 0) throw new Error(gray.stderr.toString());
 const until = opt('until');
 let n = Math.min(Math.floor(gray.stdout.length / (cw * ch)), until ? Math.round(Number(until) * rate) + 1 : Infinity);
-const B = 32; // 줄마다 가로를 32칸으로 나눈 밝기(왼쪽 말풍선, 오른쪽 말풍선, 글자 길이가 지문이 된다)
+const B = 32;
 const profile = (f) => {
   const p = new Float32Array(ch * B);
   const base = f * cw * ch;
@@ -72,7 +51,6 @@ const profile = (f) => {
 };
 const profs = Array.from({ length: n }, (_, i) => profile(i));
 
-/** a를 기준으로 b의 내용이 위로 d만큼 올라갔다 = b[y] ≈ a[y + d]. 차이 큰 줄 15%는 뺀다(새 단추, 점 셋 같은 국소 변화). 겹침이 20% 아래면 보지 않는다. */
 function match(a, b, maxD = Math.floor(ch * 0.8)) {
   let best = { d: 0, err: Infinity };
   const diffs = new Float32Array(ch);
@@ -108,9 +86,6 @@ if (marker) {
   e0 = at - 1;
   n = Math.min(n, e0 + Math.round(Number(opt('span', 1)) * rate) + 1);
 }
-// 맞았다고 볼 차이(회색 0~255 칸 평균). 순수 스크롤이면 0 근처, 틀린 자리는 1 넘게 나온다.
-// 압축 영상(webm, mov)은 멈춘 화면끼리도 차이가 있어, 사건 앞 멈춘 프레임끼리의 차이(잡음) 네 배까지 봐준다(0.8~2).
-// 잡음은 가운값으로 본다(사건 앞에 단추가 서서히 뜨는 프레임 하나가 잡음을 키우지 않게). 상한 2: 그보다 크면 틀린 자리도 맞았다고 본다.
 const nz = Array.from({ length: Math.min(8, e0) }, (_, k) => match(profs[e0 - k - 1], profs[e0 - k], 0).err).sort((a, b) => a - b);
 const noise = nz.length ? nz[Math.floor(nz.length / 2)] : 0;
 const OK = Math.min(2, Math.max(0.8, noise * 4));
@@ -123,7 +98,6 @@ for (let i = 0; i < n; i++) {
   }
   const m = match(profs[e0], profs[i]);
   const step = match(profs[i - 1], profs[i]);
-  // 한 번 놓치면(화면 하나 넘게 튐) 앞 프레임 거리를 더해도 기준을 모르니, 기준 프레임과 다시 맞을 때까지 lost다
   chain = chain !== null && step.err < OK ? chain + step.d : null;
   if (m.err < OK) {
     chain = m.d;
@@ -132,13 +106,11 @@ for (let i = 0; i < n; i++) {
   else per.push({ i, t: +(i / rate).toFixed(3), shift: null, err: +m.err.toFixed(2), how: 'lost' });
 }
 const lost = per.some((p) => p.how === 'lost');
-// 못 맞춘 프레임(lost)은 거리를 지어내지 않는다: maxShiftPx는 null, lost true(화면 대부분이 바뀔 만큼 튀었다). 맞춘 프레임 중 가장 큰 값은 따로 둔다.
 const seenMax = Math.round(Math.max(0, ...per.filter((p) => p.shift !== null).map((p) => Math.abs(p.shift))));
 const maxAbs = lost ? null : seenMax;
 const res = { label, frames: n, fps: rate, crop: [cx, cy, cw, ch], scale, eventFrame: e0, noise: +noise.toFixed(2), ok: +OK.toFixed(2), maxShiftPx: maxAbs, maxMatchedPx: seenMax, lost, perFrame: per };
 fs.writeFileSync(path.join(out, 'shift.json'), JSON.stringify(res, null, 1));
 
-// ---- 한 장에 늘어놓기: 사건 앞 1장 + 뒤 프레임을 고르게 최대 11장, 칸마다 밀린 거리 막대와 숫자 ----
 const pick = [e0, ...Array.from({ length: 11 }, (_, k) => Math.min(n - 1, e0 + 1 + Math.round((k * (n - 2 - e0)) / 10)))].filter((v, i, a) => v >= 0 && a.indexOf(v) === i);
 const TW = 220;
 const TH = Math.round((ch * TW) / cw);
@@ -159,7 +131,6 @@ const px = (x, y, c) => {
   sheet[o + 1] = c[1];
   sheet[o + 2] = c[2];
 };
-// 3x5 숫자 글꼴(0-9, '-', 'p', 'x', '#', '>', '?')
 const G = { 0: '111101101101111', 1: '010110010010111', 2: '111001111100111', 3: '111001111001111', 4: '101101111001001', 5: '111100111001111', 6: '111100111101111', 7: '111001010010010', 8: '111101111101111', 9: '111101111001111', '-': '000000111000000', p: '111101111100100', x: '000101010101000', '#': '101111101111101', '>': '100010001010100', '?': '111001011000010', ' ': '000000000000000', '.': '000000000000010' };
 const text = (s, x, y, c, k = 3) => {
   for (const ch2 of String(s)) {

@@ -1,5 +1,3 @@
-// 공동인증서 로그인 실패(H-01 s7e login.simple_auth): 처음이면 같은 값으로 인증서 로그인을 한 번 더(사람에게 묻지 않음),
-// 두 번째면 사람이 고른다([인증서로 다시 시도] 또는 간편인증). 폰이 맡긴 건은 폰 추적이 새 실행으로 옮겨 간다.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { describe, it } from 'node:test';
@@ -45,13 +43,11 @@ describe('공동인증서 로그인 실패 뒤 다시 시도', () => {
     assert.equal(b.certRetryOf, a.run.id);
     assert.deepEqual(b.notices, [CERT_RETRY_NOTE]);
     assert.deepEqual(prepared, [b.id]);
-    // 두 번째 실패: 사람이 고른다
     host.emit('run', { runId: b.id, type: 'handoff', phase: 'login', code: 'login.simple_auth' });
     const r2 = runs.get(b.id)!;
     assert.equal(r2.status, 'turn');
     assert.deepEqual(r2.turn, CERT_FAILED_TWICE);
     assert.doesNotMatch(r2.turn!.text, /PC/);
-    // [인증서로 다시 시도]
     await runs.retryCert(b.id);
     host.emit('run', { runId: b.id, type: 'end', status: 'stopped', code: 'run.stopped' });
     await tick();

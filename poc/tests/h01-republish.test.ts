@@ -1,5 +1,3 @@
-// scripts/h01-republish.mjs: 셀렉터 수정 → 판 올림 → 재게시 한 명령(팀장 지시 2026-11-09 3, PUBLISH-H01.md "판을 바꿀 때").
-// 게시 CLI·서명 CLI는 따로 시험한다(registry-publish). 여기서는 판 올림과, 게시 도구 화면에서 서명 명령을 뽑는 짝맞춤만 본다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -56,7 +54,6 @@ describe('h01-republish: 게시 도구 화면에서 서명 명령 뽑기(signCom
     const screen = ['계획 …', '  hometax.invoice.lookup(…) manifest abc — 이미 게시됨(서명 없음)', '다음: 서명 2번(Touch ID). 화면의 확인 코드가 위와 같은지 보고 누른다', `  ${cmd('manifest', 'package-1')}`, `  ${cmd('manifest', 'package-2')}`, '그다음: assemble --work …'].join('\n');
     assert.deepEqual(rp.signLines(screen), [cmd('manifest', 'package-1'), cmd('manifest', 'package-2')]);
   });
-  // 서명은 맥에서만 한다(스크립트가 win32를 거부). Windows의 signCommand는 큰따옴표로 인용한다
   it('--out·--kind·--key-id·--confirm을 셸 인용째 되읽는다(공백·작은따옴표 경로)', { skip: process.platform === 'win32' }, () => {
     const c = cmd('index', 'package-2');
     assert.equal(shq(`${work}/sig/x.package-2.json`, 'darwin').startsWith("'"), true, '인용되는 경로로 시험한다');

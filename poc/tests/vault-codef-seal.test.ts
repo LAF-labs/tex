@@ -1,5 +1,3 @@
-// 계좌 자동조회(CODEF) 로그인 봉인(금고): 고른 인증서 하나의 der·key만 읽고, 금고 창 비밀번호를 CODEF 공개키로 감싼다. 평문 비밀번호는 엔진에 가지 않는다.
-// 가짜 인증서 파일·임시 폴더·시험용 RSA 키쌍만 쓴다(실제 NPKI·키체인을 읽지 않는다).
 import assert from 'node:assert/strict';
 import { constants as cc, generateKeyPairSync, privateDecrypt, randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -51,7 +49,6 @@ async function stack() {
   control.on('secret.needed', (d) => needs.push(d));
   const ids = (await scanNpki({ roots: [{ kind: 'preferences', dir: t.root }] })).certs;
   const idOf = (dir: string) => ids.find((c) => c.dir === dir)!.id;
-  /** main이 하는 일: 비밀번호 창을 열고(금고 직결 포트) 사람이 넣은 값을 보낸다 */
   const windowProvide = async (bind: Record<string, unknown>, pw: string, remember = false) => {
     const ch = new MessageChannel();
     vault.attachPort('secretInput', wrapPort(ch.port1, 'node'), bind);
@@ -88,7 +85,6 @@ describe('금고 codef.seal', () => {
       const need = s.needs[0]!;
       assert.equal(need.mode, 'codef');
       assert.match(String(need.reqId), /^[0-9a-f]{32}$/);
-      // 다른 reqId로 창을 붙이면 받지 않는다(포트를 붙이지 않음)
       assert.equal(await s.windowProvide({ mode: 'codef', reqId: 'f'.repeat(32), scope: 'business' }, 'x'), 'no_reply');
       assert.deepEqual(await s.windowProvide({ mode: 'codef', reqId: need.reqId, scope: 'business' }, PASSWORD), {});
       const r = await p;
@@ -101,7 +97,6 @@ describe('금고 codef.seal', () => {
       assert.ok(!JSON.stringify(r).includes(PASSWORD));
       const keyOpens = s.audit.opened.filter((x) => /signpri\.key$/i.test(x));
       assert.deepEqual(keyOpens, [path.join(s.t.a.dir, 'signPri.key')]);
-      // 같은 창 포트로 두 번 보내도 받지 않는다(요청은 끝났다)
       assert.equal(await s.windowProvide({ mode: 'codef', reqId: need.reqId, scope: 'business' }, PASSWORD), 'no_reply');
     } finally {
       s.close();
@@ -116,7 +111,6 @@ describe('금고 codef.seal', () => {
       await waitNeed(s.needs, 1);
       const need = s.needs[0]!;
       assert.equal(need.field, 'account');
-      // 4자리 숫자가 아니면 받지 않는다
       assert.notDeepEqual(await s.windowProvide({ mode: 'codef', reqId: need.reqId, scope: 'business' }, 'abcd'), {});
       assert.deepEqual(await s.windowProvide({ mode: 'codef', reqId: need.reqId, scope: 'business' }, '4821'), {});
       const r = await p;
@@ -135,7 +129,6 @@ describe('금고 codef.seal', () => {
     const s = await stack();
     try {
       const certId = s.idOf(s.t.b.dir);
-      // 금고가 열려 있어야 기억한다(main이 사용자 활동을 알린다)
       await s.control.rpc('session.idle', { idleSec: 0 });
       const p = s.engine.rpc<CodefSealResult>('codef.seal', { certId, publicKey: PUB_B64, scope: 'business', mode: 'auto' });
       await waitNeed(s.needs, 1);
@@ -162,7 +155,6 @@ describe('금고 codef.seal', () => {
       assert.deepEqual(await s.engine.rpc('codef.seal', { certId: '0'.repeat(16), publicKey: PUB_B64, scope: 'business', mode: 'ask' }), { ok: false, reason: 'not_found' });
       assert.deepEqual(await s.engine.rpc('codef.seal', { certId, publicKey: 'AAAA', scope: 'business', mode: 'ask' }), { ok: false, reason: 'bad_public_key' });
       assert.equal(s.needs.length, 1);
-      // 시간이 지나면 timeout
       const late = s.engine.rpc<CodefSealResult>('codef.seal', { certId, publicKey: PUB_B64, scope: 'business', mode: 'ask' });
       assert.deepEqual(await late, { ok: false, reason: 'timeout' });
     } finally {

@@ -1,7 +1,3 @@
-// 함수 배포 진입점(팀장 결정 2026-11-06 #135 (1)). 계정·게이트웨이·릴레이·푸시를 한 프로세스에서 조립하고, 서비스 사이 호출(기기 상태·자동 정지·정지 알림)은
-// HTTP 없이 함수로 직접 부른다. 서비스마다 자기 DB 역할·스키마(`<서비스>__DATABASE_URL`)와 키를 따로 쓴다(D08 §8 분리 저장은 DB 역할이 지킨다).
-// HTTP가 꼭 필요한 곳은 룸 호스트(다른 호스트)뿐이다: 룸 호스트 → 계정 기기 상태(`internalFunction`), 계정 → 룸 호스트 룸 소비·정지 알림. 모두 INTERNAL_CALL_KEY 서명.
-// 마이그레이션은 배포 절차(supabase db push)가 하고 함수는 DDL을 하지 않는다. 공급사 이름에 묶인 코드는 없다(ADR-015).
 import type http from 'node:http';
 import { buildAccount } from '@sax/svc-account';
 import { buildGateway, type DeviceSuspender } from '@sax/svc-gateway';
@@ -15,7 +11,6 @@ type Listener = (req: http.IncomingMessage, res: http.ServerResponse) => Promise
 export async function buildCloud(env: NodeJS.ProcessEnv = process.env) {
   let push: Awaited<ReturnType<typeof buildPush>> | null = null;
   let relayRef: Awaited<ReturnType<typeof buildRelay>> | null = null;
-  // 정지 알림: 푸시 토큰 삭제, 그 폰의 우편함 자리 비우기(릴레이 v2)
   const stopped = async (id: string) => {
     await push?.svc.remove(id);
     await relayRef?.svc.freePeer(id);
@@ -24,7 +19,6 @@ export async function buildCloud(env: NodeJS.ProcessEnv = process.env) {
   const directory: DeviceDirectory = { get: (id) => account.svc.deviceRecord(id) };
   const suspender: DeviceSuspender = { suspend: async (id) => void (await account.svc.autoSuspend(id)) };
   const gateway = await buildGateway(serviceEnv('GATEWAY', env), { directory, suspender }, { migrate: false });
-  // 함수 인스턴스는 메모리 룸·라이브 연결을 이어 갈 수 없어 stateful: false(룸·WSS는 룸 호스트)
   const relay = await buildRelay(serviceEnv('RELAY', env), { migrate: false, stateful: false }, { directory });
   relayRef = relay;
   push = await buildPush(serviceEnv('PUSH', env), { directory }, { migrate: false });
@@ -35,7 +29,6 @@ export async function buildCloud(env: NodeJS.ProcessEnv = process.env) {
     { router: relay.hub.router, listener: requestListener(relay.hub.router, { logger: relay.logger, trustProxy: trust(serviceEnv('RELAY', env)) }) },
     { router: push.router, listener: requestListener(push.router, { logger: push.logger, trustProxy: trust(serviceEnv('PUSH', env)) }) },
   ];
-  /** 경로를 가진 서비스 라우터로 보낸다(서비스끼리 공개 경로가 겹치지 않는다. 시험이 확인). 아무도 없으면 계정 라우터의 404 */
   const listener: Listener = async (req, res) => {
     const { pathname } = new URL(req.url ?? '/', 'http://fn.invalid');
     const s = services.find((x) => x.router.match(req.method ?? 'GET', pathname) !== null) ?? services[0]!;

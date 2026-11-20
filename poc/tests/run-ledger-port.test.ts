@@ -1,5 +1,3 @@
-// 원장·커밋 가드 포트(M2-3, D03 §3 R-G7·§4·§5.4): RunController의 CommitPort를 실제 DB 원장에 잇는다.
-// 실제 DB(gate_requests·irreversible_log) + 가짜 가드. 실제 포털 접속 없음.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fsp from 'node:fs/promises';
@@ -39,7 +37,6 @@ describe('LedgerCommitPort(원장·가드 포트, D03 §3 R-G7)', () => {
     root = await fsp.mkdtemp(path.join(os.tmpdir(), 'sax-lp-'));
   });
   after(async () => {
-    // 마지막 DB를 닫은 뒤 지운다(Windows는 열린 sqlite를 지우지 못한다, EBUSY).
     db?.close();
     await fsp.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });

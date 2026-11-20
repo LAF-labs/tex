@@ -1,7 +1,3 @@
-// 알림 출력 계약(D10 §2 notify, 08 P-07, 02 §17). 데몬이 내는 것은 이것뿐이다.
-// - title은 고정 문구 키다. 문구는 notificationText가 키·payload로만 만든다(모델·외부 입력 문장 없음).
-// - payload에는 금액·사업자번호·주민번호·이름·비밀이 없다: 작은 정수(일수·건수), 달(YYYY-MM), 서류 종류 키, 고정 열거값만.
-//   assertSafePayload가 이를 강제하고 planNotifications가 낼 때마다 부른다.
 
 export type NotificationKind = 'doc.expiring' | 'bundle.ready' | 'payroll.unconfirmed' | 'card.stale';
 
@@ -16,28 +12,21 @@ export const TITLE_KEY: Readonly<Record<NotificationKind, TitleKey>> = Object.fr
 
 export interface DocExpiringPayload {
   docType: string;
-  /** 만료까지 남은 날(0 = 오늘 만료) */
   daysLeft: number;
-  /** 몇 일 전 알림 단계인가(remind_days 중 하나) */
   stage: number;
-  /** 규칙표에서 나온 추정 날짜 */
   estimated: boolean;
 }
 export interface BundleReadyPayload {
-  /** 꾸러미 달(반기납부면 반기 마지막 달) */
   month: string;
   halfYear: boolean;
-  /** 비어 있거나 덜 된 항목 수(@sax/bundle missingReport.emptyItems) */
   missingCount: number;
 }
 export interface PayrollUnconfirmedPayload {
   month: string;
   state: 'none' | 'draft' | 'confirmed';
-  /** 재직 중인데 줄이 없는 직원 수(이름은 넣지 않는다) */
   employeesWithoutLine: number;
 }
 export interface CardStalePayload {
-  /** 마지막 최신화 뒤 지난 날. 한 번도 안 했으면 null */
   daysSinceFetch: number | null;
 }
 
@@ -49,17 +38,13 @@ interface PayloadOf {
 }
 
 interface NotificationBase<K extends NotificationKind> {
-  /** 억제 키(같은 id는 한 번만, 그리고 하루 1회): kind:주제:단계 */
   id: string;
   kind: K;
   profileId: string;
-  /** 문서 알림이면 documents.id(UUIDv4, 시각 비포함 D07) */
   docId?: string;
-  /** 이 알림의 기준일(만료일·꾸러미 알림일) */
   dueOn: string;
   title: TitleKey;
   payload: PayloadOf[K];
-  /** 누르면 갈 곳(이번 달 판·화면). 실행 시작은 없다 */
   target: { to: 'doc'; id: string } | { to: 'view'; view: 'bundle' | 'card' | 'payroll' };
 }
 
@@ -103,7 +88,6 @@ export function notificationText(n: DaemonNotification): { title: string; body: 
     }
     case 'card.stale': {
       const p = n.payload;
-      // 알림만 한다. 자동 조회는 없다(ADR-032 결정 3: [최신화]를 누르는 것이 곧 실행 승인)
       return { title: '사업용 카드 내역', body: p.daysSinceFetch === null ? '아직 가져온 적 없어요 · [최신화]를 눌러 주세요' : `${p.daysSinceFetch}일 전 최신화 · [최신화]를 눌러 주세요` };
     }
   }

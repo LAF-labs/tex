@@ -1,5 +1,3 @@
-// M2-4 C 네트워크 커밋 가드(D03 §5.4, D02 §2.1, B-03·B-04, 금고 R-C1 #81).
-// 원장은 실제 SQLite, 금고·CDP는 가짜. 실제 포털 접속 없음.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fsp from 'node:fs/promises';
@@ -87,7 +85,6 @@ describe('CommitGuard', () => {
   afterEach(() => db.close());
 
   const row = (intentId: string): ArmRow => ({ intentId, stepId: 's21', runId: 'r1', businessKey: `bk-${intentId}`, playbookId: 'p', inputsHash: 'i', packageDigest: 'd', actionHash: 'a', deviceId: 'dv', cpBizNoHmac: 'h', recipientEmailHmac: null });
-  /** 게이트 승인 → 토큰 소비 + 원장 armed(R-G7 앞부분). */
   const armLedger = (intentId: string) => {
     const g = new GateRepo(db);
     const req = `q${++n}`;
@@ -249,15 +246,12 @@ describe('CommitGuard', () => {
     assert.deepEqual(m.journal.at(-1), ['ledger.observed_manual', { effect: 'issue_document', bound: true, intentId: 'I1', stepId: 's21', state: 'in_doubt' }]);
     assert.ok(m.g.observedManual);
     assert.deepEqual([m.security, m.stops], [[], []]);
-    // 원장 행이 아직 없는 의도(게이트 전 핸드오프)도 행을 넣고 in_doubt
     m.setManual(row('I2'));
     await m.g.onRequest(post(`${H}/mail/send/z`));
     assert.equal(ledger.get('I2', 's21')!.state, 'in_doubt');
-    // 묶을 의도가 없으면 기록만
     m.setManual(null);
     await m.g.onRequest(post(`${H}/mail/send/z`));
     assert.deepEqual(m.journal.at(-1), ['ledger.observed_manual', { effect: 'send', bound: false }]);
-    // Running으로 돌아오면 다시 무장 없이는 막는다
     m.g.setMode('running');
     assert.equal(await m.g.onRequest(post(`${H}/mail/send/z`)), 'fail');
   });

@@ -1,5 +1,3 @@
-// ModelLayer 구현. 순서: 번들 조회(앱 내장) → 입력 한도(절단 금지) → 어댑터 정적 호환 → 임계값 프로필 → (판정 캐시) → 호출 →
-// 스냅샷 확인 → 이름 조인 → (L0 덮어쓰기) → 로컬 매핑. 어느 단계든 실패하면 outcome은 unknown이다(D04 §2).
 import type { BundleAnswers, DecideRequest, DecideResult, ModelLayer, Provider, RespondRequest, RespondResult, UnknownReason, Usage } from './contract.ts';
 import { ZERO_USAGE } from './contract.ts';
 import type { BundleCatalog } from './bundle/catalog.ts';
@@ -12,7 +10,6 @@ import type { ToolsetDef } from './toolsets.ts';
 import { decisionKey, type DecisionCache } from './cache.ts';
 
 export interface DecideOptions {
-  /** L0 규칙 답. 같은 이름의 모델 답을 덮는다(엔진 judge가 승격된 질문만 넘긴다). 모델로 보내지 않는다. */
   overlay?: BundleAnswers;
 }
 
@@ -22,7 +19,6 @@ export interface LayerDeps {
   decider: DecideAdapter;
   responder?: OpenAIResponsesAdapter;
   toolsets?: Partial<Record<RespondRequest['toolset'], ToolsetDef>>;
-  /** 같은 실행·같은 입력 판정 재사용(입력 해시). 없으면 매번 부른다. */
   cache?: DecisionCache;
 }
 
@@ -55,7 +51,6 @@ export class DefaultModelLayer implements ModelLayer {
     return this.d.catalog.get(wireId);
   }
 
-  /** 이 공급사·모델에 적용할 매핑(프로필 반영). */
   effectiveDef(b: LoadedBundle, provider: Provider = this.d.decider.provider, model: string = this.d.decider.model): BundleDef | UnknownReason {
     const r = this.d.profiles.resolve(b, provider, model);
     return r.ok ? r.def : r.reason;

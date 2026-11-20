@@ -1,6 +1,3 @@
-// 발급 사다리 0원 칸 예행 2(가짜 홈택스 + 제품 H-01 패키지): 위치 찾기로도 못 고친 어긋남을 판정 → 브라우저 에이전트(jev 대역)가 넘기면
-// 그 걸음을 PC에 남기고, 2회차는 같은 막힘을 판정·에이전트·위치 찾기 없이(모델 0번) 기억한 길로 다시 걸어 끝까지 간다.
-// 판정이 fix_field를 내는 경우는 h01-real-agentpath-fixfield.test.ts(시간이 길어 CI 잡을 나누려고 파일을 갈랐다).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Db } from '@sax/db';

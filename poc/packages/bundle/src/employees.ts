@@ -1,7 +1,3 @@
-// 급여대장 화면(08 D-06, D14 M6-9)의 직원 입력·"지난달과 같나요?"·급여 기능 켜기. 엔진 BundleService가 부른다.
-// 직원 정보는 처음 한 번 넣는다(생년월일 따로, 주민번호는 선택이고 DB 키로 암호화한 rrn_enc에만, ADR-031). 결과에 주민번호 원문을 담지 않는다(가림값만).
-// 직원을 지우는 명령은 없다: 임금대장은 3년 보관이라 퇴사는 leftOn으로만 적는다(확인한 달의 줄이 그 직원을 가리킨다).
-// 모델을 부르지 않는다. 로그를 남기지 않는다(급여·개인정보 값이 섞이지 않게).
 import { EmployeeRepo, PayrollRepo, type ColumnCipher, type Db, type Employee, type EmployeeInput, type EmployeePatch, type PayItem } from '@sax/db';
 import type { ExtraItem } from '@sax/payroll';
 
@@ -20,7 +16,6 @@ const fail = (code: string): never => {
 /** 비과세 항목 이름(@sax/payroll NontaxKind와 같다). 다른 이름은 계산 때가 아니라 입력 때 막는다 */
 export const NONTAX_KINDS = ['meal', 'vehicle', 'childcare', 'research'] as const;
 
-/** 받는 칸. 이 밖의 칸은 bad_employee_field(main이 엉뚱한 칸을 섞어 보내도 조용히 넘기지 않는다) */
 const FIELDS = [
   'name', 'birthDate', 'rrn', 'hiredOn', 'leftOn', 'job', 'payType', 'basePay', 'nontax', 'dependents', 'children8to20', 'withholdingPct',
   'pensionApplies', 'healthApplies', 'employmentApplies', 'pensionBase', 'healthBase',
@@ -34,7 +29,6 @@ const num = (v: unknown, code: string): number => (typeof v === 'number' ? v : f
 const nullableNum = (v: unknown, code: string): number | null => (v === null ? null : num(v, code));
 const bool = (v: unknown, code: string): boolean => (typeof v === 'boolean' ? v : fail(code));
 
-/** 칸 모양만 본다(문자열·숫자·참거짓). 범위·날짜·주민번호 형식은 EmployeeRepo가 본다(invalid_*, rrn_birth_mismatch) */
 function field(k: Field, v: unknown): unknown {
   switch (k) {
     case 'name':
@@ -133,13 +127,9 @@ export function extrasFromItems(items: readonly PayItem[]): ExtraItem[] {
 
 export interface CarryOver {
   month: string;
-  /** 지난달 가장 큰 개정. 없으면 null(처음 쓰는 달) */
   from: { month: string; revision: number; status: 'draft' | 'confirmed' } | null;
-  /** payroll.compute·saveDraft의 inputs로 그대로 넣을 수 있다. 이달 재직이고 지난달 줄이 있는 직원만 */
   inputs: Record<string, { extras: ExtraItem[] }>;
-  /** 이달 재직인데 지난달 줄이 없는 직원(새로 들어옴): 이번 달 입력을 따로 받는다 */
   newEmployees: Array<{ id: string; name: string }>;
-  /** 지난달 줄은 있는데 이달 재직이 아닌 직원(퇴사): 보여 주기만 */
   leftEmployees: Array<{ id: string; name: string }>;
 }
 

@@ -1,6 +1,3 @@
-// D03 §3.1 레지스트리 신뢰 검사(B-22, C-26, E-04·E-05·E-14, ADR-013·023): 핀 고정 키의 Ed25519 2-of-3, 폐기 목록,
-// keyEpoch 안 단조 버전(+1000 이하), 타임스탬프 키 신선도 서명, issuedAt 미래 거부, status(하향·킬스위치 전용),
-// 미러 트리 헤드 비교(일관성 증명). 결과는 코드만 담는다(값 없음).
 import { createHash, createPublicKey, verify as edVerify, type KeyObject } from 'node:crypto';
 import { canonicalJson, canonicalizable, canonicalWithout, sha256Hex } from './canon.ts';
 import { EMERGENCY_STATUS_TTL_H, ISSUED_AT_MAX_SKEW_MIN, MODE_ORDER, STATUS_MAX_AGE_H, STATUS_STALE_DAEMON_STOP_H, VERSION_JUMP_MAX } from './constants.ts';
@@ -20,7 +17,6 @@ export function ed25519PublicKey(raw: Uint8Array): KeyObject {
 /** 앱에 핀 고정된 키(앱 업데이트로만 바뀐다, D09 §8.2). 키 세대 keyEpoch도 핀 고정이다. */
 export interface TrustRoots {
   keyEpoch: number;
-  /** 오프라인 루트 키 3개(2-of-3, revoked_keys.json 본문 서명). */
   rootKeys: ReadonlyMap<string, KeyObject>;
   packageKeys: ReadonlyMap<string, KeyObject>;
   policyKeys: ReadonlyMap<string, KeyObject>;
@@ -52,9 +48,7 @@ export function verifyEd25519(key: KeyObject, data: Uint8Array, sig: string): bo
 }
 
 export interface QuorumResult {
-  /** 서로 다른 유효 키 id(폐기 키 제외). */
   valid: string[];
-  /** 서명은 맞지만 폐기된 키(registry.key_revoked). */
   revoked: string[];
 }
 
@@ -72,8 +66,6 @@ export function countSignatures(data: Uint8Array, sigs: readonly Signature[], ke
   return { valid: [...valid], revoked: [...rev] };
 }
 
-// ---- 버전(같은 keyEpoch 안 단조) ----
-
 export interface VersionMark {
   keyEpoch: number;
   monotonic: number;
@@ -90,8 +82,6 @@ export function versionProblem(stored: VersionMark | null, next: VersionMark): V
   if (next.monotonic > stored.monotonic + VERSION_JUMP_MAX) return 'registry.version_jump_rejected';
   return null;
 }
-
-// ---- 타임스탬프 신선도(E-05) ----
 
 export interface Timestamped {
   monotonic: number;
@@ -141,7 +131,6 @@ export function acceptRevoked(next: RevokedKeys, ctx: { roots: TrustRoots; curre
   if (ep) return { ok: false, code: ep };
   const content = contentBytes(next);
   const digest = sha256Hex(content);
-  // 루트 키도 폐기될 수 있다: 루트 서명은 지금 받아 둔(이전) 폐기 목록으로 걸러 센다. 타임스탬프 키는 새 목록으로 거른다.
   const prev = ctx.current?.keyIds ?? new Set<string>();
   const nextIds = new Set(next.revoked.map((r) => r.keyId));
   if (countSignatures(content, next.signatures, ctx.roots.rootKeys, prev).valid.length < 2) return { ok: false, code: 'registry.signature_insufficient' };
@@ -150,12 +139,10 @@ export function acceptRevoked(next: RevokedKeys, ctx: { roots: TrustRoots; curre
   const iss = Date.parse(next.issuedAt);
   const exp = Date.parse(next.expiresAt);
   if (!(exp > iss) || exp - iss > REVOKED_MAX_VALIDITY_H * H) return { ok: false, code: 'registry.revoked_validity_too_long' };
-  // 이미 만료된 재서명이 아직 신선한 목록을 덮지 않게(정책의 expired_on_arrival과 같은 규칙).
   if (exp <= ctx.now) return { ok: false, code: 'registry.expired_on_arrival' };
   const cur = ctx.current;
   const vp = monotonicProblem(cur ? { ...cur.list, contentDigest: cur.contentDigest } : null, next, digest);
   if (vp) return { ok: false, code: vp };
-  // 폐기는 되돌릴 수 없다: 새 목록은 현재 목록의 상위 집합.
   if (cur && [...cur.keyIds].some((k) => !nextIds.has(k))) return { ok: false, code: 'registry.revoked_shrunk' };
   return { ok: true, accepted: { list: next, contentDigest: digest, keyIds: nextIds } };
 }
@@ -163,14 +150,11 @@ export function acceptRevoked(next: RevokedKeys, ctx: { roots: TrustRoots; curre
 /** 24시간 신선도를 잃으면 새 패키지·정책·핫픽스 로드를 보류한다(설치본 유지, 엄격하게 보수적인 정책·status는 통과). */
 export const revokedFresh = (r: AcceptedRevoked | null, now: number) => !!r && now < Date.parse(r.list.expiresAt);
 
-// ---- 레지스트리 status(하향·킬스위치 전용) ----
-
 export interface RegistryStatus {
   monotonic: number;
   keyEpoch: number;
   issuedAt: string;
   expiresAt: string;
-  /** 포털별 하향 전용 상한. 없는 포털 = 상한 없음(정책·앱 상한은 그대로). 모양은 레지스트리 #56과 같다(팀장 결정 2026-11-05). */
   portalModeCeiling: Partial<Record<Portal, PortalMode>>;
   killPlaybooks: string[];
   signatures: Signature[];
@@ -183,9 +167,7 @@ export const statusContentDigest = (s: RegistryStatus) => sha256Hex(contentBytes
 export interface AcceptedStatus {
   status: RegistryStatus;
   contentDigest: string;
-  /** 1인 긴급 키만으로 서명됨(72시간 뒤 자동 만료, 2-of-3 재확인 없으면 되돌림). */
   emergency: boolean;
-  /** 이 내용이 처음 발행된 시각(타임스탬프 재서명으로 늘어나지 않는다). 긴급 status 72시간 만료의 기준. */
   contentIssuedAt: string;
   acceptedAt: number;
 }
@@ -223,7 +205,7 @@ export function acceptStatus(next: RegistryStatus, ctx: { roots: TrustRoots; rev
     !ctx.revoked.has(ctx.roots.emergencyKey.keyId) &&
     verifyEd25519(ctx.roots.emergencyKey.key, content, next.signatures[0]!.sig);
   if (q.valid.length < 2 && !emergencyOnly) return { ok: false, code: 'registry.signature_insufficient', events };
-  const restamp = ctx.current?.contentDigest === digest; // 내용 그대로의 타임스탬프 재서명
+  const restamp = ctx.current?.contentDigest === digest;
   if (emergencyOnly && !restamp && !statusIsConservative(ctx.current?.status ?? null, next)) return { ok: false, code: 'policy.rejected_not_conservative', events };
   if (!verifyTimestamp(digest, next, ctx.roots, ctx.revoked)) return { ok: false, code: 'registry.timestamp_invalid', events };
   if (issuedInFuture(next.issuedAt, ctx.now)) return { ok: false, code: 'registry.issued_in_future', events };
@@ -245,7 +227,6 @@ export function statusFreshness(s: Pick<RegistryStatus, 'issuedAt' | 'expiresAt'
   if (!s) return 'daemon_stop';
   const age = now - Date.parse(s.issuedAt);
   if (age > STATUS_STALE_DAEMON_STOP_H * H) return 'daemon_stop';
-  // 48시간 또는 문서의 expiresAt 중 먼저 오는 쪽부터 stale.
   if (age > STATUS_MAX_AGE_H * H || now >= Date.parse(s.expiresAt)) return 'stale';
   return 'fresh';
 }
@@ -256,12 +237,8 @@ export function effectiveStatus(latest: AcceptedStatus | null, lastQuorum: Accep
   return latest?.status ?? null;
 }
 
-// ---- 정책(D03 §7.1 서명과 신선도, C-26·E-04·E-05) ----
-
 export interface AcceptedPolicy {
-  /** 클램프 뒤 값(엔진이 쓰는 값). */
   policy: Policy;
-  /** 받은 그대로(다음 보수성 판정의 기준). */
   raw: Policy;
   contentDigest: string;
   emergency: boolean;
@@ -307,11 +284,9 @@ export function acceptPolicy(next: Policy, ctx: { roots: TrustRoots; revoked: Re
   return { ok: true, accepted: { policy, raw: next, contentDigest: digest, emergency: emergencyOnly, clamped }, events };
 }
 
-// ---- 투명성 로그 헤드 비교(E-14, Phase 1 split-view 점검) ----
-
 export interface TreeHead {
   treeSize: number;
-  rootHash: string; // hex
+  rootHash: string;
 }
 
 const sha = (...parts: Uint8Array[]) => createHash('sha256').update(Buffer.concat(parts)).digest();
@@ -329,7 +304,6 @@ export function merkleRoot(leaves: readonly Uint8Array[]): Buffer {
 
 /** RFC 9162 §2.1.4.1 일관성 증명 생성(m < n). 시험 도우미. */
 export function consistencyProof(m: number, leaves: readonly Uint8Array[]): Buffer[] {
-  // 빈 트리(m = 0)에서의 증명은 빈 배열이다(RFC 9162 §2.1.4: 0 < m < n일 때만 경로가 있다). m > n은 증명이 없다.
   if (!Number.isSafeInteger(m) || m < 0 || m > leaves.length) throw new Error('consistency_bad_size');
   if (m === 0) return [];
   const sub = (mm: number, ls: readonly Uint8Array[], b: boolean): Buffer[] => {

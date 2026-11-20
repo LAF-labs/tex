@@ -1,7 +1,3 @@
-// CODEF 목적지(계좌 자동조회, 대표 결정 2026-11-12 "CODEF 공동인증서 방식"). 송신은 Egress.toCodef()만 한다.
-// - origin은 환경(게이트웨이가 토큰과 함께 알려 준 env)마다 하나로 고정, 경로는 아래 목록만. 리디렉션은 따르지 않는다.
-// - CODEF 와이어 규칙(공식 라이브러리 easycodef와 같다): 요청 본문은 JSON을 URL 인코딩한 문자열, 응답 본문도 URL 인코딩된 JSON이다.
-// - 본문(인증서 파일·감싼 비밀번호·계좌·거래내역)과 토큰은 감사 기록·로그에 남기지 않는다(목적지·경로 이름·상태만).
 
 export const CODEF_ORIGINS = {
   sandbox: 'https://sandbox.codef.io',

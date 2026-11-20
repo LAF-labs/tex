@@ -1,6 +1,3 @@
-// HPKE Base 모드(RFC 9180), 스위트 v=1: DHKEM(X25519, HKDF-SHA256) · HKDF-SHA256 · ChaCha20-Poly1305 (D08 §7, intent-envelope v).
-// 한 번 봉인·한 번 개봉(seq 0)만 쓴다. PC 쪽 개봉은 금고 crypto.hpkeOpen이 하고(개인키 Q_D는 금고 밖으로 나가지 않는다),
-// 여기 있는 hpkeOpen은 시험·개발 더미용이다.
 
 import { chacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { x25519 } from '@noble/curves/ed25519.js';

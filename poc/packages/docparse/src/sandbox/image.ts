@@ -1,11 +1,6 @@
-// OCR 전처리(순수 함수, RGBA 버퍼를 제자리에서 고친다). 서식의 음영 칸·표 선이 tesseract를 크게 흔들어서
-// 흑백으로 바꾸고(붉은 직인은 지운다), 글자일 수 없는 긴 가로·세로 선을 지운다. 샌드박스 페이지와 Node 테스트가 같이 쓴다.
-// 사진(종이 증빙·폰 촬영)은 조명이 고르지 않아 고정 임계로는 그늘진 쪽이 검게 뭉친다: cleanPhotoForOcr는 주변 평균에 맞춘 국소 임계를 쓴다.
 
-/** 회색 음영(서식의 어두운 난)은 흰색으로, 글자는 검은색으로. */
 const THRESHOLD = 170;
 
-/** 글자 한 자는 300dpi에서 50px 안팎이다. 그보다 훨씬 긴 연속 선(dark 마스크)은 표 선으로 본다. */
 function longLineMask(dark: Uint8Array, width: number, height: number): Uint8Array {
   const minH = Math.max(80, Math.round(width * 0.04));
   const minV = Math.max(80, Math.round(height * 0.025));
@@ -40,7 +35,6 @@ export function cleanForOcr(rgba: Uint8ClampedArray | Uint8Array, width: number,
     const g = rgba[p + 1]!;
     const b = rgba[p + 2]!;
     const y = 0.299 * r + 0.587 * g + 0.114 * b;
-    // 붉은 직인은 글자가 아니다. 직인 아래 검은 글자는 붉지 않아서 남는다.
     const red = r > 120 && r - g > 60 && r - b > 60;
     dark[i] = rgba[p + 3]! > 0 && y < THRESHOLD && !red ? 1 : 0;
   }
@@ -58,7 +52,6 @@ export function cleanForOcr(rgba: Uint8ClampedArray | Uint8Array, width: number,
   return { removed };
 }
 
-/** 국소 임계 창(긴 변의 1/24, 최소 15px)과 민감도. 주변 평균보다 이만큼 어두우면 글자로 본다. */
 const PHOTO_K = 0.12;
 
 /**
@@ -76,7 +69,6 @@ export function cleanPhotoForOcr(rgba: Uint8ClampedArray | Uint8Array, width: nu
     lum[i] = rgba[p + 3]! === 0 ? 255 : 0.299 * r + 0.587 * g + 0.114 * b;
     red[i] = r > 120 && r - g > 60 && r - b > 60 ? 1 : 0;
   }
-  // 적분 영상(행 우선, (width+1)×(height+1))
   const W = width + 1;
   const sum = new Float64Array(W * (height + 1));
   for (let y = 0; y < height; y++) {
@@ -97,7 +89,6 @@ export function cleanPhotoForOcr(rgba: Uint8ClampedArray | Uint8Array, width: nu
       const area = (x1 - x0) * (y1 - y0);
       const s = sum[y1 * W + x1]! - sum[y0 * W + x1]! - sum[y1 * W + x0]! + sum[y0 * W + x0]!;
       const i = y * width + x;
-      // 아주 밝은 칸(종이 바탕)은 평균과 상관없이 바탕이다. 평균보다 충분히 어두워야 글자다.
       const ink = !red[i] && lum[i]! < 235 && lum[i]! * area < s * (1 - PHOTO_K);
       const v = ink ? 0 : 255;
       if (ink) dark++;
@@ -113,7 +104,6 @@ export function cleanPhotoForOcr(rgba: Uint8ClampedArray | Uint8Array, width: nu
 
 /** 이 몫을 넘으면 바탕이 어두운 촬영본으로 본다(고정 임계로는 바탕까지 검게 뭉친다). 합성 등록증: 흰 바탕 PNG·스캔 3% 안팎, 폰 촬영 70~87%. */
 export const DOCUMENT_PHOTO_INK_SHARE = 0.25;
-/** 흰 종이의 옅은 바탕무늬·음영(이보다 밝은 회색)은 흰색으로 */
 const PAPER_WHITE = 200;
 
 /**

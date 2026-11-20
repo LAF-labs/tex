@@ -1,7 +1,3 @@
-// 발급 결과 PDF 보관(2026-11-11 리허설 F-04): save_pdf(H-01 s32) → 금고 staging → 보관함 실행 산출물(tax_invoice, run_id).
-// - DocumentService.importRunArtifact: 글자를 읽지 않고 넣는다. 재시작(새 서비스·같은 DB) 뒤에도 목록·파일 경로가 그대로다.
-// - VaultPdfPort.store(artifact): staging 파일을 읽어 산출물로 넣고 staging을 지운다.
-// - IR 실행(가짜 H-01 페이지): 포트가 있으면 s32가 artifact.saved로 지나 메일 확인(s33)까지 가고, 없으면 engine.unhandled_step으로 끝났다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -55,14 +51,12 @@ describe('DocumentService.importRunArtifact(실행 산출물)', () => {
     const file = await data.documents.filePath(v.id);
     assert.match(path.basename(file), /^tax_invoice_\d{8}_[0-9A-Z]{4}\.pdf$/, '파일 이름에 거래처·승인번호가 없다(V-23)');
     db.close();
-    // 재시작: 같은 DB·같은 보관함
     ({ db, data } = openData(dir, key));
     const list = data.documents.list();
     assert.deepEqual(list.map((d) => [d.id, d.docType, d.source]), [[v.id, 'tax_invoice', 'app']]);
     assert.deepEqual(await fs.readFile(await data.documents.filePath(v.id)), Buffer.from(PDF));
     const row = db.prepare('SELECT run_id FROM documents WHERE id = ?').get(v.id) as { run_id: string };
     assert.equal(row.run_id, 'run-1', '실행과 잇는다');
-    // 같은 파일이면 새 줄을 만들지 않는다
     assert.equal((await data.documents.importRunArtifact(PDF, { runId: 'run-1', docType: 'tax_invoice' })).duplicate, true);
     assert.equal(data.documents.list().length, 1);
     db.close();
@@ -154,7 +148,6 @@ describe('IR 실행 + save_pdf 포트(가짜 H-01 페이지)', () => {
     }
     throw new Error('timeout');
   };
-  /** entry.ts run.start와 같다: 시작한 뒤 입력 요약을 봉인해 둔다. */
   const start = (runs: RunService, runId: string, supply: number) => {
     runs.start({ runId, counterpartyId: cp, supply, tax: supply / 10, itemName: '경영 컨설팅' });
     recordRunInputs(db, cipher, runId, { counterpartyId: cp, supply, tax: supply / 10 });
@@ -187,7 +180,6 @@ describe('IR 실행 + save_pdf 포트(가짜 H-01 페이지)', () => {
     const staging = path.join(dir, 'staging');
     await fs.mkdir(staging, { recursive: true });
     const vault: PdfVault = {
-      // 금고 pdf.print 대역: 지금 탭을 인쇄했다고 치고 staging에 PDF를 둔다(실제 인쇄는 vault-pdf-save 시험이 본다)
       rpc: async <T>(method: string) => {
         assert.equal(method, 'pdf.print');
         const fileId = fid();
@@ -224,7 +216,6 @@ describe('IR 실행 + save_pdf 포트(가짜 H-01 페이지)', () => {
   });
 
   it('실행 이력: 발급·보관한 실행, 포트 없던 실행, 승인 대기에서 끊긴 실행(재시작)을 DB에서 다시 읽는다', async () => {
-    // 승인 대기까지 간 뒤 앱이 꺼졌다: 새 RunService(같은 DB)가 기동 복구로 interrupted·게이트 만료
     const gm: GatePortMessage[] = [];
     const cutEvents: RunEvent[] = [];
     const runs = service(cutEvents, gm);
@@ -245,7 +236,6 @@ describe('IR 실행 + save_pdf 포트(가짜 H-01 페이지)', () => {
     assert.equal(done.documentId, data.documents.list().find((d) => d.docType === 'tax_invoice')!.id);
     assert.equal(by.get('nopdf-1')!.code, 'engine.unhandled_step');
     assert.equal(rows[0]!.runId, 'cut-1', '최근 실행부터');
-    // 셸의 지난 실행 보기(U5): 같은 DB를 새 서비스로 다시 읽은 이력이 활동 기록 줄이 된다(시험 패키지는 fixture.invoice.issue라 pastRun을 바로 부른다)
     const { pastRun } = await import('../apps/desktop/src/run-history.ts');
     const issued = pastRun(done);
     assert.deepEqual({ kind: issued.kind, approvalNo: issued.approvalNo, documentId: issued.documentId, who: issued.who }, { kind: 'issued', approvalNo: done.approvalNo, documentId: done.documentId, who: 'A상사' });
@@ -253,11 +243,9 @@ describe('IR 실행 + save_pdf 포트(가짜 H-01 페이지)', () => {
     const stopped = pastRun(cut);
     assert.deepEqual({ kind: stopped.kind, total: stopped.total, approvalNo: stopped.approvalNo }, { kind: 'stopped_before_gate', total: 330_000, approvalNo: null });
     assert.equal(stopped.note, '승인 전에 앱이 꺼져 멈췄어요. 아무것도 발급하지 않았어요.');
-    // 다른 키로는 입력 요약을 읽지 않는다(값 없이 상태만)
     const other = runHistory(db, new ColumnCipher(new Uint8Array(randomBytes(32)))).find((r) => r.runId === 'cut-1')!;
     assert.equal(other.counterpartyName, null);
     assert.equal(other.supply, null);
-    // 시험 프로세스 안에서는 앞 서비스의 실행이 아직 승인을 기다린다(실제로는 프로세스가 끝났다). 멈춰 타이머·탭을 닫는다.
     runs.stop('cut-1');
     await wait(() => cutEvents.find((e) => e.type === 'end'));
   });

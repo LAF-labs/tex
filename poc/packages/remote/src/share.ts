@@ -1,20 +1,3 @@
-// 계정 공유 기록(ADR-048 결정 5, D07 §10). 계정의 PC와 폰이 발급 기록·거래처·내 사업자·받을 돈과 낼 돈 요약·밀린 일을 같이 쓴다. 대화는 싣지 않는다.
-// [검토] 암호 리뷰(SP-5) 대상이다.
-//
-// 서버(계정 서비스)는 줄의 종류·순번·시각·크기·올린 기기만 보고, 내용은 계정 열쇠에서 나온 키로 봉인한 암호문이다.
-//   K_share(e) = HKDF-SHA256(RK, "share/v1/" ‖ e)       e = 기기 목록의 폐기 레코드 수(세대). PC는 금고가 RK에서 만들고, 폰은 PC가 종단간 통로로 준다.
-//   Ws         = Ed25519(HKDF-SHA256(RK, "share/sig/v1")) 계정 공유 기록 서명 키. PC 금고만 서명한다. 공개키는 폰이 K_share와 같이 받는다.
-//   줄         = XChaCha20-Poly1305(K_share(e), pad(JCS({core, sig})), aad = "SAX-share-v1" ‖ JCS({epoch, kind, row_id}))
-//   sig        = Ed25519("SAX-share-v1" ‖ JCS(core))     PC가 쓴 줄은 Ws, 폰이 쓴 줄은 그 폰의 Vm
-//
-// - 세대: 기기를 끊으면 폐기 레코드가 하나 늘고(AIK 서명, 목록 버전으로 되돌리기를 막는다) 세대가 오른다. 끊긴 폰은 새 세대 키를 받지 못한다.
-//   끊긴 PC는 RK를 갖고 있어서 세대로는 막지 못한다. 서버가 그 PC의 호출을 거부하는 것에 기댄다(ADR-048 결정 6 남는 위험).
-// - PC 줄을 기기 키가 아니라 Ws로 서명하는 이유: 끊긴 기기의 공개키는 목록에서 빠지므로, 나중에 붙은 기기가 옛 줄을 확인할 길이 없어진다.
-//   Ws는 RK에서 나오므로 계정의 PC면 누구나 서명·검증하고, 폰은 공개키로 검증만 한다. 폰은 PC 줄(발급 기록·거래처)을 지어낼 수 없다.
-// - 폰 줄(맡긴 일)은 그 폰의 Vm으로 서명한다. 일을 맡는 PC는 그 폰이 지금 기기 목록에 있을 때만 받는다.
-// - 서버는 줄을 숨기거나 순서를 바꿀 수 있다. 그래서 줄은 순서에 기대지 않는다: 발급 기록은 승인번호가 같으면 한 건이고,
-//   거래처는 사업자번호마다, 내 사업자와 돈 요약은 계정에서 (at, dev)가 가장 큰 줄이 이긴다.
-//   같은 건을 두 번 내지 않는 판단은 공유 기록이 아니라 포털 기준선(D03 §4)이 한다.
 import { b64, b64url, concat, equal, fromB64, fromB64url, fromUtf8, utf8 } from './bytes.ts';
 import { CTX } from './contexts.ts';
 import { ed25519Verify, hkdfSha256, randomBytes, xOpen, xSeal } from './crypto.ts';
@@ -39,7 +22,6 @@ const ROW_ID = /^[A-Za-z0-9_-]{22}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const BIZ_NO = /^\d{10}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
-/** 전자세금계산서 승인번호: 숫자 24자리(가운데 줄표는 쓰는 쪽이 뺀다). */
 const APPROVAL_NO = /^\d{24}$/;
 const CODE = /^[a-z][a-z0-9_]*(\.[a-z0-9_]+){1,3}$/;
 const MONTH = /^\d{4}-\d{2}$/;
@@ -70,28 +52,22 @@ export const deriveShareSignSeed = (rk: Uint8Array): Uint8Array => hkdfSha256(rk
 
 export const newShareRowId = (): string => b64url(randomBytes(16));
 
-// ---- 종류별 본문 ----
-
 /** 발급 기록. 승인번호가 같으면 한 건이다(먼저 본 줄을 쓴다). 수정세금계산서는 새 승인번호의 새 줄이고 금액이 음수일 수 있다. */
 export interface ShareIssue {
   doc: 'tax_invoice';
   approvalNo: string;
-  /** 작성일자 YYYY-MM-DD */
   writtenOn: string;
   buyerBizNo: string;
   buyerName: string;
   supply: number;
   tax: number;
   item?: string;
-  /** 이 발급이 맡긴 일에서 나왔으면 그 일의 줄 id */
   taskRow?: string;
-  /** app: 앱이 발급. manual: 사람이 포털에서 직접 낸 것을 앱이 확인 */
   how: 'app' | 'manual';
 }
 /** 거래처에 저장한 품목(@sax/db CounterpartyItem과 같다). 고르는 후보일 뿐 발급 값이 아니다. */
 export interface SharePartyItem {
   name: string;
-  /** 원 단위 정수(0 이상). 정하지 않았으면 null */
   unitPrice: number | null;
   unit: string | null;
 }
@@ -102,9 +78,7 @@ export interface ShareParty {
   rep?: string;
   address?: string;
   email?: string;
-  /** 저장 품목. 없으면 "모른다"이고 빈 배열이면 "없다"다 */
   items?: SharePartyItem[];
-  /** 지운 거래처 */
   removed?: true;
 }
 /** 내 사업자(공급자). 계정에서 (at, dev)가 가장 큰 줄이 이긴다. 폰이 "내 사업자번호"를 말로 받았을 때 대조하는 데 쓴다. */
@@ -124,11 +98,8 @@ export interface ShareMoneyTop {
  * 모르는 값은 0이 아니라 null이다. 거래 내역·계좌번호·은행 메모는 싣지 않는다.
  */
 export interface ShareMoney {
-  /** 요약을 만든 시각(ISO, UTC) */
   asOf: string;
-  /** 은행 자료의 마지막 날짜. 은행 자료가 없으면 null */
   latestDay: string | null;
-  /** 은행 자료가 오래돼 숫자를 그대로 믿기 어렵다 */
   stale: boolean;
   recv: {
     count: number | null;
@@ -137,15 +108,11 @@ export interface ShareMoney {
     overdueTotal: number | null;
     oldest: { cp: string; writtenOn: string; daysOver: number } | null;
     top: ShareMoneyTop[];
-    /** 입금 확인이 안 된 발급의 승인번호(발급 기록 줄과 맞춰 본다). 없으면 "모른다" */
     open?: string[];
   };
   pay: { count: number | null; total: number | null; overdueCount: number | null; overdueTotal: number | null; top: ShareMoneyTop[] };
-  /** 은행 자료가 없으면 null */
   cash: {
-    /** YYYY-MM */
     month: string;
-    /** 이 날짜까지의 자료다 */
     through: string;
     complete: boolean;
     in: number | null;
@@ -163,11 +130,9 @@ export interface ShareMoney {
 export interface ShareTask {
   do: ShareTaskDo;
   buyerBizNo: string;
-  /** 공급가액·세액(원). 0보다 크다. 수정 발급은 맡기지 못한다 */
   supply: number;
   tax: number;
   item: string;
-  /** 없으면 거래처에 저장된 이메일 */
   email?: string;
   note?: string;
 }
@@ -175,7 +140,6 @@ export interface ShareTaskResult {
   taskRow: string;
   outcome: 'issued' | 'failed' | 'cancelled';
   approvalNo?: string;
-  /** 실패 코드(D16). 값은 넣지 않는다 */
   code?: string;
 }
 export interface ShareBodies {
@@ -243,17 +207,13 @@ const BODY_CHECK: { [K in ShareKind]: (b: Record<string, unknown>) => boolean } 
     (b.code === undefined || (typeof b.code === 'string' && b.code.length <= 64 && CODE.test(b.code))),
 };
 
-// ---- 줄 ----
-
 /** 서명되는 줄의 속. 서버는 보지 못한다. */
 export interface ShareRowCore<K extends ShareKind = ShareKind> {
   v: 1;
   row_id: string;
   kind: K;
   epoch: number;
-  /** 쓴 기기의 시계(ms). 순서 판단은 거래처·내 사업자·돈 요약의 "마지막 값"에만 쓴다 */
   at: number;
-  /** 쓴 기기 */
   dev: string;
   by: Role;
   body: ShareBodies[K];
@@ -263,7 +223,6 @@ export interface ShareRowWire {
   rowId: string;
   kind: ShareKind;
   epoch: number;
-  /** b64url(nonce ‖ ct) */
   body: string;
 }
 
@@ -318,7 +277,6 @@ export interface ShareVerifyKeys {
 }
 export type ShareOpen =
   | { ok: true; row: ShareRowCore }
-  /** key: 이 키로 열리지 않는다(다른 세대·손상). shape: 모양이 규칙 밖. mismatch: 바깥(종류·세대·id)과 속이 다르다. signer: 서명자를 모른다(목록에 없는 폰). signature: 서명이 틀리다 */
   | { ok: false; reason: 'key' | 'shape' | 'mismatch' | 'signer' | 'signature' };
 
 /** 받은 줄을 열고 서명을 확인한다. 서버가 준 입력이라 어떤 모양이 와도 던지지 않는다. */
@@ -348,8 +306,6 @@ export function openShareRow(key: Uint8Array, wire: ShareRowWire, keys: ShareVer
   }
 }
 
-// ---- 읽는 쪽 합치기(순서에 기대지 않는다) ----
-
 /** 발급 기록: 승인번호마다 한 건. 같은 번호가 또 오면 먼저 받은 줄을 둔다. */
 export function mergeShareIssues(rows: readonly ShareRowCore<'issue'>[]): ShareRowCore<'issue'>[] {
   const seen = new Map<string, ShareRowCore<'issue'>>();
@@ -373,12 +329,9 @@ export function mergeShareParties(rows: readonly ShareRowCore<'party'>[]): Share
   return [...last.values()].filter((r) => !r.body.removed);
 }
 
-// ---- 폰에 열쇠 주기(remote-envelope v1.9 share.key, D08 §6) ----
-
 /** 폰이 갖는 계정 공유 기록 열쇠: 세대마다 K_share(e), 그리고 PC 줄 서명 확인용 Ws 공개키. */
 export interface ShareKeySet {
   signPub: Uint8Array;
-  /** 세대 0부터 지금 세대까지(빠짐없이). keys[e] = K_share(e) */
   keys: Uint8Array[];
 }
 
@@ -410,7 +363,6 @@ export function readShareKeyBody(body: ShareKeyBody, have?: ShareKeySet | null):
   if (have) {
     if (!equal(have.signPub, signPub)) return null;
     for (let e = 0; e < Math.min(have.keys.length, keys.length); e++) if (!equal(have.keys[e]!, keys[e]!)) return null;
-    // 세대는 내려가지 않는다: 가진 것보다 짧은 묶음은 옛 세션의 것이다
     if (keys.length < have.keys.length) return null;
   }
   return { signPub, keys };

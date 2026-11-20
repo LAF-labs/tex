@@ -1,4 +1,3 @@
-// M6-2 꾸러미 모델, M6-14 빠진 것, M6-6 암호 걸린 엑셀 내보내기.
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -19,7 +18,6 @@ import {
 configure({ useWebWorkers: false });
 
 const sha = (b: Buffer): string => createHash('sha256').update(b).digest('hex');
-/** 암호 엑셀을 풀어 시트 XML을 읽는다 */
 async function readBook(xlsx: Buffer, pw: string): Promise<{ all: string; read: (n: string) => Promise<string> }> {
   const parts = await new ZipReader(new Uint8ArrayReader(new Uint8Array(await officeCrypto.decrypt(xlsx, { password: pw })))).getEntries();
   const all = (await Promise.all(parts.filter((p) => p.filename.endsWith('.xml')).map((p) => p.getData!(new TextWriter())))).join('\n');
@@ -228,7 +226,6 @@ describe('이번 달 상태와 빠진 것', () => {
     assert.ok(mb.all.includes('>41630<'), '소득세는 숫자 칸');
     assert.equal(masked.record.rrnIncluded, false);
 
-    // 설정 bundle.includeRrn을 켜면(앱은 includeRrn을 넘기지 않는다) 전체
     new BundleRepo(db).setIncludeRrn(profileId, true);
     const full = await exportBundle({ ...ctx(), outDir: path.join(dir, 'exports'), password: pw });
     new BundleRepo(db).setIncludeRrn(profileId, false);
@@ -238,7 +235,6 @@ describe('이번 달 상태와 빠진 것', () => {
     assert.equal(full.record.rrnIncluded, true);
     assert.deepEqual(full.guide, [ZIP_OPEN_GUIDE]);
     assert.equal(monthStatus(ctx()).find((s) => s.item.kind === 'payroll')!.status, 'ready');
-    // 급여 기록 내보내기는 설정을 켜도 주민번호 없음
     new BundleRepo(db).setIncludeRrn(profileId, true);
     const again = await exportPayrollRecord({ db, cipher, profileId, outDir: path.join(dir, 'exports'), password: pw });
     assert.ok(!(await readBook(fs.readFileSync(again.file), pw)).all.includes('900101-1'));
@@ -253,10 +249,10 @@ describe('이번 달 상태와 빠진 것', () => {
     });
     const taxInvoices = [
       inv('20261005-41000000-00000001', 80_000, 8_000, 88_000),
-      inv('20261005-41000000-00000001', 80_000, 8_000, 88_000), // H-02를 다시 돌려 같은 행
-      inv('202610054100000000000001', 80_000, 8_000, 88_000), // 하이픈만 다른 같은 번호
-      inv('20261005-41000000-00000002', 80_000, 8_000, 88_001), // 합계 1원 차이(R15 예시)
-      inv('20261005-41000000-00000001', 50_000, 5_000, 55_000, 'purchase'), // 방향이 다르면 다른 행
+      inv('20261005-41000000-00000001', 80_000, 8_000, 88_000),
+      inv('202610054100000000000001', 80_000, 8_000, 88_000),
+      inv('20261005-41000000-00000002', 80_000, 8_000, 88_001),
+      inv('20261005-41000000-00000001', 50_000, 5_000, 55_000, 'purchase'),
     ];
     const t = tidyInvoices(taxInvoices);
     assert.equal(t.dropped, 2);
@@ -273,7 +269,6 @@ describe('이번 달 상태와 빠진 것', () => {
     const bizNo = new ProfileRepo(db).get(profileId)!.bizNo!;
     for (const want of ['세무사 꾸러미 범위 표지', `${bizNo.slice(0, 3)}-${bizNo.slice(3, 5)}-${bizNo.slice(5)}`, '2026-10-01 ~ 2026-10-31', '2026-11-05 01:00:00', '같은 승인번호로 뺀 세금계산서', '2건'])
       assert.ok(all.includes(want), `표지: ${want}`);
-    // 매출 2행: 공급가액 160,000 / 세액 16,000 / 합계 176,001
     assert.ok(/<c [^>]*><v>2<\/v><\/c><c [^>]*><v>160000<\/v><\/c><c [^>]*><v>16000<\/v><\/c><c [^>]*><v>176001<\/v>/.test(cover), '표지 매출 행 수·합계');
     assert.ok(all.includes('확인 필요: 공급가액+세액이 합계와 1원 다름'), '그 행의 메모 칸');
     const missSheet = await read(`xl/worksheets/sheet${r.sheets.indexOf('빠진 것') + 1}.xml`);

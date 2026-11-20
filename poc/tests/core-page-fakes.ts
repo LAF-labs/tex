@@ -1,7 +1,4 @@
-// M2 엔진 시험용 가짜 페이지 포트(PageReader·Actuator·Clock). 결정적이고 실제 포털에 닿지 않는다.
 import type { ActResult, Actuator, Candidate, Clock, ElementInfo, ElementRef, PageReader, Resolved } from '@sax/engine/core';
-
-// ---- 가짜 DOM ----
 
 export interface FEl {
   id: string;
@@ -16,7 +13,6 @@ export interface FEl {
   a11y?: string;
   visible?: boolean;
   enabled?: boolean;
-  /** 이 시각(가짜 시계) 뒤에야 나타난다. */
   appearAt?: number;
 }
 
@@ -91,7 +87,6 @@ export class FakePage implements PageReader {
 
 export class FakeAct implements Actuator {
   log: string[] = [];
-  /** 포털이 입력 값을 바꿔 보여 주는 흉내(예: 금액 쉼표). */
   reformat: (v: string) => string = (v) => v;
   failWith: string | null = null;
   private page: FakePage;

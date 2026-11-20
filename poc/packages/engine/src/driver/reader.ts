@@ -1,25 +1,16 @@
-// PageReader의 Playwright 구현(D03 §5.1, M2-4 D). 읽기 전용: 페이지를 바꾸지 않는다.
-// - ElementRef는 ElementHandle(고정 DOM 요소)과 그것을 찾은 locator.nth(i)를 같이 든다. 역할·이름은 그 locator의
-//   aria 스냅숏 첫 줄에서 읽고, 그 사이 DOM이 바뀌어 locator가 다른 요소를 가리키면 빈 역할을 돌려 R-A1이 거부하게 한다.
-// - frame은 'main'이면 주 프레임, 아니면 그 이름의 프레임(없으면 빈 결과).
-// - 후보: role → getByRole(name 정확히), css → locator, label → getByLabel(정확히). within이 있으면 그 요소의 하위만.
 import type { ElementHandle, Frame, Locator, Page, Request } from 'playwright-core';
 import { INTERACTIVE_ROLES, type ElementInfo, type ElementRef, type ElementShape, type InteractiveElement, type PageReader } from '../core/page.ts';
 import type { Candidate } from '../core/types.ts';
 import { ariaValue } from './aria-tree.ts';
 import type { MaskedShot } from '@sax/model';
 
-/** 화면 보기 사진: 가리는 것(모든 프레임). 입력 칸 전부, 숫자 두 자 이상·@가 든 가장 작은 글 요소. */
 const SHOT_MASK_CSS = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
 const SHOT_MASK_TEXT = [/[0-9０-９]{2,}/, /[@＠]/];
-/** JPEG 품질·크기 상한(@sax/model MASKED_SHOT_MAX_BYTES와 같은 값). 넘으면 품질을 낮춰 한 번 더, 그래도 넘으면 null. */
 const SHOT_QUALITY = [55, 35] as const;
 const SHOT_MAX_BYTES = 900_000;
 
-/** 진단 영역에서 모으는 요소(입력·단추·링크·label·역할 있는 것). */
 const REGION_SEL = 'input,select,textarea,button,a[href],label,[role=button],[role=textbox],[role=combobox],[role=checkbox],[role=radio],[role=link],[role=dialog]';
 
-/** 브라우저 안에서 도는 요소 모양 함수(값은 읽지 않는다: 입력 칸 value 없음, 단추 글만). */
 function SHAPE_OF(n: Element): ElementShape {
   const e = n as HTMLInputElement;
   const tag = n.tagName.toLowerCase();
@@ -40,7 +31,6 @@ function SHAPE_OF(n: Element): ElementShape {
   };
 }
 
-/** 판정·에이전트 목록 상한(요청 크기). */
 const INTERACTIVE_MAX = 150;
 
 /** waitIdle: 요청이 없어야 하는 시간(ms). */
@@ -64,7 +54,6 @@ export class PlaywrightPageReader implements PageReader {
   private next = 1;
   private readonly timeoutMs: number;
 
-  /** 이 탭에서 아직 끝나지 않은 요청(waitIdle). XHR도 센다: WebSquare 조회 표는 로드 뒤 XHR 응답으로 그려진다. */
   private readonly inflight = new Set<Request>();
 
   constructor(page: Page, o: { timeoutMs?: number } = {}) {
@@ -80,14 +69,12 @@ export class PlaywrightPageReader implements PageReader {
     return this.page.url();
   }
 
-  /** 잡고 있는 요소를 놓는다(스텝 사이·네비게이션 뒤). */
   async release(): Promise<void> {
     const hs = [...this.held.values()];
     this.held.clear();
     await Promise.all(hs.map((h) => h.handle.dispose().catch(() => {})));
   }
 
-  /** 내부: 참조 → 핸들(GuardedActuator 아래 원시 드라이버가 쓴다). */
   handle(el: ElementRef): ElementHandle | null {
     return this.held.get(el.ref)?.handle ?? null;
   }
@@ -126,18 +113,12 @@ export class PlaywrightPageReader implements PageReader {
   async info(el: ElementRef): Promise<ElementInfo> {
     const h = this.held.get(el.ref);
     if (!h) return { role: '', name: '', visible: false, enabled: false, editable: false };
-    // isEditable: input·textarea·select·contenteditable이 readonly·disabled가 아닌가(그 밖의 요소는 던진다 → 거짓).
     const [visible, enabled, editable] = await Promise.all([h.handle.isVisible().catch(() => false), h.handle.isEnabled().catch(() => false), h.handle.isEditable().catch(() => false)]);
-    // locator.nth(i)가 아직 같은 요소일 때만 그 aria 스냅숏을 믿는다.
     const same = await h.loc.evaluate((a, b) => a === b, h.handle).catch(() => false);
     if (!same) return { role: '', name: '', visible, enabled, editable, stale: true };
-    // 역할 없는 div·span(WebSquare 창·표시 글)은 aria 스냅숏이 자기 줄 없이 자식으로 펼쳐지거나(div) 비어 있다(빈 span).
-    // 그 첫 줄을 자기 역할로 읽으면 R-A1이 엉뚱한 역할로 맞거나 틀린다. 그래서 그런 요소는 ARIA 명세대로 'generic'(이름 없음)으로 본다.
     if (await h.handle.evaluate((n) => { const e = n as Element; return (e.tagName === 'DIV' || e.tagName === 'SPAN') && !e.hasAttribute('role'); }).catch(() => false)) return { role: 'generic', name: '', visible, enabled, editable };
     const snap = await h.loc.ariaSnapshot({ timeout: this.timeoutMs }).catch(() => '');
     const head = ariaHead(snap);
-    // 숨은 요소는 aria 스냅숏에 없다(역할 빈칸). 그러면 DOM에서 암묵 역할·이름을 읽는다(IR rev v1.3.7: 홈택스 1280 배치의 로그인 상태
-    // 머리말 "로그아웃" 링크가 숨어 있다, 예행 run-b9aa50fb s2). 보이는 요소는 지금처럼 접근성 트리만 믿는다.
     if (!visible && !head.role) return { ...(await h.handle.evaluate(hiddenIdentity).catch(() => ({ role: '', name: '' }))), visible, enabled, editable };
     return { ...head, visible, enabled, editable };
   }
@@ -152,7 +133,6 @@ export class PlaywrightPageReader implements PageReader {
   async text(el: ElementRef): Promise<string> {
     const h = this.handle(el);
     if (!h) return '';
-    // 숨은 요소의 innerText는 빈칸일 수 있다(visibility). 그런 요소만 textContent(공백 접기)를 쓴다.
     return h.evaluate((n) => {
       const e = n as HTMLElement;
       const shown = e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
@@ -163,14 +143,11 @@ export class PlaywrightPageReader implements PageReader {
   async value(el: ElementRef): Promise<string> {
     const h = this.handle(el);
     if (!h) return '';
-    // select: 고른 선택지의 이름(홈택스 select의 value는 코드라 화면·접근성 트리 값과 다르다). 라디오 묶음: 고른 라디오의 이름(없으면 '').
-    // 그 밖: DOM value. 가짜 H-01의 select(value = 이름)는 결과가 같다.
     return h.evaluate((e) => {
       if (e instanceof HTMLSelectElement) return e.selectedOptions[0]?.label ?? '';
       if (!('value' in e) && e instanceof Element && (e.getAttribute('role') === 'radiogroup' || !!e.querySelector('input[type="radio"]'))) {
         const r = e.querySelector<HTMLInputElement>('input[type="radio"]:checked');
         if (!r) return '';
-        // 선택지 글: title(홈택스 WebSquare) → aria-label → 이름표. 첫 라디오의 이름표에는 묶음 머리 이름이 붙어 있다
         return r.getAttribute('title') ?? r.getAttribute('aria-label') ?? (r.labels?.[0] as HTMLElement | undefined)?.innerText ?? '';
       }
       return 'value' in e && typeof (e as { value: unknown }).value === 'string' ? (e as { value: string }).value : '';
@@ -181,13 +158,11 @@ export class PlaywrightPageReader implements PageReader {
     const h = this.held.get(el.ref);
     if (!h) return '';
     const snap = await h.loc.ariaSnapshot({ timeout: this.timeoutMs }).catch(() => '');
-    // 역할 없는 div·span(generic)은 접근성 트리에서 글 노드(`- text: 1,000`)로 펼쳐진다: 그 글을 값으로 본다(표시 글 readback, 미리보기 창). 빈 span은 ''.
     const plain = await h.handle.evaluate((n) => {
       const e = n as Element;
       if ((e.tagName !== 'DIV' && e.tagName !== 'SPAN') || e.hasAttribute('role')) return null;
       return e.querySelector('input[type="radio"]') ? { kind: 'radios' as const, head: e.getAttribute('title') ?? '' } : { kind: 'text' as const, head: '' };
     }).catch(() => null);
-    // 역할 없는 라디오 묶음(div 안 라디오)은 고른 라디오의 접근성 이름이 값이다. 첫 라디오 이름 앞에 붙은 묶음 머리(div title, 「발급유형 」)는 뗀다
     if (plain?.kind === 'radios') {
       const v = snap ? ariaValue(snap, 'radiogroup') : '';
       return plain.head && v.startsWith(`${plain.head} `) ? v.slice(plain.head.length + 1) : v;
@@ -196,7 +171,6 @@ export class PlaywrightPageReader implements PageReader {
     return ariaValue(snap, ariaHead(snap).role);
   }
 
-  /** aria 스냅숏(읽기 전용, decide 화면 관측). el이 없으면 문서 전체. 잡은 요소가 locator와 달라졌으면 null. */
   async ariaSnapshot(el: ElementRef | null): Promise<string | null> {
     if (!el) return this.page.mainFrame().locator('body').ariaSnapshot({ timeout: this.timeoutMs }).catch(() => null);
     const h = this.held.get(el.ref);
@@ -209,7 +183,6 @@ export class PlaywrightPageReader implements PageReader {
   async listRole(frame: string, role: string): Promise<Array<{ el: ElementRef; name: string; id: string | null; visible: boolean; enabled: boolean }>> {
     const f = this.frame(frame);
     if (!f) return [];
-    // 이름과 상관없이 그 역할 전부(query(role)는 이름 정확 일치라 쓰지 않는다). 너무 많으면 앞 200개만.
     const loc = f.getByRole(role as Parameters<Frame['getByRole']>[0]);
     const n = await loc.count().catch(() => 0);
     const out: Array<{ el: ElementRef; name: string; id: string | null; visible: boolean; enabled: boolean }> = [];
@@ -217,7 +190,6 @@ export class PlaywrightPageReader implements PageReader {
       const nth = loc.nth(i);
       const h = await nth.elementHandle({ timeout: this.timeoutMs }).catch(() => null);
       if (!h) continue;
-      // 비밀번호 칸은 목록에 넣지 않는다(이름도 보내지 않는다).
       const meta = await h.evaluate((e) => ({ id: (e as Element).id || null, password: (e as HTMLInputElement).type === 'password' })).catch(() => null);
       if (!meta || meta.password) {
         await h.dispose().catch(() => {});
@@ -255,7 +227,6 @@ export class PlaywrightPageReader implements PageReader {
     const f = this.frame(frame);
     const scope = within ? this.handle(within) : null;
     if (!f || (within && !scope)) return [];
-    // 요소마다 CDP 함수 호출(페이지 eval을 쓰지 않아 사이트 CSP와 무관하다)
     const hs = await (scope ? scope.$$(REGION_SEL) : f.$$(REGION_SEL)).catch(() => []);
     const out: ElementShape[] = [];
     for (const [i, h] of hs.entries()) {
@@ -268,10 +239,6 @@ export class PlaywrightPageReader implements PageReader {
     return out;
   }
 
-  /**
-   * 가린 화면 사진(computer_use). Playwright mask로 찍어 원본(가리지 않은 사진)은 엔진 메모리에도 남지 않는다.
-   * 금고 중계가 비밀 창이 열렸거나 오염된 탭의 Page.captureScreenshot을 거부하면 예외 → null.
-   */
   async maskedShot(): Promise<{ url: MaskedShot; width: number; height: number } | null> {
     const vp = this.page.viewportSize() ?? (await this.page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight })).catch(() => null));
     if (!vp) return null;
@@ -312,10 +279,6 @@ export class PlaywrightPageReader implements PageReader {
       .then(() => true, () => false);
   }
 
-  /**
-   * 로드가 끝났고 이 탭의 요청(XHR 포함)이 IDLE_QUIET_MS 동안 0개면 true. Playwright networkidle은 로드 뒤 한 번 닿으면 다시 보지 않아
-   * [조회] 클릭 뒤 XHR로 그려지는 표(홈택스 발급 목록)의 끝을 알 수 없다. 그래서 진행 중 요청을 직접 센다.
-   */
   async waitIdle(timeoutMs: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
     const loaded = await this.page.waitForLoadState('load', { timeout: timeoutMs }).then(() => true, () => false);
@@ -337,9 +300,7 @@ export class PlaywrightPageReader implements PageReader {
   }
 }
 
-/** 숨은 요소의 암묵 역할·이름(접근성 트리에 없을 때만). 링크·단추·입력 칸만 역할을 준다. 그 밖에는 빈 역할이라 동일성이 그대로 거부한다. */
 function hiddenIdentity(n: Node): { role: string; name: string } {
-  // 페이지 안에서 돈다(Playwright가 이 함수만 보낸다): 바깥 이름을 쓰지 않는다.
   const e = n as Element;
   const tag = e.tagName;
   const type = (e.getAttribute('type') ?? '').toLowerCase();

@@ -1,4 +1,3 @@
-// PC 파일을 보관함에 넣기(08 D-05, D14 M6-2·M6-4): receipt.pcStore·bundle.attachFile. 파일을 열지 않고 머리 바이트·크기만, 고아 파일·문서 0, 같은 파일은 다시 쓰지 않음.
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -143,7 +142,6 @@ describe('bundle.attachFile(꾸러미 파일 칸)', () => {
     await code('bundle.attachFile', { profileId, itemId: item('payroll').id, month: '2026-10', bytes: jpeg(), format: 'png' }, 'format_mismatch');
     await code('bundle.attachFile', { profileId, itemId: item('payroll').id, month: '2026-10', bytes: pdf(), format: 'pdf', displayName: 'x'.repeat(101) }, 'bad_display_name');
     assert.deepEqual([docCount(), files().length], [n, f]);
-    // 급여를 끈 업체의 급여대장은 파일 칸이다
     const ok = await call<{ entry: BundleEntry }>('bundle.attachFile', { profileId, itemId: item('payroll').id, month: '2026-10', bytes: pdf(), format: 'pdf' });
     assert.equal(ok.entry.status, 'ready');
   });

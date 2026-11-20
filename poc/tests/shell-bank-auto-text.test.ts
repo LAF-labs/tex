@@ -1,9 +1,6 @@
-// 은행 자동 연결 실패 문구(shell-bank-auto.js failText). 기업·개인 뱅킹은 사람이 고르지 않고 엔진이 둘 다 해 본다(대표 2026-11-19).
-// 둘 다 안 되면 그 은행에서 한 번 할 일만 말한다(2026-11-18·19 실기기: 우리은행 CF-12805 인증서 미등록, CF-12831 본인인증 요구).
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
-// 정적 JS 모듈(타입 없음). document는 그릴 때만 쓴다
 const { failText, otherWayText, withdrawOk, WITHDRAW_LEN_TEXT } = (await import('../apps/desktop/static/shell/shell-bank-auto.js')) as unknown as {
   failText: (code: string, bank?: string, clientType?: 'B' | 'P') => string;
   otherWayText: (also: unknown, bank?: string) => string | null;
@@ -50,8 +47,6 @@ describe('자동 연결 카드', () => {
   });
 });
 
-// 2026-11-19 실기기(라프·우리은행): 계좌번호 칸에 4자리를 넣고 세 번 실패했는데 번호는 은행에 가지도 않았고 화면은 "은행이 받지 않았어요"였다.
-// 기업 뱅킹 본인인증(CF-12831) 안내도 계좌번호 카드에 가려 보이지 않았다.
 describe('계좌번호 카드: 덜 넣은 번호·다른 길', () => {
   it('계좌번호는 숫자 10~16자리만 보낸다', () => {
     assert.equal(withdrawOk('0200'), false);

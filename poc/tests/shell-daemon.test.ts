@@ -1,4 +1,3 @@
-// 서류 데몬 배선(daemon-host.ts, D10 §3 notify, M4-8): 엔진 daemon.snapshot → 스케줄러 → OS 알림. Electron 없이(알림·시계·타이머 주입).
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';

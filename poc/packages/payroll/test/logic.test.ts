@@ -1,5 +1,3 @@
-// M6-8 계산 규칙(합성 표로): 끝처리, 간이세액표 찾기·가족 11명 초과·자녀 공제·80/120%, 표 끝 넘는 식, 보험 상·하한, 비과세 한도, 고지액 우선.
-// M6-15 근무표. M6-10 패키지 검증·시행일 선택. 공식 표 대조는 golden.test.ts.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
@@ -9,7 +7,6 @@ import {
 
 const meta = { review: 'confirmed' as const, sources: [{ title: '시험용', url: 'https://example.invalid/' }], effectiveTo: null };
 
-// 합성 간이세액표: 0~1,000,000은 0, 1,000,000~2,000,000, 2,000,000~3,000,000, 그리고 표 끝 3,000,000
 const fam = (base: number) => Array.from({ length: 11 }, (_, i) => Math.max(0, base - i * 10_000));
 const simple: RateTable<'simple_tax_table'> = {
   ...meta, id: 'tax-test', kind: 'simple_tax_table', effectiveFrom: '2024-03-01', rounding: 'floor_10',
@@ -58,20 +55,15 @@ describe('간이세액표 적용', () => {
     assert.equal(tableTaxFor(simple, 3_000_000, 1), 120_000, '표 끝값은 마지막 행');
   });
   it('공제대상가족 11명 초과: 11명 세액 − (10명 − 11명) × 초과 인원, 0 미만은 0', () => {
-    // 2,000,000 행: 10명 = 80,000 − 90,000 → 0, 11명 0 → 0
     assert.equal(tableTaxFor(simple, 2_500_000, 13), 0);
-    // 3,000,000 끝값: 10명 30,000, 11명 20,000 → 13명 = 20,000 − 10,000 × 2 = 0, 12명 = 10,000
     assert.equal(tableTaxFor(simple, 3_000_000, 12), 10_000);
   });
   it('표 끝을 넘는 월급여: 끝값 세액 + 가산액 + 초과분 × 비율(위 구간부터)', () => {
-    // 3,500,000: 120,000 + 25,000 + 500,000 × 0.343 = 316,500
     assert.equal(tableTaxFor(simple, 3_500_000, 1), 316_500);
-    // 5,000,000: 120,000 + 400,000 + 1,000,000 × 0.38 = 900,000
     assert.equal(tableTaxFor(simple, 5_000_000, 1), 900_000);
   });
   it('자녀 공제(1명·2명·3명 이상), 80·120%, 지방소득세 10%, 10원 미만 절사', () => {
     const w = (children: number, pct: 80 | 100 | 120) => withholding(simple, { monthlyTaxablePay: 2_500_000, dependents: 4, children8to20: children, pct });
-    // 4명 칸: 80,000 − 30,000 = 50,000
     assert.equal(w(0, 100).incomeTax, 50_000);
     assert.equal(w(1, 100).incomeTax, 37_500);
     assert.equal(w(2, 100).incomeTax, 20_840);
@@ -110,7 +102,6 @@ describe('급여 한 줄', () => {
     assert.equal(r.gross, 2_850_000);
     assert.equal(r.nontax, 200_000);
     assert.ok(r.notes.includes('nontax_over_limit:meal'));
-    // 과세 2,650,000 → 80,000 / 지방 8,000, 연금 2,650,000×4.75%=125,870(125,875), 건강 95,260(95,267.5), 장기요양 12,510(12,517.3), 고용 23,850
     assert.deepEqual([r.incomeTax, r.localIncomeTax, r.pensionEst, r.healthEst, r.ltcEst, r.employmentEst], [80_000, 8_000, 125_870, 95_260, 12_510, 23_850]);
     assert.equal(r.netPay, 2_850_000 - 80_000 - 8_000 - 125_870 - 95_260 - 12_510 - 23_850);
     assert.deepEqual(r.rateTableIds, ['tax-test', 'ins-test', 'pb-test', 'nt-test']);

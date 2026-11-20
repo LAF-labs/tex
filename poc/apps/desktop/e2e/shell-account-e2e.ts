@@ -1,9 +1,4 @@
-// 계정 로그인 e2e(A-01, remote-account.ts): 설정 > 기기 연결 → [로그인] → 이메일 → 6자리 → 첫 PC 등록. 실제 렌더러·preload·main 처리기.
-// 계정 서비스는 메모리 가짜(코드 123456, AIK 서명 목록을 실제로 검증한다)를 localhost HTTP로 띄우고(fake-account-http.ts), 셸은 제품 클라이언트
-// (cloudPorts)와 제품 Egress 허용 목록으로 거기에 닿는다. 금고 키는 소프트 키다. 실제 계정 서비스 경로는 tests/shell-remote-account.test.ts.
-// 실행: electron apps/desktop/e2e-dist/shell-account-e2e.js. 앱 폴더·키체인·네트워크를 쓰지 않는다.
-// SAX_E2E_ACCOUNT=signup이면 계정 만들기 → 비밀번호 만들기(인계 명세 §3), reset이면 비밀번호 찾기(§4)를 돈다(셸은 프로세스에 하나라 따로 띄운다).
-import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
+import './os-guard.js';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { app, nativeTheme } from 'electron';
@@ -15,7 +10,6 @@ import { registerShellSchemes, startShell, type Shell } from '../dist/shell-app.
 import { DEMO_DEV } from '../dist/demo-dev.js';
 
 registerShellSchemes();
-// SAX_E2E_THEME=light|dark: 스크린샷을 캔버스와 같은 테마로 찍는다(기본은 시스템)
 if (process.env.SAX_E2E_THEME === 'light' || process.env.SAX_E2E_THEME === 'dark') nativeTheme.themeSource = process.env.SAX_E2E_THEME;
 const USER_DATA = path.join(app.getPath('temp'), `sax-e2e-acct-${process.pid}`);
 app.setPath('userData', USER_DATA);
@@ -45,7 +39,6 @@ async function press(sel: string) {
   const ok = await js<boolean>(`(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (!b || b.disabled) return false; b.click(); return true; })()`);
   if (!ok) throw new Error(`no button ${sel}`);
 }
-/** 실제 키 입력(main이 before-input-event로 본다): 칸에 초점을 두고 글자마다 keyDown·char·keyUp. */
 async function typeKeys(sel: string, text: string) {
   await js(`document.querySelector(${JSON.stringify(sel)}).focus()`);
   for (const ch of text) {
@@ -57,7 +50,6 @@ async function typeKeys(sel: string, text: string) {
 }
 const type = (sel: string, v: string) => js(`(() => { const i = document.querySelector(${JSON.stringify(sel)}); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event('input')); })()`);
 const screen = () => js<string | null>(`document.querySelector('[data-acct-screen]')?.dataset.acctScreen ?? null`);
-/** SAX_E2E_SHOTS=<폴더>면 화면마다 실제 창을 찍어 둔다(캔버스 v60과 눈으로 맞춰 보는 용도). */
 async function shot(name: string) {
   const dir = process.env.SAX_E2E_SHOTS;
   if (!dir) return;
@@ -71,7 +63,6 @@ const callErr = (m: string, p: unknown) => js<string>(`window.sax.call(${JSON.st
 async function main() {
   const acct = fakeAccount();
   const keys = softKeys();
-  // 제품 클라이언트 + 제품 Egress(허용 목록 그대로). 개발 origin(127.0.0.1)만 cloudDevLocal로 연다.
   const front = await serveAccount(acct.client);
   const egress = new Egress({ cloudDevLocal: true });
   const cloud = cloudPorts({ egress, env: 'dev', dev: { accountOrigin: front.origin, relayHost: '127.0.0.1:9' } });
@@ -129,7 +120,6 @@ async function main() {
   check('칸 여섯 개에 넣은 숫자', (await js<string>(`[...document.querySelectorAll('.acct-cell')].map((c) => c.textContent).join('')`)) === '48');
   await shot('a01-code');
   await type('.acct-code', '');
-  // 0.1.5 실사용 재현(사람 속도): 칸을 누르고 메일을 보느라 5초가 지난 뒤 숫자를 친다. 숫자 키도 main이 본 입력이라 서버 확인까지 간다.
   await press('.acct-code');
   await sleep(5_000);
   await typeKeys('.acct-code', '000000');
@@ -140,7 +130,6 @@ async function main() {
   await press('[data-act=account-send]');
   await until('code again', async () => (await screen()) === 'code');
   check('[확인]은 코드 칸 바로 아래, 6자리 전에는 꺼져 있다', await js<boolean>(`(() => { const b = document.querySelector('[data-act=account-verify]'); return !!b && b.disabled && document.querySelector('.acct-code-box').nextElementSibling === b; })()`));
-  // 메뉴 붙여 넣기처럼 main이 입력을 못 본 채 5초가 지나 6자리가 차면: 거절되지만 코드는 칸에 남고 [확인]이 켜져 누르면 된다
   await press('.acct-code');
   await sleep(5_000);
   await type('.acct-code', '123456');
@@ -165,7 +154,6 @@ async function main() {
   check('로그인한 뒤에는 코드 보내기를 받지 않는다', (await (async () => (S!.win.webContents.sendInputEvent({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 }), await sleep(30), callErr('account.sendCode', { email: 'x@gyeonbon-test.example' })))()) === 'account_signed_in');
 }
 
-/** 계정 만들기 → 코드 → 비밀번호 만들기(인계 명세 §3 pw·shown·common·mine, §3.2 거부 문구). 새 셸·새 금고 키·비밀번호 없는 계정. */
 async function signup() {
   const acct = fakeAccount({ hasPassword: false });
   const keys = softKeys();
@@ -186,7 +174,6 @@ async function signup() {
   await type('.acct-email', 'owner@gyeonbon-test.example');
   await press('[data-act=account-send]');
   await until('code 2', async () => (await screen()) === 'code');
-  // 붙여 넣기(⌘V·Ctrl+V): 칸을 누르고 5초 뒤 붙여 넣는다. 붙여 넣기 키도 main이 본 입력이라 바로 확인까지 간다.
   await press('.acct-code');
   await sleep(5_000);
   await js(`document.querySelector('.acct-code').focus()`);
@@ -229,7 +216,6 @@ async function signup() {
   front.close();
 }
 
-/** 비밀번호 찾기(인계 명세 §4): 틀린 비밀번호 안내의 [비밀번호 찾기] → 이메일 → 코드 6자리(서버 검증 없음) → 새 비밀번호 → 바꿈 끝 → [계속]. */
 async function reset() {
   const acct = fakeAccount();
   const keys = softKeys();

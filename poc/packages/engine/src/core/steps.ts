@@ -1,9 +1,3 @@
-// M2-1 스텝 핸들러(D02 §4, D03 §5.1): goto·click·fill·select·press·wait·assert·extract·branch·end.
-// repeat·handoff·onFail 같은 제어 흐름은 실행기(interp.ts)가 한다. 핸들러는 결과(Outcome)만 돌려주고 다음 스텝을 정하지 않는다.
-// - 페이지를 바꾸는 동작은 모두 Actuator, 읽기는 PageReader로만 한다.
-// - 비밀 칸(secretKind·password)은 이 핸들러들이 읽거나 누를 수 없다(V-20의 실행 시 방어, step.secret_field).
-// - commits:true 항목·비가역 스텝은 여기서 실행하지 않는다(커밋 구간은 M2-3 submit만, step.irreversible_unguarded).
-// - 저널·로그에 화면 텍스트·입력 값을 남기지 않는다(⑦). 결과에는 코드만 있다.
 import { evalCond, stringPattern, type CondEnv } from './conds.ts';
 import { normalizeFieldValue, readField, type FieldRead } from './readback.ts';
 import { normalizeName } from './constants.ts';
@@ -16,7 +10,6 @@ import { pickStep, waitGone } from './pick.ts';
 
 export type Outcome =
   | { t: 'next' }
-  /** 분기 목적지: stepRef 또는 'handoff'·'abort'. */
   | { t: 'jump'; to: string }
   | { t: 'fail'; code: string }
   | { t: 'end'; status: EndStep['status'] };
@@ -24,23 +17,14 @@ export type Outcome =
 export interface StepEnv extends CondEnv {
   act: Actuator;
   clock: Clock;
-  /** manifest.domains(V-06의 실행 시 재확인). */
   domains: readonly string[];
-  /** fixture 패키지 실행일 때만(loader.fixtureOriginGrant, ADR-039). 없으면 실제 포털 규칙만. */
   fixtureGrant?: FixtureOriginGrant | null;
-  /** 정적으로 계산한 비가역 스텝 id(validate.irreversibleSteps). */
   irreversible: ReadonlySet<string>;
-  /** 스텝에 timeoutMs가 없을 때. */
   defaultTimeoutMs: number;
-  /** 요소가 나타나기를 기다리는 간격. */
   pollMs: number;
-  /** [중지]가 들어왔는가(조율기가 채운다). 기다리는 루프(waitTarget·wait text)가 폴링 때마다 보고 run.stopped로 빠진다. */
   stopRequested?: () => boolean;
-  /** pick.remember(IR rev v1.3.6): 고른 행 이름을 프로필 칸에 저장한다(값은 저널·로그에 없다). 없으면 이번 실행 범위에만 둔다. */
   profileWrite?: (field: 'certName', value: string) => Promise<boolean>;
-  /** wait for:'dialog'가 본 포털 대화상자 문구를 앱 화면(실행 단계)에 글로 보인다(대표 2026-11-13). key는 strings 키, ok는 패턴 일치. 저널·로그에는 넣지 않는다. */
   dialogShown?: (n: { stepId: string; key: string; text: string; ok: boolean }) => void;
-  /** 진단 저널(값 없음). branch.settled 등. 없으면 남기지 않는다. */
   journal?: (type: string, payload: Record<string, string | number | boolean>) => void;
 }
 
@@ -72,7 +56,6 @@ export async function waitTarget(env: StepEnv, key: string, timeoutMs: number, o
   }
 }
 
-/** fill.value·select.option: 참조면 읽고, 상수면 타깃의 allowedConstants 안에서만(V-21). */
 function valueOf(raw: string, entry: SelectorEntry, scope: RunScope): { ok: true; value: string | null } | { ok: false; code: string } {
   if (!isRef(raw)) return entry.allowedConstants?.includes(raw) ? { ok: true, value: raw } : { ok: false, code: 'step.constant_not_allowed' };
   const v = readRef(scope, raw);
@@ -81,7 +64,6 @@ function valueOf(raw: string, entry: SelectorEntry, scope: RunScope): { ok: true
   return s === null ? { ok: false, code: 'step.ref_unresolved' } : { ok: true, value: s };
 }
 
-/** 비가역 스텝(정적 집합)은 이 핸들러들로 실행하지 않는다. */
 const guardIrreversible = (s: Step, env: StepEnv): Outcome | null => (env.irreversible.has(s.id) ? fail('step.irreversible_unguarded') : null);
 
 const act = async (p: Promise<{ ok: true } | { ok: false; code: string }>): Promise<Outcome> => {
@@ -100,7 +82,6 @@ const click: Handler<'click'> = async (s, env) => {
   const t = await waitTarget(env, s.target, timeoutOf(s, env));
   if (!t.ok) return fail(t.code);
   const r = await env.act.click(t.t);
-  // 되돌릴 수 있는 클릭(비가역 스텝·commits 항목은 위에서 걸렀다)이 시간 초과로 끝나면 한 번 더 요소 박스 클릭(조건은 clickByBox가 본다).
   if (!r.ok && r.code === 'step.timeout' && env.act.clickByBox) return act(env.act.clickByBox(t.t));
   return r.ok ? NEXT : fail(r.code);
 };
@@ -111,7 +92,6 @@ const fill: Handler<'fill'> = async (s, env) => {
   const v = valueOf(s.value, t.t.entry, env.scope);
   if (!v.ok) return fail(v.code);
   if (v.value === null) {
-    // 선택 입력이 비었다. clear면 칸을 비운다(포털 자동 채움 제거, B-05). 그 밖에는 실패(기본 fail).
     if (s.ifAbsent === 'keep' && s.value.startsWith('$inputs.')) return NEXT;
     if (s.ifAbsent !== 'clear' || !s.value.startsWith('$inputs.')) return fail(s.value.startsWith('$inputs.') ? 'step.input_absent' : 'step.ref_unresolved');
     const r = await env.act.clear(t.t);
@@ -120,7 +100,6 @@ const fill: Handler<'fill'> = async (s, env) => {
   }
   const r = await env.act.fill(t.t, v.value, { keyEvents: s.keyEvents === true });
   if (!r.ok) return fail(r.code);
-  // 입력 뒤 DOM 값을 되읽어 같은지 확인한다(D02 §4 fill). 값은 남기지 않는다.
   const back = await env.page.value(t.t.el);
   return normalizeFieldValue(t.t.entry, back) === normalizeFieldValue(t.t.entry, v.value) ? NEXT : fail('step.readback_mismatch');
 };
@@ -171,8 +150,6 @@ const wait: Handler<'wait'> = async (s, env) => {
     case 'gone':
       return s.value ? waitGone(s.value, env, ms) : fail('step.selector_miss');
     case 'dialog': {
-      // 마지막 동작 뒤 뜬 네이티브 대화상자(alert 등, 엔진 정책이 이미 닫았다)의 문구를 판정한다(홈택스 등록번호 [확인] → alert).
-      // 다른 문구면 기다리지 않고 실패한다(재시도해도 같은 대화상자는 다시 오지 않는다). 문구는 저널에 남기지 않고 앱 화면에만 글로 보인다(⑦, dialogShown).
       const re = s.value ? stringPattern(env.strings, s.value) : null;
       if (!re || !env.act.dialogSinceAction) return fail('step.cond_unsupported');
       const deadline = env.clock.now() + ms;
@@ -201,7 +178,6 @@ const assert: Handler<'assert'> = async (s, env) => {
 const extract: Handler<'extract'> = async (s, env) => {
   const from = s.from;
   const key = 'selector' in from ? from.selector : 'regex' in from ? from.regex.target : from.a11y.target;
-  // 읽기만 하므로 커밋 항목(예: 결과 화면의 버튼 이름)도 읽을 수 있다. 비밀 칸은 안 된다.
   const t = await waitTarget(env, key, timeoutOf(s, env), { allowCommit: true });
   if (!t.ok) return fail(t.code);
   let value: string;
@@ -253,7 +229,6 @@ const branch: Handler<'branch'> = async (s, env) => {
       return true;
     };
     if (!(await settle())) return fail('run.stopped');
-    // 거짓은 페이지 요청이 멎은 뒤 한 번 더 본다(홈택스 로그인 상태 머리말은 세션 확인이 끝난 뒤에야 "로그아웃"이 된다, 예행 run-1278f5d4·c1d6fe9c).
     if (r.ok && r.value === false && env.clock.now() < until) {
       await env.page.waitIdle(Math.max(0, until - env.clock.now())).catch(() => false);
       const n = await evalCond(s.on, env);
@@ -268,10 +243,6 @@ const branch: Handler<'branch'> = async (s, env) => {
   return { t: 'jump', to: s.cases[String(r.value)] ?? s.default };
 };
 
-/**
- * branch.settled 진단(예행 s2·s6): 결과가 바뀐 순서(코드·참거짓·ms)와 끝에 본 대상의 역할·보임.
- * 글은 navigationOnly 항목(머리말 링크 같은 화면 틀)이고 12자 이하일 때만 남긴다(입력 값·사람 정보가 아님).
- */
 async function settledTrace(s: StepOf<'branch'>, env: StepEnv, result: string, ms: number, trace: string[]): Promise<void> {
   if (!env.journal || !('textMatches' in s.on)) return;
   const target = s.on.textMatches.target;
@@ -289,17 +260,12 @@ async function settledTrace(s: StepOf<'branch'>, env: StepEnv, result: string, m
 
 const end: Handler<'end'> = async (s) => ({ t: 'end', status: s.status });
 
-/**
- * readback(M2-3, D02 §2.1 B-06): 나열한 fieldKey를 세 값 일치로 되읽어 $readback에 고정한다.
- * 하나라도 실패하면 이 스텝의 값을 하나도 남기지 않는다(뒤 assert·게이트 카드가 반쯤 읽은 값을 쓰지 않게).
- */
 const readback: Handler<'readback'> = async (s, env) => {
   for (const f of [...s.fields, ...(s.optional ?? [])]) env.scope.readback.delete(f);
   const got: Array<[string, string]> = [];
   for (const f of s.fields) {
     const r = await readField(env.page, env.dict, f);
     if (!r.ok) {
-      // 실화면 예행 진단: 어느 칸이 왜 안 맞았는지(칸 이름·코드·글자 수, 값 없음). 5차 예행 H-09 s19b에서 칸을 알 수 없었다
       env.journal?.('readback.failed', { stepId: s.id, field: f, code: r.code, detail: r.detail ?? '' });
       return fail(r.code);
     }
@@ -312,7 +278,6 @@ const readback: Handler<'readback'> = async (s, env) => {
     got.push([f, r.value]);
     opt.push([f, r.value.length]);
   }
-  // 선택 칸은 무엇을 읽었는지만(칸 이름·글자 수, 값 없음) 남긴다: 실화면 예행에서 셀렉터가 맞는지 본다
   if (s.optional?.length) env.journal?.('readback.optional', { stepId: s.id, read: opt.map(([f]) => f).join(','), lens: opt.map(([, n]) => n).join(','), missed: s.optional.length - opt.length });
   for (const [f, v] of got) env.scope.readback.set(f, v);
   return NEXT;

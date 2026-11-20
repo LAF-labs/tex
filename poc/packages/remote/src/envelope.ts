@@ -1,5 +1,3 @@
-// D08 §6 라이브 메시지 봉투. JSON 모델(바이너리는 base64, 스키마 표기)과 와이어(CBOR, 바이너리는 바이트열)를 오간다.
-// 검증은 remote-envelope.schema.json에서 미리 만든 코드(schema.gen.ts)로 한다. 송신 전·수신 후 모두 검증한다.
 
 import { b64, fromB64 } from './bytes.ts';
 import { decodeCbor, encodeCbor, type CborValue } from './cbor.ts';
@@ -49,9 +47,7 @@ export interface PairOkBody {
   tokRead: string;
   tokWrite: string;
   mbxEpoch: number;
-  /** 계정 서비스가 서명한 계정 확인 주장(acctclaim.ts, v1.6). 폰은 검증 실패면 저장하지 않는다. */
   acctClaim: string;
-  /** PC가 스스로 알린 이름(서명 없음, 참고 표시만). */
   desktopName?: string;
 }
 export interface KekGrantBody {
@@ -83,7 +79,6 @@ export interface PaperInvoiceItem {
   day?: number;
   name: string;
   spec?: string;
-  /** 정수(와이어 CBOR에 실수 없음). 소수 수량은 spec에 */
   qty?: number;
   unitPrice?: number;
   supply: number;
@@ -107,7 +102,6 @@ export interface PaperInvoice {
   total: number;
   items?: PaperInvoiceItem[];
   receiptOrClaim: 'receipt' | 'claim' | null;
-  /** 칸 이름 → 0~100 정수(사장님이 고친 칸은 100) */
   fieldConfidence?: Record<string, number>;
 }
 export interface ReceiptOfferBody {
@@ -123,7 +117,6 @@ export interface ReceiptOfferBody {
   ocrEngine: 'ios_vision' | 'android_mlkit' | 'none';
   ownerConfirmed: boolean;
   candidates?: ReceiptCandidates;
-  /** v1.7: PC가 receipt.v2를 알렸을 때만 */
   paperInvoice?: PaperInvoice;
 }
 export interface ReceiptChunkBody {
@@ -147,7 +140,6 @@ export interface CashAckBody {
   state: 'stored';
 }
 
-// v1.8(ADR-046 결정 2·5): 폰 발급 명령·진행·폰 사본.
 export interface CmdRunBody {
   cmdId: string;
   playbookId: string;
@@ -180,7 +172,6 @@ export interface RunEventBody {
   attempt?: number;
   deadline?: number;
   result?: RunResult;
-  /** v1.11: 실행마다 PC가 run.event를 보낼 때마다 1씩 올린다. 폰은 적용한 것보다 크지 않은 rev를 버린다(sync.v1을 알린 폰에만). */
   rev?: number;
 }
 export interface GateField {
@@ -214,10 +205,8 @@ export interface GateResponseBody {
 /** v1.10(ADR-052 결정 2): 폰 승인 키(Px) 등록 알림과 답, 승인 요청 다시 받기. */
 export type PxHw = 'ios_se' | 'android_strongbox' | 'android_tee';
 export interface PxEnrollBody {
-  /** P-256 공개키, SEC1 비압축 65바이트(base64) */
   pxPub: string;
   hw: PxHw;
-  /** Ed25519_Vm("SAX-px-enroll-v1" ‖ CBOR([pairId, deviceId, pxPub, hw])) */
   sig: string;
 }
 export type PxAckState = 'enrolled' | 'needs_pc' | 'rejected';
@@ -271,7 +260,6 @@ export interface CopyCounterparty {
  * shareKeys는 세대 0부터 지금 세대까지 빠짐없이 오름차순이다. 폰은 RK를 받지 않는다.
  */
 export interface ShareKeyBody {
-  /** Ws(Ed25519) 공개키. PC가 쓴 줄의 서명을 확인한다 */
   shareSignPub: string;
   shareKeys: { epoch: number; shareKey: string }[];
 }
@@ -375,7 +363,6 @@ function canonicalB64(v: unknown, key?: string): boolean {
   }
   if (Array.isArray(v)) return v.every((x) => canonicalB64(x));
   if (v && typeof v === 'object') return Object.entries(v).every(([k, x]) => canonicalB64(x, k));
-  // 모든 수는 안전 정수여야 한다(스키마 integer는 2^53 이상도 통과시키지만 CBOR 결정적 인코딩은 못 한다). 퍼징에서 발견.
   if (typeof v === 'number') return Number.isSafeInteger(v);
   return true;
 }

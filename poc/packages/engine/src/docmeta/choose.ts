@@ -1,4 +1,3 @@
-// 텍스트 층과 OCR 중 어느 읽기를 쓸지. 보관함 가져오기(documents.ts)와 실물 측정 스크립트가 같은 규칙을 쓴다.
 import type { DocMetaExtract } from './extract.ts';
 
 /**

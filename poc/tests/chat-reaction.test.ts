@@ -1,5 +1,3 @@
-// 말풍선 반응(ADR-057): 판정(jev, chat_route_v1)이 고른 받는 방식으로 PC 대화(AgentChat)와 폰 대화(PhoneChat)가 같은 길을 가는가.
-// 모델·판정은 가짜다(모의 기준). 실제 jev 판정 정확도는 tests/chat-eval/route 러너가 잰다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
@@ -98,8 +96,6 @@ describe('턴 이벤트와 운영 신호(ADR-054 결정 5)', () => {
   });
 });
 
-// ── PC: AgentChat ──
-
 const pcReply = (text: string): StepResult => ({ kind: 'reply', reply: { kind: 'answer', text, show: [], ask: null, filtered: null, values: {}, unknownName: null } });
 const step = (mode: RouteStep['mode'], reaction: RouteStep['reaction']): RouteStep => ({ kind: 'route', mode, reaction, act: null, domain: null, band: 'gte90', unsure: false, failed: false });
 
@@ -162,8 +158,6 @@ describe('PC 대화(AgentChat): 판정 → 반응 → 도구', () => {
     assert.equal(turnSignal(t.events).end, 'failed');
   });
 });
-
-// ── 폰: PhoneChat ──
 
 const T0 = Date.UTC(2026, 10, 19, 3, 0);
 const COPY: PhoneCopy = { asOf: T0 - 3600_000, profile: { id: 'p1', name: '율무상회', repName: '김율무', bizNo: '123-45-67890' }, counterparties: [{ id: 'c1', name: '한빛전자', item: '컨설팅' }], issued: [], receivables: [] };
@@ -238,7 +232,6 @@ describe('폰 대화(PhoneChat): PC와 같은 판정 → 반응', () => {
     const log = await t.chat.messages();
     assert.deepEqual(log.map((m) => [m.from, m.reaction ?? null]), [['user', 'thumbs_up']]);
     assert.equal(r.kind === 'reaction' && r.id, log[0]!.id);
-    // 다음 턴 [앞 대화]에 반응 줄이 있다(모델이 그 말에 답하지 않은 것을 안다)
     t.set(ANS('answer', 'eyes'));
     await t.chat.send('이번 달 받을 돈 얼마야');
     assert.match(String(t.reqs.at(-1)!.text), /사용자: \[NAME_\d+\] 건 확인했어\n앱: \(반응 👍\)/);
@@ -256,7 +249,6 @@ describe('폰 대화(PhoneChat): PC와 같은 판정 → 반응', () => {
     assert.match(String(t.reqs[0]!.text), /앱 판단: 맞장구가 이어짐/);
     const log = await t.chat.messages();
     assert.deepEqual(log.map((m) => [m.from, m.reaction ?? null]), [['user', 'pray'], ['user', 'pray'], ['app', null]]);
-    // 말로 답했으니 다음은 다시 반응만
     assert.equal((await t.chat.send('고마워')).kind, 'reaction');
   });
 

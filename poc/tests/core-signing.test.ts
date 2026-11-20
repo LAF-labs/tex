@@ -1,4 +1,3 @@
-// 서명 바이트 규약(design/schemas/SIGNING.md) 시험 벡터: 문서의 값과 엔진 함수가 바이트 단위로 같아야 한다.
 import assert from 'node:assert/strict';
 import { createPrivateKey, createPublicKey, sign } from 'node:crypto';
 import fs from 'node:fs';

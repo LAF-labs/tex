@@ -1,6 +1,3 @@
-// 대화 의도 엔진 명령 intent.resolve(M4-3 ③, D01 §5.1, D04 §3, 계약: desktop-pending.md 「M4-3 ③」, 데스크톱 #153).
-// L0 관측 → 마스킹 → Judge.decide(intent_route_v1) → 게이트웨이(net/egress) → 로컬 매핑. 결과는 route·refuse_advice·unknown.
-// fail-closed: 모델 경로 없음·게이트웨이·검사 실패·마스킹 상한 초과는 decide.unavailable(main은 연결 안 됨 + [다시 시도]). 실행·DB 쓰기 없음.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';

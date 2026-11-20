@@ -1,4 +1,3 @@
-// M1-2 11-05 테이블 저장소(ADR-031·032·034)와 M2-6 감사 체인·텔레메트리 형태 검증.
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -166,11 +165,9 @@ describe('근무표·시행일 표', () => {
     assert.equal(r.effectiveOn('insurance_rate', '2027-01-01')!.id, 'ins-2027');
     assert.throws(() => r.install({ ...t, id: 'ins-2027b', effectiveFrom: '2027-01-01', effectiveTo: null, body: {} }), /rate_table_overlap/);
     assert.throws(() => r.install({ ...t, id: 'ins-mid', effectiveFrom: '2026-06-01', effectiveTo: '2027-02-01', body: {} }), /rate_table_overlap/, '닫힌 기간이 다음 표를 넘으면 거부');
-    // 열린 끝을 날짜로 닫는 재설치는 받는다. 다시 열거나 다른 날짜로 바꾸는 것은 거부
     r.install({ ...t, id: 'ins-2026', effectiveFrom: '2026-01-01', effectiveTo: '2026-12-31', body: { y: 2026 } });
     assert.equal(r.get('ins-2026')!.effectiveTo, '2026-12-31');
     assert.throws(() => r.install({ ...t, id: 'ins-2026', effectiveFrom: '2026-01-01', effectiveTo: null, body: { y: 2026 } }), /rate_table_id_reused/);
-    // 중간에 닫힌 표가 끼면 그 뒤는 빈 기간(앞의 열린 표가 되살아나지 않는다)
     const u = { ...t, kind: 'nontax_limits' as const };
     r.install({ ...u, id: 'nt-a', effectiveFrom: '2026-01-01', effectiveTo: null, body: {} });
     r.install({ ...u, id: 'nt-b', effectiveFrom: '2026-03-01', effectiveTo: '2026-04-30', body: {} });
@@ -187,7 +184,6 @@ describe('근무표·시행일 표', () => {
     const v1 = [{ ...t, id: 'st-2026', effectiveFrom: '2026-03-01', effectiveTo: null, body: { y: 2026 }, packageVersion: '2026.11.1' }];
     assert.deepEqual(r.installPackage({ id: 'payroll.rate-tables', version: '2026.11.1', digest: D1 }, v1, '2026-11-06T00:00:00Z'), { added: ['st-2026'], closed: [], unchanged: [] });
     assert.deepEqual(r.installedPackage('payroll.rate-tables'), { version: '2026.11.1', digest: D1, installedAt: '2026-11-06T00:00:00Z' });
-    // 다음 판: 같은 표를 다시 싣고 열린 끝을 닫고, 다음 표를 더한다
     const v2 = [
       { ...v1[0]!, effectiveTo: '2027-02-28', packageVersion: '2027.1.0' },
       { ...t, id: 'st-2027', effectiveFrom: '2027-03-01', effectiveTo: null, body: { y: 2027 }, packageVersion: '2027.1.0' },
@@ -196,7 +192,6 @@ describe('근무표·시행일 표', () => {
     assert.equal(r.get('st-2026')!.packageVersion, '2026.11.1', '처음 실린 판');
     assert.equal(r.get('st-2027')!.packageVersion, '2027.1.0');
     assert.deepEqual(r.installPackage({ id: 'payroll.rate-tables', version: '2027.1.0', digest: D2 }, v2), { added: [], closed: [], unchanged: ['st-2026', 'st-2027'] }, '재설치');
-    // 앞 행은 새 표(받을 수 있음), 뒤 행이 같은 id 다른 내용 → 전부 되돌림
     const bad = [
       { ...t, id: 'st-2028', effectiveFrom: '2028-03-01', effectiveTo: null, body: { y: 2028 }, packageVersion: '2028.1.0' },
       { ...v2[1]!, body: { y: 9999 }, packageVersion: '2028.1.0' },
@@ -242,7 +237,6 @@ describe('세무사 꾸러미 항목·달별 상태·내보내기 기록', () =>
     assert.throws(() => x.record({ profileId, period: '2026-10', sha256: 'zz', path: '/a' }), /invalid_sha256/);
     assert.deepEqual([got.zipPath, got.zipSha256], [null, null]);
     assert.equal(got.rrnIncluded, false, '주민번호는 기본 가림');
-    // 엑셀과 첨부 ZIP은 한 기록(메일 한 통)
     const two = x.record({ profileId, period: '2026-11', sha256: 'c'.repeat(64), path: '/exports/a.xlsx', zip: { path: '/exports/a.zip', sha256: 'd'.repeat(64) }, rrnIncluded: true });
     assert.deepEqual([two.zipPath, two.zipSha256, two.rrnIncluded], ['/exports/a.zip', 'd'.repeat(64), true]);
     assert.throws(() => x.record({ profileId, period: '2026-11', sha256: 'c'.repeat(64), path: '/a', zip: { path: '/a.zip', sha256: 'x' } }), /invalid_zip/);
@@ -335,15 +329,12 @@ describe('사업용 카드 [최신화] 구간 교체와 메모 다시 잇기', (
     cr.setMemo(sep.id, '9월 메모');
     cr.replaceRange(day('08'), [t('2026-08-03', 1000, 'Q1')]);
     cr.setMemo(cr.txns(profileId, '2026-08-01', '2026-08-28')[0]!.id, '8월 메모');
-    // 8월을 비워서 8월 메모 하나가 뜬다
     assert.equal(cr.replaceRange(day('08'), []).unmatchedMemos, 1);
-    // 10월에 같은 승인번호·금액: 9월 메모는 9월 행에 그대로, 10월 행에 메모 없음. 8월에 떠 있던 메모는 10월 결과로 세지 않는다
     assert.deepEqual(cr.replaceRange(day('10'), [t('2026-10-10', 9900, 'R1')]), { inserted: 1, unmatchedMemos: 0 });
     const oct = cr.txns(profileId, '2026-10-01', '2026-10-28')[0]!;
     const memos = cr.memos(profileId);
     assert.equal(memos.find((m) => m.memo === '9월 메모')!.txnId, sep.id);
     assert.ok(!memos.some((m) => m.txnId === oct.id));
-    // 10월 행에 메모를 달아도 9월 메모를 덮어쓰지 않는다
     cr.setMemo(oct.id, '10월 메모');
     assert.equal(cr.memos(profileId).find((m) => m.txnId === sep.id)!.memo, '9월 메모');
   });
@@ -380,7 +371,6 @@ describe('감사 저널 해시 체인(M2-6)', () => {
     const j = new RunJournal(db);
     const run = newRun();
     assert.throws(() => j.append(run, 'Bad Type', {}), JournalShapeError);
-    // payload의 type 필드가 형태 검사에 걸려도 이벤트 이름 오류가 아니다: 그 필드만 빼고 기록한다
     const run3 = newRun();
     j.append(run3, 'step.note', { type: 'x'.repeat(200), ok: true });
     const last = JSON.parse(db.prepare('SELECT payload_json FROM run_events WHERE run_id=?').pluck().get(run3) as string) as Record<string, unknown>;
@@ -388,7 +378,6 @@ describe('감사 저널 해시 체인(M2-6)', () => {
     j.append(run, 'step.extract', { stepId: 's1', text: '가'.repeat(200), multi: 'a\nb' });
     const p = JSON.parse(db.prepare('SELECT payload_json FROM run_events WHERE run_id=?').pluck().get(run) as string) as Record<string, string>;
     assert.deepEqual(p, { stepId: 's1', dropped: 'text,multi' });
-    // 틀린 필드 이름은 원래 이름을 남기지 않고(값일 수 있다) 'field_name'과 개수만, 한 번
     const run4 = newRun();
     j.append(run4, 'step.note', { '김직원': 1, 'a b': 2, '9x': 3, ok: true, long: 'y'.repeat(200) });
     const q = JSON.parse(db.prepare('SELECT payload_json FROM run_events WHERE run_id=?').pluck().get(run4) as string) as Record<string, unknown>;
@@ -436,7 +425,6 @@ describe('포털 아이디·동의·온보딩 이어 하기(데스크톱 #69)', 
 
   it('발급 인증이 옛 값(보안카드)인 프로필은 "고르지 않음"으로 되돌린다, 다른 값은 그대로(대표 결정 2026-11-19 지원 안 함)', () => {
     const p = new ProfileRepo(db);
-    // 옛 판이 쓴 값(v1 DDL CHECK가 아직 받는다)
     db.prepare(`UPDATE profiles SET sign_method = 'security_card' WHERE id = ?`).run(profileId);
     assert.equal(p.get(profileId)!.signMethod, null, '되돌리기 전에도 옛 값은 고르지 않음으로 읽는다');
     assert.equal(p.resetRetiredSignMethod(), 1);

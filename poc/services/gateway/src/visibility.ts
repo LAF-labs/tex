@@ -1,5 +1,3 @@
-// 저장 컬럼 ↔ D09 §1.1 "모델 게이트웨이" 행. 시험이 마이그레이션의 실제 컬럼과 이 표가 같은지 본다.
-// 본문(프롬프트·응답)·마스킹 전 원문·비밀·사업자번호(진위확인 통과분)는 어떤 테이블에도 없다.
 export const GATEWAY_VISIBILITY: Record<string, Record<string, string>> = {
   usage_monthly: {
     account_id: '계정',

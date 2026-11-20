@@ -1,6 +1,3 @@
-// 배달앱·오픈마켓 정산내역(J-01·J-02, D14 M6-5) 후처리: main이 docparse 샌드박스에서 받은 SettlementResult에서 꾸러미에 남길 요약만 고른다.
-// 요약은 파일에서 읽은 값이다(판정 아님). 세무사 꾸러미 '정산·현금매출' 시트에 "파일에서 읽은 값"으로 적고, 매출·신고 금액을 계산하지 않는다.
-// 모양이 맞는 값만 받는다. 행(rows)·열 이름(header)은 받지 않는다(파일 안 글자를 DB에 옮기지 않음).
 import type { BundleItem } from '@sax/db';
 
 export class SettlementInputError extends Error {
@@ -31,9 +28,7 @@ export interface SettlementSummary {
   payout: number | null;
   vat: number | null;
   rows: number;
-  /** 실물 확인 전 형식 규칙으로 읽었다 */
   estimated: boolean;
-  /** 파일 안 "합계" 줄과 우리가 더한 값이 다르다 */
   totalMismatch: boolean;
 }
 

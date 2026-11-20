@@ -1,5 +1,3 @@
-// 장기 키 연산 인터페이스. 데스크톱의 Sd·Vd·AIK 연산은 금고(D05 §5.1 VaultCrypto)가 구현한다.
-// 이 패키지는 인터페이스만 정의하고, 폰(소프트 키, 키 저장은 앱 몫)과 시험용 구현을 함께 둔다.
 
 import { wipe } from './bytes.ts';
 import type { AikPurpose, NoiseCtx, VdPurpose, VmPurpose } from './contexts.ts';
@@ -8,7 +6,6 @@ import { ed25519Public, ed25519SignRaw, signInput, x25519Dh, x25519Public } from
 /** Noise 정적키. 데스크톱은 VaultCrypto.noiseStatic()/noiseDH()에 연결한다. */
 export interface NoiseStatic {
   readonly publicKey: Uint8Array;
-  /** 정적키 × 상대 공개키 DH. 결과 32B는 핸드셰이크 상태(MixKey)에 바로 쓰이고 보관하지 않는다. */
   dh(remotePub: Uint8Array, ctx: NoiseCtx): Promise<Uint8Array>;
 }
 
@@ -27,7 +24,6 @@ export interface DesktopKeys {
   noise: NoiseStatic;
   vd: VdSigner;
   aik: AikSigner;
-  /** Kv 공개키(금고 비밀 봉인 수신용, D05 §5). pair.ok에 Vd 서명과 함께 싣는다. */
   kvPublic(): Uint8Array;
 }
 

@@ -1,5 +1,3 @@
-// M2-2 실행 조율(D03 §2 상태·전이, §3 게이트·토큰, §5.5 체크포인트 복귀, §8 사람 차례, §11 RunHandle).
-// 실제 DB(gate_requests)·GateTokens + 가짜 페이지·Actuator·손으로 돌리는 타이머. 실제 포털 접속 없음.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -46,7 +44,6 @@ const FORM_URL = 'https://hometax.go.kr/form';
 const CP: Step = { id: 's1', type: 'checkpoint', name: 'form', expect: { exists: 'f.root' }, url: FORM_URL };
 const GATE: Step = { id: 's20', type: 'gate', card: 'invoice.confirm', authorizes: ['s21'], waitMs: 1000 };
 const SUBMIT: Step = { id: 's21', type: 'submit', target: 'f.issue', intent: '$intent.id', verify: 'sv', timeoutMs: 100 };
-/** 주 비가역 s21의 verify. 판정은 mk의 verifyStep(기본 committed). not_committed는 게이트 앞으로(V-03f). */
 const SV: Step = { id: 'sv', type: 'verify', lookup: { playbook: 'hometax.invoice.lookup', match: { supplyAmount: '$readback.supplyAmount' }, window: 'issueDate', baseline: 'pre_gate_snapshot', notCommittedPolicy: { minElapsedMs: 60_000, lookups: 2 }, bind: { approvalNo: 'approvalNo' } }, on: { committed: 's22', not_committed: 's1', unknown: 'handoff' } };
 const END: Step = { id: 's22', type: 'end', status: 'success' };
 const GATE_FLOW = [CP, GATE, SUBMIT, SV, END];
@@ -86,7 +83,6 @@ async function until(pred: () => boolean, what: string) {
 
 const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'sax-run-ctl-'));
 const opened: Db[] = [];
-// Windows는 열린 DB 파일을 지우지 못한다(EPERM). 닫고 지운다.
 after(() => {
   for (const d of opened) d.close();
   fs.rmSync(dir, { recursive: true, force: true });
@@ -95,12 +91,9 @@ let dbn = 0;
 
 interface Opts {
   els?: FEl[];
-  /** 게이트 카드 덮기(없으면 H-01 13칸 RB). */
   card?: RunControllerInput['card'];
   verify?: (x: string) => Promise<VerifyResult>;
-  /** null이면 verify 스텝 판정 없음(unhandled). 없으면 committed. */
   verifyStep?: RunControllerInput['verifyStep'] | null;
-  /** 가짜 커밋 포트 덮기. null이면 포트 없음. */
   commit?: Partial<CommitPort> | null;
   readback?: Record<string, string>;
   preGate?: RunControllerInput['preGate'];
@@ -109,7 +102,6 @@ interface Opts {
   beforeStep?: (s: Step, c: RunController) => void;
   handlers?: Partial<Handlers>;
   pdf?: PdfPort;
-  /** reentry.navigate 때 페이지를 바꾼다(빈 탭 → 양식 등). */
   onNav?: (url: string, page: FakePage) => void;
 }
 
@@ -137,7 +129,6 @@ function mk(steps: Step[], o: Opts = {}) {
     published: [] as GateRequest[], closed: [] as Array<[string, string]>, human: [] as Array<Record<string, unknown>>, humanClosed: [] as Array<[string, string]>,
     secret: [] as Array<Record<string, unknown>>, states: [] as RunStateEvent[], journal: [] as Array<[string, Record<string, unknown>]>, effects: [] as string[], effectsAt: [] as Array<[string, string | null]>,
     guard: [] as string[], locks: [] as boolean[], navs: [] as string[], commit: [] as string[], verifies: [] as string[], judged: [] as string[],
-    /** 클릭마다 그 순간 commitArmed였는가. */
     armedAtClick: [] as Array<[string, boolean]>,
   };
   const commit: CommitPort | undefined = o.commit === null ? undefined : {
@@ -237,7 +228,6 @@ describe('게이트(D03 §2 WaitingGate, §3 R-G6·R-G8)', () => {
     assert.deepEqual(h.rec.closed, [[h.gate().reqId, 'stopped']]);
     assert.ok(h.rec.journal.some(([t, x]) => t === 'gate.withdrawn' && x.cause === 'deny_priority'));
     assert.ok(!h.names().includes('Running') || h.names().lastIndexOf('Running') < h.names().indexOf('WaitingGate'), '게이트 뒤 Running으로 가지 않았다');
-    // 창이 지난 뒤의 [중지]는 거부 우선이 아니다(창 길이만큼 기다렸다).
     const k = mk(GATE_FLOW, {});
     const q = k.c.start();
     await k.atGate();
@@ -318,7 +308,6 @@ describe('게이트(D03 §2 WaitingGate, §3 R-G6·R-G8)', () => {
   });
   it('커밋 구간 중 정지 하향은 verify 뒤 정지 분기: 원장 쓰기가 효과로 뒤따라도 verify 결과를 먼저 반영한다(committed → CompletedWithIssues, not_committed → Paused, InDoubt 아님)', async () => {
     for (const [result, want] of [['committed', 'CompletedWithIssues'], ['not_committed', 'Paused']] as const) {
-      // 시험 원장은 효과를 반영하지 않는다(armed 그대로). 조율기가 verify 전이 문맥에 결과를 넣어야 한다.
       const h = mk(GATE_FLOW, {
         verifyStep: async () => ({ result }),
         beforeStep: (s, c) => {
@@ -501,7 +490,6 @@ describe('핸드오프·재개(D03 §2 HandedOff, R-C2)', () => {
     assert.deepEqual(h.rec.guard, ['observing', 'running']);
     assert.ok(h.rec.effects.includes('slot.release'));
   });
-  // X에서 HandedOff: 원장 armed 뒤 커밋 가드 무장이 거부돼 누르지 않았다(not_committed identity_mismatch, 재개는 게이트 앞).
   const handedOffAtX = async (verify?: (x: string) => Promise<VerifyResult>) => {
     const h = mk(GATE_FLOW, { verify, commit: { armGuard: async () => ({ ok: false, code: 'commit_guard.arm_refused' }) } });
     const p = h.c.start();
@@ -716,7 +704,6 @@ describe('정지·중지·진입 확인(D03 §2 규칙, ADR-023 결정 5·6)', (
 });
 
 describe('verify 스텝(M2-3, D02 §4.4, D03 §5.3·§5.6)', () => {
-  // 게이트 → submit(가짜, 토큰 소비 자리) → verify. not_committed는 게이트 앞 체크포인트로 돌아간다(V-03f).
   const V: Step = { id: 's22', type: 'verify', lookup: { playbook: 'hometax.invoice.lookup', match: { supplyAmount: '$readback.supplyAmount' }, window: 'issueDate', baseline: 'pre_gate_snapshot', notCommittedPolicy: { minElapsedMs: 60_000, lookups: 2 }, bind: { approvalNo: 'approvalNo' } }, on: { committed: 's23', not_committed: 's1', unknown: 'handoff' } };
   const MAIL: Step = { id: 's23', type: 'verify', lookup: { playbook: 'hometax.invoice.email_status', match: { approvalNo: '$vars.approvalNo' }, window: 'today', baseline: 'none', notCommittedPolicy: { minElapsedMs: 60_000, lookups: 2 } }, on: { committed: 's24', not_committed: 's25', unknown: 's25' } };
   const OK: Step = { id: 's24', type: 'end', status: 'success' };
@@ -876,7 +863,6 @@ describe('submit(M2-3, D03 §3 R-G7·§5.3, D02 §4·§4.5): 게이트 토큰·�
     assert.ok(h.triggers.includes('Recovering'), `상태 전이가 토큰을 폐기한다(${h.triggers.join(',')})`);
     assert.ok(h.rec.journal.some(([t, d]) => t === 'submit.not_entered' && d.cause === 'issue.lock_lost'));
     assert.ok(!h.rec.effects.some((e) => e.startsWith('ledger.')), '원장 효과 없음');
-    // 재개: 게이트가 다시 열리고(새 reqId) 새로 승인해야 누른다
     ok = true;
     const p2 = h.c.resume();
     await h.atGate(2);
@@ -1186,7 +1172,6 @@ describe('submit(M2-3, D03 §3 R-G7·§5.3, D02 §4·§4.5): 게이트 토큰·�
         await h.atGate();
         h.approve();
         await until(() => h.c.signTurnOpen, '서명 차례');
-        // 사람이 홈택스 창에서 직접 서명을 마쳤다(그 뒤에 확인 버튼이 남아 있어도 엔진은 누르지 않는다).
         h.page.els.set(SIGN_OK.id, SIGN_OK);
         if (how === 'done') h.c.finishSignTurn();
         else h.c.abort();
@@ -1286,7 +1271,6 @@ describe('sign(M2-3, D02 §4): 로그인 등 커밋 구간 밖 포털 서명 흐
   });
 
   it('음성: 커밋 구간 안에서는 거부한다. 토큰을 쓴 뒤(누른 뒤)면 아무것도 하지 않고 InDoubt(원장 in_doubt, 사람 확인), 가드 해제', async () => {
-    // 정적 검증(V-03c)을 지나친 IR: X의 verify 자리에 sign
     const h = mk([CP, GATE, { ...SUBMIT, verify: 's4' } as Step, SIGN(), SV, END], { readback: { supplyAmount: '1000' } });
     const p = h.c.start();
     await h.atGate();

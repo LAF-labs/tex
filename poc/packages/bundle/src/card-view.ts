@@ -1,6 +1,3 @@
-// 사업용 카드 내역 화면(08 D-04, D14 M6-3)의 데이터: 그달 행과 건별 메모, "마지막 최신화: n일 전", 그달이 조회로 다 덮였는지,
-// 행이 바뀌어 다시 잇지 못한 메모("확인 필요"). 읽기만 한다. [최신화] 실행은 플레이북(H-12, M6-1) 몫이다.
-// 모델을 부르지 않는다(ADR-032 결정 11). 용도 분류·경비 인정 판단은 하지 않는다(결정 3).
 import { CardRepo, type CardFetch, type Db } from '@sax/db';
 import { monthRange } from './items.ts';
 
@@ -15,7 +12,6 @@ export interface CardRowView {
   supplyAmount: number | null;
   vatAmount: number | null;
   canceled: boolean;
-  /** 이 행에 이어진 메모 */
   memo: { id: string; text: string; updatedAt: string } | null;
 }
 
@@ -23,7 +19,6 @@ export interface CardRowView {
 export interface DetachedMemoView {
   id: string;
   text: string;
-  /** 메모가 붙어 있던 거래의 사용일·금액(매칭 키에서 읽음, 화면에서 어느 건이었는지 알리려고) */
   usedOn: string | null;
   amount: number | null;
   updatedAt: string;
@@ -31,11 +26,8 @@ export interface DetachedMemoView {
 
 export interface CardMonthView {
   month: string;
-  /** 마지막 최신화(어느 달이든). 한 번도 안 했으면 null */
   lastFetch: { completedAt: string; rangeFrom: string; rangeTo: string } | null;
-  /** 마지막 최신화가 며칠 전인가(한국 날짜 기준, 오늘이면 0) */
   daysSinceFetch: number | null;
-  /** 그달(이번 달이면 오늘까지)이 조회 구간으로 다 덮였는가 */
   coverage: 'full' | 'partial' | 'none';
   rows: CardRowView[];
   detachedMemos: DetachedMemoView[];
@@ -59,7 +51,6 @@ export function coverageOf(fetches: readonly Pick<CardFetch, 'rangeFrom' | 'rang
   return 'partial';
 }
 
-/** 매칭 키(a|사용일|승인번호|취소|금액#n, d|사용일|사업자번호|금액|카드|취소#n)에서 사용일·금액 */
 function keyFacts(key: string): { usedOn: string | null; amount: number | null } {
   const parts = key.replace(/#\d+$/, '').split('|');
   const usedOn = /^\d{4}-\d{2}-\d{2}$/.test(parts[1] ?? '') ? parts[1]! : null;
@@ -88,7 +79,6 @@ export function cardMonthView(db: Db, profileId: string, month: string, now: Dat
     .map((m) => ({ m, f: keyFacts(m.matchKey) }))
     .filter(({ f }) => f.usedOn !== null && f.usedOn >= from && f.usedOn <= to)
     .map(({ m, f }) => ({ id: m.id, text: m.memo, usedOn: f.usedOn, amount: f.amount, updatedAt: m.updatedAt }));
-  // 이번 달이면 오늘까지만 본다(앞날은 조회할 수 없다). 다음 달 이후는 덮을 날이 없다
   const coverTo = to < today ? to : today;
   const coverage = from > today ? 'none' : coverageOf(repo.fetchesOverlapping(profileId, from, coverTo), from, coverTo);
   return {

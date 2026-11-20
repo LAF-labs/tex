@@ -1,4 +1,3 @@
-// 게시본 H-01 전체 스텝 건조 실행(가짜 홈·로그인·서명 창 + 가짜 H-01 폼). 하네스: tests/h01-published-dryrun.ts. 실제 홈택스에 접속하지 않는다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -16,7 +15,6 @@ import { loadPublishedDryRun, startLoginFixture, type LoginFixture, type StepPat
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** 시험용 PDF 포트(보관 성공). save_pdf 뒤 s33까지 보려고 붙인다(제품 포트는 PR-A). */
 const PDF: PdfPort = {
   print: async () => ({ ok: true, fileId: 'a'.repeat(32) }),
   armDownload: async () => ({ armed: false, reason: 'n/a' }),
@@ -31,15 +29,11 @@ interface Scenario {
   captcha?: boolean;
   supplier?: { bizNo: string; name: string };
   patches?: Record<string, StepPatch>;
-  /** 사람 흉내: 실행 중 반복해서 불린다. */
   human?: (fx: LoginFixture) => void;
   approve?: boolean;
-  /** 최대 기다림(ms). */
   maxMs?: number;
   stopAfterMs?: number;
-  /** 사람 대기 알림(handoff 이벤트)마다 한 번. n = 몇 번째(0부터). */
   onHandoff?: (h: { phase: string; code?: string }, c: { runs: RunService; fx: LoginFixture; n: number }) => void;
-  /** RunService 시험 옵션(handoffCapMs 등). */
   deps?: Record<string, unknown>;
 }
 
@@ -49,7 +43,6 @@ interface Outcome {
   steps: string[];
   gate: boolean;
   handoffs: string[];
-  /** 서명 차례가 끝난 까닭(sign.turn_closed why). */
   turn: string[];
   posts: number;
   signs: number;
@@ -119,7 +112,6 @@ async function dryRun(sc: Scenario): Promise<Outcome> {
     } catch {
       /* 끝남 */
     }
-    // 끝나지 않았으면(시험 실패) 끝날 때까지 조금 기다려 실행·타이머가 남지 않게 한다.
     for (let i = 0; i < 100 && !ended(); i++) await sleep(100);
     await rb.browser.close().catch(() => {});
     return { end, journal, steps, gate: gm.some((m) => m.t === 'gate.request'), handoffs: handoffs().map((e) => `${e.phase}:${e.code ?? ''}`), turn, posts: fx.inner.posts(), signs: fx.state.signs, fx };
@@ -163,7 +155,6 @@ describe('게시본 H-01 건조 실행: 지금 동작(사실 고정)', () => {
 });
 
 const S5_SHORT: Record<string, StepPatch> = { s5: (s) => void (s.timeoutMs = 1500) };
-// 스키마 하한(10초).
 const PUSH_SHORT: StepPatch = (s) => void ((s.signFlow as { maxWaitMs: number }).maxWaitMs = 10_000);
 const resume = (c: { runs: RunService }) => assert.deepEqual(c.runs.resume('r1'), { ok: true });
 
@@ -207,9 +198,6 @@ describe('게시본 H-01 건조 실행: 사람 대기 재개(B3)', () => {
   });
 });
 
-// 공동인증서 실행(engine-cert, B1·B2): tests/h01-published-dryrun-cert.test.ts(CertSecretPort, 사람이 인증서 창에서 직접 넣는 길).
-
-// 수동 관찰: SAX_DRY=cert-login,captcha,... node --conditions=development --test tests/h01-published-dryrun.test.ts
 const SC: Array<[string, Scenario]> = [
   ['cert-login', { signMethod: 'cert', maxMs: 20_000 }],
   ['cert-sign', { signMethod: 'cert', loggedIn: true, maxMs: 60_000 }],

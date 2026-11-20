@@ -1,8 +1,3 @@
-// M6-12 파서 퍼징 하네스(D14 M6-12, D13 S17 숨김 텍스트, ADR-014 샌드박스, ADR-028 의존성 목록). 파서마다 "입력 생성기 + 성질"을 한 표에 둔다.
-// 성질: 예외는 던져도 되지만(거부) 정해진 코드로만(SandboxError·DocparseError), 멈추지 않는다(회차당 시간 상한), 출력이 있으면 스키마 검사기를 통과한다.
-// 파서: OCR 문자 parseBizCert·문서 메타 extractDocMeta(엔진), 그림 머리 imageInfo(PNG·JPEG)·parse 입구(HEIC 등 받지 않는 형식)·
-// 표 readXlsx→parseSettlement·영수증 문자 parseReceipt(@sax/docparse). 아래 "거부해야 하는 것"은 docparse 시드 코퍼스(seedCorpus)를
-// parse 입구에 넣고 네트워크 시도·eval·Function 0, 시드마다 시간 상한을 본다(PDF 시드는 pdf.js 경로라 Electron e2e가 본다).
 import assert from 'node:assert/strict';
 import dns from 'node:dns';
 import net from 'node:net';
@@ -12,27 +7,20 @@ import { FUZZ_ITER, FUZZ_SEED, pick, rng } from './lib/fuzz.ts';
 type Gen = (r: () => number) => string | Uint8Array | Promise<Uint8Array>;
 interface ParserCase {
   name: string;
-  /** import 지정자(워크스페이스 패키지). 없으면 건너뛴다. */
   module: string;
   export: string;
   input: Gen;
-  /** 부르는 방법(없으면 fn(x)). 다른 모듈이 필요하면 여기서 import한다. */
   call?: (fn: (...a: unknown[]) => unknown, x: string | Uint8Array, mod: Record<string, unknown>) => unknown;
-  /** 던져도 되는 예외인가(없으면 모두 허용). 거부는 코드가 붙은 오류로만 해야 한다. */
   okThrow?: (e: unknown) => boolean;
-  /** 모든 입력이 거부돼도 되는가(받지 않는 형식) */
   allReject?: boolean;
-  /** 결과 검사(있으면). 실패 메시지 또는 null. */
   check?: (out: unknown, mod: Record<string, unknown>) => string | null;
   perCallMs?: number;
-  /** 어느 태스크가 채우는가 */
   owner: string;
 }
 
 const CHARS = ['0', '1', '9', '-', ' ', '\n', '\t', '사', '업', '자', '등', '록', '번', '호', '대', '표', '년', '월', '일', ':', '(', ')', '​', '‮', '­', '�', '𝟙', 'Ａ', '\u0000', '<', '>', '"', '\\'];
 const TEMPLATES = ['사업자등록번호 : ', '상 호 : ', '대 표 자 : ', '개업연월일 : ', '사업장소재지 : ', '발급일 ', '유효기간 ', '주민등록번호 '];
 
-/** 문자열 입력: 실제 서식 줄 + 잡음 + 매우 긴 줄 + 반복(ReDoS 모양). */
 const textGen: Gen = (r) => {
   const lines: string[] = [];
   const n = 1 + Math.floor(r() * 40);
@@ -46,11 +34,10 @@ const textGen: Gen = (r) => {
   return lines.join(pick(r, ['\n', '\r\n', ' ']));
 };
 
-/** 바이너리 입력: 형식 머리(매직)는 맞고 나머지는 잘리거나 망가진 바이트. */
 const MAGIC: Record<string, number[]> = {
   png: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
   jpeg: [0xff, 0xd8, 0xff, 0xe0],
-  zip: [0x50, 0x4b, 0x03, 0x04], // xlsx
+  zip: [0x50, 0x4b, 0x03, 0x04],
   heic: [0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63],
 };
 const binGen = (kind: keyof typeof MAGIC) => (r: () => number): Uint8Array => {
@@ -61,10 +48,8 @@ const binGen = (kind: keyof typeof MAGIC) => (r: () => number): Uint8Array => {
   return b;
 };
 
-/** SandboxError·DocparseError(코드 있는 오류)만 거부로 본다. TypeError·RangeError 같은 날 예외는 결함이다. */
 const coded = (e: unknown): boolean => e instanceof Error && typeof (e as { code?: unknown }).code === 'string' && ['SandboxError', 'DocparseError'].includes(e.constructor.name);
 
-/** 그림·PDF 샌드박스를 부르면 실패(parse 입구가 거를 입력에만 쓴다) */
 const hostRefuse = {
   pdf: () => Promise.reject(new Error('host called: pdf')),
   image: () => Promise.reject(new Error('host called: image')),
@@ -80,10 +65,8 @@ const imageCheck = (o: unknown): string | null => {
   return null;
 };
 
-/** 크기 후보: 0·작음·경계·폭탄 */
 const dim = (r: () => number) => pick(r, [0, 1, 7, 640, 4000, 11_999, 12_000, 12_001, 65_535, 100_000, 0xffffffff, Math.floor(r() * 20_000)]);
 
-/** PNG: IHDR 머리는 맞고 크기·꼬리는 임의 */
 const pngGen: Gen = (r) => {
   const tail = Math.floor(r() * 64);
   const b = new Uint8Array(33 + tail);
@@ -92,11 +75,10 @@ const pngGen: Gen = (r) => {
   v.setUint32(16, dim(r) >>> 0);
   v.setUint32(20, dim(r) >>> 0);
   for (let i = 24; i < b.length; i++) b[i] = Math.floor(r() * 256);
-  if (r() < 0.1) return b.slice(0, Math.floor(r() * 24)); // 잘린 머리
+  if (r() < 0.1) return b.slice(0, Math.floor(r() * 24));
   return b;
 };
 
-/** JPEG: SOI 뒤 임의 세그먼트(길이 거짓·0·끝 넘김) 몇 개, 가끔 SOF */
 const jpegGen: Gen = (r) => {
   const out: number[] = [0xff, 0xd8];
   const n = Math.floor(r() * 6);
@@ -119,7 +101,6 @@ const jpegGen: Gen = (r) => {
 
 const svgGen = (r: () => number): Uint8Array => new TextEncoder().encode(`<svg xmlns="http://www.w3.org/2000/svg"><script>fetch('http://127.0.0.1:9/${Math.floor(r() * 1e6)}')</script></svg>`);
 
-/** 정상 정산 xlsx(합성 픽스처)를 0~4곳 비트 뒤집기 + 가끔 자르기. 0곳은 대조(정상 경로가 실제로 도는지). */
 let xlsxBase: Uint8Array | null = null;
 const xlsxGen: Gen = async (r) => {
   if (!xlsxBase) {
@@ -132,7 +113,6 @@ const xlsxGen: Gen = async (r) => {
   return r() < 0.15 ? b.slice(0, Math.floor(r() * b.length)) : b;
 };
 
-/** 최소 DER 작성기(NPKI 모양 합성 인증서, 서명 자리는 임의 바이트. readCertInfo는 서명을 검증하지 않는다) */
 const derLen = (n: number) => (n < 0x80 ? [n] : n < 0x100 ? [0x81, n] : [0x82, n >> 8, n & 0xff]);
 const tlvOf = (tag: number, ...body: Uint8Array[]): Uint8Array => {
   const v = Buffer.concat(body);
@@ -156,19 +136,18 @@ const certDer = (cn: string, pad = 0): Uint8Array => {
   return tlvOf(0x30, tbs, alg, tlvOf(0x03, Buffer.alloc(65, 7)));
 };
 
-/** signCert.der: 정상 합성 인증서를 0~4곳 비트 뒤집기·길이 바이트 바꾸기·자르기, 8KB 초과, DER이 아닌 것(BER 무한 길이·PEM·뒤 덧붙임). */
 const certGen: Gen = (r) => {
   const base = certDer(`TEST홍길동()${Math.floor(r() * 1e12)}`);
   const k = r();
-  if (k < 0.08) return certDer('TEST', 8200); // 상한 초과(input_size)
-  if (k < 0.14) return new TextEncoder().encode(`-----BEGIN CERTIFICATE-----\n${Buffer.from(base).toString('base64')}\n-----END CERTIFICATE-----\n`); // PEM
-  if (k < 0.2) return new Uint8Array([0x30, 0x80, ...base.subarray(2), 0, 0]); // BER 무한 길이
-  if (k < 0.26) return new Uint8Array([...base, Math.floor(r() * 256)]); // 뒤 덧붙임
+  if (k < 0.08) return certDer('TEST', 8200);
+  if (k < 0.14) return new TextEncoder().encode(`-----BEGIN CERTIFICATE-----\n${Buffer.from(base).toString('base64')}\n-----END CERTIFICATE-----\n`);
+  if (k < 0.2) return new Uint8Array([0x30, 0x80, ...base.subarray(2), 0, 0]);
+  if (k < 0.26) return new Uint8Array([...base, Math.floor(r() * 256)]);
   const b = base.slice();
   const flips = Math.floor(r() * 5);
   for (let i = 0; i < flips; i++) {
     const at = Math.floor(r() * b.length);
-    if (r() < 0.3) b[at] = pick(r, [0x80, 0x81, 0x82, 0x84, 0xff, 0x00]); // 길이 자리 흉내
+    if (r() < 0.3) b[at] = pick(r, [0x80, 0x81, 0x82, 0x84, 0xff, 0x00]);
     else b[at]! ^= 1 << Math.floor(r() * 8);
   }
   return r() < 0.15 ? b.slice(0, Math.floor(r() * b.length)) : b;
@@ -188,7 +167,6 @@ export const PARSERS: readonly ParserCase[] = [
     module: '@sax/engine/docmeta',
     export: 'extractDocMeta',
     input: textGen,
-    // 추출 결과는 스키마 검사기를 통과해야 한다(검사기가 거부하는 결과를 내면 화면·저장에 들어갈 수 있다).
     check: (o, m) => (typeof m.validateDocMeta !== 'function' || (m.validateDocMeta as (v: unknown) => unknown)(o) ? null : 'validateDocMeta가 거부하는 결과'),
     owner: 'M5-1(지금 돈다)',
   },
@@ -247,7 +225,6 @@ export const PARSERS: readonly ParserCase[] = [
       const info = fn(x);
       const { validateSandboxOutput } = await import('@sax/docparse');
       if (!validateSandboxOutput('certInfo', info)) return { bad: 'validateSandboxOutput(certInfo)가 거부하는 출력' };
-      // 상한 초과·PEM·BER·뒤 덧붙임은 통과하면 안 된다
       const raw = x as Uint8Array;
       if (raw.length > 8192) return { bad: `8KB 초과(${raw.length})를 통과시킴` };
       if (raw[0] !== 0x30 || raw[1] === 0x80) return { bad: 'DER 아닌 입력(PEM·BER)을 통과시킴' };
@@ -304,7 +281,6 @@ describe('M6-12 파서 퍼징 하네스', async () => {
         const bad = c.check?.(out, l!.mod);
         assert.equal(bad ?? null, null, `${c.name} 회차 ${i}: ${bad}`);
       }
-      // 거부(예외)는 정상이지만 전부 예외면 생성기가 파서 앞단에서 막히는 것이다(받지 않는 형식 칸은 전부 거부가 정답).
       if (c.allReject) assert.equal(threw, iter, `${c.name}: 받지 않는 형식을 ${iter - threw}건 통과시킴`);
       else assert.ok(threw < iter, `${c.name}: 모든 입력에서 예외`);
     });
@@ -334,9 +310,6 @@ describe('M6-12 파서 퍼징 하네스', async () => {
   it.todo('파서 라이브러리를 ADR-028 의존성 갱신 목록에 등록 — M6-12(docparse 의존성 확정 뒤)');
 });
 
-// ── 거부해야 하는 것(docparse 시드 코퍼스): 네트워크 시도·eval·대용량·폭탄 압축 ──
-// 시드를 parse 입구에 넣는다. 표는 샌드박스 모듈(readSheetBytes)을 이 프로세스에서 직접 돌린다(제품은 샌드박스 창).
-// 이 동안 송신(fetch·소켓 연결·DNS 조회)과 eval·Function 생성을 가로채 0건인지 본다. 시드에는 127.0.0.1:9 주소(외부 연결·XXE·DDE·SVG)가 들어 있다.
 interface Trap {
   hits: string[];
   restore: () => void;
@@ -389,8 +362,6 @@ describe('M6-12 거부해야 하는 것(docparse 시드 코퍼스, 송신·eval 
   try {
     const [main, sandbox, fixtures] = await Promise.all([import('@sax/docparse'), import('@sax/docparse/sandbox'), import('@sax/docparse/fixtures')]);
     api = { parse: main.parse as never, DocparseError: main.DocparseError, readSheetBytes: sandbox.readSheetBytes, seedCorpus: fixtures.seedCorpus as never, CANARY: fixtures.CANARY };
-    // main 쪽 스키마 검사기(ajv)는 처음 쓸 때 new Function으로 컴파일한다. 파서가 아닌 이 준비 단계는 가로채기 전에 끝내 둔다
-    // (샌드박스 모듈에 eval·Function이 없음은 tests/docparse-self.test.ts가 정적으로 본다).
     for (const op of ['pdf', 'image', 'sheet'] as const) main.validateSandboxOutput(op, {});
     main.validateParseOutcome({});
   } catch {
@@ -437,7 +408,6 @@ describe('M6-12 거부해야 하는 것(docparse 시드 코퍼스, 송신·eval 
       assert.ok(ms < 15_000, `${seed.name}: ${ms.toFixed(0)}ms`);
       if ('reject' in seed.expect) assert.ok(seed.expect.reject.includes(got), `${seed.name}: ${got}`);
       else {
-        // 정산으로 못 알아보는 표(format_not_recognized)는 거부로 끝나도 된다. 통과했으면 표지 문자열이 결과에 없어야 한다.
         assert.ok(got === 'ok' || got === 'format_not_recognized', `${seed.name}: ${got}`);
         if (out && seed.name !== 'csv-formula-injection.csv') assert.ok(!JSON.stringify(out).includes(api!.CANARY), '숨기거나 무시할 내용이 결과에 새어 나옴');
       }

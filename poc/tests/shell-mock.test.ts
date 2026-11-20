@@ -1,5 +1,3 @@
-// PoC-9 셸: 금액 해석, 부가세 분해, 입력 보완(되물은 값에 답하기), 정부24 후보 시각.
-// PoC-6 셸 실행(ShellRuns): 실행은 한 번에 하나, 엔진 이벤트 → 카드 상태, 게이트 요청 → 되읽은 값·중복 경고, 끝 코드 문구.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
@@ -18,7 +16,6 @@ const CPS: Counterparty[] = [
   { id: 'cp-c', name: 'C테크', bizNo: '4182577343', rep: '최다라', email: 'billing@ctech.example', item: '교육 용역', status: '계속사업자', checkedOn: '', lastIssuedOn: null },
 ];
 
-/** 엔진 연결 자리(EngineHost의 on·control·rpc). 부른 것을 기록하고, rpc 실패를 끼울 수 있다. */
 class FakeHost extends EventEmitter {
   readonly calls: Array<[string, unknown]> = [];
   fail: Record<string, string> = {};
@@ -128,7 +125,6 @@ describe('셸 목업', () => {
     assert.ok(a.kind === 'draft');
     await runs.prepare(a.run.id);
     assert.ok(!a.run.counterparty.first, '초안에서는 처음 거래를 모른다');
-    // 다른 실행의 게이트는 무시한다.
     host.emit('gate', gateFor('run-other', {}));
     assert.equal(gates.length, 0);
     const req = gateFor(a.run.id, { counterpartEmail: 'new@asangsa.example' }, [
@@ -148,7 +144,6 @@ describe('셸 목업', () => {
     runs.approved(a.run.id);
     assert.equal(r.approvedPending, true);
     host.emit('run', { runId: a.run.id, type: 'phase', phase: 'sign', state: 'now' });
-    // 금고 비밀 창 차례(엔진 secret 이벤트)는 실행을 끝내지 않는다(실화면 run-837dad14: 이것으로 끝내 앱 비밀번호 창이 닫혔다). 모르는 이벤트도 같다.
     host.emit('run', { runId: a.run.id, type: 'secret', state: 'open', stepId: 's21', ttlMs: 120_000 });
     host.emit('run', { runId: a.run.id, type: 'secret', state: 'closed', stepId: 's21', why: 'done' });
     host.emit('run', { runId: a.run.id, type: 'something_new' });
@@ -161,7 +156,6 @@ describe('셸 목업', () => {
     assert.equal(r.result!.approvalNo, '20261101-41000012-00000123');
     assert.equal(r.result!.mailConfirmed, false);
     assert.equal(r.steps[7]!.state, 'attention', '메일 미확인은 메일 단계에 표시');
-    // 메일까지 확인된 실행은 마지막 단계도 끝난 것으로 둔다(엔진은 끝 스텝에서 마지막 구간 done을 보내지 않는다).
     const b = interpret('B상사에 10만원 세금계산서', null, 'business', runs);
     assert.ok(b.kind === 'draft');
     await runs.prepare(b.run.id);
@@ -199,12 +193,10 @@ describe('셸 목업', () => {
     await runs.prepare(a.run.id);
     host.emit('gate', gateFor(a.run.id, {}));
     runs.approved(a.run.id);
-    // 금고가 끝나 호스트가 기다리던 답을 풀었다(엔진 판정 아님). 엔진은 그 뒤에 끝난다.
     await runs.onAnswer(a.run.id, { ok: false, code: 'vault_exit', verdict: 'unknown' });
     assert.equal(runs.get(a.run.id)!.approvedPending, true, '판정을 모르면 승인 표시를 거두지 않는다');
     host.emit('exit', 'engine', 1);
     assert.match(runs.get(a.run.id)!.stoppedNote!, /발급됐는지 모릅니다/);
-    // 보내기 전에 막혔으면(엔진이 이미 끝남) 근거는 엔진에 가지 않았다.
     const { host: h2, runs: r2 } = shellRuns();
     const c = interpret('C테크에 10만원 세금계산서', null, 'business', r2);
     assert.ok(c.kind === 'draft');
@@ -256,7 +248,6 @@ describe('셸 목업', () => {
     assert.ok(host.calls.some(([m]) => m === 'run.stop'));
     host.emit('run', { runId: a.run.id, type: 'end', status: 'stopped', code: 'gate.stopped' });
     assert.match(runs.get(a.run.id)!.stoppedNote!, /승인을 엔진에 전달하지 못해/);
-    // [중지]·만료가 근거보다 먼저 게이트를 닫으면(경쟁) 안내만 거두고 끝 이유는 엔진 것(중지)을 쓴다.
     const z = interpret('C테크에 20만원 세금계산서', null, 'business', runs);
     assert.ok(z.kind === 'draft');
     await runs.prepare(z.run.id);
@@ -276,7 +267,6 @@ describe('셸 목업', () => {
     assert.equal(r.status, 'attention');
     assert.match(r.stoppedNote!, /중복 발급될 수 있어요/);
     assert.equal(r.steps[6]!.state, 'attention', '확인하던 단계를 표시한다');
-    // in_doubt는 코드가 무엇이든 중복 위험을 알린다(main이 닫은 이유로 덮지 않음).
     const c = interpret('C테크에 10만원 세금계산서', null, 'business', runs);
     assert.ok(c.kind === 'draft');
     await runs.prepare(c.run.id);
@@ -286,7 +276,6 @@ describe('셸 목업', () => {
     assert.match(runs.get(c.run.id)!.steps[4]!.note!, /멈추고 있어요/, '거부된 승인 안내를 바로 거둔다');
     host.emit('run', { runId: c.run.id, type: 'end', status: 'in_doubt', code: 'engine.error' });
     assert.match(runs.get(c.run.id)!.stoppedNote!, /발급됐는지 확인하지 못했어요.*중복 발급될 수 있어요/);
-    // 같은 건이 발급된 뒤 다시 발급 안 됨이 있었으면 두 경고를 모두 둔다(발급된 건이 먼저).
     const d = interpret('A상사에 10만원 세금계산서', null, 'business', runs);
     assert.ok(d.kind === 'draft');
     await runs.prepare(d.run.id);
@@ -404,7 +393,6 @@ describe('셸 목업', () => {
     assert.deepEqual(handoffTurn('login', undefined), { kind: 'login', ...HANDOFF_LOGIN });
     assert.equal(handoffTurn('login', 'portal.captcha').kind, 'login');
     assert.match(handoffTurn('login', 'portal.captcha').text, /자동입력방지/);
-    // H-01 2.3.0 s4e: 인증서가 여럿인데 이름으로 못 골랐다 → 사람이 한 번 고르고 [이어서](엔진이 이름을 기억한다)
     assert.equal(handoffTurn('login', 'cert.pick_needed').kind, 'login');
     assert.match(handoffTurn('login', 'cert.pick_needed').text, /인증서 목록에서 쓸 인증서를 한 번/);
     assert.match(handoffTurn('login', 'cert.pick_needed').note, /\[이어서\].*다음부터는 이 인증서를 자동으로/);
@@ -439,14 +427,12 @@ describe('셸 목업', () => {
     assert.deepEqual([r.status, r.handoff, r.turn], ['turn', { phase: 'sign', afterGate: true, kind: 'sign', code: 'sign.waiting' }, { text: SIGN_BY_AUTH['사업자 간편인증']!.text, note: HANDOFF_SIGN.note }]);
     await assert.rejects(runs.manualDone(a.run.id), /sign\.turn_resume_only/);
     assert.ok(!host.calls.some(([m]) => m === 'run.manualDone'), '서명 차례 [직접 발급함]은 엔진에 보내지도 않는다');
-    // 서명 차례 [중지]: {stopped:false} → 확인 중(발급목록), 끝은 엔진 end로
     host.reply['run.stop'] = { stopped: false };
     await runs.stop(a.run.id);
     r = runs.get(a.run.id)!;
     assert.deepEqual([r.status, r.handoff, r.steps[5]!.state, r.steps[6]!.state, r.notices?.includes(STOP_AFTER_SIGN_NOTE)], ['issuing', null, 'todo', 'now', true]);
     await assert.rejects(runs.stop(a.run.id), /already_issuing/);
 
-    // 사람 차례 상한: end status=handoff code=run.handoff_timeout → 끝 카드
     const t = shellRuns();
     const b = interpret('B상사에 17만원 세금계산서', null, 'business', t.runs);
     assert.ok(b.kind === 'draft');
@@ -468,7 +454,6 @@ describe('셸 목업', () => {
     const sf = pb.steps.find((x) => x.signFlow)?.signFlow;
     assert.ok(sf?.methodTargets, '2.2.0은 인증유형을 프로필 값으로 고른다');
     assert.equal(sf.method, '$profile.signMethod');
-    // 게시본 2.3.8에는 보안카드 갈래(security_card)가 남아 있지만 앱은 고르지 않는다(대표 결정 2026-11-19 지원 안 함)
     assert.deepEqual(Object.keys(sf.methodTargets).filter((k) => k !== 'security_card').sort(), methods);
     for (const [label, s] of Object.entries(SIGN_BY_AUTH)) {
       assert.deepEqual(handoffTurn('sign', 'sign.waiting', label), { kind: 'sign', text: s.text, note: HANDOFF_SIGN.note });
@@ -569,7 +554,6 @@ describe('셸 목업', () => {
   it('정부24 후보는 작업 시작 뒤에 생긴 파일만', () => {
     const start = Date.now() - 5 * 60_000;
     const hm = (ms: number) => new Date(ms).toTimeString().slice(0, 5);
-    // HH:MM 글자 비교는 자정을 넘기면 틀리므로, 시작 시각부터 지난 분으로 비교한다
     const mins = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
     const since = (t: string) => (mins(t) - mins(hm(start)) + 1440) % 1440;
     const elapsed = since(hm(Date.now()));

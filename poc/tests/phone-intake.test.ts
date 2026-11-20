@@ -1,5 +1,3 @@
-// 폰 사진·현금 수신 엔진 명령(데스크톱 ③c 계약, 팀장 결정 2026-11-06): receipt.phoneHas·receipt.phoneStore·cash.phonePut.
-// 핵심: 24시간 뒤 같은 msgId를 다시 받아도 영수증 1장, 고아 문서 0. 중복은 msgId로만 본다(SHA 아님). 경합·실패면 파일을 지운다.
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';

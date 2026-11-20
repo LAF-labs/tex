@@ -1,5 +1,3 @@
-// 사업용 카드 내역 화면 데이터(08 D-04, D14 M6-3): db.query.card.list·card.setMemo·card.reattachMemo·card.deleteMemo.
-// 그달 행·건별 메모, 마지막 최신화·n일 전(한국 날짜), 그달 덮임(이번 달은 오늘까지), 행이 바뀌어 떠 있는 메모("확인 필요")와 다시 잇기.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -17,7 +15,6 @@ let dir: string;
 let db: Db;
 let profileId: string;
 let other: string;
-// 지금: 2026-11-07 10:00 KST
 let now = new Date('2026-11-07T01:00:00Z');
 let svc: BundleService;
 const code = (p: Promise<unknown>, c: string) => assert.rejects(p, (e: Error & { code?: string }) => e.code === c, c);
@@ -25,7 +22,6 @@ const view = async (month: string, pid = profileId) => (await svc.handle('db.que
 const tx = (usedOn: string, amount: number, approvalNo: string | null, o: Partial<CardTxnInput> = {}): CardTxnInput => ({
   usedOn, amount, approvalNo, merchant: '가나식당', merchantBizNo: syntheticBizNo(80), cardLast4: '1234', supplyAmount: null, vatAmount: null, canceled: false, ...o,
 });
-/** [최신화] 한 번(H-12 실행 하나 = card_fetches 한 행) */
 const fetch = (pid: string, runId: string, from: string, to: string, completedAt: string, rows: CardTxnInput[]) => {
   new RunRepo(db).create({ id: runId, playbookId: 'H-12', playbookVersion: '1', packageDigest: 'd', profileId: pid, trigger: 'local', inputsHash: 'i' });
   return new CardRepo(db).replaceRange({ runId, profileId: pid, rangeFrom: from, rangeTo: to, completedAt }, rows);
@@ -51,7 +47,6 @@ describe('db.query.card.list', () => {
   });
 
   it('그달 행(사용일 순)·메모, 마지막 최신화 n일 전(한국 날짜), 지난달 전체 조회면 full', async () => {
-    // 11-04 23:30 KST(= 11-04 14:30Z)에 10월 전체 조회
     fetch(profileId, 'run-oct', '2026-10-01', '2026-10-31', '2026-11-04T14:30:00Z', [tx('2026-10-20', 33_000, 'A1'), tx('2026-10-05', 12_000, 'A2'), tx('2026-10-05', 12_000, null)]);
     const v = await view('2026-10');
     assert.deepEqual(v.rows.map((r) => [r.usedOn, r.amount, r.approvalNo]), [['2026-10-05', 12_000, 'A2'], ['2026-10-05', 12_000, null], ['2026-10-20', 33_000, 'A1']]);
@@ -74,7 +69,6 @@ describe('db.query.card.list', () => {
   });
 
   it('행이 바뀌어 메모가 뜨면 확인 필요로 보이고(사용일·금액), 고른 행에 다시 잇거나 지운다', async () => {
-    // 10월을 다시 조회: A1(33,000) 건이 금액 정정되어 키가 바뀐다 → 그 메모는 떠 있다
     const r = fetch(profileId, 'run-oct-2', '2026-10-01', '2026-10-31', '2026-11-07T00:40:00Z', [tx('2026-10-05', 12_000, 'A2'), tx('2026-10-05', 12_000, null), tx('2026-10-20', 30_000, 'A1')]);
     assert.equal(r.unmatchedMemos, 1);
     let v = await view('2026-10');
@@ -87,7 +81,6 @@ describe('db.query.card.list', () => {
     v = await view('2026-10');
     assert.equal(v.rows.find((x) => x.approvalNo === 'A1')!.memo?.text, '거래처 점심');
     assert.deepEqual(v.detachedMemos, []);
-    // 다시 조회해도 새 키로 이어진다
     fetch(profileId, 'run-oct-3', '2026-10-01', '2026-10-31', '2026-11-07T00:50:00Z', [tx('2026-10-20', 30_000, 'A1')]);
     assert.equal((await view('2026-10')).rows[0]!.memo?.text, '거래처 점심');
     await code(svc.handle('card.reattachMemo', { profileId, memoId, txnId: (await view('2026-10')).rows[0]!.id }), 'memo_not_detached');

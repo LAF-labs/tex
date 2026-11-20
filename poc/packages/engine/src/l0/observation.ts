@@ -1,11 +1,7 @@
-// L0 규칙이 보는 로컬 관측. 모델로 보내지 않는다. 화면 관측은 금고 중계 필터를 지난 접근성 트리(값 없음, D06 §4)다.
-
 export interface ObsNode {
   role: string;
   name: string;
-  /** required, invalid, disabled, checked … */
   states?: string[];
-  /** dialog·alertdialog 아래 노드 */
   inDialog?: boolean;
 }
 
@@ -14,12 +10,7 @@ export interface ScreenObservation {
   url: string;
   title: string;
   nodes: ObsNode[];
-  /**
-   * recovery_v1: 실패한 스텝이 기대한 화면(체크포인트에서 기록). screenParams는 화면 식별 쿼리 파라미터의 기대값이다
-   * (홈택스 WebSquare는 pathname이 늘 /websquare/websquare.html이고 화면 ID가 w2xPath 쿼리에 있다).
-   */
   expected?: { urlPath: string; heading: string; screenParams?: Record<string, string> };
-  /** 화면 식별 쿼리 파라미터 이름(포털별 셀렉터 사전이 정한다). 없으면 PORTAL_SCREEN_ID_PARAMS 기본값 */
   screenIdParams?: string[];
 }
 
@@ -37,7 +28,6 @@ export interface AmountObservation {
 export interface DocMetaObservation {
   kind: 'doc_meta';
   docType: string;
-  /** 규칙 추출기가 만든 후보(최대 8개, 날짜 ±40자 문맥) */
   candidates: Array<{ date: string; context: string }>;
 }
 

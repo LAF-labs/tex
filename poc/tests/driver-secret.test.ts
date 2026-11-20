@@ -1,4 +1,3 @@
-// 사람 비밀 입력 창 포트(M2-3, D05 §3.5, ADR-005 v3): 금고 secretWindow.openForHuman → secret_window.closed | TTL → requestClose. 가짜 금고.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { VaultSecretPort, type SecretVault, type VaultSecretInput } from '@sax/engine';

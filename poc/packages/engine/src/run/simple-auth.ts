@@ -1,9 +1,3 @@
-// 폰에서 시작하는 간편인증(대표 결정 2026-11-19 A): 공동인증서 로그인이 두 번 안 돼 H-01이 간편인증 차례(login.simple_auth, s7e)에서 기다릴 때,
-// 폰이 보낸 인증 앱·이름·생년월일·휴대폰 번호로 홈택스 개인용 간편인증 창(OACX, /oacx/index.jsp 틀)을 채우고 [인증 요청]을 누른다.
-// 사장님이 휴대폰 인증 앱에서 승인하면 폰이 "승인했어요"를 보내고, 여기서 [인증 완료]를 누른 뒤 실행을 재개한다(s7f가 로그인 표지를 기다린다).
-// - 이 차례에서만 돈다(IrRun.simpleAuth가 HandedOff·login.simple_auth를 확인한다). 홈택스 밖으로는 가지 않는다(틀 주소를 확인한다).
-// - 값은 칸에만 넣고 로그·일지에 남기지 않는다(결과 코드만).
-// 칸 이름은 2026-11-19 홈택스 실화면(공개 로그인 화면, 요청은 누르지 않음)에서 읽고 채워 보았다(카카오톡·네이버·토스·통신사PASS+통신사). [인증 요청] 뒤 화면([인증 완료])은 아직 실화면으로 보지 못했다.
 import type { Frame, Page } from 'playwright-core';
 
 /** 폰이 고르는 인증 앱 코드 → 홈택스 창의 글자 */
@@ -22,17 +16,13 @@ export const OACX_PROVIDERS: Readonly<Record<string, string>> = {
   samsung: '삼성패스',
   banksalad: '뱅크샐러드',
 };
-/** 통신사PASS의 통신사 칸 값(홈택스 창 select, 2026-11-19 실화면) */
 const OACX_CARRIERS: Readonly<Record<string, string>> = { S: 'SKT', K: 'KT', L: 'LGU+', SA: 'SKT알뜰폰', KA: 'KT알뜰폰', LA: 'LGU+알뜰폰' };
 
 export interface SimpleAuthIdentity {
   provider: string;
   name: string;
-  /** YYYYMMDD */
   birth: string;
-  /** 숫자만 10~11자리(예: 01012345678) */
   phone: string;
-  /** 통신사PASS만: 통신사 칸 값(S·K·L·SA·KA·LA) */
   carrier?: string;
 }
 
@@ -67,7 +57,6 @@ export async function oacxRequest(page: Page, d: SimpleAuthIdentity): Promise<Si
   if (bad) return { ok: false, code: bad };
   let f = findOacx(page);
   if (!f) {
-    // s7d가 [개인용 간편인증] 탭을 눌러 두었다: 그 아래 큰 단추(같은 이름, 보이는 것)를 누르면 창이 열린다
     const open = page.locator('a.certibtn:visible').filter({ hasText: '개인용' }).first();
     if ((await open.count().catch(() => 0)) === 0) return { ok: false, code: 'simple.no_open_button' };
     await open.click({ timeout: 10_000 }).catch(() => {});
@@ -81,7 +70,6 @@ export async function oacxRequest(page: Page, d: SimpleAuthIdentity): Promise<Si
     const prefix = d.phone.slice(0, 3);
     await f.locator('#oacx_phone2').locator('xpath=preceding::select[1]').selectOption(prefix, { timeout: 5_000 });
     await f.locator('#oacx_phone2').fill(d.phone.slice(3), { timeout: 5_000 });
-    // 통신사PASS: 통신사 칸(값 S·K·L·SA·KA·LA를 가진 select)
     if (d.carrier) {
       const sel = f.locator('select').filter({ has: f.locator('option[value="SA"]') }).first();
       await sel.selectOption(d.carrier, { timeout: 5_000 });

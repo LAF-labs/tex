@@ -1,5 +1,3 @@
-// 대화 에이전트 chat.step(D04 §4 chat_agent): 마스킹 경계(나간 본문에 원문 없음)·도구 결과 구조 검사(C-10)·역치환·답 검사·턴 상한·세션 폐기·오타 별칭.
-// 모델은 모의 게이트웨이의 각본 출력, main은 아래 FakePc(카드·조회 결과와 ref를 가진 값 공간)다. 요청은 실제 Egress·응답 어댑터를 지난다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -32,13 +30,11 @@ let profileId: string;
 let clock: number;
 
 type Item = Record<string, unknown>;
-/** 카드 도구의 작성일자·수량·단가 칸(ADR-049)은 strict 스키마라 늘 있어야 한다. 시험이 쓰지 않으면 null로 채운다. */
 const DRAFT_NULLS = { date_month_offset: null, date_day: null, quantity: null, unit_price: null };
 const fc = (name: string, args: object, id = `call_${randomBytes(3).toString('hex')}`): Item[] => [{ type: 'function_call', call_id: id, name, arguments: JSON.stringify(name === 'invoice_draft' || name === 'draft_edit' ? { ...DRAFT_NULLS, ...args } : args) }];
 const msg = (o: object): Item[] => [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify(o) }] }];
 const reply = (o: Partial<{ kind: string; text: string; show: string[]; ask: string | null }>) => msg({ kind: 'answer', text: '확인했어요.', show: [], ask: null, ...o });
 const userText = (body: Item) => ((body.messages as Array<{ content: Array<{ text: string }> }>)[0]!.content[0]!.text);
-/** 이번 문장 줄(사용자: …)만 */
 const nowLine = (body: Item) => userText(body).split('[지금]\n')[1]!.split('\n').find((l) => l.startsWith('사용자: '))!;
 const lastOutput = (body: Item): ToolOutput | null => {
   const r = (body.replay as Item[] | undefined) ?? [];
@@ -47,17 +43,14 @@ const lastOutput = (body: Item): ToolOutput | null => {
 };
 const toks = (t: string, k: string) => [...t.matchAll(new RegExp(`\\[${k}_\\d+\\]`, 'g'))].map((m) => m[0]);
 const responds = () => mock.calls.filter((c) => c.path === '/v1/respond');
-/** main이 화면에서 하는 토큰 바꾸기(조사는 main 시험이 본다) */
 const shownText = (r: { text: string; values: Record<string, string> }) => r.text.replace(/\[[A-Z]+_\d+\]/g, (t) => r.values[t]!);
 const code = (p: Promise<unknown>, c: string) => assert.rejects(p, (e: Error & { code?: string }) => e.code === c, c);
 
-/** 모델 각본: 사용자 턴마다 [첫 호출 출력, 도구 결과를 받은 뒤 출력 …]. 함수는 요청 본문을 받는다. */
 let plan: Array<(body: Item) => Item[]> = [];
 const script = (...steps: Array<(body: Item) => Item[]>) => {
   plan = steps;
 };
 
-/** main 쪽 값 공간 흉내: 카드와 조회 결과, ref. 모델에는 ref·status·fields만 돌려준다. */
 class FakePc {
   n = 0;
   drafts: Array<{ ref: string; cp: string; amount: boolean; vat: 'separate' | 'included' | null; item: boolean; open: boolean }> = [];
@@ -99,7 +92,6 @@ class FakePc {
 
 const agent = (now = () => clock) => new ChatAgent(db, { model: gatewayChatAgentModel(new Egress({ env: {}, testOrigins: { gateway: mock.origin }, gateway: { auth: { headers: async () => ({ authorization: 'DPoP device-token', dpop: 'proof' }) }, bundles: catalog.allowEntries() } })), now });
 
-/** 사용자 턴 하나: 도구 호출이면 FakePc가 실행해 이어 간다. */
 async function say(a: ChatAgent, pc: FakePc, text: string, pf = profileId) {
   let r: StepResult = await a.step({ start: { text, frame: pc.frame(), profileId: pf } });
   const calls: DomainCall[] = [];
@@ -231,19 +223,15 @@ describe('chat.step 역치환', () => {
   it('장부에 없는 이름(U8-1): 사장님이 이번 문장에 쓴 낱말일 때만 unknownName으로 main에 준다. 지어낸 이름·내 사업장·앞 턴 이름은 싣지 않는다', async () => {
     const a = agent();
     const ask = (b: Item) => (assert.deepEqual(lastOutput(b), { ref: null, status: 'unknown_counterparty', fields: null, needs: null }), reply({ kind: 'ask', text: '장부에 없는 거래처예요.', ask: 'counterparty' }));
-    // 사장님이 쓴 이름(토큰이면 그 토큰, 아니면 문장에 있는 말 그대로)
     script((b) => fc('invoice_draft', { counterparty: toks(nowLine(b), 'NAME')[0] ?? '라온상사', amount: null, vat: null, item: null }), ask);
     let r = await a.step({ start: { text: '라온상사에 세금계산서 끊어줘', frame: { cards: [] }, profileId } });
     assert.equal(r.kind === 'reply' && r.reply.unknownName, '라온상사');
-    // 문장에 없는 이름을 모델이 지어냈다
     script(() => fc('invoice_history', { counterparty: '가짜상사' }), ask);
     r = await a.step({ start: { text: '거기 발급 기록 보여줘', frame: { cards: [] }, profileId } });
     assert.equal(r.kind === 'reply' && r.reply.unknownName, null);
-    // 내 사업장 이름(다른 레코드에 묶인 토큰)
     script((b) => fc('invoice_history', { counterparty: toks(nowLine(b), 'NAME')[0] }), ask);
     r = await a.step({ start: { text: '바다상회 발급 기록', frame: { cards: [] }, profileId } });
     assert.equal(r.kind === 'reply' && r.reply.unknownName, null);
-    // 세무 차단으로 바뀐 답에는 싣지 않는다
     script(() => fc('invoice_draft', { counterparty: '라온상사', amount: null, vat: null, item: null }), () => reply({ kind: 'tax_advice', text: '경비 돼요' }));
     r = await a.step({ start: { text: '라온상사 건 경비 처리 돼?', frame: { cards: [] }, profileId } });
     assert.equal(r.kind === 'reply' && r.reply.unknownName, null);
@@ -299,7 +287,6 @@ describe('chat.step 답 검사', () => {
       const r = await a.step({ start: { text: '안녕', frame: { cards: [] }, profileId } });
       assert.deepEqual(r.kind === 'reply' && [r.reply.text, r.reply.filtered], [CHAT_AGENT_FALLBACK_TEXT, 'slot']);
     }
-    // 되묻는 답이면 되묻기는 살린다
     script(() => reply({ text: '{d1.first.total} 맞나요?', kind: 'ask', ask: 'amount' }));
     const r = await a.step({ start: { text: '안녕', frame: { cards: [] }, profileId } });
     assert.deepEqual(r.kind === 'reply' && [r.reply.text, r.reply.ask, r.reply.filtered], [CHAT_AGENT_ASK_TEXT.amount, 'amount', 'slot']);
@@ -323,7 +310,6 @@ describe('chat.step 답 검사', () => {
     const r1 = (await say(a, pc, '지난달 매출 얼마야')).reply;
     const ref = r1.show[0]!;
     assert.deepEqual([r1.text, r1.filtered], [`지난달 매출은 {${ref}.count}건, 합계 {${ref}.sum.total}예요.`, null]);
-    // 실제 모델이 첫 행 합계를 매출 합계라고 쓴 일(real-run-2): 숫자를 직접 쓰면 문장을 버리고 표만 남긴다
     script(() => reply({ text: '합계는 1,210,000원이에요.', show: [ref] }));
     const r2 = (await say(a, pc, '합계 다시 말해 줘')).reply;
     assert.deepEqual([r2.text, r2.show, r2.filtered], [CHAT_AGENT_NUMBER_TEXT, [ref], 'number']);
@@ -470,7 +456,6 @@ describe('chat.step 턴 상한·세션 폐기', () => {
 
   it('이번 턴 글에 없는 거래처 토큰은 풀지 않는다(장부 첫 거래처를 지어 넣어도 카드가 안 생긴다)', async () => {
     const pc = new FakePc();
-    // 앞 턴에서 B상사가 토큰이 된다. 모델이 이번 글에 없는 거래처 토큰을 지어 넣는다
     const b = agent();
     script(() => reply({}));
     await say(b, pc, 'B상사 안녕');
@@ -502,7 +487,6 @@ describe('chat.step 턴 상한·세션 폐기', () => {
   it('되묻는 문장에 숫자가 섞이면 문장만 고정 문장으로 바꾸고 되묻기는 살린다. 문장 속 ref 표기는 지운다', async () => {
     const a = agent();
     script(() => reply({ kind: 'ask', text: '단가에 20개라고 하셨는데 공급가로 넣을 금액을 알려 주세요.', ask: 'amount' }));
-    // (사장님이 쓴 달 이름은 따라 써도 걸러지지 않는다: 아래 9월 사례)
     let r = (await say(a, new FakePc(), 'A상사 원두 20개')).reply;
     assert.deepEqual([r.kind, r.ask, r.text, r.filtered], ['ask', 'amount', CHAT_AGENT_ASK_TEXT.amount, 'number']);
     const pc = new FakePc();
@@ -515,14 +499,12 @@ describe('chat.step 턴 상한·세션 폐기', () => {
     script(() => fc('sales_summary', { month_offset: -2 }), () => reply({ text: '8월 매출은 {r3.sum.supply}예요.', show: ['r3'] }));
     r = (await say(a, pc, '9월 매출 알려줘')).reply;
     assert.equal(r.filtered, 'number', '사장님이 쓰지 않은 달 이름은 걸러진다');
-    // 사장님이 쓴 날짜도 따라 써도 된다(chat-eval issue-date). 쓰지 않은 날은 걸러진다
     script(() => reply({ kind: 'did', text: '10월 31일자로 준비할게요.' }));
     r = (await say(a, pc, 'A상사 10월 31일자로 끊어줘')).reply;
     assert.equal(r.filtered, null);
     script(() => reply({ kind: 'did', text: '10월 30일자로 준비할게요.' }));
     r = (await say(a, pc, 'A상사 10월 31일자로 끊어줘')).reply;
     assert.equal(r.filtered, 'number');
-    // 달 없이 쓴 날("다음 달 1일로")도 사장님이 쓴 날만 따라 쓴다(ADR-049 date-future)
     script(() => reply({ kind: 'ask', text: '1일자는 아직 오지 않은 날이라 정할 수 없어요. 작성일자를 다시 알려 주세요.', ask: 'date' }));
     r = (await say(a, pc, 'A상사 다음 달 1일로 끊어줘')).reply;
     assert.equal(r.filtered, null);
@@ -539,7 +521,6 @@ describe('chat.step 턴 상한·세션 폐기', () => {
     script(draft('원두'));
     const r1 = (await say(a, pc, 'A상사 110만원 원두 세금계산서 끊어줘')).reply;
     assert.equal(responds().length, 1);
-    // 무엇을 했는지 토큰으로 말하고 화면 값을 같이 준다
     assert.deepEqual([r1.kind, r1.show, r1.filtered], ['did', ['d1'], 'closed']);
     assert.match(r1.text, /^\[NAME_\d+\] 앞으로 \[AMT_\d+\] 세금계산서 카드를 만들었어요\. 부가세는 별도로 계산했어요\. 포함이면 말씀해 주세요\.$/);
     assert.deepEqual(Object.values(r1.values).sort(), ['110만원', 'A상사'].sort());
@@ -562,7 +543,6 @@ describe('chat.step 턴 상한·세션 폐기', () => {
     assert.deepEqual([call.amount, call.date, call.quantity, call.unitPrice], [null, { monthOffset: -1, day: 'last' }, '10', { value: 12_000 }]);
     assert.equal(r.filtered, 'closed');
     assert.match(r.text, /^\[NAME_\d+\] 앞으로 작성일 지난달 말일, 단가 \[AMT_\d+\] × 10 세금계산서 카드를 만들었어요\./);
-    // 쓰지 않은 칸은 main 호출에 싣지 않는다(예전 모양 그대로)
     script((b) => fc('invoice_draft', { counterparty: toks(nowLine(b), 'NAME')[0], amount: toks(nowLine(b), 'AMT')[0], vat: null, item: '원두' }));
     await say(a, pc, 'A상사 110만원 원두 끊어줘');
     assert.deepEqual(Object.keys(pc.calls.at(-1)!).sort(), ['amount', 'callId', 'counterpartyId', 'item', 'tool', 'vat']);
@@ -700,7 +680,6 @@ describe('chat.route 판정(ADR-057): 받는 방식과 반응', () => {
     script(() => reply({ kind: 'smalltalk', text: '별말씀을요.' }));
     await say(a, pc, '고마워');
     assert.match(userText(responds()[0]!.body!), /앱 판단: 맞장구가 이어짐\(앞 맞장구에는 반응만 했다\)\. 한 문장으로 짧게 답한다\n사용자: 고마워$/);
-    // 말로 답했으니 다음 맞장구는 다시 반응만
     const third = await withAnswers(thx, () => route(a, pc, '고마워'));
     assert.deepEqual([third.mode, third.capped], ['reaction_only', false]);
     script(() => reply({ kind: 'answer', text: '네.' }));
@@ -756,8 +735,6 @@ describe('protocol·entry 배선', () => {
   });
 });
 
-// PR #296 독립 판정(mid-verify/pr-296-final.md) 반영: ① 답 숫자 필터 우회, ② 대화 경로 원문 반복 송신, ③ 대화록 12턴 자르기.
-// 이 묶음은 장부에 거래처를 더하므로 파일 맨 끝에 둔다(앞 시험의 토큰 번호를 바꾸지 않게).
 describe('PR #296 판정 반영', () => {
   before(() => {
     const repo = new CounterpartyRepo(db);
@@ -785,7 +762,6 @@ describe('PR #296 판정 반영', () => {
     }
   });
 
-  // 판정 ATK-1: 원래 규칙이 놓치던 것이 대화록·도구 왕복으로 매 호출 다시 나갔다. 공격 문장 7개(+같은 갈래)를 세 턴 보내 세 본문 모두에 원문이 없음을 본다.
   const ATTACKS: Array<[string, string]> = [
     ['a상사에 끊어줘', 'a상사'],
     ['A 상사에 끊어줘', 'A 상사'],
@@ -849,14 +825,11 @@ describe('PR #296 판정 반영', () => {
   });
 });
 
-// PR #296 r2 판정(mid-verify/pr-296-final-r2.md) 반영: 앞이 같은 두 거래처 오인, 이메일 조각, 띄어 쓰거나 끊어 쓴 금액, 답의 "만 원"·달 이름.
-// 이 묶음도 장부에 거래처를 더하므로 파일 맨 끝에 둔다.
 describe('PR #296 r2 판정 반영', () => {
   before(() => {
     cpId['A상사몰'] = new CounterpartyRepo(db).create({ name: 'A상사몰', bizNo: syntheticBizNo(86) }).id;
   });
 
-  /** 문장 하나를 보내고 모델이 첫 NAME·AMT 토큰으로 카드를 만들게 한다. 풀린 거래처 이름(엔진이 되물으면 null)과 금액. */
   async function drafted(a: ChatAgent, pc: FakePc, text: string) {
     script(
       (b) => fc('invoice_draft', { counterparty: toks(nowLine(b), 'NAME')[0] ?? '없음', amount: toks(nowLine(b), 'AMT')[0] ?? null, vat: null, item: '컨설팅' }),
@@ -990,8 +963,6 @@ describe('PR #296 r2 판정 반영', () => {
   });
 });
 
-// PR #296 r3 판정(mid-verify/pr-296-final-r3.md) 반영: 사전은 공백을 뺀 길이로 긴 이름부터 맞춘다. 장부에 없는 긴 이름의 일부는 되묻는다.
-// 이 묶음도 장부에 거래처를 더하므로 파일 맨 끝에 둔다.
 describe('PR #296 r3 판정 반영', () => {
   before(() => {
     const repo = new CounterpartyRepo(db);

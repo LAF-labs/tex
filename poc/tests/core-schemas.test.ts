@@ -1,4 +1,3 @@
-// M1-4 스키마 10종(D02 7종 + status·revoked_keys + data_descriptor): 엔진 사본 = 설계 정본, strict 컴파일, 골든 픽스처 적합, 정책 예시(D03 §7) 적합.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';

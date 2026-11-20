@@ -1,7 +1,3 @@
-// 알림 후보 계산(D10 §2 notify, 02 §5·§17, ADR-032·033). 같은 입력이면 같은 후보(순서 포함). 억제·창·하루 상한은 scheduler가 한다.
-// - 서류 만료: remind_days(D07 기본 '7,1')의 각 단계에서 한 번. PC가 꺼져 단계를 놓쳤으면 지금 들어간 단계 하나만 낸다.
-// - 세무사 꾸러미 준비됨: 매달 bundle.reminderDay(반기납부 payroll.halfYearWithholding이면 1·7월만)부터 그 달 말까지, 안 보냈으면.
-// - 확인 안 한 급여·사업용 카드 최신화: 같은 날에 @sax/bundle missingReport 결과와 마지막 최신화 날짜로. 자동 조회는 없다.
 import type { MissingReport } from '@sax/bundle';
 import { decideSchedules, type ScheduleDecision, type ScheduleRow } from './consent.ts';
 import { computeExpiries, type Expiry, type ExpiryDocInput, type ExpiryOptions, type ValidityRuleRow } from './expiry.ts';
@@ -16,29 +12,20 @@ export interface ProfileSnapshot {
   validityRules: readonly ValidityRuleRow[];
   schedules: readonly ScheduleRow[];
   settings: {
-    /** profile.<id>.bundle.reminderDay(1~28) */
     reminderDay: number;
-    /** profile.<id>.payroll.halfYearWithholding */
     halfYearWithholding: boolean;
-    /** 사업연도 끝 달(기본 12) */
     fiscalYearEndMonth?: number;
-    /** D10 §4 lead_days(기본 7) */
     leadDays?: number;
   };
-  /** 보낸 표시가 있는 꾸러미 달(bundle_exports.sent_marked_at이 있는 period) */
   bundleSentPeriods: readonly string[];
-  /** bundlePeriod()가 준 달의 @sax/bundle missingReport. 아직 계산 못 했으면 null */
   missing: MissingReport | null;
-  /** 사업용 카드 내역 마지막 최신화 날짜(card_fetches). 없으면 null */
   cardFetchedOn: string | null;
   submitOn?: ExpiryOptions['submitOn'];
 }
 
 export interface PlannedNotification {
   notification: DaemonNotification;
-  /** 이 알림을 띄워도 되는 창 */
   window: RunWindow;
-  /** 같은 날 상한에 걸렸을 때 먼저 낼 순서(작을수록 먼저) */
   priority: number;
 }
 
@@ -142,7 +129,6 @@ export function planNotifications(s: ProfileSnapshot, today: string): Plan {
         101,
       );
     }
-    // 지난달 내역을 다 담으려면 이번 달 1일 이후에 최신화했어야 한다. 알림만 한다(ADR-032 결정 3, ADR-026: 데몬은 조회하지 않는다)
     const fetched = isDate(s.cardFetchedOn) ? s.cardFetchedOn : null;
     if (!fetched || fetched < firstOfMonth) {
       push(

@@ -1,4 +1,3 @@
-// 폰 연결 QR 인코더(remote-qr.ts, qrcode-generator 1.4.4 고정): 만든 SVG data URL을 jsQR로 다시 읽어 원문과 같은지 본다(팀장 결정 2026-11-06).
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';

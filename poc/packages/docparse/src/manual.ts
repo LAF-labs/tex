@@ -1,12 +1,9 @@
-// 수동 메타 입력 폴백(M1-8·M6-4): 자동으로 핵심 칸을 못 읽었거나(needsManual) 사장님이 고칠 때 받는 값.
-// 화면(확인 카드)은 parse 결과의 값·후보를 미리 채우고, 사장님이 확인·수정한 값만 이 모양으로 엔진에 넘긴다. 이 값이 정본이다.
 import type { InsuranceKind } from './types.ts';
 import { isoDate, isValidBizNo } from './util.ts';
 
 export interface ManualCertificateMeta {
   kind: 'certificate';
   issuedOn: string;
-  /** 서류에 유효기간이 없으면 null(규칙표로 계산) */
   validUntil: string | null;
 }
 
@@ -14,7 +11,6 @@ export interface ManualReceiptMeta {
   kind: 'receipt';
   issuedOn: string;
   merchant: string;
-  /** 모르면 null(간이영수증에는 없을 수 있다) */
   merchantBizNo: string | null;
   amount: number;
 }
@@ -29,7 +25,6 @@ export interface ManualInsuranceRow {
 export interface ManualInsuranceMeta {
   kind: 'insurance_notice';
   month: string;
-  /** 고친 줄만 */
   rows: ManualInsuranceRow[];
 }
 

@@ -1,17 +1,3 @@
-// 데스크톱 계정 로그인(A-01)·첫 PC 등록·기기 토큰 보관(D08 §4.2, D09 §2.1·§2.2, 팀장 결정 2026-11-06 (가)).
-// 흐름: 이메일 → 비밀번호(ADR-038) 또는 6자리 코드 → 계정 세션(메모리) → 기기 목록 조회 → (첫 PC) AIK 서명 첫 목록 + POST /v1/aik → 자기 인증서(AIK 서명)
-//       → 신원 파일 저장 → 로그아웃(세션 버림). 그 뒤 계정 호출은 기기 범위 토큰(인증서 + DPoP(Vd), 15분, 메모리 캐시)으로만 한다.
-//   계정 만들기(코드)로 들어왔고 비밀번호가 없으면(GET /v1/me hasPassword) 등록 뒤 비밀번호 만들기 단계(set_password)를 둔다.
-//   그 단계 동안만 세션을 메모리에 둔다(방금 인증한 세션이라 PUT /v1/password를 바로 부른다, 10분 안). 만들거나 [나중에]면 로그아웃.
-// - 비밀번호 찾기(인계 명세 §4): 이메일 → 재설정 코드(계정이 없어도 같은 응답) → 코드 6자리(서버 검증 없음) + 새 비밀번호 → 재설정·로그인
-//   (서버가 다른 세션·갱신 토큰을 모두 폐기) → 첫 PC 등록 → 로그아웃. resetId는 이 객체 안 메모리에만 있다.
-// - 계정 세션·기기 토큰·loginId는 이 객체 안 메모리에만 있다. 렌더러에는 단계·이메일·만료 시각·오류 코드만 간다.
-// - 신원 파일(remote-identity.json)에는 비밀이 없다(deviceId·공개키·AIK 서명 인증서·목록·계정 이메일). 키 연산은 금고(DesktopKeys)가 한다.
-// - 두 번째·세 번째 PC(A-03, 계정에 다른 AIK가 이미 있음)는 이메일 인증만으로 바로 붙는다(ADR-050, 대표 결정 2026-11-18):
-//   로그인된 PC가 계정 서비스에 맡겨 둔 계정 열쇠를 세션으로 받아 금고에 넣고, 자기를 더한 AIK 서명 목록을 스스로 올린다(#joinByEscrow).
-//   맡긴 열쇠가 없으면(쓰던 PC가 아직 옛 버전이거나 서버에 그 기능이 꺼져 있음) 쓰던 PC의 6자리 승인으로 붙는다(ADR-048 결정 3, remote-pclink.ts PcLinkJoin).
-//   그동안 세션은 이 객체 안 메모리에 있고(link_* 단계), 끝나거나 그만두면 로그아웃하고 버린다. 금고 연결 연산이 없는 빌드는 account.aik_already_pinned로 끝낸다.
-//   같은 금고(AIK·Sd·Vd가 같음)를 다시 설치한 경우는 서버 목록에서 이 PC 항목을 찾아 신원을 되살린다.
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -41,10 +27,8 @@ import {
 import { PcLinkJoin } from './remote-pclink.ts';
 import type { AccountClient, DeviceAuth, PcLinkVault, ServerDevice } from './remote-ports.ts';
 
-/** 엔진에 가는 기기 토큰의 범위(gateway-auth.ts). 게이트웨이는 이 범위만 본다. */
 export const GATEWAY_SCOPES: readonly string[] = Object.freeze(['gateway']);
 
-/** 인증서를 새로 서명하는 때(만료 14일 전). 서버는 not_after ≤ 지금 + 91일만 받는다. */
 export const CERT_RENEW_MS = 14 * 86_400_000;
 const FILE_VERSION = 1;
 
@@ -52,7 +36,6 @@ export interface RemoteIdentity {
   v: 1;
   accountEmail: string;
   deviceId: string;
-  /** 공개키(base64 32B). 금고 키가 바뀌면(다른 금고) 신원을 쓰지 않는다. */
   aikPub: string;
   Sd: string;
   Vd: string;
@@ -70,14 +53,12 @@ const key32 = (s: unknown) => {
   }
 };
 
-/** 파일 모양 검사 + AIK로 인증서·목록 서명 검사. 틀리면 null. */
 export function checkIdentity(v: unknown, now = Date.now()): RemoteIdentity | null {
   const i = v as Partial<RemoteIdentity> | null;
   if (!i || typeof i !== 'object' || i.v !== FILE_VERSION) return null;
   if (typeof i.accountEmail !== 'string' || !isEmailShape(i.accountEmail) || typeof i.deviceId !== 'string' || !UUID4.test(i.deviceId)) return null;
   if (!key32(i.aikPub) || !key32(i.Sd) || !key32(i.Vd) || !Number.isSafeInteger(i.enrolledAt) || !i.cert || !i.deviceList) return null;
   const aik = fromB64(i.aikPub!);
-  // 만료된 인증서도 신원은 맞다(새로 서명한다). 서명·필드만 본다: 검사 시각을 not_after 직전으로 둔다.
   const c = verifyCert(i.cert, aik, Math.min(now, i.cert.cert?.not_after - 1));
   if (!c || c.device_id !== i.deviceId || c.role !== 'desktop' || b64(c.Sx) !== i.Sd || b64(c.Vx) !== i.Vd) return null;
   const l = verifyDeviceList(i.deviceList, aik);
@@ -85,7 +66,6 @@ export function checkIdentity(v: unknown, now = Date.now()): RemoteIdentity | nu
   return i as RemoteIdentity;
 }
 
-/** userData/remote-identity.json. 임시 파일 + 이름 바꾸기, 사용자만 읽기·쓰기. */
 export class RemoteIdentityFile {
   readonly file: string;
   constructor(dir: string) {
@@ -114,7 +94,6 @@ export class RemoteIdentityFile {
   }
 }
 
-/** 받은 로그인 코드의 대기 정보(코드 자체는 없다). 이것만으로는 로그인할 수 없다(메일의 6자리가 있어야 한다). */
 interface PendingCode {
   email: string;
   loginId: string;
@@ -122,10 +101,6 @@ interface PendingCode {
   signup: boolean;
 }
 
-/**
- * userData/remote-pending-code.json: 앱을 껐다 켜도 만료(10분) 전이면 같은 코드로 로그인한다(0.1.5 실사용, 부장 지시 2026-11-10).
- * 코드 확인 성공·[뒤로]·다른 로그인·만료에 지운다. 임시 파일 + 이름 바꾸기, 사용자만 읽기·쓰기. 모양이 다르거나 만료면 버린다.
- */
 export class PendingCodeFile {
   readonly file: string;
   constructor(dir: string) {
@@ -166,43 +141,27 @@ export class PendingCodeFile {
   }
 }
 
-/** 렌더러가 보는 것(값은 이메일·만료 시각·오류 코드뿐). */
 export interface AccountView {
-  /**
-   * link_*는 새 PC 연결(ADR-048 결정 3): link_wait 쓰던 PC에서 [연결]을 누르기를 기다림 · link_code 6자리를 보이는 중(쓰던 PC에 넣는다) ·
-   * link_confirm 열쇠가 왔고 "쓰던 PC에 '연결됐어요'가 떴나요?" 확인을 기다림.
-   */
   step: 'unavailable' | 'signed_out' | 'code_sent' | 'reset_code' | 'working' | 'set_password' | 'signed_in' | 'link_wait' | 'link_code' | 'link_confirm';
   email: string | null;
   codeExpiresAt: number | null;
   error: string | null;
-  /** 이 계정에 연결된 폰 수(AIK 서명 기기 목록의 mobile 항목). 로그인 전이면 0. */
   phones: number;
-  /** false면 이 빌드에서는 [폰 연결]을 보이지 않는다(로그인 상태에서만 붙는다). 없으면 연결할 수 있다. */
   pairable?: false;
-  /** link_code·link_confirm 단계에서 이 PC 화면에 보일 6자리(사용자가 쓰던 PC에 넣는다). 그 밖에는 없다. */
   linkCode?: string;
 }
 
 interface DesktopAccountOptions {
-  /** 없으면 이 빌드에서는 계정에 닿을 수 없다(unavailable). */
   client: AccountClient | null;
   keys: () => Promise<DesktopKeys>;
   identity: RemoteIdentityFile;
-  /** 받은 코드의 대기 정보 저장(없으면 메모리에만, 재시작하면 사라진다). */
   pending?: PendingCodeFile;
   platform: 'windows' | 'macos';
-  /** 계정 기기 목록에 보이는 이름(40자). 사람 이름이 들어가지 않게 진입점이 고른다. */
   deviceName: string;
-  /** 이 PC의 모델 이름(예: "MacBook Pro"). 기기 토큰을 받을 때 알려 계정 기기 목록의 이름으로 쓴다(2026-11-19 대표). 없으면 알리지 않는다. */
   model?: () => Promise<string | undefined>;
-  /** false면 폰 연결을 닫는다(운영 룸 호스트·폰 앱 출시 전, remote-wiring.ts PROD_PHONE_PAIRING). 기본 true. */
   pairing?: boolean;
-  /** 새 PC 연결의 금고 연산(ADR-048 결정 3). 없으면 다른 PC가 이미 있는 계정에는 붙지 못한다(account.aik_already_pinned). */
   linkVault?: () => Promise<PcLinkVault>;
-  /** 계정 열쇠를 넘겨받은 뒤 부른다: 다음 keys()가 금고 공개키를 다시 읽는다(AIK가 바뀌었다). */
   resetKeys?: () => void;
-  /** 이 PC가 다른 계정 열쇠를 받아들인 뒤 부른다(올린 공유 기록을 새 열쇠로 다시 올리게 한다). */
   onRekey?: () => void;
   now?: () => number;
   log?: (name: string, data: Record<string, string | number>) => void;
@@ -220,7 +179,6 @@ export class DesktopAccount {
   #id: RemoteIdentity | null = null;
   #pendingCode: PendingCode | null = null;
   #pendingWrite: Promise<void> = Promise.resolve();
-  /** 받은 코드(대기 정보). 바꿀 때마다 파일에도 순서대로 쓴다(지우기 포함). */
   get #pending(): PendingCode | null {
     return this.#pendingCode;
   }
@@ -229,16 +187,12 @@ export class DesktopAccount {
     const f = this.#o.pending;
     if (f) this.#pendingWrite = this.#pendingWrite.then(() => (p ? f.save(p) : f.clear())).catch(() => {});
   }
-  /** 비밀번호 찾기(재설정 코드를 보냄). 코드가 틀리면 남는다(서버가 5회째에 막는다). */
   #reset: { email: string; resetId: string; expiresAt: number } | null = null;
-  /** 계정 만들기 뒤 비밀번호 만들기 단계(ADR-038 (a) 선택). 세션은 이 단계 동안만 메모리에 있다. */
   #offer: { session: string; email: string } | null = null;
-  /** 이메일 칸을 다시 채우는 값(코드를 쓴 뒤 등록이 실패했을 때). */
   #lastEmail: string | null = null;
   #working = false;
   #error: string | null = null;
   #device: DeviceSession | null = null;
-  /** 새 PC 연결 중(ADR-048 결정 3). 세션은 이 동안만 메모리에 있다. */
   #link: { join: PcLinkJoin; session: string; email: string } | null = null;
 
   constructor(o: DesktopAccountOptions) {
@@ -247,7 +201,6 @@ export class DesktopAccount {
     this.#log = o.log ?? (() => {});
   }
 
-  /** 앱 시작: 신원 파일을 읽고 금고 키와 맞춰 본다(다른 금고면 쓰지 않는다). */
   async init(): Promise<AccountView> {
     const id = await this.#o.identity.load(this.#now());
     if (id) {
@@ -259,7 +212,6 @@ export class DesktopAccount {
         this.#log('main.account_identity', { result: codeOf(e) });
       }
     }
-    // 지난 실행에 받은 코드가 아직 살아 있으면 코드 화면으로 돌아온다(로그인돼 있으면 버린다)
     const f = this.#o.pending;
     if (f) {
       const p = await f.load(this.#now());
@@ -278,7 +230,6 @@ export class DesktopAccount {
       const code = this.#link.join.code;
       return { step: `link_${this.#link.join.stage}`, email: this.#link.email, codeExpiresAt: null, error: null, phones: 0, ...(code ? { linkCode: code } : {}) };
     }
-    // 로그인 상태의 오류는 비밀번호 단계를 끝낸 이유(account.password_later)뿐이다
     if (this.#id) return { step: 'signed_in', email: this.#id.accountEmail, codeExpiresAt: null, error: this.#error === 'account.password_later' ? this.#error : null, phones: this.#id.deviceList.entries.filter((e) => e.entry.role === 'mobile').length, ...(this.#o.pairing === false ? { pairable: false as const } : {}) };
     if (this.#working) return { step: 'working', email: this.#pending?.email ?? null, codeExpiresAt: null, error: null, phones: 0 };
     if (this.#reset) {
@@ -293,10 +244,6 @@ export class DesktopAccount {
     return this.#id;
   }
 
-  /**
-   * 이메일 → 코드 보내기. 다시 보내기도 이것(서버가 시간당 5회로 막는다).
-   * signup이면 계정 만들기 화면에서 왔다: 코드 확인·등록 뒤 비밀번호가 없으면 만들기 단계를 둔다. 서버 호출은 같다(첫 검증 때 계정 생성).
-   */
   async sendCode(emailRaw: string, signup = false): Promise<AccountView> {
     const client = this.#need();
     const email = emailRaw.trim();
@@ -313,7 +260,6 @@ export class DesktopAccount {
     return this.view();
   }
 
-  /** 6자리 → 세션 → 첫 PC 등록. 세션은 이 함수 안에서만 쓰고 버린다. */
   async verify(code: string): Promise<AccountView> {
     const client = this.#need();
     const p = this.#pending;
@@ -328,7 +274,6 @@ export class DesktopAccount {
     }
     await this.#run(async () => {
       const { session } = await client.verifyEmailCode(p.loginId, code);
-      // 코드는 한 번 쓰면 끝이다. 등록이 실패해도 코드 입력으로 돌아가지 않고 이메일부터 다시 한다.
       this.#pending = null;
       this.#lastEmail = p.email;
       let keep = false;
@@ -337,23 +282,16 @@ export class DesktopAccount {
         if (id) {
           this.#id = id;
           this.#log('main.account_enroll', { result: 'ok' });
-          // 이미 비밀번호가 있으면 건너뛴다(인계 명세 §3). /v1/me가 실패하면 묻지 않는다(설정 > 계정에서 만든다).
           if (p.signup) keep = (await client.me(session).then((m) => m.hasPassword === false).catch(() => false));
           if (keep) this.#offer = { session, email: p.email };
         }
       } finally {
-        // 새 PC 연결이 시작됐으면 세션을 연결이 끝날 때까지 둔다
         if (!keep && this.#link?.session !== session) await client.logout(session).catch(() => {});
       }
     }, 'main.account_enroll');
     return this.view();
   }
 
-  /**
-   * 이메일 + 비밀번호 → 세션 → 첫 PC 등록(ADR-038 (a)). verify와 같이 세션은 이 함수 안에서만 쓰고 버린다.
-   * 비밀번호는 계정 서비스 호출 본문으로만 넘기고 어디에도 남기지 않는다. 기록은 결과 코드뿐이다.
-   * 틀림·없는 계정·잠금은 서버가 같은 응답(account.credentials_invalid)을 준다. 화면은 셋을 가르지 않는다.
-   */
   async passwordLogin(emailRaw: string, password: string): Promise<AccountView> {
     const client = this.#need();
     const email = emailRaw.trim();
@@ -383,11 +321,6 @@ export class DesktopAccount {
     return this.view();
   }
 
-  /**
-   * 계정 만들기 비밀번호 단계: PUT /v1/password(만들기, 204). 비밀번호는 이 호출 본문으로만 나가고 어디에도 남기지 않는다.
-   * 정책 거부(account.password_*)·요청이 많음은 이 단계에 남아 문구를 보인다. 세션이 쓸 수 없게 됐으면(재인증 필요·만료) 단계를 끝내고
-   * account.password_later를 남긴다(설정 > 계정에서 만든다). 성공하면 세션을 로그아웃하고 버린다.
-   */
   async setPassword(password: string): Promise<AccountView> {
     const client = this.#o.client;
     const o = this.#offer;
@@ -406,7 +339,6 @@ export class DesktopAccount {
     } catch (e) {
       const code = codeOf(e);
       this.#log('main.account_password_set', { result: code });
-      // 서버에 비밀번호 기능이 꺼져 있어도(request.not_found) 이 단계는 끝낸다.
       if (code === 'account.reauth_required' || code === 'account.unauthorized' || code === 'request.not_found') {
         await this.#endOffer();
         this.#error = 'account.password_later';
@@ -417,7 +349,6 @@ export class DesktopAccount {
     return this.view();
   }
 
-  /** 비밀번호 단계 [나중에]: 세션을 로그아웃하고 버린다. */
   async skipPassword(): Promise<AccountView> {
     if (this.#working) throw new Error('busy');
     if (this.#offer) {
@@ -434,10 +365,6 @@ export class DesktopAccount {
     if (o) await this.#o.client?.logout(o.session).catch(() => {});
   }
 
-  /**
-   * [비밀번호 찾기] → 재설정 코드 보내기(POST /v1/auth/password/reset). 계정이 없어도 같은 응답이라 늘 코드 단계로 간다(열거 방지).
-   * 다시 받기도 이것이다(새 resetId).
-   */
   async startReset(emailRaw: string): Promise<AccountView> {
     const client = this.#need();
     const email = emailRaw.trim();
@@ -456,10 +383,6 @@ export class DesktopAccount {
     return this.view();
   }
 
-  /**
-   * 코드 6자리 + 새 비밀번호 → POST /v1/auth/password/reset/verify(서버는 이때만 코드를 본다, 명세 §8 G6) → 받은 세션으로 첫 PC 등록 → 로그아웃.
-   * 코드 오류(code_invalid·code_locked)·정책 거부는 재설정 단계에 남는다(렌더러가 코드 칸 / 새 비밀번호 칸으로 돌린다). 비밀번호는 남기지 않는다.
-   */
   async finishReset(code: string, password: string): Promise<AccountView> {
     const client = this.#need();
     const r = this.#reset;
@@ -493,7 +416,6 @@ export class DesktopAccount {
     return this.view();
   }
 
-  /** [다른 이메일로] 코드 입력을 버린다(재설정 코드도). */
   back(): AccountView {
     this.#lastEmail = this.#pending?.email ?? this.#reset?.email ?? this.#lastEmail;
     this.#pending = null;
@@ -502,10 +424,6 @@ export class DesktopAccount {
     return this.view();
   }
 
-  /**
-   * 이 PC에서 로그아웃(설정 > 계정 [로그아웃]): 신원 파일·받아 둔 코드·기기 토큰(메모리)·비밀번호 만들기 세션을 지운다.
-   * 계정의 기기 등록은 그대로 둔다(같은 금고로 다시 로그인하면 이 PC를 되살린다, #enroll). 이메일 칸은 다시 채운다.
-   */
   async signOut(): Promise<AccountView> {
     if (this.#working) throw new Error('busy');
     const email = this.#id?.accountEmail ?? this.#offer?.email ?? null;
@@ -527,13 +445,6 @@ export class DesktopAccount {
     return this.view();
   }
 
-  // ---- 새 PC 연결(ADR-048 결정 3, D08 §4.3) ----
-
-  /**
-   * 쓰던 PC의 답을 본다(main이 link_* 단계 동안 몇 초마다 부른다). 화면이 바뀌었으면 true.
-   * 쓰던 PC가 거절했거나 신청이 사라지면 account.link_rejected, 답이 맞지 않으면 account.link_mismatch, 세션이 끝났으면 account.link_expired로
-   * 로그인 화면에 돌아간다. 잠깐의 네트워크 실패·요청 많음은 다음 차례에 다시 본다.
-   */
   async linkPoll(): Promise<boolean> {
     const l = this.#link;
     if (!l || this.#working) return false;
@@ -548,10 +459,6 @@ export class DesktopAccount {
     }
   }
 
-  /**
-   * link_confirm 단계에서 사용자가 "쓰던 PC에 '연결됐어요'가 떴어요"를 눌렀다. 금고가 계정 열쇠를 받아들이면 이 PC가 로그인된다.
-   * 금고가 받지 않으면(다른 계정의 열쇠) account.link_mismatch로 끝낸다.
-   */
   async linkAccept(): Promise<AccountView> {
     const l = this.#link;
     if (!l || l.join.stage !== 'confirm') throw new Error('account_no_link');
@@ -563,7 +470,6 @@ export class DesktopAccount {
       this.#o.resetKeys?.();
       const k = await this.#o.keys();
       const id: RemoteIdentity = { v: 1, accountEmail: l.email, deviceId: j.deviceId, aikPub: b64(j.aikPub), Sd: b64(k.noise.publicKey), Vd: b64(k.vd.publicKey), cert: j.cert, deviceList: j.deviceList, enrolledAt: this.#now() };
-      // 금고의 AIK가 넘겨받은 계정 AIK이고, 받은 인증서·목록이 그 AIK로 이 PC의 키를 담고 있어야 한다
       if (b64(k.aik.publicKey) !== id.aikPub || !checkIdentity(id, this.#now())) throw Object.assign(new Error('link'), { code: 'account.link_mismatch' });
       await this.#o.identity.save(id);
       this.#link = null;
@@ -579,7 +485,6 @@ export class DesktopAccount {
     return this.view();
   }
 
-  /** 연결을 그만둔다(우편함을 비우고 로그아웃). 신청 기록은 서버에 남아 다시 로그인하면 이어 쓴다. */
   async linkCancel(): Promise<AccountView> {
     if (this.#working) throw new Error('busy');
     if (this.#link) await this.#endLink(null, true);
@@ -597,7 +502,6 @@ export class DesktopAccount {
     this.#log('main.account_link', { result: error ?? 'cancelled' });
   }
 
-  /** 기기 범위 호출(토큰·DPoP). 등록 전이면 null. */
   device(): DeviceSession | null {
     if (!this.#id || !this.#o.client) return null;
     if (!this.#device) this.#device = new DeviceSession(this.#o.client, this.#o.keys, this.#o.identity, this.#id, this.#now, (id) => (this.#id = id), this.#o.model);
@@ -624,11 +528,6 @@ export class DesktopAccount {
     }
   }
 
-  /**
-   * 맡겨 둔 계정 열쇠로 이 PC를 계정에 붙인다(ADR-050). 맡긴 열쇠가 없거나 서버에 그 기능이 없으면 null(호출자가 쓰던 PC의 승인으로 넘어간다).
-   * 순서: 신청(한도는 서버가 본다) → 열쇠 받기(금고가 연 열쇠의 AIK가 계정의 AIK와 같을 때만 받는다) → 자기를 더한 목록을 AIK로 서명해 올리기 → 자기 인증서.
-   * 앞 시도에서 열쇠만 받고 끊겼으면(금고의 AIK가 이미 계정의 AIK) 받기를 건너뛰고 목록부터 한다.
-   */
   async #joinByEscrow(client: AccountClient, session: string, email: string, cur: { aikPub: string; deviceList: DeviceListJson | null }): Promise<RemoteIdentity | null> {
     const vault = await this.#o.linkVault!();
     let k = await this.#o.keys();
@@ -654,7 +553,6 @@ export class DesktopAccount {
           const code = codeOf(e);
           if (code !== 'account.escrow_missing' && code !== 'request.not_found') throw e;
           this.#log('main.account_escrow', { result: code });
-          // 서버에 보관 기능이 없으면 쓰던 PC의 승인으로 간다. 맡긴 열쇠만 없는 것이면 이 PC의 열쇠를 계정에 새로 건다(개정 1)
           if (code === 'request.not_found') return null;
           step = 'reset';
           const id = await this.#resetKey(client, session, email, deviceId, rows, k, cur.deviceList);
@@ -669,7 +567,6 @@ export class DesktopAccount {
         this.#o.resetKeys?.();
         k = await this.#o.keys();
         if (b64(k.aik.publicKey) !== cur.aikPub) throw Object.assign(new Error('escrow'), { code: 'account.link_mismatch' });
-        // 계정 열쇠가 바뀌었다: 앞 열쇠로 올린 공유 기록은 서버에 없을 수 있으니 장부의 줄을 다시 올리게 한다
         this.#o.onRekey?.();
       }
       step = 'list';
@@ -687,17 +584,11 @@ export class DesktopAccount {
       this.#log('main.account_escrow', { result: 'joined' });
       return id;
     } catch (e) {
-      // 어디서 멈췄는지 남긴다(화면 코드는 하나로 뭉칠 수 있다)
       this.#log('main.account_escrow', { result: codeOf(e), step });
       throw e;
     }
   }
 
-  /**
-   * 맡긴 열쇠가 없는 계정에 이 PC의 열쇠를 새 계정 열쇠로 건다(ADR-050 개정 1). 쓰던 PC가 꺼져 있어도 로그인이 끝난다.
-   * 목록은 계정의 다른 PC(활성·정지)와 이 PC를 이 PC의 AIK로 다시 서명한 것이다. 폰은 담지 않는다(서버가 폐기한다. QR로 다시 연결한다).
-   * 다른 PC는 다음에 이메일로 로그인할 때 맡긴 새 열쇠를 받는다(#joinByEscrow).
-   */
   async #resetKey(client: AccountClient, session: string, email: string, deviceId: string, rows: ServerDevice[], k: DesktopKeys, old: DeviceListJson | null): Promise<RemoteIdentity> {
     if (!old) throw Object.assign(new Error('escrow'), { code: 'account.bad_response' });
     const now = this.#now();
@@ -718,11 +609,6 @@ export class DesktopAccount {
     return id;
   }
 
-  /**
-   * 이 PC의 계정 열쇠를 계정 서비스에 맡긴다(ADR-050). 다음에 로그인하는 새 PC가 쓰던 PC 없이 받는다.
-   * 이미 맡겨져 있으면 아무것도 하지 않는다(금고 봉인은 하루 3번까지라 먼저 묻는다). 로그인 전·금고 연결 연산이 없는 빌드·서버에 기능이 없으면 건너뛴다.
-   * 실패해도 로그인에는 영향이 없다(다음에 켤 때 다시 한다). 결과 코드를 돌려준다(시험·기록용).
-   */
   async depositKey(): Promise<string> {
     const client = this.#o.client;
     const dev = this.device();
@@ -743,8 +629,6 @@ export class DesktopAccount {
       result = typeof code === 'string' && /^[a-z_]+\.[a-z_]+$/.test(code) ? code : typeof msg === 'string' && /^[a-z_]{1,40}$/.test(msg) ? `vault.${msg}` : 'account.failed';
     }
     this.#log('main.account_escrow', { result });
-    // 이 PC의 인증서가 계정의 열쇠와 맞지 않는다: 다른 PC가 계정 열쇠를 새로 걸었다(개정 1). 로그인 화면으로 돌려 이메일 인증으로 새 열쇠를 받게 한다.
-    // 계정의 기기 등록은 그대로다(#joinByEscrow가 이 PC를 찾아 이어 쓴다).
     if (result === 'account.cert_invalid' && this.#id && !this.#working && !this.#link) {
       const email = this.#id.accountEmail;
       this.#device?.clearToken();
@@ -767,7 +651,6 @@ export class DesktopAccount {
     return { enc: b64(sealed.enc), ct: b64(sealed.ct) };
   }
 
-  /** 첫 PC면 등록하고 신원을 돌려준다. 다른 PC가 이미 있는 계정이면 새 PC 연결을 시작하고 null(세션은 #link가 쥔다). */
   async #enroll(client: AccountClient, session: string, email: string): Promise<RemoteIdentity | null> {
     const k = await this.#o.keys();
     const now = this.#now();
@@ -778,12 +661,9 @@ export class DesktopAccount {
     let deviceId: string;
     let list: DeviceListJson;
     if (cur.aikPub) {
-      // 이미 고정된 계정: 같은 금고로 다시 설치한 이 PC는 되살리고, 다른 PC는 쓰던 PC의 승인을 받아 붙는다(ADR-048 결정 3).
-      // 같은 계정 열쇠를 가졌어도 목록에 없으면(다른 기기에서 끊긴 PC) 다시 승인을 받는다.
       const mine = cur.aikPub === aikPub && cur.deviceList && verifyDeviceList(cur.deviceList, k.aik.publicKey).ok ? cur.deviceList.entries.find((e) => e.entry.role === 'desktop' && e.entry.Sx === Sd && e.entry.Vx === Vd) : undefined;
       if (!mine || !cur.deviceList) {
         if (!this.#o.linkVault) throw Object.assign(new Error('pinned'), { code: 'account.aik_already_pinned' });
-        // 맡겨 둔 계정 열쇠가 있으면 이메일 인증만으로 바로 붙는다(ADR-050). 없으면 쓰던 PC의 승인을 기다린다
         const joined = await this.#joinByEscrow(client, session, email, { aikPub: cur.aikPub, deviceList: cur.deviceList });
         if (joined) return joined;
         const join = await PcLinkJoin.start({ client, session, aikPub: cur.aikPub, keys: k, vault: await this.#o.linkVault(), platform: this.#o.platform, name: this.#o.deviceName, now: this.#now });
@@ -796,7 +676,6 @@ export class DesktopAccount {
     } else {
       deviceId = randomUUID();
       list = await initialDeviceList(k.aik, { deviceId, role: 'desktop', noisePub: k.noise.publicKey, signPub: k.vd.publicKey, registeredAt: now });
-      // 등록과 같은 요청으로 계정 열쇠를 맡긴다(개정 1: 맡기지 않은 계정이 생기지 않게). 서버에 기능이 없거나 봉인이 안 되면 맡기지 않고 등록한다(켤 때 다시 맡긴다)
       const escrow = await this.#sealForPin(client, session, k).catch(() => null);
       const r = await client.pinFirstDesktop(session, { aikPub, deviceList: list, platform: this.#o.platform, name: this.#o.deviceName.slice(0, 40), ...(escrow ? { escrow } : {}) });
       if (r.deviceId !== deviceId) throw Object.assign(new Error('device'), { code: 'account.bad_response' });
@@ -808,10 +687,6 @@ export class DesktopAccount {
   }
 }
 
-/**
- * 기기 범위 호출. 토큰은 DeviceTokenCache(메모리, 만료 1분 전 갱신). 인증서는 만료 14일 전에 AIK로 새로 서명해 파일에 둔다.
- * 기기 목록이 바뀌면(페어링) setDeviceList로 파일까지 갱신한다.
- */
 export class DeviceSession {
   #client: AccountClient;
   #keys: () => Promise<DesktopKeys>;
@@ -819,7 +694,6 @@ export class DeviceSession {
   #id: RemoteIdentity;
   #now: () => number;
   #cache: DeviceTokenCache;
-  /** 게이트웨이 전용 범위 토큰(엔진 auth 포트용, gateway-auth.ts). 전체 범위 토큰과 따로 두고 따로 지운다. */
   #gwCache: DeviceTokenCache;
   #gwInflight: Promise<string> | null = null;
   #onChange: (id: RemoteIdentity) => void;
@@ -831,11 +705,9 @@ export class DeviceSession {
     this.#file = file;
     this.#id = id;
     this.#now = now;
-    // 모델 이름은 기본 토큰에만 싣는다(기기 목록의 이름, 2026-11-19 대표)
     this.#cache = new DeviceTokenCache(async () => this.#client.deviceToken(await this.#cert(), (await this.#keys()).vd, undefined, await model()), now);
     this.#gwCache = new DeviceTokenCache(async () => {
       const t = await this.#client.deviceToken(await this.#cert(), (await this.#keys()).vd, GATEWAY_SCOPES);
-      // 엔진이 받는 Authorization에는 토큰 원문이 든다. 서버가 범위를 줄이지 않았으면(구 서버 등) 그 토큰을 쓰지 않는다.
       if (t.scopes.length !== GATEWAY_SCOPES.length || t.scopes.some((s, i) => s !== GATEWAY_SCOPES[i])) throw Object.assign(new Error('scope'), { code: 'account.scope_unavailable' });
       return t;
     }, now);
@@ -844,8 +716,6 @@ export class DeviceSession {
   get deviceList(): DeviceListJson {
     return this.#id.deviceList;
   }
-  /** 이 PC의 기기 ID(기기 화면에서 "이 PC" 표시, 스스로 끊기 구분) */
-  /** 계정 AIK 공개키(base64). 서버가 준 기기 목록을 이 키로 검증한다 */
   get aikPub(): string {
     return this.#id.aikPub;
   }
@@ -854,42 +724,30 @@ export class DeviceSession {
     return this.#id.deviceId;
   }
 
-  /** Authorization: DPoP <token> + DPoP 증명(Vd). 401·토큰 만료면 호출자가 clearToken() 뒤 한 번 다시 한다. */
   readonly auth: DeviceAuth = async (htm, htu) => deviceAuthHeaders(await this.#cache.token(), (await this.#keys()).vd, htm, htu, this.#now());
 
   clearToken(): void {
     this.#cache.clear();
   }
 
-  /**
-   * 게이트웨이 요청 헤더(엔진 auth 포트 전용). 토큰은 scopes ['gateway']만인 것을 따로 받는다.
-   * 동시에 여럿 와도 토큰은 한 번만 받는다(기기당 시간 한도 60).
-   */
   async gatewayAuth(htm: 'POST', htu: string): Promise<Record<string, string>> {
     const p = (this.#gwInflight ??= this.#gwCache.token().finally(() => (this.#gwInflight = null)));
     return deviceAuthHeaders(await p, (await this.#keys()).vd, htm, htu, this.#now());
   }
 
-  /** 게이트웨이 전용 토큰만 버린다(엔진이 401을 받았을 때). 전체 범위 토큰은 그대로다. */
   clearGatewayToken(): void {
     this.#gwCache.clear();
   }
 
-  /** pair.ok acctClaim 필드(b64 JCS({claim, sig})). 받은 주장이 이 계정·이 AIK 것인지 먼저 본다(서명은 폰이 고정 키로 본다). */
   async acctClaimField(): Promise<string> {
     const sc = await this.#client.acctClaim(this.auth);
     if (!sc || typeof sc !== 'object' || sc.claim?.aik_pub !== this.#id.aikPub) throw Object.assign(new Error('claim'), { code: 'account.bad_response' });
     const field = b64(jcsBytes(sc));
-    // 모양은 폰과 같은 함수로 본다. 계정 서비스 키를 넘기지 않으니 모양이 맞으면 'signature'로 끝난다(서명은 폰이 고정 키로 본다).
     const shape = verifyAcctClaim(field, { accountKeys: [], aikPub: fromB64(this.#id.aikPub), now: this.#now() });
     if (!shape.ok && shape.reason === 'shape') throw Object.assign(new Error('claim'), { code: 'account.bad_response' });
     return field;
   }
 
-  /**
-   * 탈퇴(F-06, 약관 제15조): 상태 보기·요청(7일 유예, 서버가 구독을 바로 해지)·취소. 데스크톱 기기 토큰으로 부른다.
-   * 토큰이 만료돼 401이면 토큰을 버리고 한 번만 다시 한다.
-   */
   async deletion(): Promise<{ deleteAfter: number | null }> {
     return this.#retry(() => this.#client.accountDeletion(this.auth));
   }
@@ -909,7 +767,6 @@ export class DeviceSession {
     }
   }
 
-  /** 페어링 7단계 뒤: 새 목록을 파일에. */
   async setDeviceList(list: DeviceListJson): Promise<void> {
     this.#id = { ...this.#id, deviceList: list };
     await this.#file.save(this.#id);

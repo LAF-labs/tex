@@ -1,11 +1,3 @@
-// `vercel build` 결과 점검(배포 전, 로컬). 함수 묶음에 빠진 모듈·데이터 파일이 없는지 실제로 띄워 본다.
-// - .vercel/output/functions/api/*.func를 저장소 밖 임시 폴더로 복사하고, .vc-config.json filePathMap의 심볼릭 링크(pnpm 작업공간·의존성)를
-//   배포 때처럼 되살린다. 그 폴더에는 위쪽 node_modules가 없어서, 묶음에 없는 파일은 그대로 ERR_MODULE_NOT_FOUND·ENOENT로 드러난다.
-// - 함수마다 진입점(handler)을 import하고 요청을 보내 조립(네 서비스 build)까지 거친다. 공개 함수 sax는 계정·게이트웨이·릴레이·푸시 라우터,
-//   내부 함수는 서명 없음 401, 정리 함수는 CRON_SECRET으로 200을 기대한다.
-// - 레지스트리 함수 둘은 구성 없음(서명 의식 전) 503과, 이 스크립트가 만든 시험 trust(무작위 공개키)·메모리 저장소로 로그 헤드 200·재서명 cron 200을 본다.
-// - env 값은 이 스크립트가 만든 시험용 무작위 값이고, DB는 미리 마이그레이션한 sqlite 파일이다. 메일·결제·모델·NTS·푸시는 mock이라 외부 송신이 없다.
-// 사용(깨끗한 사본에서 vercel build를 한 뒤): cd poc && node --conditions=development services/deploy/check-vercel-output.ts <사본 루트>
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -20,13 +12,10 @@ import { LIMITS_MIGRATIONS_DIR, ed25519Private, ed25519RawPublic, migrate, openS
 
 interface Probe {
   method: string;
-  /** 함수 경로(`/api/…?__p=…`). `public`이 있으면 그 공개 경로에 vercel.json 재작성을 플랫폼처럼 적용한 값을 쓴다 */
   path?: string;
-  /** 공개 경로(`/registry/log/head.json` 등): 재작성 → 이 함수여야 한다 */
   public?: string;
   headers?: Record<string, string>;
   body?: unknown;
-  /** 기대 상태 코드 */
   status: number;
 }
 
@@ -81,7 +70,6 @@ export function materialize(funcDir: string, root: string, into: string): { dir:
   return { dir: into, handler: cfg.handler };
 }
 
-/** 함수 env(서비스 접두 + 공통). 시험용 값만 */
 async function testEnv(dbDir: string): Promise<Record<string, string>> {
   const file = (svc: string) => path.join(dbDir, `${svc}.db`);
   for (const [svc, mig] of [['account', ACCOUNT_MIGRATIONS], ['gateway', GATEWAY_MIGRATIONS], ['relay', RELAY_MIGRATIONS], ['push', PUSH_MIGRATIONS], ['registry', REGISTRY_MIGRATIONS]] as const) {
@@ -130,7 +118,6 @@ async function testEnv(dbDir: string): Promise<Record<string, string>> {
   };
 }
 
-/** 레지스트리 시험 구성: 역할마다 무작위 키의 공개키(trust), 타임스탬프 시드, 메모리 저장소 + 미리 마이그레이션한 sqlite */
 function registryEnv(dbDir: string): Record<string, string> {
   const pub = (seedHex: string) => ed25519RawPublic(ed25519Private(Buffer.from(seedHex, 'hex'))).toString('base64');
   const keys = (role: string, n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`${role}-${i}`, pub(hex())]));
@@ -145,7 +132,6 @@ function registryEnv(dbDir: string): Record<string, string> {
   };
 }
 
-// 복사본 안에서 도는 코드: 진입점 import → 로컬 HTTP → 요청들. 결과는 상태 코드 목록(JSON 한 줄)
 const CHILD = `
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
@@ -163,12 +149,9 @@ console.log(JSON.stringify(out));
 process.exit(0);
 `;
 
-/** 함수 하나 점검. 실패면 이유(오류 첫 줄들)를 돌려준다 */
 function runFunction(dir: string, handler: string, env: Record<string, string>, probes: Probe[]): string | null {
-  // CHECK_NODE: 묶음을 돌릴 node 실행 파일(배포 런타임과 같은 주 버전으로 돌려 볼 때). 없으면 지금 node
   const r = spawnSync(process.env.CHECK_NODE || process.execPath, ['--input-type=module', '-e', CHILD], {
     cwd: dir,
-    // 사용자 env(실제 키 등)는 넘기지 않는다
     env: { PATH: process.env.PATH ?? '', NODE_ENV: 'production', ...env, CHECK_HANDLER: path.join(dir, handler), CHECK_PROBES: JSON.stringify(probes) },
     encoding: 'utf8',
     timeout: 60_000,
@@ -195,7 +178,6 @@ export async function checkVercelOutput(root: string): Promise<{ name: string; e
     const env = await testEnv(path.join(work, 'db'));
     const reg = registryEnv(path.join(work, 'db'));
     const cron = { authorization: `Bearer ${env.CRON_SECRET}` };
-    // 이름 → [함수, 추가 env, 요청들]. 레지스트리는 구성 없음·시험 구성 두 번
     const checks: Record<string, [string, Record<string, string>, Probe[]]> = {
       sax: ['sax', {}, [
         { method: 'POST', path: '/api/sax?__p=/v1/auth/code', body: { email: 'check@example.com' }, status: 200 },
@@ -204,15 +186,12 @@ export async function checkVercelOutput(root: string): Promise<{ name: string; e
         { method: 'POST', path: '/api/sax?__p=/v1/mailboxes', body: {}, status: 401 },
         { method: 'PUT', path: '/api/sax?__p=/v1/push-token', body: {}, status: 401 },
         { method: 'GET', path: '/api/sax?__p=/internal/v1/devices/x', status: 404 },
-        // 공개 경로 → 재작성(플랫폼이 붙이는 path 매개변수 포함)
         { method: 'GET', public: '/v1/me', status: 401 },
         { method: 'GET', public: '/v1/mailboxes/mb-x/envelopes?since=0', status: 401 },
-        // 페퍼 없음: 비밀번호 경로만 닫힌다. 갱신은 열려 있다(형식 오류 400, 모르는 토큰 401)
         { method: 'POST', public: '/v1/auth/password', body: { email: 'check@example.com', password: 'x' }, status: 404 },
         { method: 'POST', public: '/v1/auth/refresh', body: { refreshToken: 'x' }, status: 400 },
         { method: 'POST', public: '/v1/auth/refresh', body: { refreshToken: 'sxa1.' + 'A'.repeat(43) }, status: 401 },
       ]],
-      // ADR-038: 묶음 안에서 argon2id(Node 내장)와 흔한 비밀번호 목록(data/common-passwords.txt.gz)이 실제로 돈다
       'sax(비밀번호)': ['sax', { ACCOUNT__PASSWORD_PEPPER_KEYS: `k1:${hex()}` }, [
         { method: 'POST', public: '/v1/auth/password', body: { email: 'check@example.com', password: 'correct horse battery' }, status: 401 },
         { method: 'PUT', public: '/v1/password', body: { password: 'correct horse battery' }, status: 401 },
@@ -233,7 +212,6 @@ export async function checkVercelOutput(root: string): Promise<{ name: string; e
       ]],
       registry: ['registry', reg, [
         { method: 'GET', path: '/api/registry?__p=/registry/log/head.json', status: 200 },
-        // 재작성 경로(운영 400 request.param_rejected 회귀): 헤드 200, 빈 로그 항목 404
         { method: 'GET', public: '/registry/log/head.json', status: 200 },
         { method: 'GET', public: '/registry/log/entries/0.json', status: 404 },
         { method: 'PUT', path: '/api/registry?__p=/admin/v1/status', body: {}, status: 401 },
@@ -268,8 +246,6 @@ export async function checkVercelOutput(root: string): Promise<{ name: string; e
       }
       out.push({ name, error: bad ?? runFunction(m.dir, m.handler, { ...env, ...extra }, resolved) });
     }
-    // 런타임: 계정 묶음은 node:crypto argon2(Node 24.7+)를 쓴다. .vc-config.json 런타임 주 버전이 24 미만이면 실패.
-    // 24.x의 부 버전은 여기서 알 수 없다: 배포 뒤 스모크(README 5절, 비밀번호 401·cron의 account.argon2_probe_ms)가 실제 런타임 확인이다
     for (const func of ['sax', 'internal', 'cron']) {
       const cfgFile = path.join(fnRoot, `${func}.func`, '.vc-config.json');
       if (!fs.existsSync(cfgFile)) continue;
@@ -277,8 +253,6 @@ export async function checkVercelOutput(root: string): Promise<{ name: string; e
       const major = Number(/^nodejs(\d+)\.x$/.exec(runtime)?.[1] ?? 0);
       out.push({ name: `${func}(런타임 ${runtime || '?'})`, error: major >= 24 ? null : `argon2id에는 Node 24.7+가 필요하다(지금 ${runtime || '알 수 없음'})` });
     }
-    // 어느 묶음에도 네이티브 애드온(.node)이 없다. 계정은 argon2id가 node:crypto 내장이고(ADR-038), 레지스트리는 엔진 코어 경유로 @sax/db의
-    // better-sqlite3 JS만 따라온다(애드온은 생성자에서만 읽는데 레지스트리는 열지 않는다). prebuild는 vercel.json excludeFiles로 뺀다
     for (const [func, m] of made) {
       const natives = (fs.readdirSync(m.dir, { recursive: true }) as string[]).filter((f) => f.endsWith('.node'));
       out.push({ name: `${func}(네이티브 없음)`, error: natives.length ? natives.slice(0, 5).join(', ') : null });

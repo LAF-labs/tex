@@ -1,11 +1,9 @@
-// 시험 전용: main이 만든 QR SVG data URL(remote-qr.ts)을 칸 그림으로 다시 그려 jsQR(개발용, apps/desktop devDependencies)로 읽는다.
 import { createRequire } from 'node:module';
 import { QR_DATA_URL_PREFIX } from '../apps/desktop/src/remote-qr.ts';
 
 type JsQr = (data: Uint8ClampedArray, w: number, h: number) => { data: string } | null;
 const jsQR = createRequire(new URL('../apps/desktop/package.json', import.meta.url))('jsqr') as JsQr;
 
-/** SVG 문자열 → RGBA(흰 바탕, path의 칸 사각형만 검게). */
 export function svgPixels(svg: string): { data: Uint8ClampedArray; size: number } {
   const vb = /viewBox="0 0 (\d+) (\d+)"/.exec(svg);
   if (!vb || vb[1] !== vb[2]) throw new Error('viewBox');
@@ -27,7 +25,6 @@ export const svgOf = (dataUrl: string): string => {
   return Buffer.from(dataUrl.slice(QR_DATA_URL_PREFIX.length), 'base64').toString('utf8');
 };
 
-/** data URL → QR 원문(못 읽으면 null). */
 export function decodeQrDataUrl(dataUrl: string): string | null {
   const { data, size } = svgPixels(svgOf(dataUrl));
   return jsQR(data, size, size)?.data ?? null;

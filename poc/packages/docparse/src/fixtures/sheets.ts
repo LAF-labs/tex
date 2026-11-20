@@ -1,4 +1,3 @@
-// 합성 정산내역·4대보험 고지내역(가짜 이름·가짜 금액). 칸 이름은 settlement.ts·insurance.ts의 "추정" 규칙과 같은 출처(공개 안내의 칸 이름)다.
 import { encodeEucKr, writeXlsx, type FixtureCell } from './zipwrite.ts';
 
 export interface SettlementFixture {
@@ -62,7 +61,7 @@ export function healthNoticeXlsx(): InsuranceFixture {
   const people = [
     { name: '김가상', rrn: '900101-1******', birth: '1990-01-01', base: 3000000 },
     { name: '이테스트', rrn: '010315-4******', birth: '2001-03-15', base: 2500000 },
-    { name: '박합성', rrn: '850720-2123456', birth: '1985-07-20', base: 4200000 }, // 전체 번호(가짜) → 앞 7자리만 남아야 한다
+    { name: '박합성', rrn: '850720-2123456', birth: '1985-07-20', base: 4200000 },
   ];
   const rows: FixtureCell[][] = [['건강보험 사업장 가입자별 고지내역'], ['고지년월', '2026년 10월', '사업장명', '가상상사'], [], ['성명', '주민등록번호', '보수월액', '건강보험', null, null, '장기요양', null, null], [null, null, null, '산출보험료', '근로자부담', '사업자부담', '산출보험료', '근로자부담', '사업자부담']];
   const expected: InsuranceFixture['expected']['rows'] = [];

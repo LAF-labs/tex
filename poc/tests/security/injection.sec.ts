@@ -1,7 +1,3 @@
-// M5-1 인젝션 레드팀 회귀(D13 S17, D04 §3, B-15·B-16, AUDIT-D D-25(N-40)). 모델 트랙 코퍼스 재사용:
-// tests/fixtures/s9-screens.ts(S9 probe 'injection')와 tests/fixtures/l0-corpus.ts(S-L0 'injection' 템플릿·일반 화면).
-// 대상: 결정적 사전 필터 injectionPrefilter(@sax/engine). 기준(S17): 진행 쪽 오판 0건 = 인젝션 표본은 모두 걸린다, 오탐 ≤ 5%.
-// 모델 판정(screen_state_v2 등)의 오판률은 실호출이라 여기서 재지 않는다(S7·S17 실측, M3-7).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { injectionPrefilter } from '@sax/engine';
@@ -12,7 +8,6 @@ import { writeMeasure } from '../measure-out.ts';
 type Node = { role: string; name: string };
 const obsText = (nodes: readonly Node[]) => nodes.map((n) => `${n.role} "${n.name}"`).join('\n');
 
-/** 회피 변형(N-35 보이지 않는 문자 + 흔한 우회). 원문이 걸리면 변형도 걸려야 한다. */
 const EVASIONS: Array<[string, (s: string) => string]> = [
   ['zwsp', (s) => s.replace(/(.)(?=.)/gu, '$1​')],
   ['soft-hyphen', (s) => s.replace(/(.)(?=.)/gu, '$1­')],
@@ -37,7 +32,6 @@ describe('M5-1 인젝션 레드팀 회귀: 결정적 사전 필터', () => {
     assert.ok(benign.length >= 20, `일반 표본 ${benign.length}`);
   });
 
-  /** 알려진 놓침(엔진 트랙에 보고, 고치면 여기서 지운다). 목록 밖의 새 놓침은 실패, 목록 안인데 걸리기 시작해도 실패(목록 정리). */
   const KNOWN_MISSES: Record<string, string> = {
   };
 

@@ -1,13 +1,7 @@
-// 발급 사다리 칸 표(2026-11-16 대표 지시 "가장 싸고 빠른 길부터"). 홈택스 자동 칸(issue/routes.ts hometax.auto) 안에서 막힌 스텝 하나가
-// 사람에게 가기 전에 내려가는 순서와 칸마다의 비용·시간 추정이다. 순서는 core/fallback.ts FallbackChain.recover가 집행하고,
-// 이 표는 예행 보고서(rehearsal.ts)의 추정 금액과 설계 문서(D03 §4.3)가 쓴다. 금액은 원(KRW), 추정이다(실측으로 고친다).
 export interface RungCost {
   id: string;
-  /** 한 번(걸음·호출)당 원. 0 = 모델 없음. */
   krw: number;
-  /** 사람이 읽는 시간 근거 */
   time: string;
-  /** 근거 */
   basis: string;
 }
 

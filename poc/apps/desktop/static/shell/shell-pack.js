@@ -1,5 +1,3 @@
-// 세무사 꾸러미(D-05) 화면과 대화 꾸러미 카드. 값은 main(accountant-pack.ts)이 만든 요약을 그대로 그린다(글자는 텍스트 노드로만).
-// 화면을 열면 고른 달 꾸러미를 바로 만든다(로컬 폴더·zip). [Finder에서 보기]·[보내기](macOS 공유 시트)는 사용자가 누른다.
 import { btn, h, kv, note, noteGroup, num } from './shell-views.js';
 
 const won = (n) => `${num(n)}원`;
@@ -8,7 +6,6 @@ const GAP_LABEL = { unsure: '발급됐는지 확인 필요', no_pdf: 'PDF 없음
 const MAIL_TEXT = { sent: '보냄', unconfirmed: '확인 못 함' };
 const ERR = { pack_missing: '꾸러미를 다시 만들었어요. 한 번 더 눌러 주세요.', gesture_required: '버튼을 직접 눌러 주세요.' };
 
-/** today(): KST YYYY-MM-DD. 지난달·이번 달 */
 function months(today) {
   const y = Number(today.slice(0, 4));
   const m = Number(today.slice(5, 7));
@@ -19,7 +16,6 @@ function months(today) {
   ];
 }
 
-/** 빠진 것: 종류별로 묶어 한 줄씩(건이 많으면 거래처는 앞 몇 곳만) */
 function gapLines(gaps) {
   const by = new Map();
   for (const g of gaps) by.set(g.kind, [...(by.get(g.kind) ?? []), g]);
@@ -52,7 +48,6 @@ export function createPackScreen({ call, toast, rerender, errText, today, railHe
     }
   }
 
-  /** 꾸러미 화면을 연다(month 없으면 지난달). 대화 카드의 [꾸러미 열기]도 여기로 온다. */
   const load = (month) => make(month ?? s.month ?? months(today())[0][1]);
 
   async function fileAct(method, month) {
@@ -85,7 +80,6 @@ export function createPackScreen({ call, toast, rerender, errText, today, railHe
 
   function gapsBox(d) {
     if (!d.gaps.length) return note('빠진 것이 없어요.', false, null, 'check');
-    // 빠진 것 여럿은 면 하나 안의 줄로(상자를 쌓지 않는다). 확인 필요·PDF 없음이 하나라도 있으면 주의 면
     const lines = gapLines(d.gaps);
     const bad = lines.some((g) => g.kind === 'unsure' || g.kind === 'no_pdf');
     return h(
@@ -179,7 +173,6 @@ export function createPackScreen({ call, toast, rerender, errText, today, railHe
     ];
   }
 
-  /** 대화 답 카드: 요약·빠진 것 수·[꾸러미 열기]·[보내기]. 같은 달 화면으로 간다. */
   function chatCard(d, openScreen) {
     s.data = d;
     s.month = d.month;

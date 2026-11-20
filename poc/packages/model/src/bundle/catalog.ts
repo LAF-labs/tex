@@ -1,5 +1,3 @@
-// 앱 내장 번들 카탈로그(BV-06). 원천은 packages/model/bundles 한 곳이고, 앱 바이너리에만 들어간다.
-// 로드할 때마다 BV-01~06을 다시 돌리고, 하나라도 어기면 그 카탈로그 전체를 쓰지 않는다(fail-closed).
 import fs from 'node:fs';
 import { BUNDLE_ALLOWLIST } from './allowlist.ts';
 import { validateBundle, type BvViolation } from './validate.ts';
@@ -40,7 +38,6 @@ export class BundleCatalog {
     this.byWireId = new Map(items.map((b) => [b.wireId, b]));
   }
 
-  /** 앱 내장 카탈로그. allow를 바꾸는 것은 테스트·S9 측정 하네스뿐이다. */
   static load(opts: { dir?: URL; prefixDir?: URL; allow?: ReadonlyArray<{ id: string; digest: string }> } = {}): BundleCatalog {
     const allow = opts.allow ?? BUNDLE_ALLOWLIST;
     const items: LoadedBundle[] = [];
@@ -62,7 +59,6 @@ export class BundleCatalog {
     return [...this.byWireId.values()];
   }
 
-  /** net/egress ModelGuard에 넘기는 허용 목록(BYOK 검사 (1)). */
   allowEntries(): Array<{ id: string; digest: string; maxInputBytes: number }> {
     return this.list().map((b) => ({ id: b.wireId, digest: b.digest, maxInputBytes: b.def.maxInputBytes }));
   }

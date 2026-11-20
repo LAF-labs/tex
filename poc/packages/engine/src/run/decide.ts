@@ -1,11 +1,3 @@
-// decide 스텝(M2-2 B, D02 §4 decide, D03 §5.3, D04 §3, D06 §2·§3): 화면 관측 → 마스킹 → L1 판정(L0 규칙 → 모델) → on[결과]로 분기.
-// - 화면 관측(ScreenSource)은 scope('root' 또는 셀렉터 사전 키)의 접근성 트리다. 볼 수 없으면 portal.unobservable(핸드오프).
-// - 모델 입력은 Redactor.applyTree(번들 maxInputBytes·needsAmounts, SCREEN_DATA 구분자)로만 만든다(③: 모델 송신은 redaction 경유).
-//   마스킹이 실패하면(fail-closed) 모델을 부르지 않고 portal.unobservable.
-// - L0 관측(ScreenObservation)은 같은 트리에서 값 없이 만든다. 모델로 보내지 않는다.
-// - 예약 결과(엔진 처리, D02 V-07): blocked → portal.blocked(중단+쿨다운), logged_out_by_other_session → 핸드오프(자동 재로그인 없음, D03 §10).
-// - 판정기 오류(게이트웨이 불가 등)는 decide.unavailable(핸드오프, D16).
-// - 저널 decide.result에는 번들·결과·규칙 행·공급사·L0 여부·사전 필터 적중만 남긴다(⑦: 화면 텍스트 없음).
 import type { DecideResult, RunToken } from '@sax/model';
 import type { A11yNode, Redactor } from '@sax/redaction';
 import type { ActResult } from '../core/page.ts';
@@ -16,12 +8,10 @@ import type { ObsNode, ScreenObservation } from '../l0/observation.ts';
 export interface ScreenCapture {
   url: string;
   title: string;
-  /** scope가 키면 그 요소 노드에 scopeId = 키가 붙어 있다. */
   tree: A11yNode;
 }
 
 export interface ScreenSource {
-  /** 읽기 전용. scope 요소를 못 찾거나 화면을 읽을 수 없으면 null. */
   capture(scope: string): Promise<ScreenCapture | null>;
 }
 
@@ -40,7 +30,6 @@ export interface DecideRecord {
   l0Only: boolean;
   injectionHit: boolean;
   reason?: string;
-  /** 응답이 밝힌 모델(별칭이 풀린 버전, 예: typesafe/jev-1.14-20261014) */
   model?: string;
 }
 
@@ -48,9 +37,7 @@ export interface DecideRunnerInput {
   screen: ScreenSource;
   redactor: Pick<Redactor, 'applyTree'>;
   judge: Pick<Judge, 'decide'>;
-  /** 실행 토큰. 함수면 첫 decide 때 한 번 받아 둔다(제품: 게이트웨이 run 토큰, 실패면 decide.unavailable). */
   runToken: RunToken | (() => Promise<RunToken>);
-  /** 앱 내장 번들 카탈로그(BV-06). */
   bundle: (wireId: string) => BundleInfo | null;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
 }
@@ -75,7 +62,6 @@ export class DecideRunner {
     this.i = i;
   }
 
-  /** 실행 토큰(함수면 한 번만 부른다. 실패하면 다음 decide에서 다시 받는다). */
   private token(): Promise<RunToken> {
     const t = this.i.runToken;
     if (typeof t !== 'function') return Promise.resolve(t);
@@ -86,12 +72,10 @@ export class DecideRunner {
     return this.tokenP;
   }
 
-  /** 직전 decide 결과(사전 안전 판정이 본다). */
   last(): DecideRecord | null {
     return this.lastRec;
   }
 
-  /** 사전 안전 판정 (a): 직전 decide가 blocked·security_warning 쪽이면 게이트를 열지 않는다. */
   safeForGate(): ActResult {
     const r = this.lastRec;
     if (r && UNSAFE_BEFORE_GATE.has(r.outcome)) return { ok: false, code: r.outcome === 'logged_out_by_other_session' ? 'portal.logged_out_by_other_session' : 'portal.blocked' };

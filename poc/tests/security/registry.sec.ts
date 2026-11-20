@@ -1,6 +1,3 @@
-// M5-1 레지스트리 회귀(D13 §1 "리모트·레지스트리 회귀", D09 §8, AUDIT-D D-02(N-10)). 엔진 트랙 고정 시드 샘플(tests/fixtures/registry)을 재사용해
-// 변조·되감기 입력이 하나도 받아들여지지 않는지 본다(서명 2-of-3, keyEpoch, monotonic, 폐기 목록).
-// 엔진 레지스트리 로더(#52, M1-4 뒷절반)·샘플이 없으면 건너뛴다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -48,7 +45,6 @@ describe('M5-1 레지스트리 회귀: 변조·되감기 거부', { skip }, () =
       const base = file(p).toString('utf8');
       const sigStart = base.indexOf('"signatures"');
       for (let i = 0; i < Math.min(FUZZ_ITER, 200); i++) {
-        // 서명 칸 앞의 영숫자 하나를 바꾼다(JSON 모양은 유지). 서명 칸 자체 변조는 아래 시험.
         const pos = Math.floor(r() * (sigStart > 0 ? sigStart : base.length));
         const c = base[pos]!;
         if (!/[a-z0-9]/i.test(c)) continue;
@@ -76,7 +72,6 @@ describe('M5-1 레지스트리 회귀: 변조·되감기 거부', { skip }, () =
     type Sxp = { ok: true; sxp: { kind: string; raw: Record<string, Uint8Array> } } | { ok: false };
     const decode = api.decodeSxp as unknown as (b: Buffer) => Sxp;
     const load = api.loadPackage!;
-    // 하위 조회 패키지가 없는 조회 패키지 둘로 본다(H-01은 조회 패키지 설치가 앞서야 한다).
     const names = ['hometax.invoice.lookup@1.0.0.sxp', 'hometax.invoice.email_status@1.0.0.sxp'];
     const r = rng(FUZZ_SEED + 3);
     let rejected = 0;
@@ -99,7 +94,6 @@ describe('M5-1 레지스트리 회귀: 변조·되감기 거부', { skip }, () =
           rejected++;
           continue;
         }
-        // 받았다면 서명된 내용이 한 바이트도 달라지지 않았어야 한다(의미 없는 바이트만 바뀐 경우).
         for (const part of ['manifest', 'playbook', 'selectors', 'strings']) assert.ok(Buffer.from(d.sxp.raw[part]!).equals(Buffer.from(orig.sxp.raw[part]!)), `${name} @${k}: 내용이 바뀐 변조본을 로드했다(${part})`);
       }
     }

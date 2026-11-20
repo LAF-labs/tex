@@ -1,6 +1,3 @@
-// 마스킹 코퍼스 측정: 항목마다 새 Redactor로 마스킹하고 원값이 출력에 남는지(누락) 본다. 표는 reports/M1-5.md에 붙인다.
-// 숫자형 누락 = 출력의 숫자 골격(토큰 제거, 전각·한글 숫자를 아라비아로, 보이지 않는 문자 제거 뒤 숫자만)에 원값 숫자 중
-// 연속 5자리 이상(짧으면 전체)이 남음. 문자형 누락 = 지정 부분 문자열이 정규화 출력에 남음.
 import { Redactor, koreanDigitCopy, normalizeForDetection, piiTripwireSafe } from './redaction-measure-deps.ts';
 import { BENIGN, buildCorpus, type CorpusItem, type Kind, type Variant } from './redaction-corpus.ts';
 
@@ -21,7 +18,6 @@ export interface Measure {
   benign: { n: number; changed: string[] };
 }
 
-// 코퍼스가 일부러 붙인 날짜·시각 머리(구분자 있는 형식)는 골격에서 뺀다. 원값은 이 형식으로 나오지 않는다.
 const DATE_PREFIX = /(?:19|20)\d{2}[-./](?:0?[1-9]|1[0-2])[-./](?:0?[1-9]|[12]\d|3[01])(?!\d)(?: \d{2}:\d{2}(?::\d{2})?)?/g;
 
 function skeleton(s: string): string {

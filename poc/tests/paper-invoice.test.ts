@@ -1,5 +1,3 @@
-// 종이 세금계산서 사진(remote-envelope v1.7, hello 기능 receipt.v2): 폰이 사장님 확인 값(paperInvoice)을 receipt.offer에 싣고,
-// PC는 같은 규칙으로 다시 본 뒤 원본 사진과 함께 보관하고, 세무사 꾸러미에 원본 사진 + 매출·매입 표로 넣는다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -115,7 +113,6 @@ describe('PC 저장(phone-receive offerParams → 엔진 PhoneIntake)', () => {
     assert.equal(ocr.paperInvoice.total, 330_000);
     assert.deepEqual(ocr.paperIssues, []);
     assert.equal(db.prepare('SELECT display_name FROM documents WHERE id = ?').pluck().get(r.docId), '종이 세금계산서');
-    // 폰이 검사를 건너뛴 값(합계 틀림)도 받되 틀린 칸을 함께 남긴다
     const bad = { ...good, msgId: ulid(), paperInvoice: { ...good.paperInvoice!, total: 1 } };
     const r2 = (await intake.handle('receipt.phoneStore', { msgId: bad.msgId, pairId: 'p', jpeg, offer: offerParams(bad) })) as { docId: string };
     assert.deepEqual((new ReceiptRepo(db).get(r2.docId)!.phoneOcr as { paperIssues: string[] }).paperIssues, ['total']);

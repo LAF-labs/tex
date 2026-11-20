@@ -1,6 +1,3 @@
-// 폰 사진·현금 수신 배선(phone-receive.ts, 데스크톱 ③c, D08 §6): 실제 ReceiveQueue(offer·chunk 조립) → main 싱크 → 엔진 명령 →
-// 실제 PhoneIntake(@sax/bundle, #123)·DB. rpc 경계는 structuredClone으로 흉내 낸다(엔진 utilityProcess 메시지와 같다).
-// 팀장 기준: "24시간 뒤 같은 msgId 재수신이면 영수증 1장, 고아 문서 0". 중복은 msgId로만.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -39,7 +36,6 @@ const state = () => ({
   files: fs.existsSync(vault) ? fs.readdirSync(vault).length : 0,
 });
 
-/** 엔진 프로세스를 다시 띄운 것처럼 매번 새 PhoneIntake(같은 DB·보관함). 호출 기록은 메서드 이름만. */
 function engine(o: { fail?: string } = {}) {
   const calls: string[] = [];
   const rpc: EngineRpc = async (m, p) => {
@@ -58,7 +54,6 @@ const jpeg = (n: number, seed = 1) => {
 };
 const env = (type: string, body: object): Envelope => ({ v: 1, type, id: `e${randomBytes(4).toString('hex')}`, pairId: 'P', from: 'mobile', to: 'desktop', seq: 0, ts: 0, ttl: 60, body }) as unknown as Envelope;
 
-/** 폰 한 번 보내기(offer + 청크 전부). 받은 ack 목록을 돌려준다. */
 async function send(queue: ReturnType<typeof phoneReceiver>['queue'], img: Uint8Array, offer = makeReceiptOffer(img, { capturedAt: T0 - HOUR, ocrEngine: 'ios_vision', ownerConfirmed: true, candidates: { amount: 12_000 } })) {
   const acks: Array<{ type: string; body: { msgId: string; state: string } }> = [];
   const ch = { pairId: 'pair-1', send: (type: string, body: object) => (acks.push({ type, body: body as never }), 'id') };
@@ -108,7 +103,6 @@ describe('폰 사진 수신: ReceiveQueue → main 싱크 → 엔진 PhoneIntake
     const acks: string[] = [];
     const ch = { pairId: 'pair-1', send: (_t: string, b: { state: string }) => (acks.push(b.state), 'id') };
     await r.queue.handle(ch as never, env('receipt.offer', offer));
-    // 그 사이 같은 msgId가 다른 길(라이브 세션·큐)로 먼저 들어온다
     await new PhoneIntake(db, { vaultDir: vault }).handle('receipt.phoneStore', { msgId: offer.msgId, pairId: 'pair-1', jpeg: img, offer: offerParams(offer) });
     const before = state();
     for (let i = 0; i < offer.chunkCount; i++) await r.queue.handle(ch as never, env('receipt.chunk', { msgId: offer.msgId, index: i, data: b64(img.subarray(i * RECEIPT_CHUNK, (i + 1) * RECEIPT_CHUNK)) }));

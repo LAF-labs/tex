@@ -1,8 +1,3 @@
-// 셸 화면 미리보기: 실제 렌더러(static/shell) + 실제 preload + 실제 승인 바 HTML을 목업 데이터로 띄우고 상태별로 찍는다.
-// 엔진·금고·Chrome 없이 화면만 본다(디자인 캔버스 "소버린 AX 화면 디자인"과 대조용). 흐름·판정 시험은 shell-e2e가 한다.
-// 실행: pnpm demo:preview  (= pnpm build && electron scripts/shell-preview.mjs [출력 폴더] [폭 높이])
-//   리눅스 CI·컨테이너: xvfb-run -a ./node_modules/.bin/electron --no-sandbox scripts/shell-preview.mjs
-//   DARK=1 이면 다크 테마, ONLY=flow,docs 처럼 장면을 고를 수 있다. OFFSCREEN=1 이면 창을 화면에 띄우지 않는다. 출력 기본값: reports/raw/design-sync/<폭>x<높이>[-dark]/ PAYROLL=1 이면 급여대장 레일 칸을 켠다.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, BrowserWindow, ipcMain, nativeImage, nativeTheme, protocol, WebContentsView } from 'electron';
@@ -16,7 +11,6 @@ const { OnboardingFlow, initialOnbState } = await import(`${DESK}/dist/onboardin
 const { MockOnboardingPorts } = await import(`${DESK}/dist/onboarding-mock.js`);
 const { buildCardHtml, barCss, barPalette, summarize, BAR_CSP } = await import(`${DESK}/dist/approval-gate.js`);
 const { barBounds, SHELL } = await import(`${DESK}/dist/shell-layout.js`);
-// 셸과 같은 응답 헤더(CSP·Trusted Types)로 띄운다. 미리보기가 통과하면 셸에서도 같은 정책에서 그려진다(M4-1).
 const { appHeaders } = await import(`${DESK}/dist/harden.js`);
 const { qrSvgDataUrl } = await import(`${DESK}/dist/remote-qr.js`);
 
@@ -25,7 +19,6 @@ const W = Number(ARGS[1] ?? 1440);
 const H = Number(ARGS[2] ?? 900);
 const OUT = ARGS[0] || path.resolve(import.meta.dirname, `../reports/raw/design-sync/${W}x${H}${process.env.DARK ? '-dark' : ''}`);
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
-/** EMPTY=1: 거래처·서류가 하나도 없는 빈 화면(empty state)을 본다. */
 const EMPTY = !!process.env.EMPTY;
 await fs.mkdir(OUT, { recursive: true });
 
@@ -33,9 +26,7 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'pv', privileges: { standard: tr
 app.on('window-all-closed', () => {});
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** 장면이 바꾸는 하네스 상태(보관함 서류를 목록에 넣을지, 승인 바 페이지 HTML). */
 const S = { bankAuto: 'sms', withVault: false, barHtml: '', onb: null, onbDelay: 0, g24Empty: false, bank: 'full', mode: {}, emptyBoot: false, security: 'ok' };
-/** 불러오는 중·오류 장면: S.mode[메서드] = 'hang'(답이 오지 않음) | 'fail'(거절) */
 const HANG = () => new Promise(() => {});
 const store = new MockStore();
 const vaultDoc = {
@@ -47,7 +38,6 @@ const cps = [
   { id: 'c2', name: 'B상사', bizNo: '1078145678', rep: '박다라', email: 'account@bsangsa.example', item: '유지보수', status: '계속사업자', checkedOn: dayOffset(-3), lastIssuedOn: dayOffset(-1) },
   { id: 'c3', name: 'C테크', bizNo: '1208712345', rep: '최마바', email: 'bill@ctech.example', item: '개발 용역', status: '계속사업자', checkedOn: dayOffset(-15), lastIssuedOn: null },
 ];
-// 셸과 같은 단계 이름·지금 문장(shell-runs STEP_LABELS·STEP_NOW)
 const LABELS = STEP_LABELS['H-01'];
 const mkRun = (status, o = {}) => {
   const done = o.done ?? 0;
@@ -61,7 +51,6 @@ const mkRun = (status, o = {}) => {
   };
 };
 
-// 이번 달 판(M-02): 셸과 같은 buildBoard에 목업 문서함·꾸러미를 넣는다(shell-app boardNow와 같은 입력 모양).
 const boardNow = () =>
   buildBoard({
     today: dayOffset(0),
@@ -76,7 +65,6 @@ const boardNow = () =>
     cardFetchedOn: MOCK_SETTINGS.cardFetchedOn,
   });
 
-// 받을 돈(D-09) 목업: 엔진 BankService.overview·detail과 같은 모양
 const recv = (id, cpName, writtenOn, total, received, st, o = {}) => {
   const dueOn = o.dueOn ?? null;
   const dueIn = dueOn ? Math.round((Date.parse(`${dueOn}T00:00:00Z`) - Date.parse(`${dayOffset(0)}T00:00:00Z`)) / 86_400_000) : null;
@@ -114,7 +102,6 @@ const bankDetail = (id) => {
   return { receivable: v, allocs, events, attachable: v.status === 'received' ? [] : bankReview.filter((t) => t.candidates.some((c) => c.receivableIds.includes(id))) };
 };
 
-// 설정 > 기기 연결(ADR-048): 계정 기기 목록·새 PC 요청 목업. 모양은 remote-devices.ts DeviceView, remote-pclink.ts PcLinkRequestView와 같다.
 const DEV_DAY = 86_400_000;
 const devRow = (id, role, platform, name, o = {}) => ({ deviceId: `0000000${id}-0000-4000-8000-000000000000`, role, platform, name, state: 'active', registeredAt: Date.now() - (o.ago ?? 10) * DEV_DAY, deleteAfter: null, lastSeenAt: Date.now() - Math.min(o.ago ?? 10, 3) * DEV_DAY, self: false, listed: true, ...o });
 const DEV = {
@@ -122,7 +109,6 @@ const DEV = {
   full: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(2, 'desktop', 'windows', '집 PC', { ago: 9 }), devRow(5, 'desktop', 'windows', '세무 담당 노트북', { ago: 2 }), devRow(3, 'mobile', 'ios', 'iPhone', { ago: 12 }), devRow(4, 'mobile', 'android', '', { ago: 3 }), devRow(6, 'mobile', 'ios', '직원 아이폰', { ago: 1, state: 'pending', listed: false })],
   suspended: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(2, 'desktop', 'windows', '집 PC', { ago: 9, state: 'suspended', deleteAfter: Date.now() + 5 * DEV_DAY + 3_600_000 }), devRow(3, 'mobile', 'ios', 'iPhone', { ago: 12 }), devRow(4, 'mobile', 'android', '잃어버린 폰', { ago: 30, state: 'suspended', deleteAfter: Date.now() + 1_800_000 })],
   alone: () => [devRow(1, 'desktop', 'macos', '사무실 Mac', { self: true, ago: 40 }), devRow(3, 'mobile', 'ios', 'iPhone', { ago: 12 })],
-  /** 폰 승인(ADR-052): iPhone은 켜짐, Android는 꺼 두었고 다시 켜 달라고 청함 */
   px: () => [devRow(1, 'desktop', 'macos', 'MacBook Pro', { self: true, ago: 40 }), devRow(3, 'mobile', 'ios', 'iPhone 16 Pro', { ago: 12, approval: 'on', lastSeenAt: Date.now() }), devRow(4, 'mobile', 'android', 'Galaxy S25', { ago: 3, approval: 'asked' })],
 };
 const req = (stage, o = {}) => ({ deviceId: '00000009-0000-4000-8000-000000000000', name: '새 노트북', platform: 'windows', createdAt: Date.now() - 60_000, stage, triesLeft: stage === 'code' ? 3 : null, ...o });
@@ -131,7 +117,6 @@ const devFail = (code) => {
   throw new Error(code);
 };
 Object.assign(S, { acct: signedIn, devices: DEV.normal(), devErr: null, reqs: [], pcMode: 'ok' });
-// 폰 연결 칸(S-03, shell-pair.js) 목업: 모양은 remote-pairing.ts PairView와 같다. QR은 실제 인코더로 만든 이미지(가짜 글자)
 const PAIR_IDLE = { step: 'idle', qr: null, expiresAt: null, phoneName: null, triesLeft: null, error: null };
 const pairQr = () => ({ ...PAIR_IDLE, step: 'waiting_phone', qr: qrSvgDataUrl(`sax1:preview:${'x'.repeat(120)}`), expiresAt: Date.now() + 103_000 });
 S.pair = PAIR_IDLE;
@@ -180,10 +165,8 @@ const handlers = {
   'bank.receivable': (p) => bankDetail(p.id),
   'bank.refreshStatus': () => ({ state: 'done', result: { newCount: 0 } }),
   'bankAuto.status': () => ({ ok: true, connected: false }),
-  // 자동 연결 장면(bankAuto): 동의 → 인증서 → (은행이 SMS 인증번호 요구) → 보유계좌. S.bankAuto = 'sms' | 'identity'
   'bankAuto.consent': () => ({ ok: true }),
   'bankAuto.certs': () => ({ certs: [{ id: '0123456789abcdef', owner: '김하늘', usage: 'yessign 범용', expiresOn: '2027-03-01', usable: true, issuance: true }] }),
-  // withdraw: 개인 뱅킹은 계좌번호, 기업 뱅킹은 본인인증(2026-11-19 실기기: 라프·우리은행)
   'bankAuto.connect': (p) => (S.bankAuto === 'withdraw' && !p.withdrawAccount ? { ok: false, code: 'withdraw_account_required', cf: 'CF-12401', clientType: 'P', also: { clientType: 'B', code: 'identity_required' } } : S.bankAuto === 'identity' ? { ok: false, code: 'identity_required', cf: 'CF-12831', clientType: 'B' } : { ok: true, sessionId: 'cs1', bankName: '우리은행', step: 'sms', accounts: [] }),
   'bankAuto.sms': (p) =>
     p.code === '000000'
@@ -196,11 +179,9 @@ const handlers = {
           { id: 'f1', name: `주민등록표등본_${dayOffset(0).replaceAll('-', '')}.pdf`, size: '182KB', at: '10:26' },
           { id: 'f2', name: 'print_0001.pdf', size: '96KB', at: '10:23' },
         ],
-  // 제품의 정부24: 후보 없이 [PDF 가져오기](= docs.import, 파일 대화상자는 건너뛴다)
   'docs.import': () => ({ doc: { id: 'g24-doc', name: '주민등록표 등본', kind: '직접 추가', docName: '주민등록표 등본', profile: 'personal', issuedOn: dayOffset(0), expiresOn: null, source: '직접 추가' }, document: { duplicate: false } }),
   'security.check': () => (S.security === 'ok' ? { state: 'ok' } : { state: S.security, name: 'MagicLine4NX', installUrl: 'https://hometax.go.kr/MagicLine4XML/ML4Web/install_bin/MagicLine4NX.pkg', canStart: true }),
   'security.install': () => ({ state: S.security }),
-  // 거래처 상세의 계좌·입금자 이름·받기로 한 날(받을 돈 D-09)
   'bank.cpBanking': () => ({
     accounts: [{ id: 'ca1', bank: '국민은행', last4: '1234', holder: '김에이' }],
     aliases: [{ id: 'al1', nameRaw: '에이상사(주)', source: 'learned' }, { id: 'al2', nameRaw: '김에이', source: 'manual' }],
@@ -215,7 +196,6 @@ ipcMain.handle('sax', async (_e, { method, params }) => {
   return f(params);
 });
 
-// ESM 진입점에서 최상위 await app.whenReady()는 ready를 막으므로 then으로 잇는다.
 app.whenReady().then(async () => {
 
 protocol.handle('pv', async (req) => {
@@ -262,10 +242,6 @@ async function shot(win, name, bar) {
 }
 
 
-/**
- * 녹화(스크롤 밀림 재기): 사건 앞 0.3초부터 뒤 1.2초까지 그려진 프레임을 모두 PNG로 받아 scroll-shift.mjs로 잰다.
- * 결과는 OUT/<name>/shift.json·sheet.png. 잰 곳은 대화 목록(.thread-scroll)만이다.
- */
 async function record(win, name, act) {
   const dir = path.join(OUT, name, 'frames');
   await fs.rm(path.join(OUT, name), { recursive: true, force: true });
@@ -275,7 +251,6 @@ async function record(win, name, act) {
   const off = !!process.env.OFFSCREEN;
   if (off) win.webContents.on('paint', (_e, _d, img) => grab(img));
   else win.webContents.beginFrameSubscription(false, grab);
-  // 아무것도 안 움직이는 동안에도 프레임이 오게 화면 구석 1px을 계속 바꾼다(잰 곳 밖)
   await js(win, `window.__tick = setInterval(() => { let t = document.getElementById('__tick'); if (!t) { t = document.createElement('i'); t.id = '__tick'; t.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;z-index:99999'; document.body.append(t); } t.style.background = t.style.background === 'red' ? 'blue' : 'red'; }, 16)`);
   await sleep(300);
   const event = frames.length;
@@ -301,7 +276,6 @@ const barFields = [
 
 const scenes = {
   async home(win) { await shot(win, '01-home'); },
-  // 레일 실측: 단추·알약·이름 칸의 실제 상자를 rail.json에 남긴다(목표: 폭 76, 단추 64×58, 알약 44×32, 한 칸 68).
   async rail(win) {
     const m = await js(win, `(() => {
       const r = (el) => { const b = el.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height }; };
@@ -349,13 +323,11 @@ const scenes = {
     ev(win, { type: 'run', run: mkRun('attention', { done: 2, attentionAt: 3, note: '품목 칸 값을 확실히 읽지 못했어요', stoppedNote: '홈택스 화면 값을 확실히 읽지 못해 멈췄어요. 아무것도 발급하지 않았어요.' }) });
     await shot(win, '10-attention');
   },
-  // M4-2 3부: 핸드오프 띠·카드, 다시 게이트 경고, 확인 중(조회 n회째), InDoubt 카드와 직접 확인 안내(08 §11).
   async incidents(win) {
     await js(win, `(() => { const i = document.querySelector('#composer'); i.value = 'A상사에 330만원 세금계산서'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
     await sleep(300);
     ev(win, { type: 'run', run: { ...mkRun('turn', { done: 2, attentionAt: 2, note: '직접 해 주세요' }), handoff: { phase: 'input', afterGate: false }, turn: handoffTurn('input') } });
     await shot(win, '30-handoff');
-    // 공동인증서 로그인 실패: 처음은 같은 값으로 다시(안내 한 줄), 두 번째는 [인증서로 다시 시도]·[간편인증 마치고 이어서]
     ev(win, { type: 'run', run: { ...mkRun('preparing', { done: 0, now: true, note: LOGIN_NOW }), notices: [CERT_RETRY_NOTE] } });
     await shot(win, '30b-cert-retry');
     ev(win, { type: 'run', run: { ...mkRun('turn', { done: 0, attentionAt: 0, note: '' }), handoff: { phase: 'login', afterGate: false, kind: 'login', code: 'login.simple_auth' }, turn: CERT_FAILED_TWICE } });
@@ -370,7 +342,6 @@ const scenes = {
     await sleep(100);
     await js(win, `document.querySelector('[data-act=check-list]').click()`);
     await shot(win, '33-in-doubt');
-    // 멈춤 카드: 승인 시간 초과([다시 준비]), 예행이 사람 차례에서 멈춤(어느 단계·다시 하는 길), 로그인 중(할 일 없음)
     ev(win, { type: 'run', run: { ...mkRun('stopped', { done: 4, stoppedNote: NOTE['gate.expired'] }), redo: true } });
     await shot(win, '34-stopped-expired');
     ev(win, { type: 'run', run: { ...mkRun('stopped', { done: 0, attentionAt: 0, note: '직접 해 주세요', stoppedNote: `'홈택스 로그인' 단계에서 사람이 할 일이 생겨 멈췄어요(${HANDOFF_LOGIN.text}). 예행은 기다리지 않아서 발급하지 않았어요. ${REHEARSAL_NEXT}` }), rehearsal: true } });
@@ -378,7 +349,6 @@ const scenes = {
     ev(win, { type: 'run', run: mkRun('preparing', { done: 0, now: true, note: LOGIN_NOW }) });
     await shot(win, '36-login-now');
   },
-  // 앱 안 브라우저(실행 중): main이 보내는 browser·screen 이벤트를 흉내 낸다. 홈택스 화면 자리(.run-screen)는 실제로는 main의 보기가 덮는다.
   async browser(win) {
     await js(win, `(() => { const i = document.querySelector('#composer'); i.value = 'A상사에 330만원 세금계산서'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
     await sleep(300);
@@ -395,7 +365,6 @@ const scenes = {
     await shot(win, '39-browser-handoff');
     ev(win, { type: 'browser', shown: false, available: false, embedded: true, width: 0 });
   },
-  // 정정(대표 실사용 2026-11-19): "일호유통 110원 끊어줘" 준비 중에 "100원이야" → 앞 준비는 접힌 요약, 새 카드가 같은 틀로 바로 준비. 다른 거래처는 기다림.
   async replace(win) {
     S.sendSeq = 0;
     const small = (amt, o) => ({ supply: amt, tax: Math.round(amt / 10), total: amt + Math.round(amt / 10), amount: amt, counterparty: { id: 'c9', name: '일호유통', bizNo: '6495800524', first: false }, item: '예행', email: { value: '', first: false }, ...o });
@@ -415,7 +384,6 @@ const scenes = {
     await shot(win, '42-replace-queued');
     S.sendSeq = 0;
   },
-  // 대화가 앱 화면을 연다(open_screen, 2026-11-19): "은행 연결해줘" → 답 한 줄 뒤 설정 > 계좌 연결
   async openBank(win) {
     S.agentReply = '계좌 연결 화면을 열었어요. 거래 중인 은행을 고르고 로그인하면 통장 내역이 여기로 모여요.';
     await js(win, `(() => { const i = document.querySelector('#composer'); i.value = '은행 연결해줘'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
@@ -426,7 +394,6 @@ const scenes = {
     await shot(win, '44-open-bank-screen');
     S.agentReply = null;
   },
-  // 스크롤(2026-11-19): 위로 올려 읽는 중 새 답이 와도 읽던 자리를 지키고 [새 답]을 띄운다. 내가 보낸 말은 늘 내린다. 녹화로 밀린 거리를 잰다.
   async scroll(win) {
     const say = (t) => js(win, `(() => { const i = document.querySelector('#composer'); i.value = ${JSON.stringify(t)}; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
     const Q = ['이번 달 세금계산서 몇 건 끊었어?', 'B상사 미수금 얼마야?', '부가세 신고는 언제까지야?', '지난달 매출 합계 알려 줘', 'C테크 이메일 바뀌었어?', '세무사 꾸러미 만들어 줘', '현금영수증도 모아 줘?', '다음 주 할 일 있어?'];
@@ -452,7 +419,6 @@ const scenes = {
     await shot(win, '49-scroll-sent');
     S.agentReply = null;
   },
-  // 실행 카드 단계 목록(11-19): 새 카드는 닫힌 채로, 연 카드는 상태가 바뀌어도 열린 채로
   async steps(win) {
     await js(win, `(() => { const i = document.querySelector('#composer'); i.value = 'A상사에 330만원 세금계산서'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
     await sleep(300);
@@ -465,7 +431,6 @@ const scenes = {
     console.log('steps still open after update:', await js(win, `document.querySelector('[data-act=steps-toggle]').getAttribute('aria-expanded')`));
     await shot(win, '52-steps-kept');
   },
-  // Muse 방식 대화(2026-11-19): 말풍선 둘, 시간 줄, 묶음(2분 안 같은 쪽 말), 답 기다리는 점 세 개
   async muse(win) {
     const say = (t) => js(win, `(() => { const i = document.querySelector('#composer'); i.value = ${JSON.stringify('')} + ${'`'}${'${'}t${'}'}${'`'}; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`.replace('${t}', t));
     S.agentReply = '이번 달 발급은 3건이에요. A상사 363만원, B상사 60만 5천원, C테크 110만원이에요.';
@@ -483,7 +448,6 @@ const scenes = {
     S.replyDelay = 0;
     S.agentReply = null;
   },
-  // 말풍선 반응(ADR-057): 일을 맡기면 👀를 먼저 달고 결과만 말한다, 고맙다는 말에는 반응만 하고 점 셋을 바로 거둔다
   async react(win) {
     const say = (t) => js(win, `(() => { const i = document.querySelector('#composer'); i.value = ${'`'}${'${'}t${'}'}${'`'}; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`.replace('${t}', t));
     S.agentReply = 'B상사 55만원(부가세 별도) 카드를 만들었어요. 홈택스에서 준비하고 승인 전에 한 번 더 보여 드릴게요.';
@@ -503,7 +467,6 @@ const scenes = {
     await shot(win, '49-react-waiting');
     await sleep(500);
     await shot(win, '50-reaction-only');
-    // 맞장구가 이어지면(대표 피드백 2026-11-19) 두 번째는 반응을 달고 한 문장으로 답한다
     S.reactOnly = null;
     S.agentReply = '별말씀을요. 또 필요하면 불러 주세요.';
     S.replyDelay = 1200;
@@ -515,7 +478,6 @@ const scenes = {
     S.replyDelay = 0;
     S.agentReply = null;
   },
-  // EMPTY=1 ONLY=empty: 빈 화면 셋(거래처·문서함·활동 기록)
   async empty(win) {
     for (const v of ['cps', 'docs']) {
       await js(win, `document.querySelector('#rail [data-view=${v}]').click()`);
@@ -545,18 +507,15 @@ const scenes = {
     await sleep(200);
     await js(win, `document.querySelector('[data-cp-row=c2]').click()`);
     await shot(win, '13-cps');
-    // 받기로 한 날: 값을 누르면 그 자리에 답 후보 줄
     await js(win, `document.querySelector('[data-bank-cp] button[data-field=terms]').click()`);
     await shot(win, '13b-cps-terms');
   },
   async board(win) {
-    // v2.0: 대화 맨 위 한 줄을 누르면 작업 패널에 할 일 목록이 열린다
     await js(win, `document.querySelector('[data-act=board-toggle]').click()`);
     await shot(win, '19-board-panel');
     await js(win, `document.querySelector('[data-board-item^="cp:"]').click()`);
     await shot(win, '20-board-compose');
   },
-  // 온보딩(08 §4): 약관 → 사업자 → 인증서 → 첫 발급. 답은 답 후보 줄이다(v2.0). 장면을 여는 동안 S.onb가 있다(아래 order 루프).
   async onboarding(win) {
     const press = async (sel) => {
       await js(win, `[...document.querySelectorAll(${JSON.stringify(sel)})].pop().click()`);
@@ -571,7 +530,6 @@ const scenes = {
     await shot(win, '24-onb-auth');
     await press('[data-onb=other]');
     await shot(win, '25-onb-auth-other');
-    // 고른 줄이 굳는 순간(main 답을 기다리는 동안): 실선 + 체크, 나머지는 흐림
     S.onbDelay = 1200;
     await js(win, `document.querySelector('[data-cert=npki-1]').click()`);
     await shot(win, '26-onb-auth-picked');
@@ -581,7 +539,6 @@ const scenes = {
     await press('[data-onb=try]');
     await shot(win, '28-onb-done');
   },
-  // 인증서 단계의 막힌 경우: 보안 프로그램 없음 + 이 PC에 인증서 없음, 보안 프로그램 꺼짐 + 인증서 없음
   async onbNoCert(win) {
     const press = async (sel) => {
       await js(win, `[...document.querySelectorAll(${JSON.stringify(sel)})].pop().click()`);
@@ -597,13 +554,11 @@ const scenes = {
     await js(win, `document.querySelector('[data-act=security-check]')?.click()`);
     await sleep(200);
     await shot(win, '24c-onb-auth-nocert-stopped');
-    // 프로그램이 준비되면 인증서 없음 안내가 그 자리에 뜬다([다시 찾기])
     S.security = 'ok';
     await js(win, `document.querySelector('[data-act=security-check]')?.click()`);
     await sleep(300);
     await shot(win, '24d-onb-auth-nocert');
   },
-  // 옛 이어 하기 저장에만 남은 화면(맡길 업무·거래처·요약). 여러 개 고르기는 줄 + [다음]이다.
   async onbOld(win) {
     const press = async (sel) => {
       await js(win, `[...document.querySelectorAll(${JSON.stringify(sel)})].pop().click()`);
@@ -624,7 +579,6 @@ const scenes = {
     await js(win, `(() => { const i = document.querySelector('#composer'); i.value = '주민등록등본 떼 줘'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
     await sleep(300);
     await shot(win, '17-g24-guide');
-    // v2.0: 정부24 패널은 저절로 열리지 않는다. 카드의 주요 단추로 연다.
     await js(win, `document.querySelector('[data-g24] .sx-btn-primary')?.click()`);
     await sleep(200);
     await js(win, `document.querySelector('[data-act=g24-saved]').click()`);
@@ -632,7 +586,6 @@ const scenes = {
     await js(win, `document.querySelector('[data-candidate=f1]').click()`);
     await shot(win, '18-g24-pick');
   },
-  // 제품: 후보가 없어 [PDF 가져오기] 하나. 가져오기가 끝나면 기다리던 정부24 카드가 끝난 상태가 된다.
   async g24Import(win) {
     S.g24Empty = true;
     await js(win, `(() => { const i = document.querySelector('#composer'); i.value = '주민등록등본 떼 줘'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
@@ -648,7 +601,6 @@ const scenes = {
     S.g24Empty = false;
   },
 
-  // 받을 돈(D-09): 못 받은 돈(건 상세) · 확인할 입금 · 받은 돈 · 내 계좌, 계좌가 없을 때
   async bank(win) {
     const tab = async (k) => { await js(win, `document.querySelector('[data-bank-tab=${k}]').click()`); await sleep(150); };
     await js(win, `document.querySelector('#rail [data-view=bank]').click()`);
@@ -677,7 +629,6 @@ const scenes = {
     await shot(win, '57-bank-noacct-consent');
     S.bank = 'full';
   },
-  // 불러오는 중(답이 오지 않음)·오류(엔진 거절): 받을 돈 · 거래처 · 문서함 · 설정(계좌 연결)
   async loading(win) {
     S.mode = { 'bank.overview': 'hang', 'counterparties.list': 'hang', 'docs.list': 'hang', 'issued.list': 'hang', 'bankAuto.status': 'hang' };
     for (const v of ['bank', 'cps', 'docs']) {
@@ -704,7 +655,6 @@ const scenes = {
     await js(win, `document.querySelector('[data-set-tab=bank]').click()`);
     await sleep(200);
     await shot(win, '61-error-settings-bank');
-    // [다시 시도]가 되살리는지: 엔진이 다시 답하면 받을 돈 목록이 뜬다
     S.mode = { 'bank.overview': 'fail' };
     await js(win, `document.querySelector('#rail [data-view=bank]').click()`);
     await sleep(300);
@@ -716,7 +666,6 @@ const scenes = {
   },
 };
 
-// 설정 > 계좌 연결 > 자동 연결: 사장님은 인증서·비밀번호만, 은행이 SMS를 요구하면 카드 안 칸 하나(대표 2026-11-19)
 scenes.bankAuto = async (win) => {
   const start = async () => {
     await js(win, `document.querySelector('#rail [data-view=settings]').click()`);
@@ -753,14 +702,12 @@ scenes.bankAuto = async (win) => {
   await js(win, `document.querySelector('[data-bank-next]').click()`);
   await sleep(300);
   await shot(win, '75-bankauto-withdraw');
-  // 덜 넣은 번호(4자리)는 금고 창을 열지 않고 칸에서 바로 알린다
   await js(win, `(() => { const i = document.querySelector('[data-bank-withdraw]'); i.value = '0200'; i.dispatchEvent(new Event('input')); document.querySelector('[data-bank-withdraw-go]').click(); })()`);
   await sleep(300);
   await shot(win, '76-bankauto-withdraw-short');
   S.bankAuto = 'sms';
 };
 
-// 설정 > 기기 연결 장면들(쓰던 PC 쪽 목록·새 PC 요청, 새 PC 쪽 로그인 세 단계, 끊긴 PC)
 const devTab = async (win) => {
   await js(win, `document.querySelector('#rail [data-view=settings]').click()`);
   await sleep(100);
@@ -799,7 +746,6 @@ Object.assign(scenes, {
     await devScroll(win, '[data-device-group=desktop]');
     await shot(win, '73-devices-last-pc');
 
-    // 새 PC 요청: 들어옴 → [연결] → 새 PC의 응답 기다림 → 6자리 칸 → 틀림 → 맞음(연결됐어요)
     reset(DEV.normal(), [req('new')]);
     await devTab(win);
     await devScroll(win, '[data-pclink-card]');
@@ -815,12 +761,10 @@ Object.assign(scenes, {
     await typeCode(win, '482915');
     await devScroll(win, '[data-pclink-card]');
     await shot(win, '78-pclink-done');
-    // 새 PC가 로그인해 목록에 먼저 오른 채(active) 요청이 열려 있다: 그 줄은 '쓰는 중'이 아니라 '연결하는 중'(끊기 단추 없음)
     reset([...DEV.normal(), devRow(9, 'desktop', 'windows', '새 노트북', { ago: 0 })], [req('code')]);
     await devTab(win);
     await devScroll(win, '[data-device-group=desktop]');
     await shot(win, '78b-pclink-listed-linking');
-    // 3번 틀림, 10분 지남, PC 한도
     reset(DEV.normal(), [req('code', { triesLeft: 1 })]);
     await devTab(win);
     await typeCode(win, '111111');
@@ -836,12 +780,10 @@ Object.assign(scenes, {
     await typeCode(win, '482915');
     await devScroll(win, '[data-pclink-card]');
     await shot(win, '81-pclink-limit');
-    // 이 PC가 다른 기기에서 끊김
     reset([], [], { devErr: 'account.device_suspended' });
     await devTab(win);
     await shot(win, '82-device-gone');
   },
-  /** 폰 승인 끄기·다시 허용(ADR-052): 켜짐·다시 켜 달라고 청함 → [승인 끄기] 확인 → 꺼짐 → [다시 허용] */
   async px(win) {
     Object.assign(S, { acct: signedIn, devices: DEV.px(), reqs: [], devErr: null, pcMode: 'ok' });
     await devTab(win);
@@ -858,7 +800,6 @@ Object.assign(scenes, {
     await sleep(250);
     await devScroll(win, '[data-device-group=mobile]');
     await shot(win, '74d-px-allowed');
-    // [연결 끊기] → 앱 안 모달로 한 번 묻는다 → 끊으면 목록에서 바로 빠진다
     await js(win, `document.querySelectorAll('[data-device-group=mobile] [data-act=device-unlink-open]')[1].click()`);
     await sleep(200);
     await shot(win, '74e-unlink-confirm');
@@ -866,13 +807,11 @@ Object.assign(scenes, {
     await sleep(250);
     await devScroll(win, '[data-device-group=mobile]');
     await shot(win, '74f-unlinked');
-    // 예전 규칙으로 정지돼 있던 폰은 목록에 보이지 않는다(PC는 남는 날짜를 보인다)
     Object.assign(S, { devices: DEV.suspended() });
     await devTab(win);
     await devScroll(win, '[data-device-group=desktop]');
     await shot(win, '74g-suspended-hidden');
   },
-  // 폰 연결 칸(S-03): 쉬는 자리 → [폰 연결] → QR(남은 시간) → 폰이 찍음(6자리) → 틀림 → 연결됐어요 · 시간 지남([새 QR]) · 멈춤([다시 시도]) · QR 만드는 중
   async pair(win) {
     Object.assign(S, { acct: signedIn, devices: DEV.normal(), reqs: [], devErr: null, pair: PAIR_IDLE });
     const push = async (v) => {
@@ -907,13 +846,11 @@ Object.assign(scenes, {
     await shot(win, '97-pair-failed');
     await push({ ...PAIR_IDLE, step: 'opening' });
     await shot(win, '98-pair-opening');
-    // 6자리 단계에서 3번 틀려 멈춤(모달에 이어서)
     await push({ ...PAIR_IDLE, step: 'awaiting_sas', phoneName: '사장님 폰', triesLeft: 1, expiresAt: Date.now() + 61_000 });
     await push({ ...PAIR_IDLE, step: 'failed', error: 'pair.sas_locked', phoneName: '사장님 폰' });
     await shot(win, '99-pair-sas-locked');
     await push(PAIR_IDLE);
   },
-  // 새 PC 쪽: 로그인 뒤 쓰던 PC의 승인을 기다림 → 6자리 → '연결됐어요'가 떴나요? · PC 3대가 찬 계정
   async newPc(win) {
     Object.assign(S, { acct: { step: 'signed_out', email: null, codeExpiresAt: null, error: null, phones: 0 }, devErr: null });
     await devTab(win);
@@ -934,7 +871,6 @@ Object.assign(scenes, {
     await sleep(200);
     await shot(win, '87-link-limit');
   },
-  // 대화로 정한 작성일자·수량×단가 카드(ADR-049): 지난 날(준비 막음), 발급기한 지남(경고만), 수량×단가 줄
   async issueDate(win) {
     await js(win, `(() => { const i = document.querySelector('#composer'); i.value = 'A상사 지난달 말일자로 10개 33만원씩 끊어줘'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
     await sleep(300);
@@ -958,7 +894,6 @@ for (const theme of process.env.DARK ? ['dark'] : ['light']) {
     const ports = () => new MockOnboardingPorts({ saveProfile: async () => {} });
     const noCert = () => Object.assign(ports(), { findCerts: async () => [] });
     S.onb = k === 'onbNoCert' ? new OnboardingFlow(noCert()) : k === 'onboarding' ? new OnboardingFlow(ports()) : k === 'onbOld' ? new OnboardingFlow(ports(), { ...initialOnbState(), step: 'tasks', consents: { terms: agreed, model: agreed } }) : null;
-    // 불러오는 중·오류 장면은 처음 목록이 빈 PC(첫 실행)에서 본다: 있던 목록이 있으면 그 목록을 그대로 보여 주기 때문이다.
     S.emptyBoot = k === 'loading' || k === 'errors';
     const win = await open(theme);
     try {

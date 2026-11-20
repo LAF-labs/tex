@@ -1,5 +1,3 @@
-// 계정 공유 기록의 장부 쪽(packages/engine/src/share/service.ts, ADR-048 결정 5, D07 §10): 장부에서 올릴 줄 모으기, 올리기 상태, 받은 줄 넣기.
-// 끝에서 PC 두 대의 장부를 main의 ShareSync(가짜 서버)로 이어 본다. 모든 값은 가짜다(합성 사업자번호).
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -16,7 +14,6 @@ import {
 import type { DeviceAuth, SharePage, ShareServerRow, ShareVault } from '../apps/desktop/src/remote-ports.ts';
 import { engineShareStore, ShareSync, type ShareDevice } from '../apps/desktop/src/share-sync.ts';
 
-// DB를 닫고 나서 폴더를 지운다(Windows는 열린 DB 파일이 있는 폴더를 지우지 못한다: EPERM)
 const opened: Array<{ db: Db; dir: string }> = [];
 after(() => {
   for (const x of opened) {
@@ -31,10 +28,8 @@ const aBiz = syntheticBizNo(2);
 const bBiz = syntheticBizNo(3);
 const cBiz = syntheticBizNo(4);
 const dBiz = syntheticBizNo(5);
-/** 받은 거래처로 이 PC 목록이 바뀌지 않았다 */
 const NONE = { added: 0, updated: 0, removed: 0, kept: 0, skipped: 0 };
 
-/** PC 한 대의 장부: 사업자 프로필 하나, 거래처 둘(에이상사에는 저장 품목). */
 function pc(o: { name?: string } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sax-share-'));
   const db: Db = openDatabase(path.join(dir, 'db.sqlite'), new Uint8Array(randomBytes(32)));
@@ -48,7 +43,6 @@ function pc(o: { name?: string } = {}) {
   const b = cps.create({ bizNo: bBiz, name: '비상사', source: 'manual' });
   const svc = new ShareService(db, cipher, { now: () => now });
   let runs = 0;
-  /** 원장에 발급 확인 한 건(앱 발급 committed 또는 사람이 직접 낸 것 확인 observed_manual). */
   const issued = (n: number, cpId: string, supply: number, tax: number, state: 'committed' | 'observed_manual' | 'in_doubt' = 'committed', ref: string | null = approval(n)) => {
     const runId = `run-${++runs}-${n}`;
     new RunRepo(db).create({ id: runId, playbookId: 'hometax.invoice.issue', playbookVersion: '1', packageDigest: 'd', profileId: pid, trigger: 'local', inputsHash: 'i' });
@@ -57,7 +51,6 @@ function pc(o: { name?: string } = {}) {
       VALUES (?, 's1', 1, ?, 'bk', 'hometax.invoice.issue', 'ih', 'pd', 'ah', ?, '2026-11-16T16:30:00Z', 'dev', ?)`).run(`i-${runId}`, runId, state, ref ? `${ref.slice(0, 8)}-${ref.slice(8, 16)}-${ref.slice(16)}` : null);
     return runId;
   };
-  /** 받을 돈 장부의 매출 건(홈택스 발급 목록에서 들인 건). */
   const hometax = (n: number, o2: { item?: string | null; supply?: number | null; kind?: 'sale' | 'purchase'; bizNo?: string | null } = {}) =>
     db.prepare(`INSERT INTO receivables (id, profile_id, kind, approval_no, cp_biz_no, cp_name, item, written_on, supply, tax, total, from_ledger, from_hometax, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, '비상사', ?, '2026-10-10', ?, 100000, 1100000, 0, 1, 't', 't')`).run(randomUUID(), pid, o2.kind ?? 'sale', approval(n), o2.bizNo === undefined ? bBiz : o2.bizNo, o2.item ?? null, o2.supply === undefined ? 1_000_000 : o2.supply);
@@ -100,7 +93,6 @@ describe('계정 공유 기록 장부: 올릴 줄 모으기', () => {
     const rows = p.pending();
     const issues = rows.filter((r) => r.kind === 'issue').map((r) => r.body);
     assert.deepEqual(issues, [
-      // 앱 발급: 작성일자는 발급한 날(KST. 16:30Z는 다음 날 01:30), 품목은 실행 입력 요약에 없어 싣지 않는다
       { approvalNo: approval(1), buyerBizNo: aBiz, buyerName: '(주)에이상사', doc: 'tax_invoice', how: 'app', supply: 500_000, tax: 50_000, writtenOn: '2026-11-17' },
       { approvalNo: approval(2), buyerBizNo: bBiz, buyerName: '비상사', doc: 'tax_invoice', how: 'manual', supply: 300_000, tax: 30_000, writtenOn: '2026-11-17' },
       { approvalNo: approval(5), buyerBizNo: bBiz, buyerName: '비상사', doc: 'tax_invoice', how: 'manual', item: '납품', supply: 1_000_000, tax: 100_000, writtenOn: '2026-10-10' },
@@ -111,12 +103,10 @@ describe('계정 공유 기록 장부: 올릴 줄 모으기', () => {
     ]);
     assert.deepEqual(rows.filter((r) => r.kind === 'self').map((r) => r.body), [{ bizNo: me, name: '하늘상회', rep: '김하늘' }]);
     assert.ok(rows.every((r) => /^[A-Za-z0-9_-]{22}$/.test(r.rowId) && r.at === Date.parse('2026-11-17T03:00:00Z') && r.taskId === undefined));
-    // 모은 줄은 모두 main의 봉인 검사(@sax/remote)를 지난다
     const key = new Uint8Array(randomBytes(32));
     for (const r of rows) await sealShareRow(key, { v: 1, row_id: r.rowId, kind: r.kind, epoch: 0, at: r.at, dev: dev1, by: 'desktop', body: r.body } as ShareRowCore, async () => new Uint8Array(64));
     p.tick();
     assert.deepEqual(p.svc.collect(), { issue: 0, party: 0, self: 0 });
-    // 승인번호가 뒤늦게 확인되면(다시 확인) 그때 올라간다
     p.db.prepare(`UPDATE irreversible_log SET state = 'committed', verify_ref = ? WHERE state = 'in_doubt'`).run(approval(3));
     assert.deepEqual(p.svc.collect(), { issue: 1, party: 0, self: 0 });
     assert.equal(p.pending().length, 7);
@@ -134,13 +124,11 @@ describe('계정 공유 기록 장부: 올릴 줄 모으기', () => {
     assert.deepEqual(p.svc.collect(), { issue: 0, party: 1, self: 0 });
     assert.deepEqual(p.pending().at(-1)!.body, { bizNo: bBiz, name: '비상사', removed: true });
     assert.deepEqual(p.svc.collect(), { issue: 0, party: 0, self: 0 });
-    // 다시 만들면 새 줄
     p.tick();
     p.cps.create({ bizNo: bBiz, name: '비상사', source: 'manual' });
     assert.deepEqual(p.svc.collect(), { issue: 0, party: 1, self: 0 });
     const parties = p.pending().filter((r) => r.kind === 'party').map((r) => ({ v: 1, row_id: r.rowId, kind: 'party', epoch: 0, at: r.at, dev: dev1, by: 'desktop', body: r.body }) as ShareRowCore<'party'>);
     assert.deepEqual(mergeShareParties(parties).map((r) => [r.body.bizNo, r.body.items?.length]).sort(), [[aBiz, 2], [bBiz, 0]].sort());
-    // 상호를 아직 모르는 프로필(번호가 이름)은 내 사업자 줄을 내지 않는다
     const q = pc();
     q.db.prepare('UPDATE profiles SET display_name = biz_no').run();
     assert.equal(q.svc.collect().self, 0);
@@ -179,7 +167,6 @@ describe('계정 공유 기록 장부: 올리기 상태와 받기', () => {
     bad(() => p.svc.handle('share.sent', { rowId: 'x', seq: 1 }));
     bad(() => p.svc.handle('share.sent', { rowId: rows[3]!.rowId, seq: 0 }));
     bad(() => p.svc.handle('share.dropped', { rowId: rows[3]!.rowId, reason: 'Bad Reason' }));
-    // 계정 열쇠가 바뀌면 올린 줄을 다시 올릴 줄로 돌린다(버린 줄은 그대로)
     assert.deepEqual(p.svc.handle('share.resend', {}), { rows: 2 });
     assert.deepEqual(p.db.prepare('SELECT state, seq FROM share_out ORDER BY rowid').all(), [
       { state: 'pending', seq: null }, { state: 'pending', seq: null }, { state: 'dropped', seq: null }, { state: 'pending', seq: null },
@@ -204,10 +191,8 @@ describe('계정 공유 기록 장부: 올리기 상태와 받기', () => {
     assert.deepEqual(p.db.prepare(`SELECT kind, ref, by_role FROM share_in ORDER BY seq`).all(), [
       { kind: 'issue', ref: approval(9), by_role: 'desktop' }, { kind: 'money', ref: '', by_role: 'desktop' }, { kind: 'task', ref: '', by_role: 'mobile' },
     ]);
-    // 다른 기기가 이미 올린 승인번호는 내 원장에 있어도 다시 올리지 않는다
     p.issued(9, p.a.id, 10, 1);
     assert.equal(p.svc.collect().issue, 0);
-    // 겉모양이 다른 줄이 하나라도 있으면 통째로 거절한다(자리도 옮기지 않는다)
     for (const r of [
       { seq: 0, row: first.row }, { seq: 5, row: { ...first.row, row_id: 'short' } }, { seq: 5, row: { ...first.row, kind: 'note' } }, { seq: 5, row: { ...first.row, dev: 'pc' } },
       { seq: 5, row: { ...first.row, by: 'server' } }, { seq: 5, row: { ...first.row, body: [] } }, { seq: 5, row: { ...first.row, v: 2 } }, { seq: 5, row: { ...first.row, row_id: newShareRowId(), body: { ...issue, approvalNo: 5 } } },
@@ -221,13 +206,11 @@ describe('계정 공유 기록 장부: 올리기 상태와 받기', () => {
 
   it('내가 올린 줄이 돌아오면 넣지 않고 순번만 채운다. 받은 거래처 값이 내 값과 같으면 다시 올리지 않는다(키 순서가 달라도)', () => {
     const p = pc();
-    // 다른 PC가 먼저 올린 거래처(같은 값, 키 순서는 JCS와 다르게)와 내 사업자
     const theirs = inRow(1, 'party', { name: '(주)에이상사', rep: '이에이', items: [{ unitPrice: 500_000, unit: '건', name: '월 자문' }], email: 'a@example.com', bizNo: aBiz });
     p.svc.apply([theirs, inRow(2, 'self', { rep: '김하늘', name: '하늘상회', bizNo: me })], 2);
     assert.deepEqual(p.svc.collect(), { issue: 0, party: 1, self: 0 });
     const mine = p.pending();
     assert.deepEqual(mine.map((r) => r.body.bizNo), [bBiz]);
-    // 올렸는데 응답을 못 받은 줄: 다음에 받을 때 내 줄이 섞여 온다
     const echo = { seq: 3, row: { v: 1 as const, row_id: mine[0]!.rowId, kind: 'party' as const, epoch: 0, at: mine[0]!.at, dev: dev1, by: 'desktop' as const, body: mine[0]!.body } };
     assert.deepEqual(p.svc.apply([echo], 3), { applied: 0, cursor: 3, parties: NONE });
     assert.deepEqual(p.db.prepare('SELECT state, seq FROM share_out').all(), [{ state: 'sent', seq: 3 }]);
@@ -238,7 +221,6 @@ describe('계정 공유 기록 장부: 올리기 상태와 받기', () => {
     const a = pc();
     const b = pc({ name: '에이상사 주식회사' });
     let seq = 0;
-    /** from의 밀린 줄을 서버에 올린 셈 치고 to에 넣는다 */
     const carry = (from: ReturnType<typeof pc>, to: ReturnType<typeof pc>, dev: string) => {
       const rows = from.pending().map((r) => ({ seq: ++seq, row: { v: 1 as const, row_id: r.rowId, kind: r.kind, epoch: 0, at: r.at, dev, by: 'desktop' as const, body: r.body } }));
       for (const r of rows) from.svc.sent(r.row.row_id, r.seq);
@@ -249,7 +231,6 @@ describe('계정 공유 기록 장부: 올리기 상태와 받기', () => {
     const [da, db] = [randomUUID(), randomUUID()];
     a.svc.collect();
     assert.equal(carry(a, b, da), 3);
-    // b의 에이상사는 상호만 달랐다. 처음 만난 거래처라 받은 값으로 맞추고, 올릴 것이 없다(비상사·내 사업자는 받은 값과 같다)
     assert.equal(b.cps.byBizNo(aBiz)!.name, '(주)에이상사');
     b.tick();
     assert.deepEqual(b.svc.collect(), zero);
@@ -258,14 +239,12 @@ describe('계정 공유 기록 장부: 올리기 상태와 받기', () => {
       b.tick();
       assert.deepEqual([a.svc.collect(), b.svc.collect()], [zero, zero]);
     }
-    // a가 메일을 고치면 b가 따라온다
     a.tick(10 * 60_000);
     a.cps.update(a.a.id, { email: 'new@example.com' });
     assert.deepEqual(a.svc.collect(), { issue: 0, party: 1, self: 0 });
     assert.equal(carry(a, b, da), 1);
     assert.equal(b.cps.byBizNo(aBiz)!.email, 'new@example.com');
     assert.deepEqual(b.svc.collect(), zero);
-    // b가 주소를 고치면 a가 따라온다(b의 시계가 a의 마지막 줄보다 뒤)
     b.tick(30 * 60_000);
     b.cps.update(b.a.id, { address: '서울시 중구' });
     assert.deepEqual(b.svc.collect(), { issue: 0, party: 1, self: 0 });
@@ -287,26 +266,21 @@ describe('계정 공유 기록 장부: 받은 거래처를 이 PC 거래처 목�
     let r = p.svc.apply([inRow(1, 'party', { bizNo: cBiz, name: '씨상사', rep: '최씨', email: 'c@example.com', items: [{ name: '납품', unitPrice: null, unit: null }] }, { at: 1000 })], 1);
     assert.deepEqual(r.parties, { ...NONE, added: 1 });
     let c = p.cps.byBizNo(cBiz)!;
-    // 이 PC에서 진위확인을 한 적이 없는 거래처로 들어간다
     assert.deepEqual([c.name, c.repName, c.email, c.verifiedAt, c.useCount, c.source], ['씨상사', '최씨', 'c@example.com', null, 0, 'manual']);
     assert.deepEqual(p.cps.getItems(c.id), [{ name: '납품', unitPrice: null, unit: null }]);
     assert.deepEqual(p.svc.collect(), { issue: 0, party: 2, self: 1 });
     assert.ok(p.pending().every((x) => x.body.bizNo !== cBiz));
-    // 다른 PC가 상호를 고치고 메일·품목을 지웠다: 그대로 따른다. 상호가 바뀌면 진위확인 결과를 비운다
     p.cps.setVerification(c.id, 'status:01');
     r = p.svc.apply([inRow(2, 'party', { bizNo: cBiz, name: '씨상사 주식회사', rep: '최씨', items: [] }, { at: 2000 })], 2);
     assert.deepEqual(r.parties, { ...NONE, updated: 1 });
     c = p.cps.byBizNo(cBiz)!;
     assert.deepEqual([c.name, c.email, c.verifiedStatus, p.cps.getItems(c.id).length], ['씨상사 주식회사', null, null, 0]);
-    // 같은 줄이 또 와도, 옛 줄이 늦게 와도 바뀌지 않는다
     r = p.svc.apply([inRow(3, 'party', { bizNo: cBiz, name: '옛 상호', items: [] }, { at: 1500 })], 3);
     assert.deepEqual([r.parties, p.cps.byBizNo(cBiz)!.name], [NONE, '씨상사 주식회사']);
-    // 지움
     r = p.svc.apply([inRow(4, 'party', { bizNo: cBiz, name: '씨상사 주식회사', removed: true }, { at: 3000 })], 4);
     assert.deepEqual([r.parties, p.cps.byBizNo(cBiz)], [{ ...NONE, removed: 1 }, null]);
     p.tick();
     assert.equal(p.svc.collect().party, 0);
-    // 다른 PC가 다시 더하면 다시 생긴다
     r = p.svc.apply([inRow(5, 'party', { bizNo: cBiz, name: '씨상사', items: [] }, { at: 4000 })], 5);
     assert.deepEqual([r.parties, p.cps.byBizNo(cBiz)!.name], [{ ...NONE, added: 1 }, '씨상사']);
     assert.equal(p.svc.collect().party, 0);
@@ -324,9 +298,7 @@ describe('계정 공유 기록 장부: 받은 거래처를 이 PC 거래처 목�
     p.tick();
     assert.equal(p.svc.collect().party, 1);
     assert.deepEqual(last(p), { bizNo: cBiz, name: '씨상사', email: 'mine@example.com', items: [] });
-    // 받아서 넣은 디상사를 이 PC에서 지운다: 다른 기기도 지우게 "지움" 줄을 낸다
     p.cps.delete(p.cps.byBizNo(dBiz)!.id);
-    // 지운 뒤 다른 PC의 옛 수정이 와도 다시 생기지 않는다
     r = p.svc.apply([inRow(4, 'party', { bizNo: dBiz, name: '디상사', rep: '정디', items: [] }, { at: 2500 })], 4);
     assert.deepEqual([r.parties, p.cps.byBizNo(dBiz)], [{ ...NONE, kept: 1 }, null]);
     p.tick();
@@ -355,7 +327,7 @@ describe('계정 공유 기록 장부: 받은 거래처를 이 PC 거래처 목�
 
   it('시계가 느린 PC에서 고쳐도 묻히지 않는다: 새 줄의 시각은 그 거래처의 가장 늦은 줄보다 뒤다', () => {
     const p = pc();
-    const future = new Date('2026-11-17T03:00:00Z').getTime() + 3 * 3_600_000; // 다른 PC의 시계가 3시간 빠르다
+    const future = new Date('2026-11-17T03:00:00Z').getTime() + 3 * 3_600_000;
     p.svc.apply([inRow(1, 'party', { bizNo: cBiz, name: '씨상사', items: [] }, { at: future })], 1);
     p.svc.collect();
     p.cps.update(p.cps.byBizNo(cBiz)!.id, { email: 'late@example.com' });
@@ -379,8 +351,6 @@ describe('계정 공유 기록 장부: 받은 거래처를 이 PC 거래처 목�
     assert.equal(p.status().cursor, 4);
   });
 });
-
-// ---- PC 두 대의 장부를 main의 ShareSync로 잇는다(서버는 가짜, 봉인·서명은 진짜) ----
 
 class FakeServer {
   rows: ShareServerRow[] = [];
@@ -418,27 +388,21 @@ describe('계정 공유 기록: 장부에서 장부로', () => {
     a.issued(1, a.a.id, 500_000, 50_000);
     const [sa, sb] = [side(0, a), side(1, b)];
     assert.deepEqual(await sa.sync(), { state: 'ok', pulled: 0, applied: 0, rejected: {}, pushed: 4, dropped: 0, parties: 0 });
-    // b는 같은 거래처·내 사업자를 갖고 있어 받은 뒤 올릴 것이 없다
     assert.deepEqual(await sb.sync(), { state: 'ok', pulled: 4, applied: 4, rejected: {}, pushed: 0, dropped: 0, parties: 0 });
     assert.deepEqual(b.status(), { cursor: 4, out: { pending: 0, sent: 0, dropped: 0 }, in: { issue: 1, party: 2, self: 1, money: 0, task: 0, task_result: 0 } });
     const got = JSON.parse(b.db.prepare(`SELECT body_json FROM share_in WHERE kind = 'issue'`).pluck().get() as string);
     assert.deepEqual([got.approvalNo, got.buyerBizNo, got.supply, got.how], [approval(1), aBiz, 500_000, 'app']);
-    // 서버가 가진 것은 봉인문이다(승인번호·사업자번호·상호가 보이지 않는다)
     const blob = JSON.stringify(server.rows);
     for (const s of [approval(1), aBiz, me, '에이상사', '하늘상회']) assert.ok(!blob.includes(s), s);
-    // b가 홈택스 목록에서 같은 승인번호와 새 건을 들인다: 새 건만 올라간다
     b.hometax(1);
     b.hometax(2, { item: '납품' });
     assert.deepEqual(await sb.sync(), { state: 'ok', pulled: 0, applied: 0, rejected: {}, pushed: 1, dropped: 0, parties: 0 });
-    // a는 자기 줄 4개가 돌아온 것은 넣지 않고(순번만 채운다) b의 줄 하나만 넣는다
     assert.deepEqual(await sa.sync(), { state: 'ok', pulled: 5, applied: 5, rejected: {}, pushed: 0, dropped: 0, parties: 0 });
     assert.deepEqual(a.status(), { cursor: 5, out: { pending: 0, sent: 4, dropped: 0 }, in: { issue: 1, party: 0, self: 0, money: 0, task: 0, task_result: 0 } });
     for (const s of [sa, sb, sa]) assert.deepEqual([(await s.sync()).pushed, server.rows.length], [0, 5]);
-    // 서버의 줄을 열어 합치면 발급 두 건
     const opened = server.rows.map((r) => openShareRow(deriveShareKey(rk, 0), r, { sharePub: ed25519Public(deriveShareSignSeed(rk)), mobileSignPub: () => null }));
     const issues = mergeShareIssues(opened.flatMap((o) => (o.ok && o.row.kind === 'issue' ? [o.row as ShareRowCore<'issue'>] : [])));
     assert.deepEqual(issues.map((r) => r.body.approvalNo).sort(), [approval(1), approval(2)]);
-    // b가 거래처를 더하면 a의 거래처 목록에 들어간다(main은 parties를 보고 목록을 다시 읽는다)
     b.tick();
     b.cps.create({ bizNo: cBiz, name: '씨상사', email: 'c@example.com', source: 'manual' });
     assert.equal((await sb.sync()).pushed, 1);

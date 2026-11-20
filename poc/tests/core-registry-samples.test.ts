@@ -1,5 +1,3 @@
-// 고정 시드 레지스트리 샘플(tests/fixtures/registry): 파일 = 생성 결과(바이트 단위), 그리고 엔진이 전부 받는다.
-// 클라우드 레지스트리(services/registry)는 같은 파일로 자기 검증기를 돌려 상호 검증한다(SIGNING.md §10.3).
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';

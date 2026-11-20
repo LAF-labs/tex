@@ -1,4 +1,3 @@
-// InDoubt 증언 계약(ADR-021 결정 5, D03 §2 InDoubt 행): 요청 모양·요약 해시·main 자기 확인·엔진 대조.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {

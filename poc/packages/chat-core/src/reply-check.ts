@@ -1,5 +1,3 @@
-// 답 검사(D04 §3·§4, B-15). 모델이 쓴 문장을 사장님에게 보이기 전 마지막 차단이다. PC 엔진(chat.ts·chat-agent.ts)과 폰 대화 코어가 같은 코드를 쓴다.
-// 순수 함수만 둔다. 문장·토큰·값을 로그에 남기지 않는다.
 import { EMAIL_RE, TOKEN_RE, normalizeForRedaction, numericSpans } from '@sax/redaction';
 import { numberShaped } from './rules.ts';
 import { AGENT_SHOW_MAX, CHAT_REPLY_MAX_CHARS, slotAnywhere } from './tables.ts';
@@ -44,8 +42,6 @@ export function unsafeText(text: string): boolean {
   const n = normalizeForRedaction(text);
   const flat = n.replace(/\s+/g, '');
   if (/비밀번호|비번|패스워드|암호|입력하세요|OTP/i.test(flat)) return true;
-  // 인증서·보안카드는 이름만 말하는 것("공동인증서나 간편인증을 쓰면 돼요", "발급 인증 화면을 열었어요")은 괜찮다. 번호·비밀 값을 대화로 달라는 말과 같이 오면 막는다
-  // (대표 실사용 2026-11-19: "보안카드 등록할래"의 답이 이름 때문에 걸려 할 수 있는 일 목록으로 바뀌었다).
   if (/인증서|보안카드/.test(flat) && /번호|비밀|입력|알려|보내|적어|불러|말해|말씀/.test(flat)) return true;
   if (numericSpans(n).length) return true;
   if (new RegExp(EMAIL_RE.source, 'u').test(n)) return true;
@@ -73,24 +69,13 @@ export interface CheckedReply<K extends string = string, A extends string = stri
 export interface ReplyCheckCtx<K extends string, A extends string> {
   kinds: ReadonlySet<K>;
   asks: ReadonlySet<A>;
-  /** 이 대화 세션의 토큰 맵에 있는 토큰인가 */
   hasToken(token: string): boolean;
-  /** 이 대화 세션의 도구 결과가 낸 ref인가(문장 슬롯이 가리킬 수 있는 것) */
   hasRef(ref: string): boolean;
-  /** show에 넣을 수 있는 ref인가(도구 결과 + 지금 화면의 카드) */
   canShow(ref: string): boolean;
-  /** 식별자·링크·비밀 유도 말이 섞였을 때의 고정 안내 */
   fallbackText: string;
-  /** 슬롯·토큰 밖 숫자가 있고 같이 보일 결과가 있을 때의 고정 안내 */
   numberText: string;
-  /** 사장님이 이번에 쓴 문장(마스킹된 것). 거기 쓴 달·날짜("9월", "10월 31일")는 따라 써도 숫자로 거르지 않는다. 없으면 모두 거른다. */
   userText?: string;
-  /** 되묻는 답(kind ask)이 숫자로 걸렸을 때 그 칸의 고정 되묻기 문장. 있으면 되묻기는 살린다(사장님이 빈 칸을 채울 수 있게). */
   askText?: (ask: A) => string;
-  /**
-   * 모르는 결과를 가리키는 슬롯·틀린 슬롯("{d2.first.supply}")이 있을 때. 있으면 그 답을 쓰고(부르는 쪽이 이번 턴 결과로 고정 문장을 고른다),
-   * 없으면 ReplyShapeError.
-   */
   badSlot?: (kind: K, ask: A | null, show: string[]) => CheckedReply<K, A>;
 }
 
@@ -105,11 +90,8 @@ export function braceTokens<T>(v: T): T {
   return v;
 }
 
-/** 달·날짜("9월", "10월 31일") */
 const DAY = /(?<!\d)(?:1[0-2]|[1-9])월(?:\s*(?:3[01]|[12]\d|[1-9])일)?(?!\d)/gu;
-/** 달 없이 쓴 날("다음 달 1일로", "25일자로"): 사장님이 이번 문장에 쓴 날만 따라 써도 된다(ADR-049) */
 const SOLO_DAY = /(?<!\d|월\s*)(?:3[01]|[12]\d|[1-9])일(?!\d)/gu;
-/** 문장 안 ref 표기("[ref:r1]", "(보임: r1, d2)"): 화면이 표·카드로 보이므로 지운다(숫자로 걸러지지 않게) */
 const REF_NOTE = /\s*[[(](?:ref|보임)\s*[:：]?\s*[rd][1-9]\d{0,5}(?:\s*,\s*[rd][1-9]\d{0,5})*[\])]/gu;
 
 const REF = /^[rd][1-9][0-9]{0,5}$/;
@@ -130,7 +112,6 @@ export function checkAgentReply<K extends string, A extends string>(out: unknown
   const k = kind as K;
   const a = ask as A | null;
   if (k === 'tax_advice') return { kind: k, text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice' };
-  // 중괄호 토큰은 대괄호로, 문장 속 ref 표기는 지우고, 슬롯 안 공백("{ r1.first.total }")은 뜻이 같으니 붙인다
   const text = braceTokens(o.text)
     .replace(REF_NOTE, '')
     .replace(/\s+/g, ' ')
@@ -145,7 +126,6 @@ export function checkAgentReply<K extends string, A extends string>(out: unknown
     throw bad();
   }
   if (chatAdviceMentioned(text)) return { kind: k, text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice' };
-  // 사장님이 이번 문장에 쓴 달·날짜는 그대로 따라 써도 된다(지어낸 값이 아니다, chat-eval look-sept·issue-date)
   const norm = (x: string) => x.replace(/\s+/g, '');
   const said = new Set([...(ctx.userText ?? '').matchAll(DAY)].flatMap((m) => [norm(m[0]), norm(m[0]).replace(/\d+일$/, '')]));
   const saidDay = new Set([...(ctx.userText ?? '').replace(DAY, ' ').matchAll(SOLO_DAY)].map((m) => m[0]));

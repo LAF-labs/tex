@@ -1,5 +1,3 @@
-// PoC-9 데모 셸 렌더러: 메인 대화(단일 세션) · 작업 패널 · 문서함 · 거래처 · 정부24 목업.
-// 승인 카드는 main이 대화 열 하단(입력창 위)에 따로 그린다. 렌더러는 main이 알린 높이만큼 그 자리를 비우기만 한다(ADR-021 결정 7).
 import { g24Card, g24Panel } from './shell-g24.js';
 import { onboardingView, showOnbError } from './shell-onboarding.js';
 import { accountCard, accountErrText, loginScreen } from './shell-account.js';
@@ -19,14 +17,10 @@ const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart
 const $ = (s) => document.querySelector(s);
 
 const state = {
-  screen: null, // 진행 화면(B3): { runId, frame, paused }
-  // [브라우저] 토글·앱 안 브라우저(main이 알린다). embedded면 패널 화면 칸 위에 main이 실제 브라우저 보기를 두고, 패널 폭(width)도 main이 정한다.
+  screen: null,
   browser: { shown: false, available: false, embedded: false, width: 0 },
-  /** 브라우저 아래 진행 덩어리의 [자세히] 펼침(사람이 고른 것, 실행이 바뀌어도 둔다) */
   dockOpen: false,
-  /** 작성 카드 [자세히]를 편 카드(다시 그려도 펼친 채) */
   draftMore: new Set(),
-  /** 단계 목록을 연 실행 카드(실행 id). 새 카드는 닫힌 채로 시작한다. */
   stepsOpen: new Set(),
   boot: null,
   today: new Date(),
@@ -37,40 +31,37 @@ const state = {
   g24: new Map(),
   docs: [],
   cps: [],
-  // 레일 화면 목록을 다시 읽는 중('loading')·못 읽음('error'). 목록이 비었을 때만 화면에 보인다(있던 목록은 그대로 둔다).
   load: { cps: null, docs: null },
-  panel: null, // { kind: 'run'|'g24'|'doc'|'cp'|'act', id }
-  menu: false, // 제목줄 프로필 메뉴
+  panel: null,
+  menu: false,
   editing: null,
-  editingFields: null, // 초안 카드의 품목·이메일 칸을 연 run id
-  editingCp: null, // 초안 카드의 거래처 고르기를 연 run id
+  editingFields: null,
+  editingCp: null,
   vat: null,
-  fill: [], // 에이전트가 되물을 때 입력창 위에 띄우는 채우기 칩 { label, text, cp }
-  composing: false, // 입력창에서 타이핑·클릭을 시작했다(칩을 숨긴다). 보내면 풀린다
-  agentAsk: false, // 대화 에이전트가 되묻는 중(답 상자의 칩으로 답한다). 빠른 실행 칩을 숨긴다
-  lastMe: null, // 마지막에 보낸 내 말풍선(반응 알약이 붙는 곳, ADR-057)
-  waitEl: null, // 답을 기다리는 줄(진행 단계 이벤트가 글자를 바꾼다)
+  fill: [],
+  composing: false,
+  agentAsk: false,
+  lastMe: null,
+  waitEl: null,
   barActive: false,
-  board: null, // 이번 달 판(main이 계산, board.ts). 판에는 승인 버튼이 없다(ADR-021·033)
-  boardExpanded: new Set(), // "n건 더 보기"로 펼친 카드 종류
-  onb: null, // 온보딩(main OnbView). null이면 이미 등록을 마친 사용자
+  board: null,
+  boardExpanded: new Set(),
+  onb: null,
   docFilter: 'all',
-  docImport: null, // { pickId, wrong, pw, show } 열기 암호를 묻는 중(문서함 위 모달)
-  docLocked: new Set(), // 이번 실행에서 열기 암호로 가져온 서류 id(목록 자물쇠). 엔진은 암호 여부를 저장하지 않는다.
+  docImport: null,
+  docLocked: new Set(),
   docBusy: false,
-  docDraft: null, // 문서 패널 확인 구역에서 입력 중인 값 { id, seen, createdAt, docType, issuedOn, expiresOn, noExpiry }
-  docUpdating: false, // 확인·수정 요청을 기다리는 중(두 번 보내지 않게)
-  docsRev: 0, // 가져오기·확인으로 목록을 바꿀 때마다 올린다(그 전에 보낸 docs.list 응답이 새 서류를 덮지 않게)
-  setTab: 'biz', // 설정 화면에서 고른 항목: 'biz'(내 사업장) | 'auth'(발급 인증) | 'devices'(기기 연결) | 'bank'(계좌 연결) | 'billing'(구독)
-  deletion: null, // 탈퇴 상태(설정 > 기기 연결): { deleteAfter: ms|null, confirm }
-  account: null, // 계정 상태(main AccountView): 단계·이메일·코드 만료·오류 코드
-  login: null, // 로그인 화면(A-01)이 열려 있으면 { screen, draft: { email, password, code, show }, busy }
-  pair: null, // 폰 연결 칸(main PairView: 단계·QR 이미지·만료·폰 이름·남은 횟수·오류 코드). null이면 쉬는 자리
-  pairBusy: false, // 폰 연결 요청을 기다리는 중(두 번 보내지 않게)
-  pairCode: '', // 6자리 칸에 넣던 값(다시 그려도 남게)
+  docDraft: null,
+  docUpdating: false,
+  docsRev: 0,
+  setTab: 'biz',
+  deletion: null,
+  account: null,
+  login: null,
+  pair: null,
+  pairBusy: false,
+  pairCode: '',
 };
-
-// ---- 공용 동작 ----
 
 let toastTimer;
 function toast(text) {
@@ -81,7 +72,6 @@ function toast(text) {
   toastTimer = setTimeout(() => (t.hidden = true), 2400);
 }
 const errText = (e) => String(e?.message || e).replace(/^Error invoking remote method 'sax': (Error: )?/, '');
-/** 여러 화면이 같이 쓰는 오류 문장. 표에 없는 코드는 화면에 그대로 보이지 않는다(영어 코드 대신 일반 문장). */
 const COMMON_ERR = {
   gesture_required: '버튼을 직접 눌러 주세요.',
   account_required: '먼저 로그인해 주세요.',
@@ -91,13 +81,11 @@ const COMMON_ERR = {
   run_active: '발급이 진행 중이라 지금은 할 수 없어요. 끝난 뒤에 해 주세요.',
 };
 const GENERIC_ERR = '처리하지 못했어요. 잠시 뒤 다시 해 주세요.';
-/** 오류 → 사람 말: 그 화면의 표 → 공통 표 → 일반 문장. */
 const human = (e, table = {}) => {
   const c = errText(e);
   return table[c] || COMMON_ERR[c] || GENERIC_ERR;
 };
 
-// 보관함(문서함) 오류·확인 필요 이유. 엔진·docparse는 코드만 준다.
 const DOC_ERR = {
   profile_required: '내 사업장을 먼저 등록해 주세요', not_pdf: 'PDF 파일이 아니에요', input_size: '파일이 비었거나 15MB를 넘어요', read_failed: '파일을 읽지 못했어요',
   invalid_pdf: 'PDF를 열 수 없어요(손상)', timeout: '읽는 데 너무 오래 걸려 멈췄어요', memory_limit: '파일이 너무 커서 멈췄어요', session_failed: 'PDF를 여는 데 실패했어요. 다시 해 주세요',
@@ -124,10 +112,6 @@ const DOC_REASON = {
   subject_mismatch: '내 사업장과 사업자번호가 달라요', subject_unverified: '사업자번호를 읽지 못했어요',
 };
 
-/**
- * 앱 안 브라우저 보기 자리(Claude 데스크톱 브라우저 패널처럼): 패널의 화면 칸 자리를 main에 알린다. main이 그 칸 위에 실제 브라우저 보기를 둔다
- * (패널 영역 밖으로는 못 옮긴다). 칸이 없거나(다른 패널·패널 닫힘) 대화상자가 떠 있거나 경계를 끄는 중이면 숨긴다(보기가 그 위를 덮지 않게).
- */
 let slotSent = '';
 let slotDrag = false;
 function slotTick() {
@@ -143,7 +127,6 @@ function slotTick() {
 }
 requestAnimationFrame(slotTick);
 
-/** 작성 카드에서 고친 값이 거절되면 토스트 대신 그 카드 안, 고치던 칸(field) 아래에 이유를 남긴다(칸은 열린 채, 넣던 값 vals도 그대로). */
 function draftError(id, msg, field = null, vals = null) {
   state.draftErr = { id, msg, field, vals };
   const r = state.runs.get(id);
@@ -152,9 +135,7 @@ function draftError(id, msg, field = null, vals = null) {
 
 const act = {
   toast,
-  // 앱 안 브라우저 크게/작게(제목줄 [브라우저]와 같다)
   browserSize: (big) => void call('browser.toggle', { show: big }).catch(() => {}),
-  // 앱 안 브라우저 패널 왼쪽 경계 끌기: 원하는 폭을 main에 보낸다(main이 대화 열 최소 폭 안에서 정해 다시 알린다). 끄는 동안 보기는 숨긴다.
   browserDrag: (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -188,7 +169,6 @@ const act = {
   },
   openDoc: (id) => call('docs.open', { id }).catch((e) => toast(docErr(e))),
   revealDoc: (id) => call('docs.reveal', { id }).catch((e) => toast(docErr(e))),
-  // 결과 카드·실행 패널의 [PDF 열기]·[폴더 열기]: 엔진이 보관한 이 실행의 PDF(runId) 줄을 연다. 없으면 홈택스 발급목록 안내(F-04).
   openRunDoc: (run, reveal = false) => runDoc(run).then((d) => (d ? (reveal ? act.revealDoc(d.id) : act.openDoc(d.id)) : toast(NO_FILE_TEXT))),
   supplier: () => state.boot.profiles.business.name,
   open: (id) => openPanel({ kind: 'run', id }),
@@ -222,7 +202,6 @@ const act = {
     state.editingCp = null;
     for (const r of state.runs.values()) renderRun(r);
   },
-  // 초안 카드의 [품목·이메일 고치기]: 칸을 열고, [바꾸기]면 main이 검사해 카드 값을 바꾼다(다시 [홈택스에서 준비]로 확인)
   editFields: (id, focus = 'item') => {
     state.draftErr = null;
     state.editingFields = id;
@@ -231,7 +210,6 @@ const act = {
     state.editingCp = null;
     for (const r of state.runs.values()) renderRun(r);
   },
-  // 초안 카드의 [거래처 바꾸기](F-14): 장부에서 고르면 main이 받는 이메일·추정 품목을 그 거래처 것으로 바꾼다.
   editCp: (id) => {
     state.draftErr = null;
     state.editingCp = id;
@@ -262,7 +240,6 @@ const act = {
   },
   saveAmount: async (id, text) => {
     try {
-      // 금액 해석은 main이 요청 문장과 같은 규칙으로 한다("1억 2천만원"도 그대로 넣을 수 있다).
       putRun(await call('draft.update', { id, amountText: String(text) }));
       state.editing = null;
       state.draftErr = null;
@@ -271,12 +248,10 @@ const act = {
       draftError(id, human(e, { bad_amount: '금액을 다시 확인해 주세요. 예: 330만원, 3,300,000' }), 'amount', { amount: String(text) });
     }
   },
-  // 핸드오프 [다 했어요]·[직접 발급함]: 재개·확인으로만 간다(발급하지 않는다). main이 실제 입력 뒤 3초 안에만 받는다.
   resume: (id) => handoffCall('run.resume', id),
   retryCert: (id) => handoffCall('run.retryCert', id),
   simpleDone: (id) => handoffCall('run.simpleDone', id),
   manualDone: (id) => handoffCall('run.manualDone', id),
-  // [홈택스 창 보기]: 실행 Chrome 창을 앞으로(main → 금고). 발급·재개와 무관하다.
   showBrowser: async (id) => {
     try {
       await call('run.showBrowser', { id });
@@ -291,7 +266,6 @@ const act = {
       toast(human(e, { already_issuing: '이미 발급을 시작해서 멈출 수 없어요' }));
     }
   },
-  // [다시 시작](브라우저가 닫혀 멈춘 실행): 같은 값의 새 초안을 만들고 바로 홈택스에서 준비한다(새 Chrome)
   restart: async (id) => {
     try {
       const d = await call('run.redraft', { id });
@@ -301,9 +275,7 @@ const act = {
       toast('다시 시작하지 못했어요. 같은 요청을 대화에 다시 말해 주세요');
     }
   },
-  // [다시 준비]: main이 같은 값의 새 초안을 만든다(발급 전에 멈춘 실행만). 시작은 새 카드의 [홈택스에서 준비]
   redraft: async (id) => {
-    // 민원증명은 고칠 칸이 없어 [다시 준비]가 곧 다시 떼기다
     if (state.runs.get(id)?.cert) return act.restart(id);
     try {
       const d = await call('run.redraft', { id });
@@ -313,9 +285,8 @@ const act = {
     }
   },
   again: (run) => {
-    // 민원증명: 같은 서류·신청 값으로 바로 다시 뗀다(새 카드, 승인 카드는 다시 뜬다)
     if (run.cert) return act.restart(run.id);
-    state.vat = run.vat; // 지난번 부가세 방식도 그대로
+    state.vat = run.vat;
     fillComposer(`${run.counterparty.name}에 ${num(run.amount)}원 세금계산서 끊고 메일 보내 줘`);
   },
   reissue: (doc) => {
@@ -327,7 +298,7 @@ const act = {
     const g = state.g24.get(id);
     if (g.stage !== 'guide') return;
     const candidates = await call('g24.candidates', { doc: g.doc, startedAt: g.startedMs });
-    if (g.stage !== 'guide') return; // 기다리는 동안 그만뒀으면 되살리지 않는다
+    if (g.stage !== 'guide') return;
     g.candidates = candidates;
     g.stage = 'pick';
     renderG24(g);
@@ -362,26 +333,18 @@ const act = {
   },
 };
 
-// ---- 틀: 제목줄·레일 ----
-
-/** 레일 아이콘 아래 짧은 이름(12px, 레일 폭 76 안). */
 const RAIL_SHORT = { chat: '대화', docs: '문서함', cps: '거래처', bank: '받을 돈', biz: '사업장', bundle: '꾸러미', payroll: '급여', activity: '기록', settings: '설정' };
 
-// 레일은 자주 가는 곳만(v2.0, 9곳 → 5곳). 세무사 꾸러미·활동 기록은 문서함 안, 내 사업장은 설정 안에 둔다(PARENT).
 const RAIL = [
   ['chat', '대화', 'chat'],
   ['docs', '문서함', 'docs'],
   ['cps', '거래처', 'cps'],
-  // 받을 돈(09 D-09): 사업자 프로필만
   ['bank', '받을 돈', 'money', () => state.profile === 'business'],
-  // 급여대장(D-06)은 켠 사장님만 보인다(ADR-034 결정 8, 설정 payroll.enabled 기본 끔). 켜는 곳은 설정(M4-4).
   ['payroll', '급여대장', 'payroll', () => !!state.boot?.payrollEnabled],
 ];
-/** 레일에 없는 화면이 속한 곳: 그 화면을 보는 동안 레일은 부모를 고른 것으로 보이고, 머리에 [← 부모]가 있다. */
 const PARENT = { bundle: 'docs', activity: 'docs' };
 const PARENT_LABEL = { docs: '문서함', settings: '설정' };
 
-/** 제목줄(캔버스 M-01): 프로필(상호 ▾, 사업자/개인 전환 메뉴) · 데모 표시. 창 단추는 Windows 창 틀이 그린다. */
 function renderTitlebar() {
   const p = state.boot.profiles;
   const cur = p[state.profile];
@@ -400,12 +363,8 @@ function renderTitlebar() {
       h('button', { type: 'button', class: 'tb-co', 'aria-haspopup': 'menu', 'aria-expanded': String(state.menu), onclick: () => toggleMenu() }, cur.name, icon('chevron')),
       state.menu ? h('div', { class: 'menu', role: 'menu', 'aria-label': '프로필' }, h('div', { class: 'menu-label' }, '새 요청에 쓸 프로필'), item('business', `사업자 · ${p.business.name}`), p.personal && !p.personal.placeholder ? item('personal', `개인 · ${p.personal.name}`) : null) : null,
     ),
-    // [브라우저](claude desktop처럼): 실행 Chrome을 이 앱 브라우저 패널 자리에 앞으로 올린다. 다시 누르면 앱이 앞으로. 실행 Chrome이 없으면 누를 수 없다.
-    // 진행 중인 홈택스 작업이 없으면 누를 수 없는 단추를 늘 보이지 않는다(v2.0): 실행 중일 때만 나타난다.
     state.browser.available ? h('button', { type: 'button', class: 'tb-browser', 'data-act': 'browser-toggle', 'aria-pressed': String(state.browser.shown), title: state.browser.shown ? '브라우저 패널 작게' : '브라우저 패널 크게', onclick: () => void call('browser.toggle', { show: !state.browser.shown }).catch(() => {}) }, '홈택스 화면') : null,
-    // 견본 표시는 시연(fixture)에서만. 제품은 main이 sample: false를 보낸다. replaceChildren은 null을 글자로 넣으므로 펼쳐 넣는다.
     ...(state.boot?.sample === false ? [] : [h('span', { class: 'mock-badge' }, '견본 데이터 · PoC 데모')]),
-    // 설치본 자기 점검 warn(미서명 빌드 등, main이 고른 고정 문구).
     ...(state.boot?.build ?? []).map((t) => h('span', { class: 'mock-badge', 'data-build-badge': '' }, t)),
     ].filter(Boolean),
   );
@@ -432,7 +391,6 @@ function renderRail() {
     const n = dday(d.expiresOn, state.today);
     return n !== null && n <= 7;
   }).length;
-  // 아이콘만으로는 어디로 가는지 알 수 없다(길 찾기). 레일 폭(76)에 맞는 짧은 이름을 아이콘 아래에 둔다. 전체 이름은 aria-label·title.
   const item = ([v, label, ic]) =>
     h(
       'button',
@@ -440,11 +398,8 @@ function renderRail() {
       h('span', { class: 'rail-ic' }, icon(ic), v === 'docs' && soon ? h('b', { 'aria-hidden': 'true' }) : null),
       h('span', { class: 'rail-label', 'aria-hidden': 'true' }, RAIL_SHORT[v] ?? label),
     );
-  // Muse처럼 묶음을 세로 가운데에 둔다: 위·아래 빈칸(i)이 남는 높이를 나눠 갖고, 설정은 맨 아래.
   $('#rail').replaceChildren(h('i'), ...RAIL.filter((r) => !r[3] || r[3]()).map(item), h('i'), item(['settings', '설정', 'settings']));
 }
-
-// ---- 대화 화면 ----
 
 const chat = {
   root: null,
@@ -458,7 +413,6 @@ const chat = {
 function buildChat() {
   chat.thread = h('div', { class: 'sx-thread' });
   chat.scroll = h('div', { class: 'thread-scroll' }, h('div', { class: 'col' }, chat.thread));
-  // 읽던 자리 지키기: 맨 아래에서 FOLLOW_PX 안이면 새 말을 따라 내리고, 위로 올려 읽는 중이면 [새 답]만 띄운다.
   chat.newReply = h('button', { type: 'button', class: 'sx-new-reply', 'data-act': 'new-reply', hidden: '', onclick: () => scrollToEnd(true) }, icon('chevron'), '새 답');
   chat.scroll.addEventListener('scroll', () => {
     if (nearEnd()) chat.newReply.hidden = true;
@@ -472,7 +426,6 @@ function buildChat() {
     autoGrow();
     renderQuick();
   });
-  // 입력창을 누르면 칩을 숨겨 쓰는 데 집중하게 한다. 비운 채 떠나면 다시 보인다.
   chat.input.addEventListener('pointerdown', () => ((state.composing = true), renderQuick()));
   chat.input.addEventListener('blur', () => {
     if (chat.input.value.trim()) return;
@@ -480,18 +433,13 @@ function buildChat() {
     renderQuick();
   });
   chat.input.addEventListener('keydown', (e) => {
-    // Enter는 보내기, Shift+Enter(와 Alt+Enter)는 줄바꿈. 한글 조합 중 Enter는 보내지 않는다. 이 입력창의 Enter는 어떤 승인도 하지 않는다.
-    // 조합 판정은 Mattermost 웹(webapp/channels/src/utils/keyboard.ts isKeyPressed, utils/post_utils.ts postMessageOnKeyPress)을 따른다:
-    // isComposing만으로는 조합을 끝내는 Enter가 keyCode 229로 한 번 더 오는 브라우저가 있어 둘 다 본다.
     if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.isComposing && e.keyCode !== 229) {
       e.preventDefault();
       send();
     }
   });
   const sendBtn = h('button', { type: 'button', class: 'sx-send', 'aria-label': '보내기', onclick: send }, icon('send'));
-  // 입력창 [+]: 문서함의 PDF 가져오기와 같은 동작(파일 끌어 놓기 자리).
   const attach = h('button', { type: 'button', class: 'sx-attach', 'aria-label': 'PDF 가져오기', title: 'PDF 가져오기', onclick: () => importDoc({ pick: true }) }, icon('plus'));
-  // 입력창 알약(48px) 어디를 눌러도 글자 칸(22px)으로 간다. 단추([+]·보내기)는 제 일을 한다.
   const inputBox = h('div', { class: 'sx-input', onpointerdown: (e) => { if (!e.target.closest('button, textarea')) { e.preventDefault(); chat.input.focus(); } } }, attach, chat.input, sendBtn);
   chat.root = h(
     'section',
@@ -503,7 +451,6 @@ function buildChat() {
     h('div', { class: 'bar-slot', 'aria-hidden': 'true' }),
     h('div', { class: 'composer-zone' }, h('div', { class: 'col sx-composer' }, inputBox)),
   );
-  // 온보딩 중이면 대화의 첫 부분이 온보딩이다(08 §4). 끝난 사용자는 지난 타임라인을 그린다.
   if (state.onb) {
     appendThread(h('div', { 'data-onboarding': '' }), false);
     renderOnboarding();
@@ -511,8 +458,6 @@ function buildChat() {
   renderQuick();
   renderToday();
 }
-
-// ---- 온보딩(08 §4, M4-2) ----
 
 const ONB_ERR = {
   bad_biz_no: '사업자번호가 맞지 않아요. 10자리를 다시 확인해 주세요.',
@@ -525,7 +470,6 @@ const ONB_ERR = {
   gesture_required: '버튼을 직접 눌러 주세요.',
   account_required: '먼저 로그인해 주세요.',
 };
-/** main이 돌려준 온보딩 답(onboarding.reply)을 화면에 반영한다. */
 function applyOnb(r) {
   if (r.onboarding !== undefined) state.onb = r.onboarding;
   if (r.profiles) state.boot.profiles = r.profiles;
@@ -533,7 +477,6 @@ function applyOnb(r) {
   renderTitlebar();
   renderToday();
   if (r.fill) fillComposer(r.fill);
-  // 약관에 동의하면 로그인 화면(loginGate)이 먼저다
   if (loginGate()) renderModal();
 }
 const onbAct = {
@@ -542,7 +485,6 @@ const onbAct = {
       applyOnb(await call('onboarding.reply', { step, choice, ...extra }));
       return true;
     } catch (e) {
-      // 번호 틀림·휴폐업 등 거부는 토스트 대신 그 단계 카드 안, 칸 하나의 것이면 그 칸 아래(대표 2026-11-13)
       showOnbError(step, ONB_ERR[errText(e)] ?? '다시 해 주세요', errText(e));
       renderOnboarding();
       return false;
@@ -552,12 +494,10 @@ const onbAct = {
   toast,
   legal: (doc) => openLegal(doc),
   rerender: () => renderOnboarding(),
-  // securityOps는 아래에서 정의된다(모듈 평가 순서): 쓸 때 읽는다
   get security() {
     return securityOps;
   },
 };
-/** 이용약관·개인정보 처리방침 전문을 기본 브라우저로 연다(F-06). */
 async function openLegal(doc) {
   try {
     await call('legal.open', { doc });
@@ -565,7 +505,6 @@ async function openLegal(doc) {
     toast('열지 못했어요. tax.laf-co.com에서 볼 수 있어요.');
   }
 }
-/** 온보딩 영역을 지금 상태로 다시 그린다. 약관(④) 동의 전에는 입력창을 막는다(main도 onboarding_terms로 거부한다). */
 function renderOnboarding() {
   const old = chat.thread?.querySelector('[data-onboarding]');
   if (!old || !state.onb) return;
@@ -578,11 +517,6 @@ function renderOnboarding() {
 }
 const onbActive = () => !!state.onb && state.onb.step !== 'done';
 
-/**
- * 건너뛴 사업자(O-02)·인증(O-03)을 다시 연다([사업자 등록 마치기]·[발급 인증 고르기], 판의 "등록 할 일"). 그 단계만 대화로 묻는다.
- * 지난 온보딩 자리는 기록으로 남기고, 새 자리를 대화 끝에 둔다(다시 연 뒤의 답만 그린다, OnbView.redoFrom).
- */
-/** Chrome 설치 안내(U6): 대화에 한 번만 두고, [다시 확인]은 main이 설치 여부를 다시 본다(판도 새로 온다). */
 function chromeGuide() {
   if (state.view !== 'chat') go('chat');
   chat.thread.querySelector('[data-chrome-guide]')?.remove();
@@ -602,13 +536,11 @@ function chromeGuide() {
   appendThread(box);
 }
 
-/** 보안 프로그램(MagicLine4NX) 점검·설치·켜기를 main에 묻는다(B4). 온보딩 [홈택스 인증서] 카드와 대화 안내가 같이 쓴다. */
 const securityOps = {
   check: () => call('security.check'),
   install: () => call('security.install'),
   start: () => call('security.start'),
 };
-/** 보안 프로그램 안내(B4): 대화에 한 번만 둔다. 괜찮아지면 사라지고 알린다. */
 async function securityGuide() {
   if (state.view !== 'chat') go('chat');
   chat.thread.querySelector('[data-security-guide]')?.remove();
@@ -624,17 +556,12 @@ async function securityGuide() {
   appendThread(wrap);
 }
 
-/**
- * 대화가 연 앱 안 화면(open_screen, main 'open-screen' 이벤트). 답이 대화에 그려진 뒤 그 화면으로 간다(대표 지적 2026-11-19 "에이전틱하지 않잖아").
- * 화면 이름은 @sax/chat-core OPEN_SCREENS와 같다. 모르는 이름은 무시한다.
- */
 const SCREEN_TAB = { issue_auth: 'auth', business: 'biz', bank: 'bank', devices: 'devices', billing: 'billing' };
 const SCREEN_VIEW = { counterparties: 'cps', docs: 'docs', receivables: 'bank' };
 function openScreen(screen) {
   const tab = Object.hasOwn(SCREEN_TAB, screen) ? SCREEN_TAB[screen] : null;
   const view = Object.hasOwn(SCREEN_VIEW, screen) ? SCREEN_VIEW[screen] : null;
   if (!tab && !view && screen !== 'chrome' && screen !== 'security_program') return;
-  // 답 문장이 먼저 보이게 조금 뒤에 연다
   setTimeout(async () => {
     if (screen === 'chrome') return chromeGuide();
     if (screen === 'security_program') return securityGuide();
@@ -681,11 +608,6 @@ function timelineItem(it) {
   return h('div');
 }
 
-/**
- * 대화 안 비밀 입력 카드(대표 지시 2026-11-14 "공동인증서 비밀번호는 앱 내 채팅으로"). 금고가 물을 때만 main이 띄운다.
- * 값은 가려진 칸에서 바로 main(secret.answer) → 금고로만 간다. 칸은 보내자마자 비우고, 상태·대화 기록·모델에는 넣지 않는다.
- * 대화에는 "●●●● 입력함"만 남는다.
- */
 function onSecretAsk(ev) {
   const card = () => document.querySelector(`[data-secret-ask="${CSS.escape(ev.reqId)}"]`);
   if (ev.state !== 'open') {
@@ -730,17 +652,12 @@ function onSecretAsk(ev) {
     box.replaceChildren(h('p', { class: 'sx-meta' }, '입력하지 않았어요'));
   });
   appendThread(box, false);
-  // 카드 머리(물음)부터 보이게: 승인 바 자리를 비운 좁은 대화 열에서도 물음이 가려지지 않는다
   requestAnimationFrame(() => {
     box.scrollIntoView({ block: 'start' });
     input.focus({ preventScroll: true });
   });
 }
 
-/**
- * 대화 시간 줄과 말풍선 묶음(Muse 방식). 시간 줄은 말풍선마다 붙이지 않고 첫 말, 날짜가 바뀐 말,
- * 앞 말과 30분 넘게 벌어진 말 앞에만 가운데 한 줄로 띄운다. 같은 쪽 말이 2분 안에 바로 이어지면 한 묶음(간격 4, 붙은 쪽 모서리 6).
- */
 const STAMP_GAP_MS = 30 * 60 * 1000;
 const JOIN_MS = 2 * 60 * 1000;
 const clock = { at: null, day: null, side: null, el: null };
@@ -750,7 +667,6 @@ function stampFor(el, at) {
   if (!side) return;
   const day = new Date(at).toDateString();
   if (clock.at == null || day !== clock.day || at - clock.at > STAMP_GAP_MS) {
-    // 바로 앞이 지난 기록의 날짜 줄("오늘")이면 줄을 하나 더 두지 않고 그 줄을 시각으로 바꾼다.
     const prev = chat.thread.lastElementChild;
     if (prev?.classList.contains('sx-stamp') && !prev.dataset.stamp && new Date().toDateString() === day) prev.remove();
     chat.thread.append(h('div', { class: 'sx-stamp', 'data-stamp': String(at) }, museStamp(at)));
@@ -761,10 +677,6 @@ function stampFor(el, at) {
   Object.assign(clock, { at, day, side, el });
 }
 
-/**
- * 대화 줄 하나 붙이기. 지난 기록(scroll=false)은 시각을 모르니 날짜 줄만 쓰고, 지금 오가는 말에만 시간 줄을 붙인다.
- * 내가 보낸 말(mine)은 늘 맨 아래로 내린다. 앱의 말은 붙이기 전에 맨 아래 근처였을 때만 따라 내리고, 아니면 [새 답]을 띄운다(읽던 자리를 지킨다).
- */
 function appendThread(el, scroll = true, mine = false) {
   if (scroll) stampFor(el, Date.now());
   const follow = mine || nearEnd();
@@ -773,11 +685,9 @@ function appendThread(el, scroll = true, mine = false) {
   if (follow) scrollToEnd();
   else showNewReply();
 }
-/** 맨 아래에서 이 거리(px) 안이면 "끝에 있다"로 본다(새 말을 따라 내린다). */
 const FOLLOW_PX = 80;
 const nearEnd = () => !chat.scroll || chat.scroll.scrollHeight - chat.scroll.scrollTop - chat.scroll.clientHeight <= FOLLOW_PX;
 const showNewReply = () => chat.newReply && (chat.newReply.hidden = false);
-/** 맨 아래로. 단추로 내릴 때만 부드럽게(움직임 줄이기 설정이면 바로). */
 const scrollToEnd = (smooth = false) =>
   requestAnimationFrame(() => {
     if (chat.newReply) chat.newReply.hidden = true;
@@ -785,7 +695,6 @@ const scrollToEnd = (smooth = false) =>
     if (smooth && !matchMedia('(prefers-reduced-motion: reduce)').matches) chat.scroll.scrollTo({ top, behavior: 'smooth' });
     else chat.scroll.scrollTop = top;
   });
-/** 카드를 바꿔 그린 뒤: 그리기 전에 끝 근처였으면 따라 내리고, 아니면 [새 답]. */
 const followEnd = (wasNear) => {
   if (wasNear) scrollToEnd();
   else showNewReply();
@@ -794,16 +703,13 @@ const followEnd = (wasNear) => {
 function autoGrow() {
   const el = chat.input;
   el.style.height = 'auto';
-  // 승인 대기 중에는 예약 높이(3줄)까지만 늘어나고 넘치면 입력창 안에서 스크롤한다.
   const max = (state.barActive ? 3 : 6) * 24;
   el.style.height = `${Math.min(el.scrollHeight, max)}px`;
 }
 
-// 사람이 카드에서 할 일이 있는 동안에는 요청 칩을 숨긴다(카드 버튼에서 시선을 뺏지 않게, 캔버스 M-01).
 const BUSY = ['draft', 'preparing', 'turn', 'waiting', 'issuing', 'attention'];
 const cardWork = () => [...state.runs.values()].some((r) => BUSY.includes(r.status)) || [...state.g24.values()].some((g) => g.stage === 'guide' || g.stage === 'pick');
 
-/** 많이 쓴 요청 2개. 데모는 빠른 실행 목록의 앞 둘이다(실제로는 활동 기록에서 센다). 누르면 바로 보낸다. */
 function prompts() {
   return state.boot.quick
     .filter((q) => !q.soon)
@@ -814,7 +720,6 @@ function prompts() {
     });
 }
 
-/** 거래처별 최근 발급 금액(이번 대화의 완료 실행 → 지난 기록 순). 없으면 null. */
 function lastAmount(name) {
   const run = [...state.runs.values()].reverse().find((r) => r.status === 'done' && r.counterparty.name === name);
   if (run) return run.amount;
@@ -823,7 +728,6 @@ function lastAmount(name) {
 }
 const won = (n) => (n % 10000 === 0 ? `${n / 10000}만원` : `${num(n)}원`);
 
-/** 되묻기 칩을 채우기 칩으로: 거래처를 물으면 최근 금액을 붙인다("A상사 300만원"). 누르면 입력창에만 채운다. */
 function fillChips(chips) {
   return chips.map((c) => {
     const amt = lastAmount(c.label);
@@ -832,16 +736,13 @@ function fillChips(chips) {
 }
 
 function renderQuick() {
-  // 온보딩 중에는 빠른 실행 칩을 두지 않는다(맡긴 업무를 고른 뒤에 생긴다, 08 §4 O-06). 카드의 칩만 누른다.
   if (onbActive()) return chat.quick.replaceChildren();
   const text = chat.input.value;
-  // 입력 중에는 칩을 두지 않는다. 부가세는 작성 카드의 [별도|포함] 한 곳에서만 고른다(v2.0: 보내기 전 토글과 겹쳤다). 기본은 별도.
   if (!text.trim()) {
     state.vat = null;
     if (state.composing || state.agentAsk) {
       chat.quick.replaceChildren();
     } else if (state.fill.length) {
-      // 되묻기: 최근 보낸 곳. 점선·연필로 바로 보내는 칩과 구분한다.
       chat.quick.replaceChildren(...state.fill.map((c) => h('button', { type: 'button', class: 'is-fill', 'data-fill': c.cp, title: '입력창에 채우기', onclick: () => fillComposer(c.text) }, icon('pencil'), c.label)));
     } else if (!cardWork()) {
       chat.quick.replaceChildren(...prompts().map((p) => h('button', { type: 'button', class: 'is-prompt', 'data-prompt': p, onclick: () => sendPrompt(p) }, p, icon('send'))));
@@ -859,10 +760,6 @@ function sendPrompt(text) {
   send();
 }
 
-/**
- * [홈택스에서 준비]를 main이 받지 않은 이유(F-07). 결속(버튼 클릭이 실제 입력으로 안 보였다)과 상한(연달아 멈춤·분당 3번)을 나눠 말하고,
- * 상한은 main이 붙인 남은 초(throttled.streak:42)를 보인다. 모르는 코드는 null(공통 문장).
- */
 function prepareRefusal(c) {
   if (c === 'gesture_required') return '버튼 클릭을 확인하지 못했어요. [홈택스에서 준비]를 한 번 더 눌러 주세요.';
   const m = /^throttled\.(streak|rate):(\d{1,3})$/.exec(c);
@@ -870,7 +767,6 @@ function prepareRefusal(c) {
   return c === 'throttled' ? '조금 뒤에 다시 눌러 주세요.' : null;
 }
 
-/** 이 실행이 보관함에 남긴 발급 PDF 줄(#269 runId). 지금 목록에 없으면 한 번 다시 읽는다. */
 async function runDoc(run) {
   const find = () => state.docs.find((d) => d.runId === run.id);
   if (find()) return find();
@@ -882,7 +778,6 @@ async function runDoc(run) {
   return find() ?? null;
 }
 
-/** 되묻기의 [거래처 추가](F-02·F-03): 거래처 화면의 추가 폼(이름 채움). 저장하면 대화로 돌아와 그 이름을 채운다. */
 async function addCpFromAsk(name) {
   await go('cps');
   openPanel({ kind: 'cp-edit', id: null, name: String(name ?? ''), ask: true });
@@ -900,7 +795,6 @@ function fillComposer(text) {
 
 async function send() {
   const text = chat.input.value.trim();
-  // 앞 요청의 답을 기다리는 동안(시연 모델은 최대 4초) 새 요청은 입력창에 둔다(되묻기 순서가 꼬이지 않게).
   if (!text || state.sending) return;
   const vat = state.vat;
   chat.input.value = '';
@@ -908,7 +802,6 @@ async function send() {
   state.fill = [];
   state.composing = false;
   state.agentAsk = false;
-  // 새 문장을 보냈으면 앞 답의 [다시 시도]·되묻기 칩은 지난 것이다(눌러도 앞 문장을 다시 보내지 않게)
   for (const b of chat.thread.querySelectorAll('[data-act="intent-retry"], [data-agent-chip]')) b.disabled = true;
   autoGrow();
   renderQuick();
@@ -918,10 +811,8 @@ async function send() {
   await ask(text, vat);
 }
 
-/** 판정이 고른 반응 허용 목록(ADR-057, @sax/chat-core REACTIONS와 같다). 이름 밖의 값은 그리지 않는다. */
 const REACTION_EMOJI = { thumbs_up: '👍', eyes: '👀', check: '✅', pray: '🙏' };
 const REACTION_LABEL = { thumbs_up: '좋아요', eyes: '보고 있어요', check: '확인', pray: '감사해요' };
-/** 사용자 말풍선 아래 귀퉁이에 반응 알약을 단다. 같은 말에 또 오면 바꾼다(하나만). */
 function reactTo(el, reaction) {
   if (!el?.isConnected || !Object.hasOwn(REACTION_EMOJI, reaction)) return;
   el.querySelector(':scope > .sx-react')?.remove();
@@ -930,14 +821,9 @@ function reactTo(el, reaction) {
   el.append(h('span', { class: 'sx-react', role: 'img', 'aria-label': REACTION_LABEL[reaction] }, REACTION_EMOJI[reaction]));
 }
 
-/**
- * 요청 하나를 main에 보내고 답을 그린다. 모델에 닿지 못하면(kind 'unavailable') 의도를 대신 고르지 않고
- * 연결 안 됨 문장과 [다시 시도]를 보인다(정규식 대체 없음, 사용자 결정 2026-11-10). [다시 시도]는 같은 문장·부가세로 다시 보낸다.
- */
 async function ask(text, vat) {
   let r;
   state.sending = true;
-  // 답을 기다리는 동안 Muse처럼 앱 말풍선 안 점 세 개. 단계 문장은 화면 읽기 프로그램에만 읽힌다.
   const waitEl = h('div', { class: 'sx-app sx-typing', role: 'status', 'aria-label': PROGRESS_TEXT.thinking, 'data-agent-progress': 'thinking' }, h('i'), h('i'), h('i'));
   state.waitEl = waitEl;
   const waitTimer = setTimeout(() => waitEl.isConnected || appendThread(waitEl), 180);
@@ -955,7 +841,6 @@ async function ask(text, vat) {
   if (r.kind === 'unavailable') {
     const box = h('div', { class: 'sx-app', 'data-intent-unavailable': '' }, h('p', {}, r.text));
     appendThread(box);
-    // [다시 시도]는 다시 보내서 나아질 때만(연결 안 됨·잠시 뒤). 한도·비밀 값·긴 문장은 문장만.
     if (r.retry === false) return;
     const retry = btn(
       '다시 시도',
@@ -970,7 +855,6 @@ async function ask(text, vat) {
     box.append(h('div', { class: 'sx-actions' }, retry));
     return;
   }
-  // 발급에 필요한 등록이 빠졌다(main이 카드를 만들기 전에 막았다): 무엇이 빠졌는지와 그 단계를 다시 여는 버튼
   if (r.kind === 'setup') {
     const box = h('div', { class: 'sx-app', 'data-setup-needed': r.missing.map((m) => m.id).join(' ') }, h('p', {}, r.text));
     box.append(h('div', { class: 'sx-actions' }, ...r.missing.map((m, i) => btn(m.label, () => reopenSetup(m.id), i ? '' : 'sx-btn-primary', { 'data-act': `setup-${m.id}` }))));
@@ -978,24 +862,19 @@ async function ask(text, vat) {
     return;
   }
   if (r.kind === 'agent') return renderAgent(r);
-  // 반응만(ADR-057): 답 말풍선 없이 내 말에 이모지 하나. 점 셋은 위 finally에서 이미 거뒀다.
   if (r.kind === 'reaction') return void reactTo(state.lastMe, r.reaction);
-  // 세무사 꾸러미 요청: main이 그 달 꾸러미를 만들었다. 카드의 [꾸러미 열기]는 같은 달 꾸러미 화면으로 간다.
   if (r.kind === 'pack') {
     appendThread(h('div', { class: 'sx-app', 'data-pack-reply': r.pack.month }, h('p', {}, `${r.pack.label} 세무사 꾸러미를 만들었어요.`), packUi.chatCard(r.pack, (m) => (packUi.select(m), go('bundle')))));
     return;
   }
-  // 대화 짧은 응대(main이 엔진 chat.respond로 받은 답): 글자는 텍스트 노드로만. 제안 작업 칩은 입력창을 채울 뿐이다(보내고 확인 카드를 거쳐야 시작).
   if (r.kind === 'chat') {
     const box = h('div', { class: 'sx-app', 'data-chat-reply': r.filtered ?? '' }, h('p', {}, r.text));
     if (r.suggest?.length) box.append(h('div', { class: 'sx-actions' }, ...r.suggest.map((c) => btn(c.label, () => fillComposer(c.text), '', { 'data-chat-suggest': c.playbook }))));
     appendThread(box);
     return;
   }
-  // 세무 질문이 섞인 요청: 작업은 하고 고정 문구만 보인다(D04 §3). 문구는 main이 정한 고정 값이다.
   if (r.note) appendThread(h('div', { class: 'sx-app sx-meta', 'data-advice-note': '' }, r.note));
   if (r.kind === 'draft') {
-    // 작성 카드는 대화에 있다. 같은 내용을 패널에 또 열지 않는다(v2.0). 패널은 카드를 누르거나 실행이 시작되면 열린다.
     if (r.text) appendThread(h('div', { class: 'sx-app', 'data-cert-reply': r.run.cert?.code ?? '' }, r.text));
     putRun(r.run);
   } else if (r.kind === 'g24') {
@@ -1007,22 +886,18 @@ async function ask(text, vat) {
     renderG24(g);
   } else {
     const box = h('div', { class: 'sx-app' }, r.text);
-    // 거래처가 없거나 장부에 없는 이름(F-02·F-03): [거래처 추가]는 거래처 화면의 추가 폼을 그 이름으로 연다. 추가하면 대화로 돌아와 그 이름을 입력창에 채운다(되묻기를 잇는다).
     if (r.addCp) box.append(h('div', { class: 'sx-actions' }, btn('거래처 추가', () => addCpFromAsk(r.addCp.name), 'sx-btn-primary', { 'data-act': 'ask-cp-add' })));
     appendThread(box);
-    // 되물은 답 후보는 입력창 위 채우기 칩으로 둔다(캔버스 M-01 되묻기).
     state.fill = r.chips?.length ? fillChips(r.chips) : [];
     renderQuick();
   }
 }
 
-/** 대화 에이전트 진행 단계 글자(main 'chat-progress' 이벤트). 값·문장은 오지 않는다. */
 const PROGRESS_TEXT = { thinking: '말씀을 읽고 있어요…', reading: '기록을 찾아보고 있어요…', drafting: '카드를 만들고 있어요…' };
 const AGENT_TABLE_ROWS = 10;
 
 const MAIL_TEXT = { sent: '메일 보냄', unconfirmed: '메일 확인 못 함' };
 
-/** 발급 행 끝 두 칸: 원장 승인번호와 메일 상태(두 줄), 문서함 PDF. 없는 것은 비운다. */
 function agentIssued(x) {
   return [
     h(
@@ -1035,11 +910,9 @@ function agentIssued(x) {
   ];
 }
 
-/** 결과 표(매출·발급 기록·받을 돈·낼 돈·돈 흐름): 제목에 건수·합계(main이 슬롯과 같은 집계로 낸 것), 행은 최근부터 10개. 글자는 텍스트 노드로만. */
 function agentTable(t) {
   const md = (d) => `${Number(d.slice(5, 7))}월 ${Number(d.slice(8, 10))}일`;
   const rows = t.rows.slice(0, AGENT_TABLE_ROWS);
-  // 승인번호·PDF·메일 칸은 발급한 세금계산서 표에만(받을 돈·낼 돈·돈 흐름 표에는 없다)
   const issued = t.table === 'sales' || t.table === 'history';
   return h(
     'div',
@@ -1052,20 +925,13 @@ function agentTable(t) {
   );
 }
 
-/**
- * 대화 에이전트 답(main AgentChat): 문장, 결과 표, 카드, 되묻기 칩. 문장·표 글자는 텍스트 노드로만 그린다.
- * 되묻기 칩은 누르면 그 문장을 바로 보낸다. 카드는 지금 실행 값이고 발급은 카드의 [홈택스에서 준비]와 승인 카드로만 한다.
- */
 function renderAgent(r) {
   const box = h('div', { class: 'sx-app', 'data-agent-reply': r.filtered ?? '' }, h('p', {}, r.text));
   for (const x of r.show) if (x.type === 'table') box.append(agentTable(x));
   if (r.setup?.length) box.append(replyOptions(r.setup.map((m) => ({ label: m.label, onPick: () => reopenSetup(m.id), act: `setup-${m.id}`, lock: false }))));
-  // 사장님이 쓴 거래처 이름이 장부에 없다(U8-1): 그 이름으로 거래처 추가 폼을 연다. 저장하면 대화로 돌아와 그 이름을 입력창에 채운다.
   if (r.unknown) box.append(h('p', { class: 'sx-meta', 'data-unknown-name': r.unknown.name }, r.unknown.text), replyOptions([{ label: `${r.unknown.name}을(를) 거래처로 추가`, onPick: () => addCpFromAsk(r.unknown.name), act: 'ask-cp-add', lock: false }]));
   if (r.ask) {
-    // 되묻기의 답은 말풍선 아래 답 후보 줄로(누르면 그 말을 내 말로 보낸다). 다른 답이면 입력창에 쓰면 된다.
     const opts = r.ask.chips.map((c) => ({ label: c.label, onPick: () => sendPrompt(c.text), attrs: { 'data-agent-chip': r.ask.kind } }));
-    // 거래처를 물을 때는 장부에 없는 이름일 수 있다: [거래처 추가]는 거래처 화면의 추가 폼을 연다(이름을 이미 안내했으면 그쪽 줄 하나만)
     if (r.ask.kind === 'counterparty' && !r.unknown) opts.push({ label: '새 거래처 추가', onPick: () => addCpFromAsk(''), act: 'ask-cp-add', lock: false });
     if (opts.length) box.append(replyOptions(opts));
   }
@@ -1081,7 +947,6 @@ async function handoffCall(method, id) {
     putRun(await call(method, { id }));
   } catch (e) {
     const c = errText(e);
-    // 엔진이 거절한 코드({ok:false, code})는 사람 말로(#278). 서명 차례의 [직접 발급함]은 화면에 없지만 오면 같은 문장.
     toast(
       c === 'gesture_required'
         ? '버튼을 직접 눌러 주세요.'
@@ -1098,10 +963,6 @@ async function handoffCall(method, id) {
   }
 }
 
-/**
- * 핸드오프 띠(D01 실행 뷰, v2.0 구조 감사 H3): 사람이 필요한 실행의 카드가 대화 화면 밖에 있을 때만 대화 열 위에 한 줄.
- * 카드가 보이면 숨긴다(카드가 같은 할 일과 단추를 보인다). 누르면 그 카드로 스크롤할 뿐이다. 승인 버튼은 없다.
- */
 let handoffSeen = null;
 function renderHandoff() {
   if (!chat.handoff) return;
@@ -1110,7 +971,6 @@ function renderHandoff() {
   const r = [...state.runs.values()].find((x) => x.status === 'turn' && x.handoff);
   const cardOf = () => (r ? chat.thread.querySelector(`[data-run="${CSS.escape(r.id)}"]`) : null);
   const el = cardOf();
-  // 같은 카드를 다시 보는 경우에는 띠를 먼저 숨기지 않는다(한 프레임 깜박임·화면 읽기 프로그램의 다시 읽기 방지).
   if (!el || chat.handoff.dataset.card !== r.id) chat.handoff.hidden = true;
   chat.handoff.dataset.card = r?.id ?? '';
   if (!el) return chat.handoff.replaceChildren();
@@ -1118,7 +978,6 @@ function renderHandoff() {
     h('span', { class: 'sx-handoff-text' }, `지금 사람이 필요해요 · ${runTitle(r)}`),
     h('button', { type: 'button', class: 'sx-btn sx-btn-quiet', 'data-act': 'handoff-go', onclick: () => cardOf()?.scrollIntoView({ block: 'center' }) }, '카드로 가기'),
   );
-  // 카드의 절반 이상이 대화 스크롤 안에 보이면 띠를 숨긴다. 카드가 다시 그려져 바뀌었으면(다른 카드 편집 등) 새 카드를 본다.
   handoffSeen = new IntersectionObserver(
     (entries) => {
       const e = entries[entries.length - 1];
@@ -1150,7 +1009,6 @@ function putRun(run) {
 function renderRun(run) {
   const wasNear = nearEnd();
   const cardAct = { ...act, editing: state.editing, editingFields: state.editingFields, editingFocus: state.editingFocus, draftErr: state.draftErr, editingCp: state.editingCp, counterparties: state.cps, draftMore: state.draftMore, toggleDraftMore: (id, open) => (open ? state.draftMore.add(id) : state.draftMore.delete(id)), stepsOpen: state.stepsOpen, toggleSteps: (id, open) => (open ? state.stepsOpen.add(id) : state.stepsOpen.delete(id)) };
-  // 여러 건 묶음은 한 카드(data-batch)로 그린다. 건은 지금 받은 값(run)과 들고 있는 나머지 건을 순번대로.
   if (run.batch) {
     const mates = [...state.runs.values()].filter((x) => x.batch?.id === run.batch.id && x.id !== run.id);
     const all = [...mates, run].sort((a, b) => a.batch.index - b.batch.index);
@@ -1166,7 +1024,6 @@ function renderRun(run) {
   if (old) old.replaceWith(el);
   else appendThread(el);
   if (old && (chat.thread.lastElementChild === el || run.status === 'waiting')) followEnd(wasNear);
-  // 카드만 다시 그려도 띠가 새 카드를 본다(화면 밖 옛 카드에 관찰자가 남아 띠가 카드와 함께 보이던 것).
   renderHandoff();
 }
 
@@ -1180,14 +1037,8 @@ function renderG24(g) {
   renderQuick();
 }
 
-/**
- * 이번 달 할 일(08 M-02, ADR-033): 대화 열 맨 위에는 한 줄 요약만 둔다(대화를 가리지 않는다, v2.0 2026-11-14).
- * 줄을 누르면 작업 패널에 main이 계산한 카드 4종(기한 순) 목록이 열린다(boardPanel).
- * 판 항목에는 승인 버튼이 없다. 누르면 그 작업 카드·서류·화면으로 옮기거나 입력창에 요청을 채울 뿐이다(보내기는 사람이 한다).
- */
 function renderToday() {
   if (!chat.today) return;
-  // 온보딩 중에는 판을 두지 않는다(대화가 한 번에 하나씩 묻는다). 끝나면 건너뛴 항목이 판의 할 일로 남는다(08 §4).
   chat.today.hidden = onbActive();
   if (onbActive()) return;
   const b = state.board;
@@ -1217,7 +1068,6 @@ function renderToday() {
 
 const boardMonth = () => (state.board ? `${Number(state.board.month.slice(5, 7))}월` : '이번 달');
 
-/** 작업 패널의 할 일 목록: 등록 할 일 줄 + 항목이 있는 카드만(상자 없이 묶음 제목과 줄). */
 function boardPanel() {
   const b = state.board;
   const setup = b?.setup ?? [];
@@ -1233,7 +1083,6 @@ function boardPanel() {
   );
 }
 
-/** 판 카드 하나(제목 + 항목 줄). 한 카드에 세 줄까지, 넘치면 "n건 더 보기"로 그 자리에서 펼친다(줄마다 갈 곳이 달라 다른 화면으로 보내지 않는다). */
 function boardCard(c) {
   const MAX = 3;
   const open = state.boardExpanded.has(c.kind);
@@ -1267,14 +1116,12 @@ function boardRow(it) {
   );
 }
 
-/** 기한 글자: D-n · 오늘 · n일 지남. 7일 안이거나 지났으면 황토. */
 function dueText(due) {
   const n = dday(due, state.today);
   if (n === null) return null;
   return { text: n === 0 ? '오늘' : n > 0 ? `D-${n}` : `${-n}일 지남`, soon: n <= 7 };
 }
 
-/** 판 항목의 갈 곳. 실행은 작업 패널로, 서류는 문서함 패널로, 요청은 입력창에 채우기만, 화면은 그 화면으로. */
 async function boardGo(t) {
   if (t.to === 'run') {
     if (state.view !== 'chat') await go('chat');
@@ -1293,19 +1140,12 @@ async function boardGo(t) {
   }
 }
 
-// ---- 작업 패널 ----
-
-/**
- * InDoubt 실행 패널(직접 확인 안내)을 열고 닫을 때 main에 알린다. main은 증언 요청이 무장돼 있으면 그동안만 승인 바 자리에
- * 황토색 확인 바를 띄운다(ADR-021 결정 5). 렌더러는 띄울지 정하지 않고, 확인 결과도 보내지 않는다(바 클릭으로만 받는다).
- */
 let incidentId = null;
 function syncIncident(p) {
   const next = p?.kind === 'run' && state.runs.get(p.id)?.inDoubt ? p.id : null;
   if (next === incidentId) return;
   if (incidentId) void call('incident.close', { id: incidentId }).catch(() => {});
   incidentId = next;
-  // 열기가 실패하면(실제 입력 없이 열린 패널 → gesture_required) 연 것으로 두지 않는다(F-16): 같은 카드를 다시 누르면 다시 연다
   if (next)
     void call('incident.open', { id: next }).catch(() => {
       if (incidentId === next) incidentId = null;
@@ -1314,7 +1154,6 @@ function syncIncident(p) {
 
 function openPanel(p) {
   syncIncident(p);
-  // 패널을 닫거나 다른 서류로 옮기면 확인 구역의 입력을 버린다(다시 열었을 때 버린 수정이 되살아나 보내지지 않게)
   if (!(p?.kind === 'doc' && p.id === state.docDraft?.id)) state.docDraft = null;
   state.panel = p;
   $('#app').classList.toggle('panel-closed', !p);
@@ -1322,17 +1161,11 @@ function openPanel(p) {
   renderPanel();
 }
 
-/** CDP 수정 키 비트(Alt 1, Ctrl 2, Meta 4, Shift 8). */
 const modBits = (e) => (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
-/** 패널에서 그대로 넘기는 특수 키(금고 SCREEN_KEYS와 같은 이름). 글자는 insertText로 간다. */
 const SCREEN_KEYS = new Set(['Enter', 'Backspace', 'Tab', 'Escape', 'Delete', 'ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
 const SCREEN_CMD_KEYS = new Set(['a', 'z', 'x', 'c']);
 const screenInput = (p) => call('browser.input', p).catch(() => {});
 
-/**
- * 앱 안 브라우저 조작(대표 지시 2026-11-13 "인앱브라우저에서 조작"): 중계 화면 위 마우스·휠은 프레임 기준 0~1 좌표로, 특수 키는 키로,
- * 글자는 한글 조합이 끝난 값만(insertText), 붙여넣기는 글자로 보낸다. 받는 칸은 화면 위의 보이지 않는 입력 칸(IME 조합용)이다.
- */
 function wireScreen(box, img, input) {
   const at = (e) => {
     const b = img.getBoundingClientRect();
@@ -1369,7 +1202,6 @@ function wireScreen(box, img, input) {
     if (e.isComposing || e.keyCode === 229) return;
     const mods = modBits(e);
     if ((e.metaKey || e.ctrlKey) && !e.altKey) {
-      // ⌘V·Ctrl+V는 paste 이벤트로, 편집 명령(전체 선택·되돌리기·잘라내기·복사)만 넘긴다
       if (SCREEN_CMD_KEYS.has(e.key.toLowerCase())) {
         e.preventDefault();
         void screenInput({ kind: 'key', key: e.key.toLowerCase(), modifiers: mods });
@@ -1394,23 +1226,17 @@ function wireScreen(box, img, input) {
   box.addEventListener('focusin', () => box.classList.add('is-focused'));
   box.addEventListener('focusout', () => box.classList.remove('is-focused'));
 }
-/** 사람 차례(main browser focus): 실행 패널을 열고 중계 화면에 입력 포커스. */
 function focusScreen() {
   const s = state.screen;
   if (!s) return;
   if (state.panel?.kind !== 'run' || state.panel.id !== s.runId) openPanel({ kind: 'run', id: s.runId });
   requestAnimationFrame(() => {
     const box = document.querySelector(`[data-run-screen="${CSS.escape(s.runId)}"]`);
-    // 브라우저(탭 줄·주소창·화면)는 패널 맨 위다: 패널을 맨 위로
     box?.closest('[data-browser-pane]')?.scrollIntoView({ block: 'start' });
     box?.querySelector('.run-screen-input')?.focus({ preventScroll: true });
   });
 }
 
-/**
- * 진행 화면(B3): main이 보낸 실행 탭 화면을 패널 자리에 그린다. 화면을 직접 눌러 조작한다(wireScreen).
- * 비밀 창이 열린 동안은 화면 대신 "비밀번호 입력 중"(금고가 중계·입력을 멈춘다). 프레임은 패널을 다시 그리지 않고 그림만 바꾼다.
- */
 function paintScreen() {
   const s = state.screen;
   const box = s ? document.querySelector(`[data-run-screen="${CSS.escape(s.runId)}"]`) : null;
@@ -1425,7 +1251,6 @@ function paintScreen() {
   if (s.gone) mark('gone', '연결 끊김');
   else if (s.paused) mark('paused', '비밀번호 입력 중');
   else if (s.frame || (state.browser.embedded && s.url)) mark('live', '직접 조작');
-  // 앱 안 브라우저: 이 칸 위에 main이 실제 보기를 둔다. 그림·입력 중계가 없다(사람이 보기를 직접 누른다).
   if (state.browser.embedded) {
     box.dataset.state = s.gone ? 'gone' : s.paused ? 'paused' : 'live';
     if (s.gone) box.replaceChildren(h('p', { class: 'sx-meta' }, '연결 끊김 · 브라우저가 닫혔어요'));
@@ -1459,9 +1284,7 @@ function renderPanel() {
   if (!p) return el.replaceChildren();
   if (p.kind === 'run') {
     const run = state.runs.get(p.id);
-    // 앱 안 브라우저(실행 중일 때): 패널 맨 위에 탭·주소창·화면, 그 아래 작업 내용
     const pane = run ? browserPane(run, state.screen?.runId === run.id ? (state.screen.url ?? '') : '', state.browser.shown, act) : null;
-    // 브라우저가 떠 있으면 그 아래는 진행 한 덩어리(runDock)이고, 값·단계 목록은 [자세히]로 펼친다(11-18 다듬기).
     const detail = run ? runPanel(run, act) : h('div');
     el.replaceChildren(...(pane ? [pane, runDock(run, detail, state.dockOpen, (o) => (state.dockOpen = o))] : [detail]));
     paintScreen();
@@ -1484,7 +1307,6 @@ function renderPanel() {
   }
 }
 
-/** 레일 화면 머리의 "승인 대기" 줄. 바 바로 옆에 렌더러 버튼을 두지 않으려고 화면 위쪽에 둔다. */
 const waitingChip = () => {
   const r = [...state.runs.values()].find((x) => x.status === 'waiting');
   return h('button', { type: 'button', class: 'sx-btn sx-btn-quiet rs-waiting', onclick: () => go('chat') }, r ? `${runTitle(r)} 승인 대기 · 대화로 가기` : '승인 대기 · 대화로 가기');
@@ -1492,7 +1314,6 @@ const waitingChip = () => {
 
 const panelHead = (title, ...extra) => h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, title), ...extra, h('button', { type: 'button', class: 'panel-x', 'aria-label': '패널 닫기', onclick: act.closePanel }, icon('close')));
 
-/** 레일 화면 머리(캔버스 D-01·D-02): 제목 · 건수 · 오른쪽 버튼, 승인 대기 중이면 대화로 가는 줄. */
 const railHead = (title, meta, ...right) =>
   h(
     'div',
@@ -1503,13 +1324,10 @@ const railHead = (title, meta, ...right) =>
     h('div', { class: 'rs-right' }, waitingChip(), ...right),
   );
 
-/** 목록 표: 테두리 상자 안 표(좌우로 밀지 않고 좁으면 값을 줄바꿈). cols = [이름, 'num'이면 오른쪽 정렬]. */
 const listTable = (cols, rows) =>
   h('div', { class: 'list-box' }, h('table', { class: 'list' }, h('thead', {}, h('tr', {}, cols.map(([t, cls]) => h('th', { class: cls ?? null }, t)))), h('tbody', {}, rows)));
 
 const shortDate = (s) => (s && /^\d{4}-\d\d-\d\d$/.test(s) ? s.slice(5) : s);
-
-// ---- 레일 화면 ----
 
 const DOC_FILTERS = [
   ['all', '전체'],
@@ -1518,19 +1336,13 @@ const DOC_FILTERS = [
   ['soon', '만료 임박'],
 ];
 
-/** 문서함에 보이는 발급 기록 상태(원장 기준, run-history.ts PastKind). 발급된 건은 승인번호·메일·[PDF], 확인 필요는 상태 글자. */
 const ISSUED_SHOWN = 10;
 const ISSUED_STATE = { issued: ['발급됨', ''], unsure: ['확인 필요', 'is-attention'] };
-/**
- * 문서함 맨 위: 발급한 세금계산서 한 줄씩(B5). 날짜 · 거래처 · 금액 · 승인번호 · 메일 · [PDF].
- * 발급 안 된 시도는 활동 기록에만 둔다(접힌 한 줄). 발급됐는지 모르는 건(확인 필요)은 다시 발급하지 않게 여기 남긴다.
- */
 function issuedSection() {
   const all = (state.issued ?? []).filter((x) => x.kind === 'issued' || x.kind === 'unsure');
   const tried = (state.issued?.length ?? 0) - all.length;
   const triedLine = tried ? h('div', { class: 'issued-tried', 'data-issued-tried': String(tried) }, btn(`발급 안 된 시도 ${tried}건 · 활동 기록에서 보기`, () => go('activity'), 'sx-btn-quiet', { 'data-act': 'issued-tried' })) : null;
   if (!all.length) return triedLine;
-  // 최근 10건, 나머지는 [모두 보기](부장 지시 2026-11-14)
   const rows = state.issuedAll ? all : all.slice(0, ISSUED_SHOWN);
   const done = all.filter((x) => x.kind === 'issued').length;
   const unsure = all.filter((x) => x.kind === 'unsure').length;
@@ -1567,13 +1379,11 @@ function docsView() {
     const n = dday(d.expiresOn, state.today);
     return n !== null && n <= 7;
   };
-  // 앱이 발급한 세금계산서는 위의 발급 기록(원장)에 한 번만 보인다(서류 표에 같은 건이 두 번 나오던 것, v2.0).
   const withIssued = f === 'all' || f === 'tax';
   const list = state.docs
     .filter((d) => f === 'all' || (f === 'tax' && d.kind === '세금계산서') || (f === 'cert' && d.kind !== '세금계산서') || (f === 'soon' && n7(d)))
     .filter((d) => !(withIssued && d.kind === '세금계산서' && d.source === '앱이 발급'))
     .map((d) => ({ d, n: dday(d.expiresOn, state.today) }))
-    // 확인 필요는 맨 위, 다음 만료 7일 이내, 나머지는 최근 발급순(발급일이 비면 맨 뒤).
     .sort((a, b) => Number(!!b.d.vault?.needsUser) - Number(!!a.d.vault?.needsUser) || Number(b.n !== null && b.n <= 7) - Number(a.n !== null && a.n <= 7) || (b.d.issuedOn ?? '').localeCompare(a.d.issuedOn ?? ''));
   const check = state.docs.filter((d) => d.vault?.needsUser).length;
   const soon = state.docs.filter(n7).length;
@@ -1582,10 +1392,8 @@ function docsView() {
   return h(
     'section',
     { class: 'rail-screen', 'data-view': 'docs' },
-    // 서류가 하나도 없으면 머리에는 제목만 두고 거르기도 숨긴다(빈 화면 가운데 [PDF 가져오기] 하나).
     !state.docs.length && !(state.issued ?? []).length ? railHead('문서함', '', btn('세무사 꾸러미', () => go('bundle'), 'sx-btn-quiet', { 'data-act': 'go-bundle' }), btn('활동 기록', () => go('activity'), 'sx-btn-quiet', { 'data-act': 'go-activity' })) :
     railHead('문서함', meta, btn('세무사 꾸러미', () => go('bundle'), 'sx-btn-quiet', { 'data-act': 'go-bundle' }), btn('활동 기록', () => go('activity'), 'sx-btn-quiet', { 'data-act': 'go-activity' }), btn(state.docBusy ? '읽는 중…' : 'PDF 가져오기', () => importDoc({ pick: true }), '', { 'data-act': 'doc-import', disabled: state.docBusy })),
-    // 거르기는 화면 전체에 걸리므로 맨 위에 둔다(전에는 발급 표 아래에 있어 그 표에는 안 걸리는 것처럼 보였다).
     state.docs.length || (state.issued ?? []).length ? h('div', { class: 'filters', role: 'group', 'aria-label': '서류 거르기' }, DOC_FILTERS.map(fb)) : null,
     withIssued ? issuedSection() : null,
     list.length || !withIssued ? listTable(
@@ -1593,10 +1401,8 @@ function docsView() {
       list.map(({ d }) =>
         h(
           'tr',
-          // 만료일 확실성(문서·추정·확인함)은 상세 패널 유효 칸에 보인다. 행에는 속성으로만 둔다(시험이 읽는다).
           { class: state.panel?.id === d.id ? 'is-on' : null, 'data-doc-row': d.id, 'data-expiry-tag': d.vault && d.expiresOn ? expiryTag(d) : null, onclick: () => openPanel({ kind: 'doc', id: d.id }) },
           h('td', { class: 'name' }, d.name, state.docLocked.has(d.id) ? lockMark() : null, d.profile === 'personal' ? h('span', { class: 'sx-tag doc-tag' }, '개인') : null, d.vault?.needsUser ? h('span', { class: 'doc-flag' }, '확인 필요') : null),
-          // 유효 열은 두지 않는다(캔버스 D-01). 만료 임박은 거르기·정렬과 상세 패널에 남는다.
           h('td', { class: d.issuedOn ? null : 'is-none' }, d.issuedOn ?? '—', d.issuedOn && agoText(d.issuedOn, state.today) ? h('span', { class: 'sx-meta doc-ago' }, agoText(d.issuedOn, state.today)) : null),
           h('td', { class: d.purpose ? null : 'is-none' }, d.purpose || '—'),
           h('td', { class: 'sx-meta' }, d.source),
@@ -1619,9 +1425,7 @@ function cpsView() {
   return h(
     'section',
     { class: 'rail-screen', 'data-view': 'cps' },
-    // 비어 있으면 머리의 건수·[거래처 추가]를 두지 않는다(빈 화면 가운데 단추 하나만).
     state.cps.length ? railHead('거래처', `${state.cps.length}곳${issued ? ` · 이번 달 발급 ${issued}곳` : ''}`, btn('거래처 추가', () => openPanel({ kind: 'cp-edit', id: null }), '', { 'data-act': 'cp-add' })) : railHead('거래처', ''),
-    // 온보딩 O-05에서 [거래처 화면에서 추가]로 왔다(F-12): 다 넣으면 대화로 돌아가 [다 했어요]를 누르게 띠 하나
     state.onb?.step === 'counterparties'
       ? h('div', { class: 'sx-note', 'data-onb-band': 'cps' }, h('div', {}, '거래처를 다 넣으면 대화로 돌아가 [다 했어요]를 눌러 주세요.'), btn('대화로 돌아가기', () => go('chat'), 'sx-btn-primary', { 'data-act': 'onb-back' }))
       : null,
@@ -1643,7 +1447,6 @@ function cpsView() {
   );
 }
 
-/** 거래처 상세(캔버스 D-02 오른쪽): 값 → 발급 이력 → 버튼 → 출처. 실행은 대화로 넘긴다. */
 function cpPanel(c) {
   const history = state.docs.filter((d) => d.kind === '세금계산서' && d.name === `세금계산서 · ${c.name}`).sort((a, b) => (b.issuedOn ?? '').localeCompare(a.issuedOn ?? ''));
   return h(
@@ -1667,18 +1470,14 @@ function cpPanel(c) {
       btn('세금계산서 발급', () => fillComposer(`${c.name}에 세금계산서 `), 'sx-btn-primary'),
       btn('수정', () => openPanel({ kind: 'cp-edit', id: c.id }), '', { 'data-act': 'cp-edit' }),
     ),
-    // 받을 돈(09 §3.6): 거래처 계좌(여러 개)·입금자 이름·결제 조건. 사업자 프로필만
     state.profile === 'business' ? bankUi.cpSection(c) : null,
     h('div', { class: 'sx-source' }, '거래처 장부 · 이 PC에만 있어요'),
   );
 }
 
 const CP_ERR = { bad_item_name: '품목 이름을 확인해 주세요', too_many_items: '저장 품목은 20개까지예요', invalid_biz_no: '사업자번호가 맞지 않아요(10자리, 검증 숫자)', duplicate_biz_no: '이미 있는 사업자번호예요', name_required: '상호를 넣어 주세요', invalid_email: '이메일 형식이 아니에요', unsupported: '이 모드에서는 바꿀 수 없어요', busy: '등록증을 읽는 중이에요', gesture_required: '버튼을 다시 눌러 주세요' };
-/** main이 거절한 까닭이 칸 하나의 것이면 그 칸 아래에 쓴다(나머지는 폼 끝 한 줄). */
 const CP_ERR_FIELD = { invalid_biz_no: 'bizNo', duplicate_biz_no: 'bizNo', name_required: 'name', invalid_email: 'email', bad_item_name: 'item', too_many_items: 'item' };
 
-/** 거래처 추가·수정. 사업자번호는 추가할 때만 넣는다(수정은 상호·대표자·이메일·품목). [저장 품목]은 저장 품목 목록의 첫 품목이다(#144). */
-/** add: 새 거래처 폼의 채움(name)과 되묻기에서 왔는지(ask: 저장하면 대화로 돌아가 이름을 채운다). */
 function cpEditPanel(c, add = null) {
   const inputs = {
     name: textInput({ name: 'name', value: c?.name ?? add?.name, max: LIMITS.name, required: '상호를 넣어 주세요.', compact: true }),
@@ -1690,9 +1489,7 @@ function cpEditPanel(c, add = null) {
   const cancel = () => openPanel(c ? { kind: 'cp', id: c.id } : null);
   let saving = false;
   let reading = false;
-  /** 이 폼에서 읽은 등록증의 표(main이 든 주소를 이 폼의 저장에만 붙인다). */
   let certHold = null;
-  // 등록증 읽기·저장 결과는 토스트 대신 폼 안 한 줄 글(대표 2026-11-13). 칸 하나의 틀림은 그 칸 아래. 칸을 고치면 내린다.
   const msg = h('p', { class: 'form-msg', role: 'status', 'data-cp-msg': '', hidden: true });
   const say = (text, bad) => {
     msg.textContent = text;
@@ -1700,7 +1497,6 @@ function cpEditPanel(c, add = null) {
     msg.dataset.cpMsg = bad ? 'bad' : 'ok';
     msg.hidden = false;
   };
-  // [등록증으로 채우기](M4-3 O-05): main이 파일을 고르게 하고 후보만 돌려준다. 값은 입력 칸 value로만 넣는다(HTML로 그리지 않는다).
   const fillFromCert = async () => {
     if (reading) return;
     reading = true;
@@ -1714,7 +1510,6 @@ function cpEditPanel(c, add = null) {
       if (r.bizNo) form.elements.bizNo.value = fmtBiz(r.bizNo);
       if (r.rep) form.elements.rep.value = r.rep;
       certHold = r.hold ?? null;
-      // 등록증 종목은 저장 품목 후보로만(F-15). 이미 적어 둔 품목은 덮지 않는다. (elements.item은 컬렉션의 item() 메서드라 namedItem으로)
       const itemIn = form.elements.namedItem('item');
       const itemFilled = !!r.item && !!itemIn && !String(itemIn.value).trim();
       if (itemFilled) itemIn.value = r.item;
@@ -1738,14 +1533,12 @@ function cpEditPanel(c, add = null) {
         if (saving || !checkFields(form)) return;
         saving = true;
         const f = new FormData(form);
-        // 사업자번호는 숫자 10자리로 보낸다(main이 숫자만 남겨 검증한다). 수정 폼은 칸이 꺼져 있어 보내지 않는다(null).
         const no = f.get('bizNo');
         try {
           const r = await call('counterparty.save', { id: c?.id ?? null, name: f.get('name'), bizNo: no === null ? null : bizDigits(no), rep: f.get('rep'), email: f.get('email'), item: f.get('item'), certHold });
           state.cps = r.counterparties;
           const savedName = String(f.get('name') ?? '').trim();
           if (!c && add?.ask) {
-            // 되묻기에서 왔다: 대화로 돌아가 이 이름을 입력창에 채운다(보내면 되묻기를 잇는다)
             await go('chat');
             fillComposer(state.cps.find((x) => x.id === r.id)?.name ?? savedName);
             toast('거래처를 추가했어요. 보내면 이어서 발급할게요');
@@ -1775,7 +1568,6 @@ function cpEditPanel(c, add = null) {
   return h('div', { class: 'panel-in', 'data-panel-cp-edit': c?.id ?? 'new' }, panelHead(c ? `${c.name} 수정` : '거래처 추가'), form, h('div', { class: 'sx-source' }, '이 PC 거래처 장부에만 저장해요'));
 }
 
-/** 내 사업장 사업자 카드(shell-biz.js): 보기 / [수정] 폼. 편집 중 값은 state.bizEdit에 둔다(다시 그려도 남는다). */
 function bizCard() {
   const b = state.boot.profiles.business;
   return bizProfileCard({
@@ -1797,7 +1589,6 @@ function bizCard() {
       state.boot.profiles = r.profiles;
       state.boot.profileEdits = r.edits;
       state.bizEdit = null;
-      // 제목줄(상호)·판·카드에 바로 반영
       render();
       renderTitlebar();
       renderToday();
@@ -1807,8 +1598,6 @@ function bizCard() {
   });
 }
 
-/** 내 사업장(캔버스 D-03): 사업자 프로필(보기·[수정]) · 개인 프로필 · 맡긴 업무. */
-/** 설정 안의 내 사업장: 내 사업장 화면의 본문 열을 설정 본문 자리에 둔다(화면 머리는 설정 항목 제목으로). */
 function bizBody() {
   const col = bizView().querySelector('.rs-col');
   col.classList.add('set-body');
@@ -1819,7 +1608,6 @@ function bizBody() {
 
 function bizView() {
   const p = state.boot.profiles;
-  // 저장된 개인 프로필이 없으면(제품) 내용 없는 "개인 · 개인" 카드를 그리지 않는다
   const personal = p.personal && !p.personal.placeholder ? p.personal : null;
   return h(
     'section',
@@ -1849,7 +1637,6 @@ function bizView() {
         'section',
         { class: 'rs-sec', 'aria-labelledby': 'biz-tasks' },
         h('h2', { class: 'sx-panel-sec', id: 'biz-tasks' }, '맡긴 업무'),
-        // 민원증명 버튼은 그 요청을 바로 보낸다(기본 용도·제출처로 시작, 사람은 승인 카드의 [승인]만). 세금계산서는 입력창을 채운다(거래처·금액을 말해야 한다).
         h('div', { class: 'sx-quick' }, state.boot.quick.filter((q) => !q.soon).map((q) => h('button', { type: 'button', 'data-quick-cert': q.cert ?? null, onclick: () => (q.cert ? sendPrompt(q.text) : fillComposer(q.text)) }, q.label))),
         h('p', { class: 'sx-meta' }, '입력창 위 빠른 실행에 이 순서로 보여요.'),
       ),
@@ -1857,7 +1644,6 @@ function bizView() {
   );
 }
 
-/** 지난 실행 종류(main run-history.ts PastKind) → 칩 상태와 결과 칸 글자. */
 const PAST = {
   issued: { status: 'done', result: '완료', hometax: '전자세금계산서 1건 발급 · 발급목록에서 확인' },
   unsure: { status: 'attention', result: '확인 필요', hometax: '발급됐는지 확인하지 못함' },
@@ -1865,7 +1651,6 @@ const PAST = {
   stopped_before_gate: { status: 'stopped', result: '승인 전에 멈춤', hometax: '발급하지 않음(승인 전에 앱이 꺼짐)' },
 };
 
-/** 활동 기록 행: 이번 기동의 실행(세금계산서·정부24)·사업장 수정 + 지난 실행(main이 준 이력). 새것이 위. 같은 실행은 이번 기동 메모리 쪽이 이긴다. */
 function activityRows() {
   const today = `${String(state.today.getMonth() + 1).padStart(2, '0')}-${String(state.today.getDate()).padStart(2, '0')}`;
   const rows = [];
@@ -1877,7 +1662,6 @@ function activityRows() {
     const result = { guide: '내 차례', pick: '내 차례', saved: '문서함에 넣음', stopped: '그만둠' }[g.stage];
     rows.push({ id: g.id, g24: g, at: `${today} ${g.startedAt}`, what: `${g.doc} · 정부24`, profile: '개인', portal: '정부24 · 직접', status: { guide: 'turn', pick: 'turn', saved: 'done', stopped: 'stopped' }[g.stage], result });
   }
-  // 내 사업장 고친 기록(칸 이름만, 값 없음). 새것이 위.
   const LABEL = { name: '상호', bizNo: '사업자번호', rep: '대표자', bizType: '업태', bizItem: '종목', address: '주소', email: '이메일' };
   for (const [i, e] of [...(state.boot.profileEdits ?? []).entries()].reverse()) {
     const d = new Date(e.at);
@@ -1909,7 +1693,6 @@ function activityView() {
               h('td', {}, r.profile),
               h('td', {}, r.portal),
               h('td', { class: r.status === 'attention' ? 'is-attention' : r.status === 'stopped' ? 'is-muted' : null }, r.result),
-              // 지난 실행은 무엇을 보냈는지 남기지 않았다(모른다). "안 함"으로 단정하지 않는다.
               modelCell(r.run?.sent ?? r.g24?.sent) ? h('td', {}, modelCell(r.run?.sent ?? r.g24?.sent)) : h('td', { class: 'is-muted' }, r.past ? '—' : '안 함'),
             ),
           ),
@@ -1918,7 +1701,6 @@ function activityView() {
   );
 }
 
-/** 활동 기록 상세(캔버스 S-01 오른쪽): 값 → 어디로 무엇이 갔나요 → 실행 단계. */
 function activityPanel(row) {
   const r = row.run;
   const where = r?.result
@@ -1932,19 +1714,16 @@ function activityPanel(row) {
         ]
       : row.edit
         ? [
-            // 상태조회(checkBizNo)는 제품에서 아직 보내지 않는다(조회 못 함 → [맞습니다]). 프록시가 붙으면 여기도 바꾼다.
             ['저장', `이 PC 내 사업장 정보 · 고친 칸 ${row.edit.fields.length}개(값은 기록하지 않아요)`],
             ['AI', '쓰지 않음'],
             serverRow([]),
           ]
         : row.past
         ? [
-            // 지난 실행은 메일·모델·우리 서버로 무엇이 갔는지 남기지 않았다. 아는 것만 적는다.
             ['홈택스', PAST[row.past.kind].hometax],
             row.past.documentId ? ['보관', '이 PC 문서함'] : null,
           ]
         : [
-            // 확인 필요는 안 됨·모름·됨(중복 위험)이 섞여 있다. 여기서 단정하지 않고 위 안내(stoppedNote)를 따른다.
             ['홈택스', r.status === 'stopped' ? '발급하지 않음' : r.status === 'attention' ? '확인 필요 · 위 안내를 봐 주세요' : '진행 중'],
             modelRow(r.sent),
             serverRow(r.sent),
@@ -1952,7 +1731,6 @@ function activityPanel(row) {
   return h(
     'div',
     { class: 'panel-in', 'data-panel-act': row.id },
-    // 지난 실행은 칩도 표의 결과 칸과 같은 말(승인 전에 멈춤·발급 안 함…)
     panelHead(row.what, chip(row.status, row.past ? row.result : undefined)),
     kv([
       ['시각', row.at],
@@ -1961,7 +1739,6 @@ function activityPanel(row) {
       r?.result ? ['승인번호', r.result.approvalNo, { mono: true }] : row.past?.approvalNo ? ['승인번호', row.past.approvalNo, { mono: true, copy: () => act.copy(row.past.approvalNo) }] : null,
       row.past?.total != null ? ['합계', `${num(row.past.total)}원 (공급가액 ${num(row.past.supply)} + 세액 ${num(row.past.tax)})`] : null,
     ]),
-    // 멈춘 까닭과 지난 기록 메모가 함께 있어도 면은 하나(둘 중 하나라도 확인 필요면 주의 면)
     noteGroup([r?.stoppedNote, row.past?.note], r?.status === 'attention' || row.past?.kind === 'unsure'),
     row.past?.kind === 'issued'
       ? row.past.documentId
@@ -1981,9 +1758,7 @@ const SETTINGS_TABS = [
   ['bank', '계좌 연결'],
   ['billing', '구독'],
 ];
-/** 설정 > 구독(shell-billing.js) */
 const billing = createBilling({ call, rerender: () => render(), errText: (e) => errText(e) });
-/** 설정 > 기기 연결의 계정 기기 목록·새 PC 요청(shell-devices.js) */
 const devices = createDevices({
   call,
   rerender: () => state.view === 'settings' && state.setTab === 'devices' && renderKeepCode(),
@@ -2000,14 +1775,12 @@ const devices = createDevices({
     if (state.account?.step !== 'signed_in' && !state.login) openLogin();
   },
 });
-/** 6자리를 넣는 칸에 있던 초점·커서를 다시 그린 뒤에도 그 칸에 둔다(새 PC 요청을 다시 읽어 그릴 때). */
 function renderKeepCode() {
   const a = document.activeElement;
   const id = a?.dataset?.pclinkCode;
   render();
   if (id) $(`[data-pclink-code="${CSS.escape(id)}"]`)?.focus();
 }
-/** 계좌 자동조회(CODEF, shell-bank-auto.js). 연결한 계좌는 받을 돈 화면에서 [최신화]한다 */
 const bankAuto = createBankAuto({ call, rerender: () => render(), toast: (t) => toast(t), uploadFile: () => void go('bank'), openBank: () => void go('bank') });
 
 async function loadCertMemory() {
@@ -2023,7 +1796,6 @@ async function loadCertMemory() {
   }
   if (state.view === 'settings') render();
 }
-/** 설정 > 발급 인증 [인증서 비밀번호 저장](대표 지시 2026-11-14): 가려진 칸 값은 금고로만 간다. 칸은 보내자마자 비운다. */
 function certMemorySaveRow() {
   const input = secretInput({ label: '공동인증서 비밀번호', oninput: () => (state.certMemoryErr = null) });
   const save = h('button', { type: 'submit', class: 'sx-btn sx-btn-lg' }, '저장');
@@ -2039,7 +1811,6 @@ function certMemorySaveRow() {
       state.certMemory = (await call('certMemory.save', { value })).remembered === true;
       toast('인증서 비밀번호를 이 Mac 금고에 저장했어요. 다음 발급부터 앱이 넣어요.');
     } catch {
-      // 실패는 칸 아래에 남긴다(다시 그려도 보이게 글만 state에, 값은 두지 않는다)
       state.certMemoryErr = '저장하지 못했어요. 다시 넣어 주세요.';
     }
     render();
@@ -2079,8 +1850,6 @@ function setTab(tab) {
   if (tab === 'billing') void billing.load();
 }
 
-// ---- 계정 로그인(A-01) ----
-
 async function refreshAccount() {
   try {
     state.account = await call('account.view', {});
@@ -2090,8 +1859,6 @@ async function refreshAccount() {
   render();
   if (state.account?.step === 'signed_in') await loadDeletion();
 }
-
-// ---- 탈퇴(F-06, 약관 제15조): 7일 유예, 요청하면 구독이 바로 해지된다 ----
 
 async function loadDeletion() {
   try {
@@ -2116,7 +1883,6 @@ const ymd = (ms) => {
   const d = new Date(ms);
   return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일`;
 };
-/** 설정 > 기기 연결의 탈퇴 줄. 확인 한 번을 거친다(되돌릴 수 있는 7일 유예라 입력 확인 없이 두 번 누름). */
 function deletionRow() {
   const d = state.deletion;
   if (state.account?.step !== 'signed_in' || !d) return null;
@@ -2146,17 +1912,12 @@ function openLogin() {
   render();
 }
 
-/**
- * 로그인이 먼저다(사용자 결정 2026-11-10): 제품은 약관에 동의한 뒤 로그인(첫 PC 등록)해야 온보딩·대화로 간다.
- * 끝낸 프로필이 로그아웃 상태로 켜져도 대화 대신 이 화면이 먼저다. 닫을 수 없다(main도 그 전 요청을 account_required로 거절한다).
- */
 function loginGate() {
   if (!state.boot?.loginRequired) return false;
-  if (state.onb && state.onb.consents?.terms?.choice !== 'agreed') return false; // 약관이 먼저
+  if (state.onb && state.onb.consents?.terms?.choice !== 'agreed') return false;
   return state.account?.step !== 'signed_in';
 }
 
-/** 설정 > 계정 [로그아웃]: main이 신원·받아 둔 코드를 지우면 로그인 화면(게이트)이 다시 막는다. */
 async function signOut() {
   try {
     state.account = await call('account.signOut', {});
@@ -2167,18 +1928,15 @@ async function signOut() {
   }
 }
 
-/** 폰 연결 칸(shell-pair.js): QR은 계정 카드 안에서 그 자리에, 6자리부터는 메인 창 안 모달로 그린다(따로 창 없음). */
 function pairRow() {
   return pairSection(state.pair, PAIR_ACT, state.pairBusy, Date.now(), pairModalOpen());
 }
-/** 6자리 단계부터 끝까지 모달. 이번 연결에서 6자리 단계에 들어왔는지(pairSas)는 QR 단계·쉬는 자리로 돌아가면 지운다. */
 function pairModalOpen() {
   const step = state.pair?.step;
   if (step === 'awaiting_sas' || step === 'checking') state.pairSas = true;
   else if (step !== 'paired' && step !== 'failed') state.pairSas = false;
   return state.view === 'settings' && state.setTab === 'devices' && pairInModal(state.pair, state.pairSas);
 }
-/** 폰 연결 요청 하나. 답(PairView)으로 다시 그린다. 못 보냈으면(실제 입력 없음·로그인 전) 알림 한 줄. */
 async function pairCall(method, params = {}) {
   if (state.pairBusy) return;
   const prev = state.pair?.step;
@@ -2205,14 +1963,12 @@ const PAIR_ACT = {
   codeOf: () => state.pairCode,
   setCode: (v) => (state.pairCode = v),
 };
-/** 설정 > 기기 연결에 있을 때만 다시 그린다. 6자리 칸에 있던 초점은 그대로 두고, 6자리 단계로 막 넘어왔으면 칸에 둔다. */
 function pairRender(prevStep) {
   if (state.view !== 'settings' || state.setTab !== 'devices') return;
   render();
   const step = state.pair?.step;
   if (prevStep && prevStep !== step && (step === 'idle' || !step)) $('[data-act=pair-open]')?.focus();
 }
-// QR 남은 시간(1초마다 글자만 고친다). 0이 되면 main이 '시간이 지났어요'로 바꿔 보낸다
 setInterval(() => {
   const t = document.querySelector('[data-pair-ttl]');
   if (t) t.textContent = pairTtlText(Number(t.dataset.pairTtl));
@@ -2222,17 +1978,14 @@ setInterval(() => {
 
 function closeLogin() {
   if (!state.login) return;
-  // 로그인 화면이 막고 있는 동안은 닫지 않는다(비밀번호 바꿈 끝 화면의 [계속]은 로그인된 뒤라 닫힌다)
   if (loginGate()) return;
   state.login = null;
   render();
   $('[data-act=account-login]')?.focus();
 }
 
-/** 서버가 받은 코드를 거절한 오류(이때만 코드 칸을 비운다). */
 const SERVER_CODE_ERR = new Set(['account.code_invalid', 'account.code_locked', 'account.code_expired']);
 
-/** 로그인 화면의 요청 하나. 끝나면 main이 준 단계로 다시 그린다. 등록이 끝나면 화면을 닫는다. 비밀번호는 보낸 뒤 비운다. */
 async function accountStep(method, params) {
   const l = state.login;
   if (!l || l.busy) return;
@@ -2240,31 +1993,25 @@ async function accountStep(method, params) {
   render();
   try {
     state.account = await call(method, params);
-    // 재설정 바꾸기는 정책 거부면 받아 둔 코드로 다시 보낸다(코드 오류일 때만 아래에서 비운다)
     if (method !== 'account.verify' && method !== 'account.finishReset') l.draft.code = '';
   } catch (err) {
     state.account = { ...(state.account ?? { step: 'signed_out', email: null, codeExpiresAt: null }), error: errText(err) };
   } finally {
     l.busy = false;
     if (method === 'account.password' || method === 'account.setPassword' || method === 'account.finishReset') l.draft.password = '';
-    // 비밀번호 찾기: 코드를 보냈으면 코드 칸부터. 코드 오류는 코드 칸으로 돌아가 칸을 비운다(새 비밀번호도 지웠다, 명세 §4).
     if (method === 'account.startReset' && state.account?.step === 'reset_code') l.screen = 'reset_code';
     if (method === 'account.finishReset' && SERVER_CODE_ERR.has(state.account?.error)) {
       l.screen = 'reset_code';
       l.draft.code = '';
     }
-    // 서버는 이메일·서비스 이름을 한 코드로 준다. 어느 쪽인지는 보내기 전에 같은 규칙으로 가려 둔 종류로 고른다(비밀번호는 남기지 않는다).
     if ((method === 'account.setPassword' || method === 'account.finishReset') && state.account?.error === 'account.password_contains_identity' && l.pwKind === 'service') state.account = { ...state.account, error: 'account.password_contains_service' };
-    // 서버에 비밀번호 기능이 꺼져 있으면(404) 이메일 코드 로그인으로 바로 넘긴다(인계 명세 §1)
     if (method === 'account.password' && state.account?.error === 'request.not_found') {
       l.screen = 'code_email';
       state.account = { ...state.account, error: null };
     }
-    // 받은 코드는 만료까지 쓴다: 서버가 코드가 틀렸다·막혔다·지났다고 한 때만 칸을 비운다. 앱 쪽 거절(실제 입력 못 봄·모양)·연결 실패는 칸에 남긴다.
     if (method === 'account.verify' && (SERVER_CODE_ERR.has(state.account?.error) || state.account?.step === 'set_password')) l.draft.code = '';
   }
   if (state.account?.step === 'signed_in' && method === 'account.finishReset') {
-    // 바꿈 끝 화면(§4 done)을 보이고 [계속]에서 닫는다
     l.screen = 'reset_done';
     l.draft.code = '';
   } else if (state.account?.step === 'signed_in') {
@@ -2276,7 +2023,6 @@ async function accountStep(method, params) {
   render();
 }
 
-/** 화면 이동(렌더러 안). 앞 화면의 오류 문구는 지운다. */
 function loginGo(screen) {
   const l = state.login;
   if (!l || l.busy) return;
@@ -2293,7 +2039,6 @@ const loginCtx = () => ({
   draft: state.login.draft,
   busy: state.login.busy,
   now: () => Date.now(),
-  // 로그인 화면이 막고 있으면 [닫기]가 없다(바꿈 끝 화면의 [계속]은 로그인된 뒤라 닫힌다)
   onClose: loginGate() && state.login.screen !== 'reset_done' ? null : closeLogin,
   gate: loginGate(),
   go: loginGo,
@@ -2306,10 +2051,8 @@ const loginCtx = () => ({
     render();
     $('#modal .acct-password')?.focus();
   },
-  // 새 PC 연결: 쓰던 PC에 '연결됐어요'가 떴다 · 그만두기
   linkAccept: () => accountStep('account.linkAccept', {}),
   linkCancel: () => accountStep('account.linkCancel', {}),
-  // 계정 만들기 화면에서 보낸 코드면 signup(확인 뒤 비밀번호가 없으면 만들기 단계)
   sendCode: (email) => accountStep('account.sendCode', state.login.screen === 'signup' ? { email, signup: true } : { email }),
   setPassword: (password) => {
     state.login.pwKind = identityIn(password, state.account?.email ?? '');
@@ -2323,7 +2066,6 @@ const loginCtx = () => ({
   },
   verify: (code) => accountStep('account.verify', { code }),
   password: (email, password) => accountStep('account.password', { email, password }),
-  // 코드 화면 [뒤로]: 코드를 버리고 코드 받기 화면으로(계정 만들기에서 왔으면 그대로)
   back: async () => {
     const s = state.login.screen;
     state.login.screen = s === 'reset_code' || s === 'reset_new' ? 'reset_email' : s === 'signup' ? 'signup' : 'code_email';
@@ -2331,7 +2073,6 @@ const loginCtx = () => ({
   },
 });
 
-// 코드 화면의 남은 시간(1초마다 글자만 바꾼다)
 setInterval(() => {
   const el = document.querySelector('[data-acct-left]');
   const at = state.account?.codeExpiresAt;
@@ -2339,13 +2080,11 @@ setInterval(() => {
   const sec = Math.max(0, Math.round((at - Date.now()) / 1000));
   el.textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 }, 1000);
-// 프로필 인증 라벨(shell-model SIGN_LABEL)별 발급 때 사람이 하는 일(shell-runs SIGN_BY_AUTH와 같은 사실).
 const AUTH_DESC = {
   '사업자 간편인증': '발급할 때마다 휴대폰에서 승인해요',
   '공동·금융인증서': '홈택스 로그인에 쓰는 그 인증서예요. 첫 발급 때 비밀번호를 한 번 넣으면 다음부터는 앱이 넣어요',
 };
 
-/** 발급 인증(캔버스 S-02): 사업자 프로필의 인증 하나. 바꾸기는 내 사업장과 같은 온보딩 다시 열기. */
 function authCard() {
   const auth = state.boot.profiles.business.auth;
   const desc = AUTH_DESC[auth];
@@ -2357,7 +2096,6 @@ function authCard() {
       h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, desc ? auth : '발급 인증을 아직 고르지 않았어요'), desc ? h('span', { class: 'sx-meta' }, desc) : null),
       canChange ? btn(desc ? '바꾸기' : '고르기', () => reopenSetup('auth'), '', { 'data-act': 'auth-reopen' }) : null,
     ),
-    // 기억한 홈택스 인증서(H-01 2.3.0이 이 이름으로 인증서 창의 행을 고른다). [지우기]면 다음 발급 때 사람이 한 번 고르고 다시 기억한다
     state.certName?.set
       ? h(
           'div',
@@ -2366,7 +2104,6 @@ function authCard() {
           btn('지우기', clearCertName, '', { 'data-act': 'cert-name-clear' }),
         )
       : null,
-    // 기억한 인증서 비밀번호(대표 지시 2026-11-13): 처음 넣은 값을 금고가 기억하고 다음부터 넣는다. [지우기] 하나만.
     state.certMemory === true
       ? h(
           'div',
@@ -2377,15 +2114,12 @@ function authCard() {
       : state.certMemory === false
         ? certMemorySaveRow()
         : null,
-    // 진행 중 실행은 시작 때 인증 그대로 끝난다(#295 결정, 엔진 run.start 스냅숏).
     canChange && desc ? h('p', { class: 'sx-meta', 'data-auth-note': '' }, '바꾸면 다음 발급부터 적용돼요. 진행 중인 작업은 원래 인증으로 끝내요.') : null,
   ];
 }
 
-/** 약관·처리방침 전문(F-06): 동의한 뒤에도 언제든 볼 수 있게 설정 기기 연결 탭 끝에 둔다. */
 const legalRow = () =>
   h('p', { class: 'onb-links', 'data-legal-row': '' }, btn('이용약관', () => openLegal('terms'), 'sx-btn-quiet', { 'data-legal': 'terms' }), btn('개인정보 처리방침', () => openLegal('privacy'), 'sx-btn-quiet', { 'data-legal': 'privacy' }));
-/** 설정(캔버스 S-02): 발급 인증 · 기기 연결. */
 function settingsView() {
   return h(
     'section',
@@ -2411,7 +2145,6 @@ function settingsView() {
   );
 }
 
-/** 2차 배분 화면의 자리(D-04 사업용 카드 · D-06 급여대장). 라우팅만 있고 내용은 그 트랙이 붙인다. */
 const LATER = {
   card: ['사업용 카드 내역', 'D-04', '홈택스 사업용 카드 사용내역과 [최신화]가 여기에 들어와요.'],
   payroll: ['급여대장', 'D-06', '직원 목록과 이번 달 급여대장이 여기에 들어와요.'],
@@ -2420,13 +2153,10 @@ const laterView = (v) => () => {
   const [title, id, text] = LATER[v];
   return h('section', { class: 'rail-screen', 'data-view': v, 'data-screen': id }, h('div', { class: 'rs-col' }, railHead(title, '준비 중'), h('article', { class: 'sx-card later-card' }, h('p', { class: 'sx-body-sm is-muted' }, text))));
 };
-// 받을 돈 화면(shell-bank.js). 그리기·상태는 그 모듈이 갖고, 여기서는 연결만 한다.
 const bankUi = createBankScreen({ call, toast: (t) => toast(t), rerender: () => state.view === 'bank' && render(), errText: (e) => errText(e), counterparties: () => state.cps, openCounterparty: null, railHead: (...a) => railHead(...a) });
-// 세무사 꾸러미 화면(shell-pack.js). 열면 고른 달 꾸러미를 main이 로컬 폴더·zip으로 만든다.
 const packUi = createPackScreen({ call, toast: (t) => toast(t), rerender: () => state.view === 'bundle' && render(), errText: (e) => errText(e), today: () => localDate(state.today), railHead, listTable });
 const VIEWS = { bank: () => bankUi.view(), docs: docsView, cps: cpsView, biz: bizView, bundle: () => packUi.view(), card: laterView('card'), payroll: laterView('payroll'), activity: activityView, settings: settingsView };
 
-/** 거래처 목록 다시 읽기. 실패하면 있던 목록은 두고 알림, 목록이 비었으면 화면에 [다시 시도] */
 async function loadCps() {
   state.load.cps = 'loading';
   try {
@@ -2438,7 +2168,6 @@ async function loadCps() {
   }
   if (state.view === 'cps' || state.view === 'bank') render();
 }
-/** 문서함 목록 다시 읽기(보관함). 가져오기·확인으로 바뀐 뒤 보낸 응답이 아니면 버린다 */
 async function loadDocs() {
   const rev = state.docsRev;
   state.load.docs = 'loading';
@@ -2449,12 +2178,10 @@ async function loadDocs() {
     state.docs = docs;
   } catch (e) {
     state.load.docs = 'error';
-    // 있던 목록은 그대로 두고 알린다(거래처와 같다). 목록이 비었으면 화면 가운데 [다시 시도]
     if (state.docs.length && state.view === 'docs') toast(human(e));
   }
   if (state.view === 'docs') render();
 }
-/** 목록이 비었을 때 불러오는 중·못 불러옴 자리. 아니면 null(빈 상태를 그대로 그린다) */
 const loadState = (k, what, retry) =>
   state.load[k] === 'loading'
     ? emptyState('불러오는 중이에요', null, null, { 'data-load': k, 'aria-busy': 'true' })
@@ -2463,7 +2190,6 @@ const loadState = (k, what, retry) =>
       : null;
 
 async function go(v) {
-  // 내 사업장은 설정의 첫 항목이다(v2.0). 예전 길(go('biz'): 할 일·온보딩)은 그 자리로 간다.
   if (v === 'biz') {
     state.setTab = 'biz';
     v = 'settings';
@@ -2471,10 +2197,8 @@ async function go(v) {
   }
   if (state.view === v && v !== 'docs' && v !== 'settings') return;
   state.view = v;
-  // 패널은 그 화면의 것만 남긴다(대화: 작업, 문서함: 서류, 거래처: 거래처, 활동 기록: 기록).
   const own = { chat: ['run', 'g24', 'board'], docs: ['doc'], cps: ['cp', 'cp-edit'], activity: ['act'] }[v] ?? [];
   if (state.panel && !own.includes(state.panel.kind)) openPanel(null);
-  // 화면은 곧바로 그리고(불러오는 동안 빈 화면에 갇히지 않게), 불러오면 다시 그린다. 실패해도 화면은 남고, 목록이 비었으면 [다시 시도]가 있다.
   if (v === 'cps' || v === 'bank') {
     render();
     await loadCps();
@@ -2482,9 +2206,7 @@ async function go(v) {
   }
   if (v === 'settings' && state.setTab === 'auth') void loadCertMemory();
   if (v === 'bundle') void packUi.load();
-  // 문서함은 지금 목록으로 먼저 그리고, 보관함에서 다시 읽어 오면 다시 그린다(만료일·확인 필요는 엔진이 정하고, D-n은 렌더러가 오늘 날짜로 센다)
   if (v === 'docs') {
-    // 발급한 세금계산서(B5): 원장·실행 이력을 지금 읽는다(main issued.list)
     call('issued.list')
       .then((rows) => {
         state.issued = Array.isArray(rows) ? rows : [];
@@ -2508,7 +2230,6 @@ function render() {
     if (center.firstChild !== chat.root) center.replaceChildren(chat.root);
     scrollToEnd();
   } else {
-    // 같은 화면을 다시 그릴 때는 스크롤 자리를 지킨다(행을 누르거나 [최신화] 진행으로 다시 그려도 맨 위로 튀지 않게).
     const prev = center.firstElementChild;
     const keep = prev && prev.dataset?.view === state.view ? prev.scrollTop : 0;
     const el = VIEWS[state.view]();
@@ -2519,16 +2240,8 @@ function render() {
   renderModal();
 }
 
-// ---- 보관함 가져오기·확인(문서함) ----
-
-/** 목록 서류 이름 옆 자물쇠(캔버스 D-01): 열기 암호가 걸린 PDF. */
 const lockMark = () => h('span', { class: 'doc-lock', role: 'img', 'aria-label': '열기 암호 있음', title: '열기 암호 있음', 'data-doc-lock': '' }, icon('lock'));
 
-/**
- * 열기 암호 창(캔버스 D-01 · 암호 걸린 PDF 열기). 문서함에서 암호를 기다릴 때만 띄우고, 띄운 동안 앱 틀은 inert다.
- * 암호로 읽는 동안에는 창을 닫는다(앱은 그대로 쓰고, 가져오기 버튼이 "읽는 중…"으로 막혀 그만둔 뒤 결과가 보관되는 경쟁이 없다).
- * 암호는 이 가져오기에만 쓰고 저장하지 않는다. 다시 그려도 입력 중인 값은 state에 남는다(DOM 속성에는 넣지 않는다).
- */
 function passwordModal() {
   const imp = state.docImport;
   const input = h('input', { type: imp.show ? 'text' : 'password', class: 'doc-pw', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'PDF 열기 암호' });
@@ -2564,14 +2277,12 @@ function passwordModal() {
 
 function renderModal() {
   const root = $('#modal');
-  // 로그인 화면이 막아야 하면 연다(기동·약관 동의 직후·로그아웃 이벤트)
   if (loginGate() && !state.login) state.login = { screen: 'email', draft: { email: state.account?.email ?? '', password: '', code: '', show: false }, busy: false };
   const pw = state.view === 'docs' && !!state.docImport && !state.docBusy;
   const login = !pw && !!state.login;
   const pair = !pw && !login && pairModalOpen();
   const dev = !pw && !login && !pair && state.view === 'settings' && state.setTab === 'devices' ? devices.modal() : null;
   const open = pw || login || pair || !!dev;
-  // 처음 띄울 때와 창 안에 있던 포커스는 새 입력 칸으로 옮긴다(다시 그릴 때마다 칸을 새로 만든다)
   const a = document.activeElement;
   const focus = !root.firstChild || !a || a === document.body || root.contains(a);
   const shake = pair && !!state.pairShake;
@@ -2579,19 +2290,16 @@ function renderModal() {
   root.replaceChildren(...(pw ? [passwordModal()] : login ? [loginScreen(loginCtx())] : pair ? [pairModal(state.pair, PAIR_ACT, state.pairBusy, Date.now(), shake)] : dev ? [dev] : []));
   $('#app').inert = open;
   if (dev) {
-    // 처음 띄울 때는 [취소]에 둔다(끊기는 되돌릴 수 없어서 Enter 한 번으로 끊기지 않게)
     if (focus) root.querySelector('[data-act=device-confirm-back], [data-act=px-confirm-back]')?.focus();
     return;
   }
   if (pair) {
-    // 6자리 칸: 처음 띄울 때·틀린 뒤는 첫 빈 칸에. 끝 화면은 주 단추에.
     if (focus || shake) (root.querySelector('.sas-box:not(:disabled)') ? root.querySelectorAll('.sas-box')[Math.min(state.pairCode.length, 5)] : root.querySelector('.modal-acts .sx-btn-primary:not(:disabled)'))?.focus();
     return;
   }
   const i = open && focus ? root.querySelector(pw ? '.doc-pw' : '.acct-code, .acct-password, .acct-email, [data-act=account-reset-done]') : null;
   if (i) {
     i.focus();
-    // type=email은 선택 범위를 지원하지 않는다(던진다)
     if (i.type !== 'email') i.setSelectionRange(i.value.length, i.value.length);
   }
 }
@@ -2601,18 +2309,14 @@ function cancelPassword() {
   call('docs.importCancel', { pickId: state.docImport.pickId }).catch(() => {});
   state.docImport = null;
   render();
-  // 사용자가 창을 닫았다(Esc·취소·닫기): 포커스를 창을 연 가져오기 버튼으로 돌려준다(대화 화면에는 없다)
   $('[data-act=doc-import]')?.focus();
 }
 
 async function importDoc(input) {
   if (state.docBusy) return;
-  // 정부24 카드의 [PDF 가져오기]로 연 가져오기만 그 카드의 답이다(g24 id). 문서함·입력창 [+]의 가져오기는 정부24 카드를 끝내지 않는다.
-  // g24는 main에 보내지 않는다. 암호를 다시 넣는 두 번째 호출까지 state.g24Import로 이어 간다.
   const { g24: g24Id, ...params } = input;
   if (g24Id) state.g24Import = g24Id;
   else if (params.pick) state.g24Import = null;
-  // 암호를 묻던 파일을 두고 새 파일을 고르면, 묻던 파일은 그만둔다(main이 들고 있는 바이트를 버린다)
   if (params.pick && state.docImport) cancelPassword();
   state.docBusy = true;
   render();
@@ -2636,7 +2340,6 @@ async function importDoc(input) {
       renderG24(g24);
     }
     const msg = r.document?.duplicate ? '이미 보관함에 있는 파일이에요' : d.vault?.needsUser ? '보관함에 넣었어요. 확인할 칸이 있어요' : '보관함에 넣었어요';
-    // 읽는 동안 다른 화면으로 갔으면 끌고 오지 않는다(승인 대기 중인 작업 패널을 바꾸지 않게)
     if (state.view === 'docs') {
       toast(msg);
       openPanel({ kind: 'doc', id: d.id });
@@ -2652,10 +2355,6 @@ async function importDoc(input) {
   }
 }
 
-/**
- * 확인 구역을 (다시) 만든 뒤 이 시간 동안은 확인을 받지 않는다(버튼도 꺼 둔다). 저장·stale 뒤에 새 값으로 다시 그린 확인 버튼에
- * 두 번 누른 두 번째 클릭이 닿아, 보지 않은 값이 확인되지 않게.
- */
 const DOC_CONFIRM_HOLD_MS = 700;
 
 async function updateDoc(id, patch, seen) {
@@ -2665,16 +2364,12 @@ async function updateDoc(id, patch, seen) {
     const d = await call('docs.update', { id, patch, seen });
     state.docsRev++;
     state.docs = state.docs.map((x) => (x.id === d.id ? d : x));
-    // 응답을 기다리는 동안 다른 서류로 옮겼으면 그 서류의 입력은 두고, 이 서류의 입력만 버린다(새 값으로 다시 만든다)
     if (state.docDraft?.id === id) state.docDraft = null;
     toast(d.vault?.needsUser ? `저장했어요. ${d.vault.reasons.includes('expiry_recomputed') ? '다시 계산한 만료일을' : '남은 칸을'} 확인해 주세요` : '확인했어요');
   } catch (e) {
-    // 칸 하나의 까닭(날짜 앞뒤·형식·종류)은 그 칸 아래에, 나머지는 토스트
     const at = DOC_ERR_FIELD[errText(e)];
     if (at && state.docDraft?.id === id) state.docDraft.err = { field: at, text: docErr(e) };
     else toast(docErr(e));
-    // 다른 곳에서 바뀐 서류: 지금 값을 다시 읽어 보여 주고 입력은 버린다(본 값이 아닌 값으로 확인하지 않게)
-    // 목록을 받은 뒤에 입력을 버린다(그 전에 다시 그리면 옛 값으로 입력을 다시 만들게 된다). 다시 읽는 동안은 docUpdating이라 확인을 받지 않는다.
     if (errText(e) === 'stale') {
       const rev = ++state.docsRev;
       await call('docs.list')
@@ -2692,23 +2387,15 @@ async function updateDoc(id, patch, seen) {
   }
 }
 
-/** 확인 구역의 입력 중인 값과 그때 보여 준 값(seen). 같은 서류를 보는 동안 다시 그려도 남고, 패널을 닫거나 다른 서류로 옮기면 버린다. */
 function docDraft(doc) {
   if (state.docDraft?.id !== doc.id) {
     const seen = { docType: doc.vault.docType, issuedOn: doc.issuedOn, expiresOn: doc.expiresOn };
-    // 만료일이 없는 사업자등록증명·그 밖의 서류는 '만료일 없음'이 켜진 채로 시작한다(보이는 것과 저장값이 같게)
     const noExpiry = doc.expiresOn === null && seen.docType !== 'national_tax_cert';
     state.docDraft = { id: doc.id, seen, createdAt: Date.now(), docType: seen.docType, issuedOn: doc.issuedOn ?? '', expiresOn: doc.expiresOn ?? '', noExpiry };
   }
   return state.docDraft;
 }
 
-/**
- * 보관함 서류의 읽은 값·확인 필요·확인(수정). 바뀐 칸만 보내고, 보여 준 값(seen)을 붙인다(엔진이 저장값과 다르면 거부).
- * 후보(정하지 못한 칸에서 엔진이 고른 가장 이른 날짜)는 칸 값과 다르면 보여 주고, '후보 넣기'로만 칸에 들어간다.
- * 저장값이 있는 날짜 칸을 비우거나 입력하다 만 채로는 저장하지 않는다(빈 칸이 '바꾸지 않음 = 확인'이 되지 않게).
- * 만료일을 지우려면 '만료일 없음'을 고른다(납세증명서 제외).
- */
 function docReview(doc) {
   const v = doc.vault;
   const draft = docDraft(doc);
@@ -2723,14 +2410,13 @@ function docReview(doc) {
   typeSel.addEventListener('change', () => {
     draft.docType = typeSel.value;
     draft.err = null;
-    if (draft.docType === 'national_tax_cert') draft.noExpiry = false; // 납세증명서는 만료일을 없앨 수 없다
+    if (draft.docType === 'national_tax_cert') draft.noExpiry = false;
     render();
   });
   const issued = dateInput({ value: draft.issuedOn, compact: true, 'data-field': 'issuedOn' });
   issued.addEventListener('input', () => ((draft.issuedOn = issued.value), (draft.err = null)));
   const expires = dateInput({ value: draft.expiresOn, compact: true, 'data-field': 'expiresOn', disabled: noExpiryOn });
   expires.addEventListener('input', () => ((draft.expiresOn = expires.value), (draft.err = null)));
-  // 사업자등록증명·그 밖의 서류는 법정 유효기간이 없어 사용자가 만료일을 없앨 수 있다(납세증명서는 엔진이 확인 필요로 남긴다)
   const noExpiry = canClear ? h('input', { type: 'checkbox', checked: noExpiryOn, 'data-field': 'noExpiry' }) : null;
   noExpiry?.addEventListener('change', () => {
     draft.noExpiry = noExpiry.checked;
@@ -2744,7 +2430,6 @@ function docReview(doc) {
   const held = () => Date.now() - draft.createdAt < DOC_CONFIRM_HOLD_MS;
   const save = () => {
     if (state.docUpdating || held()) return;
-    // 고칠 칸 아래에 까닭을 쓴다(토스트 대신)
     if (issued.validity.badInput) return fieldError(issued, '날짜를 끝까지 넣어 주세요.');
     if (expires.validity.badInput) return fieldError(expires, '날짜를 끝까지 넣어 주세요.');
     if (!draft.issuedOn && doc.issuedOn) return fieldError(issued, '발급일을 넣어 주세요.');
@@ -2756,7 +2441,7 @@ function docReview(doc) {
     if (noExpiryOn) {
       if (draft.seen.expiresOn !== null) patch.expiresOn = null;
     } else if (draft.expiresOn && draft.expiresOn !== draft.seen.expiresOn) patch.expiresOn = draft.expiresOn;
-    confirmBtn.disabled = true; // 응답까지(다시 그리지 않으므로 직접 끈다)
+    confirmBtn.disabled = true;
     updateDoc(doc.id, patch, draft.seen);
   };
   const confirmBtn = btn(v.needsUser || v.expirySource === 'rule' ? '확인' : '저장', save, 'sx-btn-primary', { 'data-act': 'doc-confirm', disabled: state.docUpdating || held() });
@@ -2821,10 +2506,6 @@ function addDoc(doc) {
   if (state.view === 'docs') render();
 }
 
-// ---- main 이벤트 ----
-
-// 창을 앞으로 가져온 클릭(F-11): 내 차례 카드의 버튼 위에서 창이 활성화됐는데 그 버튼 클릭이 오지 않으면(macOS는 첫 클릭을 페이지에 주지 않는다)
-// 그 카드에 "한 번 더 눌러 주세요"를 보인다. 버튼 규칙(실제 입력·결속)은 그대로다.
 let lastPointerDown = { t: 0, el: null };
 document.addEventListener('pointerdown', (e) => (lastPointerDown = { t: performance.now(), el: e.target }), true);
 const AGAIN_TEXT = '창을 앞으로 가져오는 클릭이었어요. 한 번 더 눌러 주세요.';
@@ -2834,7 +2515,7 @@ function onActivated(x, y) {
   if (!b || !card || !['turn', 'waiting'].includes(card.dataset.status)) return;
   const at = performance.now();
   setTimeout(() => {
-    if (lastPointerDown.t >= at && b.contains(lastPointerDown.el)) return; // 클릭이 왔다
+    if (lastPointerDown.t >= at && b.contains(lastPointerDown.el)) return;
     if (!b.isConnected || card.querySelector('[data-again]')) return;
     card.append(h('p', { class: 'sx-meta is-attention', 'data-again': '' }, AGAIN_TEXT));
   }, 400);
@@ -2857,7 +2538,6 @@ window.sax.onEvent((ev) => {
     return;
   }
   if (ev.type === 'open-screen' && typeof ev.screen === 'string') return void openScreen(ev.screen);
-  // 일을 맡긴 말에 먼저 붙는 접수 표시(👀). 점 셋은 그대로 돌고 답은 결과만 말한다.
   if (ev.type === 'chat-reaction') return void reactTo(state.lastMe, ev.reaction);
   if (ev.type === 'chat-progress') {
     const el = state.waitEl;
@@ -2873,7 +2553,6 @@ window.sax.onEvent((ev) => {
     state.browser = { shown: ev.shown === true, available: ev.available === true, embedded: ev.embedded === true, width: Number(ev.width) || 0 };
     document.body.classList.toggle('browser-embedded', state.browser.embedded);
     if (state.browser.embedded && state.browser.width > 0) document.documentElement.style.setProperty('--l-browser', `${state.browser.width}px`);
-    // 실행 중이면 패널을 넓히고(browser-live), [브라우저]로 크게 하면 대화 열을 줄여 패널을 더 키운다(browser-big)
     document.body.classList.toggle('browser-live', state.browser.available);
     document.body.classList.toggle('browser-big', state.browser.available && state.browser.shown);
     renderTitlebar();
@@ -2915,11 +2594,9 @@ window.sax.onEvent((ev) => {
     const prev = state.runs.get(ev.run.id);
     putRun(ev.run);
     if (prev?.status !== 'waiting' && ev.run.status === 'waiting' && state.view === 'chat') openPanel({ kind: 'run', id: ev.run.id });
-    // 여러 건 묶음은 마지막 건이 끝날 때 한 번만(남은 건이 진행 중이거나 승인받은 초안이면 아직이다)
     const batchOpen = ev.run.batch && [...state.runs.values()].some((x) => x.batch?.id === ev.run.batch.id && (['preparing', 'turn', 'waiting', 'issuing'].includes(x.status) || (x.status === 'draft' && x.batch.approved && !x.batch.skipped && !x.batch.halted)));
     if (prev?.status !== 'done' && ev.run.status === 'done' && !batchOpen) appendThread(h('div', { class: 'sx-app' }, '다음 일을 말해 주세요.'));
   } else if (ev.type === 'bar') {
-    // 승인 카드 자리 비우기: 카드 위치·높이는 main이 정하고(ADR-021 결정 7), 렌더러는 그 높이만큼 자리를 비울 뿐이다.
     state.barActive = ev.active;
     if (ev.active) setBarHeight(ev.height);
     document.body.classList.toggle('bar-active', ev.active);
@@ -2936,11 +2613,9 @@ window.sax.onEvent((ev) => {
     state.board = ev.board;
     renderToday();
   } else if (ev.type === 'past') {
-    // 지난 실행을 다시 읽었다(발급됐는지 모르던 실행을 발급목록으로 확인함). 활동 기록을 그 목록으로 그린다.
     if (state.boot) state.boot.past = ev.past;
     if (state.view !== 'chat') render();
   } else if (ev.type === 'docs-reload') {
-    // 시연 씨앗이 보관함에 견본 서류를 다 넣었다. 문서함·거래처(최근 발급)를 다시 읽는다.
     const rev = ++state.docsRev;
     Promise.all([call('docs.list'), call('counterparties.list')])
       .then(([docs, cps]) => {
@@ -2969,7 +2644,6 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.key === 'Escape' && state.panel && document.activeElement?.tagName !== 'INPUT') openPanel(null);
 });
-// 프로필 메뉴 밖을 누르면 닫는다.
 document.addEventListener('mousedown', (e) => {
   if (state.menu && !e.target.closest('.tb-profile')) toggleMenu(false);
 });
@@ -2977,13 +2651,11 @@ window.addEventListener('resize', () => {
   applyLayout();
   if (state.barActive) scrollToEnd();
 });
-// 대화 열 폭을 #center 폭(스크롤 막대 제외 전)으로 한 번 정해 스크롤 영역 안팎에 같은 폭을 쓴다. main의 바 폭 식과 같다.
 new ResizeObserver(() => {
   const w = $('#center').clientWidth;
   const L = state.boot?.layout;
   if (L) document.documentElement.style.setProperty('--col-w', `${Math.min(L.chatMax, w - L.gutter * 2)}px`);
 }).observe($('#center'));
-// 스크롤바는 스크롤하는 동안과 멈춘 뒤 0.8초만 보인다(디자인 시스템 "간격과 배치", bundle.css "Scroll").
 const scrollTimers = new WeakMap();
 document.addEventListener(
   'scroll',
@@ -2996,17 +2668,14 @@ document.addEventListener(
   },
   { capture: true, passive: true },
 );
-// 자정을 넘겨도 D-day·오늘 요약이 맞게 1분마다 오늘을 다시 잡는다.
 setInterval(() => {
   state.today = new Date();
   renderToday();
   renderRail();
 }, 60_000);
 
-// 카드가 띠(레일 오른쪽~창 끝)인지와 높이는 main이 'bar'·'bar-layout' 이벤트로 알려 준다. 렌더러는 그대로 따라 자리를 비운다.
 function applyLayout() {}
 
-/** main이 알린 카드 높이(DIP). 숫자가 아니거나 범위 밖이면 기동 때 받은 기본 높이를 둔다. */
 function setBarHeight(px) {
   const v = Number.isInteger(px) && px > 0 && px <= 600 ? px : state.boot?.layout?.barHeight;
   if (v) document.documentElement.style.setProperty('--l-bar-h', `${v}px`);
@@ -3024,12 +2693,10 @@ async function boot() {
   const root = document.documentElement.style;
   for (const [k, v] of Object.entries({ rail: L.rail, panel: L.panel, titlebar: L.titlebar, 'chat-max': L.chatMax, gutter: L.gutter, 'composer-reserve': L.composerReserve, gap: L.gap, 'bar-h': L.barHeight })) root.setProperty(`--l-${k}`, `${v}px`);
   document.body.dataset.platform = state.boot.platform;
-  // 시연(fixture)이 아니면 개발용 표시(약관 "F-06 초안 전 문구" 배지 등)를 숨긴다(shell.css body[data-sample=false])
   document.body.dataset.sample = String(state.boot.sample !== false);
   applyLayout();
   renderTitlebar();
   buildChat();
-  // 로그인이 먼저다(제품): 계정 상태를 먼저 읽어 로그인 화면(loginGate)을 띄울지 정한다.
   if (state.boot.loginRequired) await refreshAccount();
   render();
   document.body.dataset.ready = '1';

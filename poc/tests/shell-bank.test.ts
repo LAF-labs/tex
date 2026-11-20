@@ -1,4 +1,3 @@
-// 받을 돈 main 쪽(bank-host.ts): 판 카드(bankBoardCards)·렌더러 요청 표.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { bankBoardCards } from '../apps/desktop/src/bank-host.ts';
@@ -15,7 +14,6 @@ describe('판 카드', () => {
   });
   it('거래내역이 오래되면 금액 대신 "오래됐어요", 없으면 카드 없음', () => {
     assert.equal(bankBoardCards({ ...base, stale: true }).at(0)!.items[0]!.label, '거래내역이 오래됐어요');
-    // 거래내역이 아예 없으면 "오래됐어요"가 아니다. 줄이 단추라 글자 단추([…])를 붙이지 않는다.
     const none = bankBoardCards({ ...base, latestDay: null, stale: true }).at(0)!.items[0]!;
     assert.equal(none.label, '받을 돈 3건 · 입금 확인 전');
     assert.equal(none.detail, '거래내역을 아직 올리지 않았어요');

@@ -1,6 +1,3 @@
-// verify 판정(M2-3, D02 §4.4, D03 §5.6): 기준선 B₀, B₁ \ B₀ 정확히 1건 → committed, 부재 증거가 모두 있을 때만 not_committed, 나머지 unknown.
-// 기준은 H01Runner verifyInvoice다(조회 실패 3회 연속 → unknown, 새 건 2건 이상 → unknown, 간격 두 배·상한).
-// 조회 하위 플레이북은 가짜 조회 포트가 대신한다. 실제 포털 접속 없음.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
@@ -18,9 +15,7 @@ const S30 = stepOf<StepOf<'verify'>>('s30');
 const S33 = stepOf<StepOf<'verify'>>('s33');
 const S20 = stepOf<StepOf<'gate'>>('s20');
 
-/** 게이트 앞 readback에 고정된 값(정규화 뒤). */
 const RB = { counterpartBizNo: '1234567890', issueDate: '2026-11-06', supplyAmount: '1000000', taxAmount: '100000' };
-/** 같은 건의 조회 행(화면 문구, 포털 표기). */
 const row = (approvalNo: string, o: Partial<Record<keyof typeof RB, string>> = {}): LookupRow => ({
   counterpartBizNo: '123-45-67890', issueDate: '2026.11.06', supplyAmount: '1,000,000', taxAmount: '100,000원', approvalNo, ...o,
 });
@@ -28,7 +23,6 @@ const OTHER = row('X-other', { supplyAmount: '999' });
 
 const POLICY: Policy['verify'] = { minElapsedMs: 60_000, lookups: 2, maxMs: 300_000 };
 
-/** 차례대로 결과를 내는 가짜 조회 포트. 비면 마지막 결과를 되풀이한다. 조회마다 시계가 1초 간다(새 탭 조회 시간). */
 class ScriptLookup {
   reqs: LookupRequest[] = [];
   private script: Array<LookupResult | (() => LookupResult)>;
@@ -47,7 +41,6 @@ class ScriptLookup {
 const rows = (...r: LookupRow[]): LookupResult => ({ ok: true, rows: r });
 const failed = (code = 'verify.lookup_failed'): LookupResult => ({ ok: false, code });
 
-/** 실패 신호 요소(원래 탭). */
 const ERR_BOX = (o: Partial<FEl> = {}): FEl => ({ id: 'err', role: 'dialog', name: '', css: ['#errorDialog'], text: '발급에 실패했습니다. 다시 시도하세요', ...o });
 
 function mk(script: Array<LookupResult | (() => LookupResult)>, o: { els?: FEl[]; policy?: Policy['verify']; readback?: Record<string, string> } = {}) {
@@ -59,7 +52,6 @@ function mk(script: Array<LookupResult | (() => LookupResult)>, o: { els?: FEl[]
   const lookup = new ScriptLookup(clock, script);
   const book = new VerifyBook();
   const d: VerifyDeps = { lookup, book, page, clock, dict: DICT, strings: GOLDEN.strings, scope, policy: () => o.policy ?? POLICY };
-  /** 기준선을 찍고, 클릭을 보냈다고 기록한다(클릭 직전 실패 신호와 함께). */
   const dispatched = async () => book.markDispatched('s30', clock.now(), await failSignalKeys(page, S30.failSignals ?? []));
   return { clock, page, scope, lookup, book, d, dispatched };
 }
@@ -143,7 +135,7 @@ describe('verify 판정(D02 §4.4, D03 §5.6)', () => {
     const h = mk([rows()], { els: [box] });
     await takeBaseline(h.d, IR, S20);
     await h.dispatched();
-    box.appearAt = 0; // 클릭 뒤 오류 대화상자가 떴다
+    box.appearAt = 0;
     const t0 = h.clock.now();
     assert.deepEqual(await judgeVerify(h.d, S30), { result: 'not_committed' });
     assert.ok(h.clock.now() - t0 >= 60_000, 'minElapsedMs 전에는 판정하지 않는다');
@@ -183,15 +175,12 @@ describe('verify 판정(D02 §4.4, D03 §5.6)', () => {
 
   it('조회 실패는 부재 증거가 아니다: 연속 0건을 끊는다(0건·실패·0건은 연속 2회가 아니다)', async () => {
     const box = ERR_BOX({ appearAt: Number.MAX_SAFE_INTEGER });
-    // 60초가 지난 뒤 0건 → 실패 → 0건 → 0건: 실패 뒤 다시 두 번 0건이어야 not_committed
     const h = mk([rows(), rows(), rows(), rows(), failed(), rows(), rows()], { els: [box] });
     await takeBaseline(h.d, IR, S20);
     await h.dispatched();
     box.appearAt = 0;
     h.d.policy = () => ({ ...POLICY, minElapsedMs: 0 });
-    // 정책 0이어도 플레이북(60초)이 더 엄격하다
     assert.deepEqual(await judgeVerify(h.d, S30), { result: 'not_committed' });
-    // 실패가 0건을 끊지 않았다면 5번째 조회(115초)에서 판정했다
     assert.equal(h.lookup.reqs.filter((r) => r.purpose === 'verify').length, 6);
   });
 
@@ -234,10 +223,8 @@ describe('verify 판정(D02 §4.4, D03 §5.6)', () => {
     await takeBaseline(h.d, IR, S20);
     await h.dispatched();
     box.appearAt = 0;
-    // 조회 시각 1·12·33·74초. 플레이북 값만 보면 33초(3번째, 0건 3회)에서 판정했다. 정책 4회라 4번째에서.
     assert.deepEqual(await judgeVerify(h.d, s30), { result: 'not_committed' });
     assert.equal(h.lookup.reqs.filter((r) => r.purpose === 'verify').length, 4);
-    // 정책 minElapsedMs가 0이어도 플레이북 30초: 0건 2회(12초)에서는 판정하지 않는다
     const h2 = mk([rows()], { els: [ERR_BOX({ appearAt: Number.MAX_SAFE_INTEGER })], policy: { minElapsedMs: 0, lookups: 2, maxMs: 300_000 } });
     await takeBaseline(h2.d, IR, S20);
     await h2.dispatched();

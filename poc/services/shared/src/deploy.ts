@@ -1,6 +1,3 @@
-// 함수 배포(Vercel 등) 공용: 서비스별 환경 변수 접두, 경로 복원, 내부 경로 기본 거부, 정리(cron) 보호.
-// 한 프로젝트에 여러 서비스를 함수로 올리면 환경 변수가 프로젝트 전체에 공유된다. 그래서 서비스별 값은 `<서비스>__<이름>`으로 두고
-// 진입점이 접두를 벗겨 그 서비스의 env로 쓴다(공통 값은 접두 없이). 공급사 이름에 묶인 코드는 없다(ADR-015).
 import type http from 'node:http';
 import { safeEqual } from './crypto.ts';
 
@@ -41,12 +38,7 @@ export function restorePath(url: string | undefined): string | null {
 }
 
 export interface FunctionEntryOpts {
-  /** 요청 처리기. 처음 요청 때 한 번 만든다(실패하면 다음 요청에서 다시) */
   build(): Promise<(req: http.IncomingMessage, res: http.ServerResponse) => Promise<void>>;
-  /**
-   * 이 함수가 받는 내부 경로(메서드·경로). 없으면 공개 함수: `/internal/*`은 모두 404.
-   * 있으면 내부 함수: 이 목록만 받고 그 밖(공개 경로 포함)은 모두 404. 받은 요청도 서비스의 서명 검사(INTERNAL_CALL_KEY)를 거친다.
-   */
   internal?: (method: string, pathname: string) => boolean;
 }
 
@@ -73,7 +65,7 @@ export function functionEntry(o: FunctionEntryOpts): (req: http.IncomingMessage,
     req.url = u.pathname + u.search;
     built ??= o.build();
     const listener = await built.catch((e: unknown) => {
-      built = null; // 다음 요청에서 다시 시도(설정 오류는 로그에 이름만)
+      built = null;
       throw e;
     });
     await listener(req, res);

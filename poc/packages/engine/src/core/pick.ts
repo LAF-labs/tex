@@ -1,9 +1,3 @@
-// IR rev v1.3.6: 목록에서 행 고르기(pick 스텝·signFlow.certPick)와 사라짐 기다리기(wait for:'gone').
-// - 목록 = rows 항목(사전): item(행)·name(행 안 이름 칸)·selected(선택된 행) CSS. 홈택스 인증서 창(ML4Web jqx DataTable)이 첫 사용처다.
-// - 고르는 규칙: use 'selected'면 지금 선택된 행(사람이 고른 행, 정확히 하나). 그 밖에는 행이 하나면 그 행, 여럿이면 by 값과
-//   이름 칸 글(정규화)이 같은 행이 정확히 하나일 때만. 추측하지 않는다(못 고르면 none, 스텝은 ifNone으로 간다).
-// - 사후 조건: 고른 행이 선택돼 있지 않으면 누르고(GuardedActuator.pickRow), 선택 표지가 그 행으로 바뀌어야 성공이다.
-// - 저널·로그에 행 글·이름을 남기지 않는다(⑦). 결과에는 코드만 있다. 이름은 remember일 때 프로필 칸으로만 간다.
 import { normalizeName } from './constants.ts';
 import type { ElementRef } from './page.ts';
 import { resolveTarget } from './resolve.ts';
@@ -11,9 +5,7 @@ import { isAbsent, isRef, readRef, scalar } from './scope.ts';
 import { NEXT, waitTarget, type Outcome, type StepEnv } from './steps.ts';
 import type { StepOf } from './types.ts';
 
-/** 고른 뒤 선택 표지가 그 행으로 바뀌기를 기다리는 상한(ms). */
 const PICK_SELECT_WAIT_MS = 3_000;
-/** wait for:'gone': 대상이 이만큼 계속 없어야 사라졌다고 본다(처리 표시가 아직 안 뜬 순간을 사라짐으로 읽지 않게). */
 const GONE_QUIET_MS = 500;
 
 type PickResult = { ok: true; name: string } | { ok: false; code: string; none?: boolean };
@@ -29,7 +21,6 @@ export async function pickRow(env: StepEnv, key: string, o: { by?: string; use?:
   const { item, name, selected } = entry.rows;
   const css = (value: string) => ({ kind: 'css' as const, value });
   const deadline = env.clock.now() + timeoutMs;
-  // 행이 그려질 때까지(이름 칸 글이 빈칸이 아닌 행이 하나 이상)
   let rows: Array<{ el: ElementRef; name: string }> = [];
   for (;;) {
     rows = [];
@@ -81,7 +72,6 @@ export async function pickStep(s: StepOf<'pick'>, env: StepEnv): Promise<Outcome
   const r = await pickRow(env, s.target, { ...(s.by !== undefined ? { by: s.by } : {}), ...(s.use ? { use: s.use } : {}) }, s.timeoutMs ?? env.defaultTimeoutMs);
   if (!r.ok) return r.none && s.ifNone ? { t: 'jump', to: s.ifNone } : { t: 'fail', code: r.code };
   if (s.remember) {
-    // 다음 실행이 이름으로 고르게 프로필에 둔다. 저장이 안 돼도 이번 실행은 이미 골랐다(다음에 사람이 한 번 더 고를 뿐).
     await env.profileWrite?.(s.remember, r.name).catch(() => false);
     env.scope.profile = { ...env.scope.profile, [s.remember]: r.name };
   }

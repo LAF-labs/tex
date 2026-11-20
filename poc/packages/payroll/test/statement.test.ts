@@ -1,4 +1,3 @@
-// 임금명세서·임금대장 법정 항목 누락 검사(R14 D-L12, §3 대조표 P-1~P-6·L-1~L-4). 경고용이고 막지 않는다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
@@ -24,7 +23,6 @@ describe('임금명세서 누락 검사(§27의2, R14 P-1~P-6)', () => {
 
   it('월급 2,500천원 + 식대 20만원: 다 채우면 빈 목록(공제 합계 = 항목 합계, 실지급 = 총액 − 공제)', () => {
     assert.deepEqual(check(ok), []);
-    // 35,600 + 3,560 + 118,750 + 89,870 + 11,800 + 22,500 = 282,080 → 2,700,000 − 282,080
     assert.equal(ok.totalDeduction, 282_080);
     assert.equal(ok.net, 2_417_920);
   });

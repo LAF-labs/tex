@@ -1,9 +1,3 @@
-// 계좌 자동조회(CODEF)용 인증서 비밀번호 기억(사장님이 [이 PC에 기억]을 고른 때만, 대표 결정 2026-11-12 과제 지시).
-// - ADR-020 결정 2("인증서 비밀번호는 저장 기능이 없다")의 좁은 예외다. 이 칸은 codef.seal만 읽는다. 타이피스트·포털 칸·secret.list에 나오지 않는다
-//   (STORABLE_KINDS에 넣지 않는다). 그래서 기억해 둔 비밀번호가 홈택스 등 다른 사이트 입력에 쓰이는 길이 없다.
-// - 칸: codef/<scope>/<certId>. 칸마다 KEK(32B 무작위, 기기 결박 래핑 kek/codef/<scope>/<certId>/device)로 AES-256-GCM(AAD = 칸 이름).
-// - 금고가 잠겨 있으면 읽지도 쓰지도 않는다. 지우기는 잠겨 있어도 한다([연결 해제]·비밀번호 틀림).
-// - 로그는 이벤트 이름만(값·길이·인증서 id 없음).
 import { randomBytes } from 'node:crypto';
 import type { EventLog } from '@sax/platform';
 import type { ProfileScope } from '../protocol.ts';
@@ -62,7 +56,6 @@ export class CodefPasswordStore {
     }
   }
 
-  /** 기억하기. 기기 결박 래핑이 안 되면 저장하지 않는다(약한 등급으로 조용히 내려가지 않는다). 값은 복사해 봉인하고 원본은 부른 쪽이 지운다. */
   async write(scope: ProfileScope, certId: string, bytes: Uint8Array): Promise<'ok' | 'vault_locked' | 'kek_unavailable' | 'write_failed'> {
     this.check(certId);
     if (!(bytes instanceof Uint8Array) || bytes.length === 0 || bytes.length > CODEF_PASSWORD_MAX_BYTES) throw new Error('bad_params');

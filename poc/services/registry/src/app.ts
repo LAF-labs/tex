@@ -1,5 +1,3 @@
-// 레지스트리 HTTP. 공개 GET은 정적 파일(ETag 조건부), 게시 PUT은 운영자 토큰 + 서명 검증 관문(규칙 정본: design/schemas/SIGNING.md, 엔진 로더).
-// 게시 토큰은 호스팅 쓰기 권한일 뿐 서명 권한이 아니다: 2-of-3 서명이 없는 산출물은 토큰이 있어도 올라가지 않는다(ADR-013, D09 §8.2 역할 분리).
 import type { KeyObject } from 'node:crypto';
 import { canonicalizable } from '@sax/engine/core';
 import { Router, fail, fromB64, json, safeEqual, sha256hex, type Ctx, type Reply } from '@sax/svc-shared';
@@ -32,23 +30,14 @@ export interface RegistryAppOpts {
   trust: TrustRoot;
   adminToken: string;
   now: () => number;
-  /** 게시 이벤트(카운트만) */
   onEvent?: (e: string) => void;
-  /** 투명성 로그(D09 §8.3). 있으면 게시마다 공개 전에 항목을 먼저 쓰고 /registry/log/*를 연다. 운영 기동(main)은 반드시 둔다 */
   log?: TransparencyLog;
-  /**
-   * 첫 게시 도장(CEREMONY.md §5·§6 "타임스탬프는 서버가 붙인다"): 정책·status·폐기 목록·인덱스(ADR-043)를 `timestamp` 없이 올리면 이 타임스탬프 역할 키
-   * (로그 헤드와 같은 온라인 키, logSigningKey가 핀과 대조한 것)로 issuedAt·expiresAt·timestamp를 붙인 뒤 같은 관문 검증을 한다.
-   * 내용 서명(루트·정책·긴급 키)은 신선도 필드를 서명 바이트에서 빼므로 그대로다. 재서명 cron(resign.ts)과 같은 restamp·같은 유효 기간이다.
-   */
   stamper?: { keyId: string; key: KeyObject };
 }
 
-/** 조회 주기 파일(ADR-023): 15분 폴링 + ETag, max-age=60 */
 const POLL = 'public, max-age=60';
 const IMMUTABLE = 'public, max-age=31536000, immutable';
 
-/** {id}@{version}.sxp. id는 점 필수(핫픽스는 <appliesTo.id>.hotfix, 데이터 패키지는 `-` 허용). 종류별 id 규칙은 .sxp 안 스키마가 본다 */
 const PACKAGE_FILE = /^([a-z0-9]+(?:\.[a-z0-9_-]+)+)@(\d+\.\d+\.\d+)\.sxp$/;
 const POLICY_FILE = /^(\d{4}\.\d{2}(?:\.\d+)?)\.json$/;
 
@@ -69,13 +58,11 @@ export function registryRouter(o: RegistryAppOpts): Router {
     if (!(CHANNELS as readonly string[]).includes(c)) fail('registry.not_found');
     return c as Channel;
   };
-  /** 공개: 투명성 로그 항목을 먼저 쓰고(실패하면 공개하지 않는다), 그다음 파일을 쓴다(D09 §8.3 "먼저 기록") */
   const publish = async (kind: LogKind, key: string, bytes: Buffer) => {
     if (o.log) await o.log.append({ kind, path: key, sha256: sha256hex(bytes) });
     await store.put(key, bytes);
   };
   const putJson = (kind: LogKind, key: string, v: unknown) => publish(kind, key, Buffer.from(JSON.stringify(v)));
-  /** 검증을 돌리고, 통과하든 거부되든 그동안 생긴 이벤트(registry.key_revoked 등)를 남긴다 */
   const checked = <T>(fn: (v: Verdict) => T): T => {
     const v: Verdict = { events: [] };
     try {
@@ -84,7 +71,6 @@ export function registryRouter(o: RegistryAppOpts): Router {
       for (const e of v.events) o.onEvent?.(e);
     }
   };
-  /** timestamp가 없는 문서는 서버가 도장을 찍는다(stamper가 있을 때만). 있으면 그대로 검증한다(손대지 않는다) */
   const stamped = <T extends { monotonic: number; issuedAt: string; expiresAt: string; timestamp: unknown }>(doc: T, ttl: number): T => {
     if (!doc || typeof doc !== 'object' || Array.isArray(doc)) fail('registry.schema_invalid');
     if (doc.timestamp !== undefined || !o.stamper) return doc;
@@ -92,7 +78,6 @@ export function registryRouter(o: RegistryAppOpts): Router {
     o.onEvent?.('registry.stamped_on_publish');
     return restamp(doc, ttl, o.now(), o.stamper);
   };
-  // 게시는 인스턴스 안에서 하나씩(읽기 → 검증 → 쓰기 사이에 다른 게시가 끼어 단조 값·덮어쓰기 검사를 비켜 가지 않게)
   let chain: Promise<unknown> = Promise.resolve();
   const serial = <T>(fn: () => Promise<T>): Promise<T> => {
     const run = chain.then(fn, fn);
@@ -109,7 +94,6 @@ export function registryRouter(o: RegistryAppOpts): Router {
     return { status: 200, headers, raw: b };
   };
 
-  // ---------- 공개 GET(정적 경로, D09 §8.1) ----------
   r.add('GET', '/registry/:channel/index.json', (ctx) => serve(ctx, `registry/${channelOf(ctx.params.channel!)}/index.json`, POLL, 'application/json'));
   r.add('GET', '/registry/status.json', (ctx) => serve(ctx, 'registry/status.json', POLL, 'application/json'));
   r.add('GET', '/registry/revoked_keys.json', (ctx) => serve(ctx, 'registry/revoked_keys.json', POLL, 'application/json'));
@@ -117,7 +101,6 @@ export function registryRouter(o: RegistryAppOpts): Router {
     const f = ctx.params.file!;
     if (f === 'current.json') return serve(ctx, 'policy/current.json', POLL, 'application/json');
     if (!POLICY_FILE.test(f)) fail('registry.not_found');
-    // {ver}.json도 신선도 재발행(같은 내용, 새 issuedAt·서명)으로 바뀌므로 불변 캐시가 아니다
     return serve(ctx, `policy/${f}`, POLL, 'application/json');
   });
   r.add('GET', '/packages/:file', (ctx) => {
@@ -126,7 +109,6 @@ export function registryRouter(o: RegistryAppOpts): Router {
   });
   r.add('GET', '/releases/:channel/latest.json', (ctx) => serve(ctx, `releases/${channelOf(ctx.params.channel!)}/latest.json`, POLL, 'application/json'));
   r.add('GET', '/releases/:channel/latest.yml', (ctx) => serve(ctx, `releases/${channelOf(ctx.params.channel!)}/latest.yml`, POLL, 'text/yaml; charset=utf-8'));
-  // 처음 설치 직접 링크(/download 안내 페이지의 [Mac용 내려받기]). 서명된 beta latest.json의 zip 주소 옆 dmg로 보낸다. publish-update.sh가 PUT 전에 같은 이름의 dmg를 올린다
   r.add('GET', '/download/mac', async () => {
     const url = (await readJson<ReleaseManifest>('releases/beta/latest.json'))?.files[0]?.url ?? '';
     if (!/^https:\/\/[^/]+\/.+\.zip$/.test(url)) fail('registry.not_found');
@@ -134,8 +116,6 @@ export function registryRouter(o: RegistryAppOpts): Router {
   });
   r.add('GET', '/healthz', () => json(200, { ok: true }));
 
-  // ---------- 투명성 로그(RFC 9162, D09 §8.3) ----------
-  // 쿼리는 경로마다 정해진 키만 정확히 한 번씩(클라이언트 egress 허용 목록과 같은 규칙)
   const DEC = /^(0|[1-9][0-9]{0,14})$/;
   const query = (ctx: Ctx, want: Record<string, RegExp>): Record<string, string> => {
     const keys = [...ctx.query.keys()];
@@ -177,7 +157,6 @@ export function registryRouter(o: RegistryAppOpts): Router {
     return { status: 200, headers: { 'cache-control': IMMUTABLE }, body: p };
   });
 
-  // ---------- 게시(운영자, 서명 검증 관문) ----------
   r.add(
     'PUT',
     '/admin/v1/packages/:file',
@@ -189,13 +168,10 @@ export function registryRouter(o: RegistryAppOpts): Router {
         if (!m) fail('request.param_rejected');
         const data = fromB64((ctx.body as { data?: unknown } | undefined)?.data);
         if (!data || !data.length) fail('request.param_rejected');
-        // 같은 이름은 다시 쓰지 않는다(불변 경로). 다른 바이트로 덮어쓰기 = 공급망 변조
         const cur = await store.get(`packages/${f}`);
         if (cur && !cur.equals(data!)) fail('registry.content_digest_mismatch');
-        // .sxp 안의 manifest·hotfix 서명(패키지 키 2-of-3)·스키마·내용 다이제스트까지 본다(엔진이 받지 않을 패키지는 올리지 않는다)
         const revoked = await revokedSet();
         const info = checked((v) => verifySxp(data!, { id: m![1]!, version: m![2]! }, o.trust, revoked, o.now(), v));
-        // 같은 바이트 재게시(멱등)는 로그에 다시 쓰지 않는다
         if (!cur) await publish('package', `packages/${f}`, data!);
         o.onEvent?.('package_staged');
         return json(201, { sxpDigest: sha256hex(data!), size: data!.length, kind: info.kind });
@@ -216,7 +192,6 @@ export function registryRouter(o: RegistryAppOpts): Router {
         const revoked = await revokedSet();
         const stored = await readJson<RegistryIndex>(key);
         checked((v) => verifyIndex(doc, channel, o.trust, revoked, stored, o.now(), v));
-        // 인덱스가 가리키는 패키지는 먼저 올라와 있어야 하고, 바이트가 sxpDigest·size와 같고, 안의 서명·종류·포털이 항목과 맞아야 한다
         for (const e of doc.entries) {
           const b = await store.get(`packages/${e.id}@${e.version}.sxp`);
           if (!b) fail('registry.not_found');
@@ -238,8 +213,6 @@ export function registryRouter(o: RegistryAppOpts): Router {
       const doc = stamped(ctx.body as SignedPolicy, RESIGN_TTL.policy);
       const [revoked, stored] = [await revokedSet(), await readJson<SignedPolicy>('policy/current.json')];
       const v = checked((x) => verifyPolicy(doc, o.trust, revoked, stored, o.now(), x));
-      // {ver}.json과 current.json은 같은 내용(ADR-023). 같은 버전 파일이 이미 있으면 monotonic·내용 다이제스트가 같을 때만(신선도 재발행).
-      // current.json 쓰기가 실패해도 {ver}.json은 같은 내용으로만 다시 쓸 수 있으므로, 같은 문서로 재시도하면 끝난다.
       const prev = await readJson<SignedPolicy>(`policy/${doc.version}.json`);
       if (prev && (prev.monotonic !== doc.monotonic || contentDigest(prev) !== contentDigest(doc))) fail('registry.version_rollback');
       await putJson('policy', `policy/${doc.version}.json`, doc);
@@ -279,13 +252,11 @@ export function registryRouter(o: RegistryAppOpts): Router {
       const channel = channelOf(ctx.params.channel!);
       const body = ctx.body as ReleaseManifest;
       if (!body || typeof body !== 'object' || Array.isArray(body)) fail('registry.schema_invalid');
-      // 사람은 내용(판·파일·주소)에만 서명해 올린다. 기간·타임스탬프가 없으면 여기서 붙이고, 그 뒤 재서명 cron이 이어 붙인다(resign.ts)
       const stamp = body.timestamp === undefined && o.stamper !== undefined && canonicalizable(body);
       if (stamp) o.onEvent?.('registry.stamped_on_publish');
       const doc = stamp ? restampRelease(body, RESIGN_TTL.release, o.now(), o.stamper!) : body;
       const [revoked, stored] = [await revokedSet(), await readJson<ReleaseManifest>(`releases/${channel}/latest.json`)];
       checked((v) => verifyRelease(doc, channel, o.trust, revoked, stored, o.now(), v));
-      // yml을 먼저 쓰고 json을 마지막에 쓴다: json이 "게시됨"의 기준이라, 중간에 실패하면 같은 버전으로 다시 올릴 수 있다
       await publish('release', `releases/${channel}/latest.yml`, Buffer.from(renderLatestYml(doc)));
       await putJson('release', `releases/${channel}/latest.json`, doc);
       o.onEvent?.('release_published');

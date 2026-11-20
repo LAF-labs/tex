@@ -1,12 +1,3 @@
-// H-01 셀렉터를 고친 뒤 다시 게시하는 한 명령(팀장 지시 2026-11-09 3, PUBLISH-H01.md "판을 바꿀 때", ADR-025).
-// poc/ 에서: node scripts/h01-republish.mjs 2.1.1            (운영 게시: Touch ID 4번 + 운영자 토큰)
-//           node scripts/h01-republish.mjs 2.1.2 --lookups 1.1.1  (조회 셀렉터도 고쳤을 때: 조회 패키지 2개 판·H-01 lookupsUsed도 올림, Touch ID 8번)
-//           node scripts/h01-republish.mjs 2.1.1 --dry-run  (운영은 읽기만, 임시 키, Touch ID 없음)
-// 하는 일: 소스 판 올리기(manifest.json·playbook.json) → prepare → 패키지 서명 2번 → assemble → 인덱스 서명 2번 → push.
-// 게시 CLI(services/registry/src/publish/cli.ts)·서명 CLI(ceremony sign)를 그대로 부른다. 이 스크립트는 키도 토큰도 갖지 않는다.
-// - 서명은 사람이 Touch ID 창의 확인 코드를 보고 누른다. 토큰은 push가 터미널에서 보이지 않게 묻는다(인자·env·파일로 받지 않는다).
-// - 정책·status·폐기 목록은 다시 올리지 않는다(그대로면 서명 없음). 바꾸려면 PUBLISH-H01.md 절차를 쓴다.
-// - 중간에 멈추면 같은 명령을 다시 친다. 작업 폴더에 plan.json이 있으면 prepare를 건너뛰고, 이미 있는 서명은 다시 하지 않는다.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -25,7 +16,6 @@ const SIGN_PREFIX = 'node --conditions=development services/registry/src/ceremon
 
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
-/** a > b(숫자 비교). 둘 다 semver여야 한다 */
 export function semverGreater(a, b) {
   const x = SEMVER.exec(a);
   const y = SEMVER.exec(b);
@@ -34,14 +24,9 @@ export function semverGreater(a, b) {
   return false;
 }
 
-/**
- * JSON 텍스트의 최상위 "version"만 바꾼다(들여쓰기·순서 그대로). manifest의 lookupsUsed[].version은 건드리지 않는다.
- * 최상위 판이 없거나 바꾼 뒤 JSON이 아니면 던진다.
- */
 export function bumpTopVersion(text, version) {
   const before = JSON.parse(text);
   if (typeof before.version !== 'string') throw new Error('h01.version_missing');
-  // 최상위 키는 첫 줄 `{` 다음 들여쓰기 한 단계에 있다. 그 들여쓰기의 "version" 줄 하나만 바꾼다
   const indent = /^\{\r?\n([ \t]+)"/.exec(text)?.[1];
   if (!indent) throw new Error('h01.format_unknown');
   const re = new RegExp(`^${indent}"version": "[^"]*"`, 'm');
@@ -51,7 +36,6 @@ export function bumpTopVersion(text, version) {
   return out;
 }
 
-/** manifest 텍스트의 lookupsUsed[id].version만 바꾼다(그 id 항목 바로 다음 줄의 version). 없는 id면 던진다 */
 export function bumpLookupsUsed(text, id, version) {
   const re = new RegExp(`("id": "${id.replaceAll('.', '\\.')}",\\r?\\n[ \\t]+"version": ")[^"]*(")`);
   if (!re.test(text)) throw new Error(`h01.lookup_missing ${id}`);
@@ -61,7 +45,6 @@ export function bumpLookupsUsed(text, id, version) {
   return out;
 }
 
-/** prepare·assemble 화면에서 서명 명령 줄만 뽑는다(pipeline.ts signCommand 모양) */
 export function signLines(output) {
   return output
     .split(/\r?\n/)
@@ -69,7 +52,6 @@ export function signLines(output) {
     .filter((l) => l.startsWith(SIGN_PREFIX));
 }
 
-/** 서명 명령의 --out·--kind·--key-id·--confirm(POSIX 셸 인용 그대로) */
 export function signParts(cmd) {
   const arg = (k) => {
     const m = new RegExp(`--${k} ('((?:[^']|'\\\\'')*)'|(\\S+))`).exec(cmd);
@@ -98,7 +80,6 @@ function parseArgs(argv) {
 
 const say = (l) => process.stdout.write(`${l}\n`);
 
-/** 게시 CLI를 부른다. 화면에 그대로 보이고, 출력도 돌려준다(서명 명령을 뽑으려고) */
 function publish(args) {
   const r = spawnSync(process.execPath, [...PUBLISH, ...args], { cwd: POC, encoding: 'utf8', stdio: ['inherit', 'pipe', 'inherit'] });
   process.stdout.write(r.stdout ?? '');
@@ -106,7 +87,6 @@ function publish(args) {
   return r.stdout ?? '';
 }
 
-/** 서명 명령을 하나씩 돈다. 이미 있는 서명 파일은 건너뛴다(같은 명령을 두 번 돌리면 EEXIST) */
 function signAll(cmds, label) {
   let n = 0;
   for (const [i, c] of cmds.entries()) {
@@ -134,11 +114,9 @@ async function confirm(q, yes) {
   }
 }
 
-/** 소스 판을 올린다. 이미 그 판이면 그대로, 더 낮은 판이면 거부(불변 경로, publish.version_exists) */
 function bumpSources(version, lookups) {
   const changed = [];
   if (lookups) {
-    // 조회 패키지 2개 판 → H-01 manifest lookupsUsed 판(로더가 id·판·다이제스트를 대조한다. 다이제스트는 게시 도구가 채운다)
     changed.push(...bumpDirs(LOOKUP_DIRS, lookups));
     const mf = path.join(POC, H01_DIR, 'manifest.json');
     let text = fs.readFileSync(mf, 'utf8');
@@ -177,7 +155,6 @@ export async function main(argv) {
     return 0;
   }
 
-  // 1. prepare(작업 폴더에 plan.json이 있으면 이어 하기: 화면 기록에서 서명 명령을 다시 읽는다)
   const prepLog = `${work}.prepare.txt`;
   let prep;
   if (fs.existsSync(path.join(work, 'plan.json')) && fs.existsSync(prepLog)) {
@@ -188,18 +165,15 @@ export async function main(argv) {
     prep = publish(['prepare', '--registry', o.registry, ...base, ...SOURCES]);
     fs.writeFileSync(prepLog, prep, { flag: 'wx' });
   }
-  // 첫 게시(폐기 목록·정책·status가 함께 올라가야 엔진이 받는다)는 PUBLISH-H01.md 절차로 한다
   if (/지금 인덱스 monotonic 없음/.test(prep)) throw new Error('h01.first_publish 운영에 인덱스가 아직 없다. 첫 게시는 PUBLISH-H01.md 절차로 한다');
   const pkgSigns = signLines(prep);
   if (pkgSigns.some((c) => signParts(c).kind !== 'manifest')) {
-    // 이 명령은 패키지만 다시 올린다. 정책·status 서명이 나오면 절차가 다르다(PUBLISH-H01.md)
     throw new Error('h01.unexpected_docs prepare가 패키지 밖의 서명을 요구한다. PUBLISH-H01.md 절차로 한다');
   }
   if (!pkgSigns.length) throw new Error('h01.nothing_to_sign 바뀐 패키지가 없다(같은 내용이 이미 게시됨)');
   await confirm(`\n위 확인 코드로 패키지 서명 ${pkgSigns.length}번(Touch ID)을 한다.`, o.yes);
   signAll(pkgSigns, '패키지 서명');
 
-  // 2. assemble → 인덱스 서명
   const asmLog = `${work}.assemble.txt`;
   let asm;
   if (fs.existsSync(path.join(work, 'assembled.json')) && fs.existsSync(asmLog)) asm = fs.readFileSync(asmLog, 'utf8');
@@ -211,7 +185,6 @@ export async function main(argv) {
   if (idxSigns.length !== 2 || idxSigns.some((c) => signParts(c).kind !== 'index')) throw new Error('h01.unexpected_assemble 인덱스 서명 2줄이 아니다');
   signAll(idxSigns, '인덱스 서명');
 
-  // 3. push(토큰은 게시 CLI가 터미널에서 보이지 않게 묻는다)
   if (fs.existsSync(path.join(work, 'record.json'))) {
     say(`이미 게시함: ${path.join(work, 'record.json')}`);
   } else {

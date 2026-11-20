@@ -1,6 +1,3 @@
-// ADR-039 결정 4 포장 가드: fixture 패키지·그것을 만드는 코드가 설치본에 들어가지 않는다는 것을 이름 규칙만 믿지 않고 시험으로 본다.
-// 1차 방어는 제품 로더 거부(결정 2 ②, core-loader 시험), 이것은 2차다. 포장 규칙(package-win DEV_ONLY_RE·electron-builder EXCLUDE)은
-// 포장 트랙 파일이라 여기서 읽기만 한다. 규칙이 바뀌어 이 시험이 깨지면 ADR-039 결정 4를 함께 본다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,7 +11,6 @@ import { EXCLUDE } from '../apps/desktop/build/electron-builder.config.mjs';
 const POC = path.join(import.meta.dirname, '..');
 const read = (p: string) => fs.readFileSync(path.join(POC, p), 'utf8');
 
-/** package-win.mjs의 DEV_ONLY_RE(모듈을 불러오면 포장이 돌아서 소스에서 꺼낸다). */
 function devOnlyRe(): RegExp {
   const m = /const DEV_ONLY_RE = \/(.+)\/([a-z]*);/.exec(read('scripts/package-win.mjs'));
   assert.ok(m, 'package-win.mjs에 DEV_ONLY_RE가 없다(포장 판정이 바뀌었으면 ADR-039 결정 4를 함께 고친다)');
@@ -32,7 +28,6 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** 제품 소스: 데스크톱 앱과 그 운영 의존 작업 공간 패키지(전이)의 src. */
 function productPackages(): Map<string, string> {
   const dirs = new Map<string, string>();
   for (const root of ['packages', 'apps', 'services']) {
@@ -54,7 +49,6 @@ function productPackages(): Map<string, string> {
   return out;
 }
 
-/** fixture 패키지를 만드는 코드(portal을 fixture로 두는 리터럴). 상수 정의(FIXTURE_PORTAL)·거부 목록은 해당하지 않는다. */
 const BUILDS_FIXTURE = /\bportal['"]?\s*[:=]\s*['"]fixture['"]|\.portal\s*=\s*FIXTURE_PORTAL/;
 
 describe('ADR-039 결정 4 포장 가드(2차 방어)', () => {
@@ -122,7 +116,6 @@ describe('ADR-039 결정 4 포장 가드(2차 방어)', () => {
       assert.equal(m.id, id, '폴더 이름 = 패키지 id');
       assert.notEqual(m.portal, 'fixture', `${id}: fixture 포털 패키지는 tests/에만 둔다`);
     }
-    // 설치본에 들어가도(pnpm deploy가 엔진 폴더를 복사한다) 서명이 없어 제품 로더(dist)가 거부한다
     const dist = (await import(new URL('../packages/engine/dist/core/loader.js', import.meta.url).href)) as typeof import('../packages/engine/src/core/loader.ts');
     const bytes = (o: unknown) => Buffer.from(JSON.stringify(o), 'utf8');
     const raw = (f: ReturnType<typeof h01>) => ({ manifest: bytes(f.manifest), playbook: bytes(f.playbook), selectors: bytes(f.selectors), strings: bytes(f.strings) });
@@ -131,7 +124,6 @@ describe('ADR-039 결정 4 포장 가드(2차 방어)', () => {
       const r = dist.loadPackage(raw(f), ctx);
       assert.equal(r.ok ? 'ok' : r.code, 'registry.signature_insufficient', f.manifest.id);
     }
-    // 제품 소스(설치본 의존 전이)에 이 폴더를 가리키는 문자열 리터럴이 없다(읽는 코드가 없다)
     const offenders: string[] = [];
     for (const [, d] of productPackages()) {
       for (const f of walk(path.join(POC, d, 'src'))) {

@@ -1,8 +1,4 @@
-// 셸 문서함 e2e(PoC-8 후속): 데모 셸의 문서함에서 PDF 가져오기 → docparse 샌드박스 → 셸 엔진(fixture 모드, 임시 앱 폴더)의 보관함
-// → 목록·만료 출처·확인 필요 → 문서 패널에서 확인(후보 넣기, 바뀐 칸만 보냄). 열기 암호 흐름, 중복·실패·다른 화면에 있을 때,
-// 렌더러가 대화상자 없이 가져오기를 부르는 경로도 본다. PDF 열기는 OS 뷰어를 띄우지 않게 바꿔 끼운다.
-// 실행: electron apps/desktop/e2e-dist/shell-docs-e2e.js → reports/raw/poc-8-shell-docs.json, reports/raw/poc-8/shell-docs.png. 앱 폴더·키체인을 쓰지 않는다(fixture 모드).
-import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
+import './os-guard.js';
 import { rmSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -18,7 +14,6 @@ import { encryptedTestPdf, syntheticCerts } from '../dist/synthetic-certs.js';
 import { importPdf, type EngineCall } from '../dist/vault-import.js';
 
 registerShellSchemes();
-// 시험용 앱 폴더(데모 공급자 폴더 이름 sax-shell-docs-*와 겹치지 않게). 끝나면 지운다.
 const USER_DATA = path.join(app.getPath('temp'), `sax-e2e-docs-${process.pid}`);
 app.setPath('userData', USER_DATA);
 process.once('exit', () => rmSync(USER_DATA, { recursive: true, force: true, maxRetries: 2 }));
@@ -53,7 +48,6 @@ async function htmlToPdf(html: string): Promise<Buffer> {
   }
 }
 
-/** 파일 고르기 대화상자를 정해진 파일로 바꾼다. delay만큼 기다렸다 돌려주고, 'throw'면 대화상자가 실패한다. */
 function pickNext(file: string | null | 'throw', delay = 0): void {
   dialog.showOpenDialog = (async () => {
     await sleep(delay);
@@ -65,11 +59,9 @@ function pickNext(file: string | null | 'throw', delay = 0): void {
 type DocRow = { id: string; name: string; issuedOn: string | null; expiresOn: string | null; vault?: { expirySource: string | null; needsUser: boolean; reasons: string[]; subjectMismatch: boolean; suggested: { validUntil?: string } } };
 const listDocs = () => js<DocRow[]>(`window.sax.call('docs.list')`);
 const rowText = (id: string) => js<string>(`document.querySelector('[data-doc-row="${id}"]')?.textContent ?? ''`);
-/** 목록에는 유효 열이 없다(캔버스 D-01). 만료일 확실성은 행의 data-expiry-tag로 본다(화면에서는 상세 패널 유효 칸). */
 const rowTag = (id: string) => js<string>(`document.querySelector('[data-doc-row="${id}"]')?.getAttribute('data-expiry-tag') ?? ''`);
 const toastText = () => js<string>(`(() => { const t = document.querySelector('#toast'); return t && !t.hidden ? t.textContent : ''; })()`);
 const busy = () => js<boolean>(`document.querySelector('[data-act=doc-import]')?.disabled ?? false`);
-/** 메인 창에 실제 입력 하나(main의 before-mouse-event가 본다). 짝 없는 mouseUp이라 아무것도 누르지 않는다. 대화상자·뷰어는 3초 안의 입력 뒤에만 열린다(ADR-027 결정 8). */
 const gesture = () => S!.win.webContents.sendInputEvent({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 });
 const importClick = async () => {
   gesture();
@@ -77,7 +69,6 @@ const importClick = async () => {
   await js(`document.querySelector('#toast').hidden = true; document.querySelector('[data-act=doc-import]').click()`);
   await until('import done', async () => !(await busy()));
 };
-/** 가져오기 뒤 새로 생긴 서류(목록에 없던 id) */
 async function importNew(file: string): Promise<DocRow | undefined> {
   const before = new Set((await listDocs()).map((d) => d.id));
   pickNext(file);
@@ -85,7 +76,6 @@ async function importNew(file: string): Promise<DocRow | undefined> {
   return (await listDocs()).find((d) => !before.has(d.id));
 }
 const review = (id: string, sel: string) => `document.querySelector('[data-doc-review="${id}"] ${sel}')`;
-/** 확인 구역을 만든 직후에는 확인 버튼이 잠시 꺼져 있다. 켜지면 누른다. */
 async function confirmWhenReady(id: string, clicks = 1): Promise<void> {
   await until('confirm enabled', async () => js<boolean>(`${review(id, '[data-act=doc-confirm]')}?.disabled === false`), 5000);
   await js(`(() => { const b = ${review(id, '[data-act=doc-confirm]')}; for (let i = 0; i < ${clicks}; i++) b.click(); })()`);
@@ -93,15 +83,13 @@ async function confirmWhenReady(id: string, clicks = 1): Promise<void> {
 
 async function main(): Promise<void> {
   const tmp = await fs.mkdtemp(path.join(app.getPath('temp'), 'sax-e2e-docs-files-'));
-  const mine = DEMO_PROFILE.bizNo; // fixture 엔진의 내 사업장
+  const mine = DEMO_PROFILE.bizNo;
   const certs = syntheticCerts();
   const taxes = certs.filter((c) => c.kind === 'national_tax_cert');
   const bizs = certs.filter((c) => c.kind === 'biz_registration_cert');
   const tax = taxes[0]!;
   const biz = bizs[0]!;
   const asMine = (html: string, bizNo: string) => html.replace(formatBizNo(bizNo), formatBizNo(mine));
-  // 납세증명서는 데모 사업장 번호로(대상 일치), 사업자등록증명은 다른 번호 그대로(다른 사업자 → 확인 필요).
-  // amb: 유효기간 줄이 둘(서로 다른 날짜) → 엔진은 발급일 이후 가장 이른 문서 후보를 잠정 만료일로(규칙 30일보다 이르므로), 확인 필요.
   const AMB_VALID = '2026-10-20';
   const files = { tax: path.join(tmp, 'tax.pdf'), biz: path.join(tmp, 'biz.pdf'), amb: path.join(tmp, 'amb.pdf'), biz2: path.join(tmp, 'biz2.pdf'), locked: path.join(tmp, 'locked.pdf') };
   await fs.writeFile(files.tax, await htmlToPdf(asMine(tax.html, tax.expected.bizNo!)));
@@ -112,8 +100,6 @@ async function main(): Promise<void> {
   await fs.writeFile(files.biz2, await htmlToPdf(asMine(bizs[1]!.html, bizs[1]!.expected.bizNo!)));
   await fs.writeFile(files.locked, encryptedTestPdf('shell-pw', 'owner', 'PASSWORD PROTECTED SHELL DOCUMENT FOR THE DOCS VIEW TEST'));
 
-  // 데모 공급자를 직접 넘기고, 셸이 보내는 수정 칸을 적는다(바뀐 칸만 보내는지)
-  // 셸 엔진(fixture 모드: 임시 앱 폴더의 DB·보관함)을 쓰는 공급자를 감싸 넘긴다. 엔진 호스트는 startShell 안에서 생기므로 나중에 잇는다.
   let host: EngineHost | null = null;
   const engine: EngineCall = (m, p) => host!.rpc(m, p);
   const base = engineDocsProvider(engine, importPdf);
@@ -134,7 +120,6 @@ async function main(): Promise<void> {
       seens.push(seen);
       return base.update(id, patch, seen);
     },
-    // 'evil': 보관함 경로가 PDF가 아닌 경우(main이 열지 않아야 한다)
     filePath: (id) => (id === 'evil' ? Promise.resolve(path.join(vaultDir, 'evil.app')) : base.filePath(id)),
   };
   const opened: string[] = [];
@@ -202,11 +187,9 @@ async function main(): Promise<void> {
   const field = (f: string) => js<string>(`${review(a!.id, `[data-field=${f}]`)}?.value ?? ''`);
   const setField = (f: string, v: string) => js(`(() => { const i = ${review(a!.id, `[data-field=${f}]`)}; i.value = '${v}'; i.dispatchEvent(new Event('input')); })()`);
 
-  // 두 번 누르기: 발급일을 고쳐 확인을 연달아 누르고, 응답 뒤 새로 그린 확인 버튼도 바로 누른다 → 한 번만 보내고 재계산 값은 확인 필요로 남는다
   await setField('issuedOn', '2026-10-02');
   const p0 = patches.length;
   await confirmWhenReady(a!.id, 2);
-  // 첫 클릭이 보낸 것이어야 한다(다른 서류의 직전 저장이 이 서류의 클릭을 막지 않는다)
   const firstSent = await until('saved once', async () => patches.length > p0 && (await listDocs()).find((d) => d.id === a!.id)?.issuedOn === '2026-10-02', 3000);
   await js(`${review(a!.id, '[data-act=doc-confirm]')}.click()`);
   await sleep(300);
@@ -217,20 +200,17 @@ async function main(): Promise<void> {
   const noSeen = await js<string>(`window.sax.call('docs.update', { id: '${a!.id}', patch: {} }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`);
   check('옛 화면 값으로 보낸 확인은 stale, 본 값 없이 보내면 seen_required', stale === 'stale' && noSeen === 'seen_required', { stale, noSeen });
 
-  // 후보: 칸 값이 문서 후보와 다르면(칸이 차 있어도) 보여 주고, 후보 넣기로 칸에 넣는다
   await setField('expiresOn', '2026-10-25');
   await js(`(() => { const s = ${review(a!.id, '[data-field=docType]')}; s.dispatchEvent(new Event('change')); })()`);
   const hint = await js<string>(`${review(a!.id, '[data-doc-hint]')}?.textContent ?? ''`);
   check('만료일 칸이 차 있어도 문서 후보와 다르면 후보를 보여 준다', (await field('expiresOn')) === '2026-10-25' && hint.includes(AMB_VALID), { hint });
-  // 입력 중인 값은 다시 그려도 남는다(요소가 바뀌었는지 표시로 확인)
   await js(`${review(a!.id, '[data-field=issuedOn]')}.dataset.old = '1'`);
   await setField('issuedOn', '2026-10-03');
   await js(`${review(a!.id, '[data-field=docType]')}.dispatchEvent(new Event('change'))`);
   check('다시 그려도 입력 중인 발급일이 남는다', (await js<boolean>(`!${review(a!.id, '[data-field=issuedOn]')}.dataset.old`)) && (await field('issuedOn')) === '2026-10-03');
-  // 저장값이 있는 날짜 칸을 비운 채(입력하다 만 날짜가 다시 그려져 빈칸이 된 경우 포함) 누르면 보내지 않는다
   await setField('issuedOn', '');
   await js(`${review(a!.id, '[data-field=docType]')}.dispatchEvent(new Event('change'))`);
-  await sleep(800); // 저장 직후 확인을 받지 않는 시간이 지난 뒤
+  await sleep(800);
   const p1 = patches.length;
   await js(`document.querySelector('#toast').hidden = true; ${review(a!.id, '[data-act=doc-confirm]')}.click()`);
   await sleep(200);
@@ -243,7 +223,6 @@ async function main(): Promise<void> {
   const a2 = (await listDocs()).find((d) => d.id === a!.id);
   check('바꾼 칸 없이 확인하면 문서 후보 날짜가 확인함이 된다(빈 수정)', !!a2 && a2.expiresOn === AMB_VALID && !a2.vault!.needsUser && a2.vault!.expirySource === 'user' && JSON.stringify(patches.at(-1)) === '{}', { a2, patch: patches.at(-1) });
 
-  // 사업자등록증명 b: 만료일 없음 → 납세증명서로 바꾸면 만료일 칸이 다시 열리고 지우지 않는다. 다른 서류로 옮기면 입력을 버린다.
   await js(`document.querySelector('[data-doc-row="${b!.id}"]').click()`);
   const rb = (sel: string) => review(b!.id, sel);
   await js(`(() => { const c = ${rb('[data-field=noExpiry]')}; c.checked = true; c.dispatchEvent(new Event('change')); })()`);
@@ -260,7 +239,6 @@ async function main(): Promise<void> {
   await confirmWhenReady(b!.id);
   await until('b expiry set', async () => (await listDocs()).find((d) => d.id === b!.id)?.expiresOn === '2026-12-01', 5000);
   check('바뀐 칸(만료일)만 보낸다', JSON.stringify(patches.at(-1)) === JSON.stringify({ expiresOn: '2026-12-01' }), patches.at(-1));
-  // 패널이 열린 채 다른 곳에서 서류가 바뀌면: 확인은 stale로 거부되고, 목록을 다시 읽어 새 값을 보여 주며 확인 버튼은 잠시 꺼진다
   const bNow = (await listDocs()).find((d) => d.id === b!.id)!;
   await base.update(b!.id, { expiresOn: '2026-12-02' }, { docType: 'biz_registration_cert', issuedOn: bNow.issuedOn, expiresOn: bNow.expiresOn });
   await js(`document.querySelector('#toast').hidden = true`);
@@ -282,7 +260,6 @@ async function main(): Promise<void> {
   const evil = await js<string>(`window.sax.call('docs.open', { id: 'evil' }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`);
   check('보관함 경로가 PDF가 아니면 열지 않는다', evil === 'open_failed' && opened.length === 1, { evil, opened });
 
-  // 읽는 동안 다른 화면으로 가면 끝나도 문서함·서류 패널로 끌고 오지 않는다
   const nBefore = (await listDocs()).length;
   pickNext(files.biz2, 400);
   gesture();
@@ -303,7 +280,6 @@ async function main(): Promise<void> {
   );
   check('열기 암호 PDF: 열기 암호 창(모달)이 뜨고 앱 틀은 inert, 암호 칸에 포커스', pwModal.dialog && pwModal.inert && pwModal.focused, pwModal);
   const pending = pickIds.at(-1);
-  // 창이 문서함을 덮으므로 새 가져오기는 대화 입력창의 [+]로 한다(대화에서는 창을 띄우지 않는다)
   await js(`document.querySelector('#rail [data-view=chat]').click()`);
   check('대화 화면에서는 열기 암호 창을 띄우지 않는다', await js<boolean>(`!document.querySelector('[data-doc-password]') && !document.querySelector('#app').inert`));
   pickNext(null);
@@ -358,7 +334,6 @@ app.whenReady().then(async () => {
   } catch (e) {
     check('e2e 예외 없음', false, (e as Error).stack);
   }
-  // 엔진이 끝난 뒤 fixture 임시 앱 폴더(DB·보관함 사본)를 지운다
   await S?.close().catch(() => {});
   app.exit(results.length && results.every((r) => r.ok) ? 0 : 1);
 });

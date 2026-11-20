@@ -1,4 +1,3 @@
-// 기동: 환경 변수(ENV.md) → DB 마이그레이션 → HTTP. 비밀은 KMS가 환경 변수로 주입한다(저장소·이미지에 없음).
 import { fileURLToPath } from 'node:url';
 import { InternalAuth, InternalClient, Logger, SqlNonceStore, TokenIssuer, TokenVerifier, createServer, ed25519Private, ed25519RawPublic, key32, listen, migrate, openFromEnv, LIMITS_MIGRATIONS_DIR, sqlLimits } from '@sax/svc-shared';
 import { MockMailSender, MockPaymentGateway, type DeviceStopHook, type MailSender, type PairingRooms, type PaymentGateway } from './adapters.ts';
@@ -10,7 +9,6 @@ import { accountRouter } from './app.ts';
 import { CommonPasswords, COMMON_PASSWORDS_FILE, PasswordHasher, argon2Available, parsePepperKeys } from './password.ts';
 import { AccountService, type PasswordDeps } from './service.ts';
 
-/** argon2id 운영 실측(이벤트 이름·수치만, 한 시간에 한 번): 해시 1회 ms와 그때 RSS MB */
 const ARGON2_PROBE_EVERY_MS = 60 * 60_000;
 
 export const MIGRATIONS_DIR = fileURLToPath(new URL('../migrations/', import.meta.url));
@@ -39,16 +37,10 @@ export function httpPairingRooms(base: string, key: Buffer, fetchFn: typeof fetc
 export interface AccountBuildDeps {
   mail?: MailSender;
   payments?: PaymentGateway;
-  /** 같은 배포 안 서비스의 정지 처리(함수 직접 호출). STOP_HOOK_URLS(다른 호스트, 서명 HTTP) 앞에 붙는다 */
   stopHooks?: DeviceStopHook[];
-  /** 이벤트 로그(이름·수만). 없으면 새 Logger('account') */
   logger?: Logger;
 }
 
-/**
- * 비밀번호 로그인 구성(ADR-038). PASSWORD_PEPPER_KEYS가 없거나 런타임에 argon2id가 없으면 null(비밀번호 경로 404, 다른 로그인은 그대로).
- * 페퍼 키는 다른 비밀과 같은 값이면 기동하지 않는다(키를 섞지 않는다).
- */
 function passwordDeps(env: NodeJS.ProcessEnv, logger: Logger): PasswordDeps | undefined {
   const peppers = parsePepperKeys(env.PASSWORD_PEPPER_KEYS);
   if (!peppers) return undefined;
@@ -63,8 +55,6 @@ function passwordDeps(env: NodeJS.ProcessEnv, logger: Logger): PasswordDeps | un
 
 /** 조립(라우터·서비스·정리). 상시 서버(`startAccount`)와 함수 진입점(`@sax/svc-cloud`)이 같은 것을 쓴다. 함수는 DDL을 하지 않는다(migrate: false, 마이그레이션은 배포 절차). */
 export async function buildAccount(env: NodeJS.ProcessEnv = process.env, deps: AccountBuildDeps = {}, o: { migrate: boolean } = { migrate: true }) {
-  // 메일 구성 오류는 DB를 열기 전에 낸다
-  // PG는 mock(웹훅 모의) 또는 toss(토스페이먼츠 자동결제, TOSS_* env 2개 + BILLING_KEY_SEAL_KEY). 메일은 mock(기본) 또는 ses(MAIL_PROVIDER=ses일 때만, SES_* env 3개). 그 밖의 값이면 기동하지 않는다
   if (env.PG_PROVIDER !== 'mock' && env.PG_PROVIDER !== 'toss' && !deps.payments) throw new Error('config_provider: PG_PROVIDER는 mock 또는 toss');
   if (env.MAIL_PROVIDER !== 'mock' && env.MAIL_PROVIDER !== 'ses' && !deps.mail) throw new Error('config_provider: MAIL_PROVIDER는 mock 또는 ses');
   const logger = deps.logger ?? new Logger('account');
@@ -76,18 +66,15 @@ export async function buildAccount(env: NodeJS.ProcessEnv = process.env, deps: A
   }
   const kid = env.TOKEN_KID ?? 'k1';
   const signKey = ed25519Private(key32(env.TOKEN_SIGNING_SEED, 'TOKEN_SIGNING_SEED'));
-  // acct_claim 전용 키. 없으면 그 경로가 닫힌다. 기기 토큰 키와 같은 값이면 기동하지 않는다(키를 섞지 않는다)
   if (env.ACCT_CLAIM_SIGNING_KEY !== undefined && env.ACCT_CLAIM_SIGNING_KEY === env.TOKEN_SIGNING_SEED) fail('ACCT_CLAIM_SIGNING_KEY');
   const acctClaims = env.ACCT_CLAIM_SIGNING_KEY !== undefined ? AcctClaimSigner.fromSeedHex(env.ACCT_CLAIM_SIGNING_KEY) : undefined;
   const publicOrigin = env.ACCOUNT_PUBLIC_ORIGIN ?? fail('ACCOUNT_PUBLIC_ORIGIN');
   const internalKey = key32(env.INTERNAL_CALL_KEY, 'INTERNAL_CALL_KEY');
   if (env.INTERNAL_CALL_KEY === env.TOKEN_SIGNING_SEED || env.INTERNAL_CALL_KEY === env.ACCT_CLAIM_SIGNING_KEY) fail('INTERNAL_CALL_KEY');
   const passwords = passwordDeps(env, logger);
-  // 계정 열쇠 보관 키(ADR-050). 없으면 그 경로가 닫힌다(새 PC는 쓰던 PC의 승인으로만 붙는다). 다른 비밀과 같은 값이면 기동하지 않는다(키를 섞지 않는다)
   if (env.KEY_ESCROW_KEY !== undefined && [env.TOKEN_SIGNING_SEED, env.ACCT_CLAIM_SIGNING_KEY, env.INTERNAL_CALL_KEY, env.CODE_MAC_KEY, env.LIMIT_ID_KEY, env.BILLING_KEY_SEAL_KEY].includes(env.KEY_ESCROW_KEY)) fail('KEY_ESCROW_KEY');
   const escrow = env.KEY_ESCROW_KEY !== undefined ? KeyEscrow.fromSeedHex(env.KEY_ESCROW_KEY) : undefined;
   const payments: PaymentGateway = deps.payments ?? (env.PG_PROVIDER === 'toss' ? TossPaymentGateway.fromEnv(env, publicOrigin, { onEvent: (n) => logger.event(n) }) : new MockPaymentGateway(env.MOCK_PG_SECRET));
-  // 빌링키 봉인 키: 빌링키 PG면 필수. 다른 비밀과 같은 값이면 기동하지 않는다(키를 섞지 않는다)
   let billingKeySealKey: Buffer | undefined;
   if (payments.billing) {
     billingKeySealKey = key32(env.BILLING_KEY_SEAL_KEY, 'BILLING_KEY_SEAL_KEY');

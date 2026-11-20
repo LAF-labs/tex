@@ -1,5 +1,3 @@
-// @sax/chat-core 대조 시험(ADR-047 결정 4): 폰이 쓰는 순수 코어가 PC의 원본(@sax/model 툴셋, Node API)과 같은 결과를 내는가.
-// 폰 앱에는 이 패키지의 고정 사본이 들어가므로, 여기서 어긋나면 폰과 PC가 같은 문장을 다르게 다룬다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
@@ -20,7 +18,6 @@ import * as engine from '@sax/engine';
 import { CHAT_DIGEST, CHAT_PHONE, toolsetPrefix } from '@sax/model';
 import { Redactor, utf8Length, wasMinted } from '@sax/redaction';
 
-// Ajv는 @sax/model의 의존이다(시험 패키지에는 없다). 툴셋 스키마를 검증하는 그 Ajv로 대조한다.
 const Ajv2020 = (createRequire(new URL('../packages/model/package.json', import.meta.url))('ajv/dist/2020.js') as { default: new (o: { strict: boolean }) => { compile(schema: object): (v: unknown) => boolean } }).default;
 
 describe('chat-core: 순수 TS(폰에 그대로 들어간다)', () => {
@@ -52,7 +49,6 @@ describe('chat-core: 순수 TS(폰에 그대로 들어간다)', () => {
 describe('chat-core: 금액·날짜 표기와 엔진 재수출', () => {
   it('금액·날짜 표기', () => {
     for (const n of [1, 9, 10, 11, 1000, 1100, 550000, 605000, 999999, 1234567, 33_000_000]) assert.equal(won(n), `${n.toLocaleString('en-US')}원`);
-    // KST 날짜: UTC 15시가 한국 자정이다
     assert.equal(kstDate(Date.UTC(2026, 10, 15, 14, 59)), '2026-11-15');
     assert.equal(kstDate(Date.UTC(2026, 10, 15, 15, 0)), '2026-11-16');
   });

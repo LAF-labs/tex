@@ -1,6 +1,3 @@
-// 엔진 패키지 공급(PR-D2 앞부분, D03 §3.1, D09 §8, ADR-013·028, 팀장 결정 (가) 2026-11-09): 가짜 레지스트리(고정 시드 샘플)에서
-// 플레이북·조회 패키지를 받아 로더 전체로 검증한 .sxp만 저장하고, 실행을 시작할 때 저장본을 다시 loadPackage 해 IrPackage로 만든다.
-// 서명 검증 실패·다이제스트 불일치·버전 내림·보류·설치 뒤 키 폐기·저장 바이트 변조를 본다. 네트워크는 주입한 fetch뿐이다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -31,7 +28,6 @@ const LOOKUP = 'hometax.invoice.lookup';
 const MAIL = 'hometax.invoice.email_status';
 const sxpPath = (id: string, v: string) => packagePath(id, v);
 
-/** 샘플 조회 패키지의 manifest 다이제스트(H-01 lookupsUsed[].digest). */
 const lookupDigest = (id: string) => {
   const d = decodeSxp(file(`packages/${id}@1.0.0.sxp`));
   assert.ok(d.ok && d.sxp.kind === 'package');
@@ -39,7 +35,6 @@ const lookupDigest = (id: string) => {
 };
 const LOOKUP_DIGESTS = [lookupDigest(LOOKUP), lookupDigest(MAIL)];
 
-/** H-01을 버전만 바꿔 서명한 .sxp(signers 기본 패키지 키 2개). */
 function h01Sxp(version: string, o: { signers?: TestKey[]; edit?: (f: PackageFiles) => void } = {}): Buffer {
   const f = h01();
   f.manifest.version = version;
@@ -51,13 +46,11 @@ function h01Sxp(version: string, o: { signers?: TestKey[]; edit?: (f: PackageFil
 type Entry = { id: string; version: string; kind: string; portal?: string; sxpDigest: string; size: number; rolloutPercent: number; minAppVersion?: string };
 const entryOf = (id: string, version: string, kind: string, sxp: Uint8Array, over: Partial<Entry> = {}): Entry => ({ id, version, kind, portal: 'hometax', sxpDigest: sha256Hex(sxp), size: sxp.length, rolloutPercent: 100, ...over });
 
-/** stable 인덱스(내용 = 패키지 키 2-of-3, 신선도 = timestamp 키, ADR-043). 샘플 인덱스(monotonic 7)보다 높은 monotonic으로 새로 서명한다. */
 function indexBytes(entries: Entry[], monotonic: number): Uint8Array {
   const doc = signTimestamped({ channel: 'stable', monotonic, keyEpoch: 1, issuedAt: ISSUED, expiresAt: iso(Date.parse(ISSUED) + 14 * 24 * H), entries, signatures: [], timestamp: { keyId: '', alg: 'ed25519', sig: '' } }, TWO, K.ts);
   return new Uint8Array(Buffer.from(JSON.stringify(doc)));
 }
 
-/** 레지스트리 대역: 경로 → 바이트(ETag = sha256 앞 32 hex). 부른 경로를 남긴다. */
 function fakeRegistry(files: Record<string, Uint8Array | number>) {
   const calls: string[] = [];
   const fetch: RegistryFetch = async (p, o) => {
@@ -80,7 +73,6 @@ const sampleFiles = (): Record<string, Uint8Array | number> => ({
   [sxpPath(ID, '2.1.0')]: file(`packages/${ID}@2.1.0.sxp`),
 });
 
-/** 샘플 조회 패키지 2개 + 주어진 H-01 판들로 새 인덱스를 만든 레지스트리 파일. */
 function withVersions(versions: Array<{ version: string; sxp: Uint8Array; over?: Partial<Entry> }>, monotonic: number, base = sampleFiles()) {
   const files = { ...base };
   const entries = [entryOf(LOOKUP, '1.0.0', 'lookup', file(`packages/${LOOKUP}@1.0.0.sxp`)), entryOf(MAIL, '1.0.0', 'lookup', file(`packages/${MAIL}@1.0.0.sxp`))];
@@ -119,7 +111,6 @@ describe('패키지 공급: 받기(가짜 레지스트리, 로더 전체 검증 
     assert.deepEqual([...l.lookups.keys()], [LOOKUP, MAIL]);
     assert.deepEqual(l.pkg.lookupDigests, LOOKUP_DIGESTS);
     assert.equal(s.reg.calls.length, 0, '실행 시작 로드는 네트워크를 쓰지 않는다');
-    // 로그에는 코드·개수만(경로·패키지 id 없음)
     const lines = s.log.lines.join('\n');
     assert.match(lines, /"registry\.synced"/);
     for (const bad of ['/packages', '.sxp', ID, LOOKUP]) assert.ok(!lines.includes(bad), bad);
@@ -149,7 +140,6 @@ describe('패키지 공급: 받기(가짜 레지스트리, 로더 전체 검증 
     const CERT = ['hometax.cert.biz_registration', 'hometax.cert.taxpayment', 'hometax.cert.vat_tax_base', 'hometax.cert.financial_statements'];
     assert.deepEqual([...dist.PRODUCT_PACKAGE_IDS], [ID, ...CERT]);
     assert.deepEqual(Object.values(PRODUCT_PACKAGES), [...dist.PRODUCT_PACKAGE_IDS]);
-    // 원본이 있는 플레이북이고, 조회(hometax.cert.issued_list 등)는 manifest lookupsUsed로 따라온다(목록에 넣지 않는다).
     for (const id of dist.PRODUCT_PACKAGE_IDS) {
       const m = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, `../packages/engine/playbooks/${id}/manifest.json`), 'utf8')) as { kind: string; lookupsUsed: Array<{ id: string }> };
       assert.equal(m.kind, 'playbook', id);
@@ -277,7 +267,6 @@ describe('패키지 공급: 버전 내림 방지·보류', () => {
   it('지금 판 포인터를 낮은 판으로 되돌려도(저장소 조작) 로더가 설치본 기준으로 다시 본다: 같은 버전 다른 내용은 registry.version_rollback', async () => {
     const s = setup(withVersions([{ version: '2.2.0', sxp: h01Sxp('2.2.0') }], 8));
     await s.sync.sync();
-    // 2.2.0 기록의 바이트를 같은 버전의 다른 내용으로 바꾸되 sxpDigest도 맞춘다(저장 다이제스트 검사를 지나도 manifest 다이제스트가 다르다)
     const rec = s.store.get(`pkg.${ID}@2.2.0`) as StoredPackage;
     const other = h01Sxp('2.2.0', { edit: (f) => void (f.manifest.createdAt = '2026-11-08T00:00:00+09:00') });
     s.store.set(`pkg.${ID}@2.2.0`, { ...rec, sxp: other.toString('base64'), sxpDigest: sha256Hex(other) });
@@ -334,7 +323,6 @@ describe('패키지 공급: 앱 판(minAppVersion, 팀장 지시 2026-11-09)', (
     assert.ok(!s.reg.calls.includes(sxpPath(ID, '2.2.0')));
     assert.match(s.log.lines.join('\n'), /"registry\.app_version_low"/);
     assert.ok(s.sync.loadInstalled(ID).ok);
-    // 앱을 올리면(같은 경계 값) 다음 동기화에서 받는다
     const up = setup(s.reg.files, { appVersion: '1.5.0', store: s.store });
     assert.deepEqual((await up.sync.sync()).packages, { [ID]: 'accepted' });
     assert.equal(current(up.store), '2.2.0');
@@ -422,7 +410,6 @@ describe('installedIrSource(RunServiceDeps.irSource)', () => {
     const a = src();
     assert.ok(a.ok);
     assert.equal(a.ir.pkg.files.manifest.id, ID);
-    // 조회는 서명 조회 패키지 IR로 돈다(IrLookupPort, 팀장 결정 2026-11-09 (가)). 앱 코드 HOMETAX_PORTAL 조회 정의(TODO)는 쓰지 않는다.
     assert.deepEqual([...a.ir.lookupPackages!.keys()].sort(), [MAIL, LOOKUP].sort());
     assert.equal(a.ir.lookupPackages!.get(LOOKUP)!.files.manifest.kind, 'lookup');
     assert.equal(a.ir.lookupDefs, undefined);

@@ -1,7 +1,3 @@
-// 실행 이력(2026-11-11 리허설 F-05·F-06): 재시작 뒤에도 셸이 활동 기록·결과 카드·"지난번 실행" 안내를 다시 그릴 수 있게 DB에서 모은다.
-// 원천: runs(상태·시각, 기동 때 interrupted), run_events(run.ended 상태·코드, gate.*), irreversible_log(원장 상태·승인번호 verify_ref),
-// documents(run_id = 실행이 보관한 발급 PDF), runs.inputs_json_enc(실행 입력 요약: 거래처 id·공급가·세액, 컬럼 키로 봉인).
-// 거래처 이름은 지금 장부에서 읽는다(지운 거래처면 null). 저널·로그에는 이 값들을 쓰지 않는다(⑦). main 전용 조회다(셸 렌더러로 그대로 가지 않는다).
 import type { ColumnCipher, Db } from '@sax/db';
 
 /** 실행 입력 요약(runs.inputs_json_enc). 값이라 봉인한다. 품목·이메일은 두지 않는다(카드를 다시 그리는 데 필요한 것만). */
@@ -14,28 +10,19 @@ export interface RunInputsSummary {
 export interface RunHistoryRow {
   runId: string;
   playbookId: string;
-  /** runs.status: running | success | completed_with_issues | failed | handoff | stopped | expired | in_doubt | interrupted */
   status: string;
-  /** run.ended 코드(없으면 null). interrupted는 run.ended가 없다. */
   code: string | null;
   startedAt: string;
   finishedAt: string | null;
-  /** 이 실행의 마지막 원장 상태(비가역 스텝을 무장한 적이 없으면 null). */
   ledger: string | null;
-  /** 발급목록으로 확인한 승인번호(committed). */
   approvalNo: string | null;
-  /** 받는 사람 메일 발송을 확인했는가(run.ended mailConfirmed). 기록이 없는 옛 실행은 null. */
   mailConfirmed: boolean | null;
-  /** 이 실행이 보관한 발급 PDF(보관함 문서 id). */
   documentId: string | null;
-  /** 게이트 요청까지 갔다(승인 카드가 떴다). */
   gated: boolean;
-  /** 입력 요약을 읽지 못하면(옛 실행·키 다름) 셋 다 null. */
   counterpartyId: string | null;
   counterpartyName: string | null;
   supply: number | null;
   tax: number | null;
-  /** 민원증명 실행의 입력 요약(서류·용도·제출처·주민번호 공개 선택값 등 패키지 선언 키). H-01·옛 실행·읽지 못하면 null. */
   certInputs: Readonly<Record<string, string>> | null;
 }
 
@@ -48,7 +35,6 @@ export function recordRunInputs(db: Db, cipher: ColumnCipher, runId: string, s: 
   db.prepare('UPDATE runs SET inputs_json_enc = ? WHERE id = ?').run(blob, runId);
 }
 
-/** 민원증명 입력 요약 상한(칸 수·값 길이). 엔진 certInputs가 이미 검사한 선택값만 온다. */
 const CERT_MAX_KEYS = 16;
 const CERT_MAX_LEN = 100;
 
@@ -86,7 +72,6 @@ function openInputs(cipher: ColumnCipher | null, runId: string, blob: unknown): 
 export function runInputsOf(db: Db, cipher: ColumnCipher, runId: string): (RunInputsSummary & { startedAt: string }) | null {
   const r = db.prepare('SELECT started_at, inputs_json_enc FROM runs WHERE id = ?').get(runId) as { started_at: string; inputs_json_enc: unknown } | undefined;
   const s = r ? openInputs(cipher, runId, r.inputs_json_enc) : null;
-  // 세금계산서 입력만 되살린다(민원증명 in_doubt는 발급목록 재조회 대상이 아니다)
   return s?.kind === 'invoice' && r ? { ...s.s, startedAt: String(r.started_at) } : null;
 }
 

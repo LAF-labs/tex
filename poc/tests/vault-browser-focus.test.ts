@@ -1,6 +1,3 @@
-// browser.focus: Chrome 창은 어떤 경우에도 앞으로 올리지 않는다(대표 지시 2026-11-14). 금고는 늘 focused:false. 엔진 포트에는 열지 않는다.
-// 엔진도 Page.bringToFront·Target.activateTarget으로 올릴 수 없다(금고 중계가 거부).
-// SAX_FOCUS_HEADFUL=1(맥, 수동): 화면에 Chrome을 띄우고 Finder를 앞으로 둔 뒤 browser.focus를 불러도 Finder가 맨 앞에 남는지 lsappinfo로 본다.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { describe, it } from 'node:test';

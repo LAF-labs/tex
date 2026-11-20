@@ -1,6 +1,3 @@
-// 셸 문서함 공급자(PoC-8 후속): 엔진 보관함 항목 → 셸 서류, 엔진 공급자(RPC).
-// 엔진 쪽은 실제 DataService(임시 DB·보관함)를 RPC로 부른다. 화면 흐름(가져오기 버튼·열기 암호·확인)은 Electron e2e(apps/desktop/e2e/shell-docs-e2e.ts)가
-// 셸 엔진(fixture 모드)으로 본다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fsp from 'node:fs/promises';
@@ -17,7 +14,6 @@ const MINE = syntheticBizNo(1);
 const tax = (biz: string) =>
   `발급번호 0123-457-5258-910\n납세증명서\n주민등록번호(사업자등록번호) ${formatBizNo(biz)}\n유효기간 2026년 11월 30일\n「국세징수법」 … 다른 체납액이 없음을 증명합니다.\n담당부서 민원봉사실\n2026년 11월 1일\n가나세무서장 직인`;
 const pdf = () => new Uint8Array(Buffer.from(`%PDF-1.7\n% ${randomBytes(8).toString('hex')}\n%%EOF\n`));
-/** vault-import.importPdf 흉내: 대화상자·docparse 없이 정해진 텍스트로 엔진 document.import를 부른다. */
 const fakeImporter = (text: string, o: { password?: boolean } = {}): Importer => async (params, engine) => {
   if (o.password && params.password !== 'pw') return { status: params.password ? 'wrong_password' : 'needs_password', pickId: 'pick-1' };
   const extract = { text, pages: 1, totalPages: 1, hasTextLayer: true, scanned: false, ocrConfidence: null };

@@ -1,5 +1,3 @@
-// 대화 짧은 응대 chat.respond(팀장 지시 2026-11-10, D04 §4.1). 마스킹 → 게이트웨이 /v1/respond(chat_reply) → 출력 검증.
-// 세무 판단 출력 차단(D04 §3)·길이 상한·식별자/링크 차단·스키마 불일치 오류·게이트웨이 불가 오류(오프라인 대체 없음).
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -71,7 +69,6 @@ describe('chat_reply 툴셋 정의', () => {
     const listed = [...p.matchAll(/^- ([a-z.]+): (.+)$/gm)].map((m) => ({ id: m[1], label: m[2] }));
     assert.deepEqual(listed, CHAT_CAPABILITIES.map((c) => ({ id: c.id, label: c.label })));
     assert.match(p, /세무 판단은 어떤 kind에서도 하지 않는다/);
-    // 할 수 있는 일은 intent_route_v1 playbook 어휘 안에 있다(데스크톱이 같은 id로 작업을 연다)
     const q = catalog.get('intent_route_v1')!.def.questions.find((x) => x.name === 'playbook')!;
     const vocab = q.type === 'choice' ? q.choices.map((c) => c.value) : [];
     for (const c of CHAT_CAPABILITIES) assert.ok(vocab.includes(c.id), c.id);
@@ -110,7 +107,6 @@ describe('chat.respond 경로(마스킹 → /v1/respond → 검증)', () => {
       assert.equal(x.reply, CHAT_ADVICE_TEXT, bad);
       assert.equal(x.filtered, 'advice');
     }
-    // 발급 안내는 세무 판단이 아니다
     for (const ok of ['세금계산서 발급을 도와드릴 수 있어요.', '납세증명서나 사업자등록증명을 떼 드릴 수 있어요.', '부가세 별도 금액으로 계산서를 끊을까요?', '안녕하세요! 무엇을 도와드릴까요?']) assert.equal(chatAdviceMentioned(ok), false, ok);
   });
 
@@ -142,7 +138,6 @@ describe('chat.respond 경로(마스킹 → /v1/respond → 검증)', () => {
       reply({ kind: 'joke' }),
       reply({ suggest: ['hometax.invoice.amend'] }),
       reply({ suggest: ['hometax.invoice.issue', 'hometax.invoice.issue', 'hometax.invoice.issue', 'hometax.invoice.issue'] }),
-      // 증명서는 지금 못 하는 일이라 제안 목록에 없다(#291)
       reply({ suggest: ['hometax.cert.business'] }),
       out({ kind: 'help', reply: '네', suggest: [], extra: 1 }),
       out({ kind: 'help', reply: '네' }),
@@ -155,7 +150,6 @@ describe('chat.respond 경로(마스킹 → /v1/respond → 검증)', () => {
     }
     mock.opts = { respondOutput: reply({}), tamperToolset: true };
     await code(chat(r, '안녕'), 'chat.bad_response');
-    // 어댑터를 거치지 않아도 같은 검사(checkOutput 단독)
     assert.throws(() => checkOutput({ kind: 'help', reply: '네', suggest: ['gov24.resident.copy'] }), /chat.bad_response/);
     assert.throws(() => checkOutput(null), /chat.bad_response/);
   });

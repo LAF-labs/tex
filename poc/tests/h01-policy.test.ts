@@ -1,5 +1,3 @@
-// PoC-10(Mac 선행분): 요청률 정책(D03 §7)을 H-01 실행에 붙인 시험. 금고는 프로세스 안(시험 정책 127.0.0.1)·헤드리스 Chrome,
-// 페이지는 가짜 H-01 픽스처다. 차단 신호가 오면 그 뒤로 엔진이 픽스처에 요청을 보내지 않는지 픽스처 요청 기록으로 본다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -49,7 +47,6 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
     v: 2, runId: req.runId, gateStepId: req.gateStepId, reqId: req.reqId, approvalNonce: req.approvalNonce, actionHash: req.actionHash, exp: Date.now() + 120_000, presence: 'click', mac: 'not-verified-in-phase1',
   });
 
-  /** 새 DB(카운터·쿨다운이 비어 있음)에 붙은 실행 서비스. 페이지는 같은 실행 탭을 쓴다. */
   async function service(policy?: RatePolicy, clock?: Clock, portal: PortalConfig = fixturePortal(fx.origin), receivedPolicy?: () => Policy | null) {
     const db = openDatabase(path.join(dir, `${dbs.length}.sqlite`), new Uint8Array(randomBytes(32)));
     dbs.push(db);
@@ -70,7 +67,6 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
     return { runs, start, db };
   }
 
-  /** mark 뒤 처음 path 요청 이후의 요청(1.5초 더 기다려 본다). */
   async function requestsAfter(mark: number, p: string) {
     const i = fx.requests.findIndex((r, k) => k >= mark && r.path === p);
     await sleep(1_500);
@@ -133,11 +129,9 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
   });
 
   it('받은 정책 blockSignalsAdd(홈택스): 내장 사전에 없는 차단 안내 문구를 정책이 더하면 차단 신호로 멈춘다. 없으면 그 문구는 신호가 아니다', async () => {
-    // 홈택스 내장 사전에는 block 항목이 없다(실측 전). 가짜 페이지를 홈택스 종류로 돌려(하한 맞춘 verify) 받은 정책만 바꾼다.
     const hometaxLike: PortalConfig = { ...fixturePortal(fx.origin), kind: 'hometax', verify: { minElapsedMs: 60_000, lookups: 2, intervalMs: 10_000, maxMs: 300_000 } };
     const received = (add?: Policy['cooldown']['blockSignalsAdd']): Policy => {
       const p = structuredClone(POLICY_EXAMPLE) as unknown as Policy;
-      // 시험 시간을 줄이려고 지연만 0(클램프 전 값을 그대로 준다. RateGuard는 내장 값과 엄격한 쪽을 쓴다).
       p.pace.interactive = { stepDelayMs: [0, 0], keyEventDelayMs: 0, afterNavSettleMs: [0, 0], slowFactor: 1 };
       if (add) p.cooldown.blockSignalsAdd = add;
       return p;
@@ -185,12 +179,11 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
     const r = start();
     const req = await gateFor(r);
     const mark = fx.requests.length;
-    fx.knobs.status = { path: '/api/knob', code: 429 }; // 폼이 150ms마다 부르는 요청
+    fx.knobs.status = { path: '/api/knob', code: 429 };
     try {
       const end = await endOf(r);
       assert.deepEqual([end.status, end.code], ['failed', 'portal.blocked']);
       await sleep(1_000);
-      // 페이지 자체 스크립트(폴링)는 계속 돌지만 엔진이 보낸 요청은 없다.
       assert.deepEqual(fx.requests.slice(mark).filter((x) => x.path !== '/api/knob'), []);
       assert.ok(gateMsgs.some((m) => m.t === 'gate.closed' && m.reqId === req.reqId && m.reason === 'signal'));
       assert.deepEqual(runs.answer(approval(req)), { ok: false, code: 'no_open_gate' });
@@ -198,7 +191,6 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
       assert.equal(runs.inspect(r).ledger, null);
     } finally {
       fx.knobs.status = null;
-      // 남은 폼 페이지의 폴링 응답(429)이 다음 시험의 실행에 닿지 않게 비운다(그때 닿으면 그 실행의 신호가 맞다).
       await sleep(500);
     }
   });
@@ -208,7 +200,7 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
       [{ block: 'dialog' }, 'fixture.block.text'],
       [{ block: 'lookup' }, 'fixture.block.url'],
       [{ status: { path: '/invoice/issue', code: 403 } }, 'http.403_document'],
-      [{ status: { path: '/invoice/list', code: 429 } }, 'http.429'], // 조회 팝업 첫 문서(응답 이벤트가 안 보여 문서 상태로 본다)
+      [{ status: { path: '/invoice/list', code: 429 } }, 'http.429'],
     ] as const) {
       const { runs, start, db } = await service();
       Object.assign(fx.knobs, knob);
@@ -244,7 +236,7 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
 
   it('네비게이션 없이 뜬 안내 레이어도 다음 동작 전에 잡는다', async () => {
     const { runs, start } = await service();
-    fx.knobs.notice = FIXTURE_BLOCK_TEXT; // 폼이 읽힌 뒤 150ms 주기 XHR로 그린다
+    fx.knobs.notice = FIXTURE_BLOCK_TEXT;
     try {
       const r = start();
       const end = await endOf(r);
@@ -262,13 +254,13 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
     const { runs, start } = await service({ ...FIXTURE_POLICY, limits: { ...FIXTURE_POLICY.limits, navigationsPerMin: 2 } }, clock);
     const posts = fx.posts();
     const r = start();
-    assert.deepEqual(runs.answer(approval(await gateFor(r))), { ok: true }); // 발급 화면·기준선 조회로 60초 창이 찼다
+    assert.deepEqual(runs.answer(approval(await gateFor(r))), { ok: true });
     await next(() => (events.some((e) => e.runId === r && e.type === 'phase' && e.phase === 'sign' && e.state === 'now') ? true : undefined));
-    await sleep(2_500); // 거부 우선 창 2초 + 스텝 지연 → 발급 클릭 전 자리 대기
+    await sleep(2_500);
     fx.knobs.notice = FIXTURE_BLOCK_TEXT;
     try {
-      await sleep(600); // 폼 폴링(150ms)이 레이어를 그린다
-      offset += 61_000; // 60초 창을 비운다(앞으로 가는 시계는 보수 모드가 아니다)
+      await sleep(600);
+      offset += 61_000;
       const end = await endOf(r);
       assert.deepEqual([end.status, end.code], ['failed', 'portal.blocked']);
       assert.equal(fx.posts(), posts, '발급 POST 없음');
@@ -348,7 +340,7 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
 
   it('발급이 확정된 뒤 걸린 차단 신호는 숨기지 않는다(완료·확인 필요, 승인번호 유지)', async () => {
     const { runs, start } = await service();
-    fx.knobs.status = { path: '/mail/list', code: 429 }; // 확정 뒤 메일발송목록 조회(팝업 첫 문서)
+    fx.knobs.status = { path: '/mail/list', code: 429 };
     try {
       const r = start();
       assert.deepEqual(runs.answer(approval(await gateFor(r))), { ok: true });
@@ -362,7 +354,6 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
   });
 
   it('verify 조회가 3번 연속 실패하면 더 조회하지 않고 발급됐는지 모름으로 둔다', async () => {
-    // 조회 실패 1회가 10초(결과 준비 대기)라 verify 상한(가짜 페이지 3초)을 늘려 연속 실패 규칙만 본다.
     const p = fixturePortal(fx.origin);
     const { runs, start } = await service(undefined, undefined, { ...p, verify: { ...p.verify, maxMs: 120_000 } });
     const r = start();
@@ -380,7 +371,6 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
   });
 
   it('커밋 구간·verify는 실행당 동작 수 상한으로 끊지 않는다(끊으면 발급됐는지 모름만 생긴다)', async () => {
-    // 발급 화면 1 + 입력 6 + 기준선 조회 1 + 발급 클릭 1 = 9. verify·메일 조회는 상한을 넘어도 계속한다.
     const { runs, start } = await service({ ...FIXTURE_POLICY, run: { ...FIXTURE_POLICY.run, maxActuationsPerRun: 9 } });
     const r = start();
     assert.deepEqual(runs.answer(approval(await gateFor(r))), { ok: true });

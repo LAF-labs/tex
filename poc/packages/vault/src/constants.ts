@@ -1,9 +1,6 @@
-// 금고 바이너리 상수(D05 §3). 플레이북·운영 정책·환경 변수로 바꿀 수 없다.
-// 테스트는 Vault 생성자에 정책 객체를 주입하고, 앱 진입점(entry.ts)은 이 상수만 쓴다.
 
 /** 사용자 설치 Chrome 위치(인자로 받지 않는다). */
 export const CHROME_CANDIDATES: Partial<Record<NodeJS.Platform, string[]>> = {
-  // ~/Applications: 관리자 권한 없이 사용자 폴더에 깐 Chrome(고객 PoC, CUSTOMER-DIST §1.2). Edge 등 다른 Chromium은 넣지 않는다(검증 안 됨).
   darwin: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'],
   linux: ['/opt/google/chrome/chrome', '/usr/bin/google-chrome'],
   win32: [
@@ -13,19 +10,10 @@ export const CHROME_CANDIDATES: Partial<Record<NodeJS.Platform, string[]>> = {
   ],
 };
 
-/**
- * Chrome 기동 인자 허용 목록(D05 §3.1). 이 밖의 인자는 붙이지 않는다.
- * `--kiosk-printing`은 S3a 결과 전이라 넣지 않았다.
- */
-// --disable-default-apps: Chrome 기본 앱(Web Store 결제 구성요소 nmmhkkegccagdldgiimedpiccmgmieda 등)이 전용 프로필에 깔리지 않게 한다.
-// 깔리면 확장 검사(extension_not_allowed, 실패 닫힘)가 비밀 창을 막아 발급이 멈춘다. 확장을 줄이는 쪽이라 보안을 약하게 하지 않는다(D05 §3.1, 팀장 결정 2026-11-06).
 export const CHROME_ARG_ALLOWLIST = [
   '--remote-debugging-pipe', '--user-data-dir', '--no-first-run', '--disable-breakpad', '--disable-default-apps',
-  // 홈택스 Chrome이 앱 뒤에 가려져도(#305) 렌더러·타이머를 늦추지 않는다(부장 지시 2026-11-13).
   '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
-  // 창 없는 Chrome(대표 요청 2026-11-13 "크롬이 아예 안 뜨게"). 진행은 앱 패널 중계(B3)로 본다. 사람이 페이지를 만져야 할 때만 창 있는 Chrome으로 다시 띄운다.
   '--headless', '--window-size',
-  // 실행 창을 앱 모드로(탭줄·주소창 없음, 대표 지시 2026-11-13 "앱 안 브라우저처럼"). 시작 문서는 CHROME_APP_START_URL 고정. 기본 브라우저 확인 안내 끔.
   '--app', '--no-default-browser-check',
 ] as const;
 /**
@@ -71,12 +59,6 @@ export const SECRET_ORIGINS: Record<string, string[]> = {
   portal_password: ['hometax.go.kr'],
 };
 
-/**
- * 도메인 안에서도 메서드 단위 허용 목록이다(도메인 전체 허용 '*'는 두지 않는다). 근거: S6b 관측 + playwright-core 1.64 coreBundle이 부르는 명령.
- * 표 밖 명령(예: Page.startScreenRecording·searchInResource·getAnnotatedPageContent·setDocumentContent, Runtime.compileScript·runScript·queryObjects,
- * DOM.getOuterHTML)은 기본 거부다. 스크린샷 거부·값 접근 패턴 검사를 우회하는 경로이기 때문이다. 표 대조 시험: tests/vault-relay-table.test.ts.
- */
-// Page.bringToFront는 열지 않는다: Chrome 창을 앱 앞으로 올리는 길이다(대표 지시 2026-11-14, 사람 차례는 앱 패널에서).
 export const RELAY_DOMAIN_METHOD_ALLOWLIST: Record<string, string[]> = {
   Page: [
     'enable', 'disable', 'getFrameTree', 'setLifecycleEventsEnabled', 'addScriptToEvaluateOnNewDocument', 'removeScriptToEvaluateOnNewDocument',
@@ -94,7 +76,6 @@ export const RELAY_DOMAIN_METHOD_ALLOWLIST: Record<string, string[]> = {
   Input: ['dispatchKeyEvent', 'dispatchMouseEvent', 'dispatchTouchEvent', 'dispatchDragEvent', 'insertText', 'setInterceptDrags', 'cancelDragging', 'setIgnoreInputEvents'],
   Log: ['enable', 'disable', 'clear'],
   Inspector: ['enable', 'disable'],
-  // 응답 바디는 엔진에 주지 않는다(N-51: 로그인 응답·세션 토큰). 엔진 신호는 상태·URL만 쓴다.
   Network: ['enable', 'disable', 'getRequestPostData', 'setCacheDisabled', 'setExtraHTTPHeaders', 'setBypassServiceWorker'],
   Fetch: ['enable', 'disable', 'continueRequest', 'failRequest', 'getRequestPostData', 'continueWithAuth'],
   Emulation: ['setFocusEmulationEnabled', 'setEmulatedMedia', 'setAutoDarkModeOverride'],
@@ -109,11 +90,10 @@ export const RELAY_DENIED_METHODS = new Set([
   'Network.getAllCookies', 'Network.getCookies', 'Network.setCookie', 'Network.setCookies', 'Network.deleteCookies', 'Network.clearBrowserCookies',
   'Network.clearBrowserCache', 'Network.loadNetworkResource', 'Network.replayXHR', 'Network.setRequestInterception', 'Network.takeResponseBodyForInterceptionAsStream',
   'Network.getResponseBodyForInterception', 'Network.streamResourceContent',
-  // 페이지 통째 캡처(MHTML)·리소스 원문·옛 스냅숏은 상시 거부(N-12). Playwright 기본 흐름은 쓰지 않는다.
   'Page.captureSnapshot', 'Page.getResourceContent', 'DOMSnapshot.getSnapshot',
   'Fetch.fulfillRequest', 'Fetch.takeResponseBodyAsStream',
   'DOM.setFileInputFiles', 'DOM.getFileInfo',
-  'Runtime.addBinding', // D05 §4.1 비밀 origin 거부는 Phase 2. PoC는 엔진 바인딩 자체를 허용하지 않는다(S6b에서 영향 측정).
+  'Runtime.addBinding',
 ]);
 
 /** 비밀 창 활성 상태에서 대상 타깃에 대해 거부하는 메서드(D05 §3.5 ①). 접두사 일치. */
@@ -168,33 +148,21 @@ export type VaultEvent =
   | 'vault.secret_window_close_denied' | 'vault.webdriver_selfcheck_failed' | 'vault.user_tab_hidden'
   | 'vault.chrome_dump_removed' | 'vault.chrome_dump_dir_link' | 'vault.chrome_residue_removed' | 'vault.chrome_residue_link' | 'vault.chrome_residue_busy' | 'vault.chrome_dump_busy' | 'vault.dir_check_warm' | 'vault.secret_input_unbound' | 'vault.leak_scan' | 'vault.leak_scan_skipped'
   | 'vault.keystore_mismatch' | 'vault.dbkey_missing' | 'vault.net_deny_unavailable'
-  // 사람 비밀 세션 결박(ADR-026): 값·칸 번호 없이 종류·등급·건수만
   | 'vault.credential_suspect' | 'vault.locked' | 'vault.secret_stored' | 'vault.secret_forgotten' | 'vault.kek_unwrap_failed'
   | 'vault.item_corrupt' | 'vault.index_corrupt' | 'vault.restore_failed'
-  // 옛 판의 보안카드 슬롯을 기동 때 지움(대표 결정 2026-11-19 지원 안 함): 칸 수만
   | 'vault.card_purged' | 'vault.card_purge_failed'
-  // run에 고정된 프로필과 다른 scope의 입력 요청(Q-2)
   | 'vault.profile_mismatch'
-  // 종류별 입력 규칙(ADR-020 결정 2·ADR-025 결정 10·D05 §4): 값·칸 번호 없이
   | 'vault.typist_kind_refused' | 'vault.secret_input_unrequested'
-  // R-C1 커밋 본문 대조(D05 §3.3): 결과·필드 수·사유만(본문·값 없음)
   | 'vault.commit_armed' | 'vault.commit_arm_refused' | 'vault.commit_compared' | 'vault.commit_block_failed'
-  // 장기 키 연산(D05 §5.1): 연산·용도·건수만(키·입력·출력 없음)
   | 'vault.key_created' | 'vault.crypto_op' | 'vault.crypto_rate_anomaly' | 'vault.crypto_purpose_denied' | 'vault.hpke_open_failed'
-  // 키 연산 RPC 실패: 메서드·포트·사유 코드만(오류 문장·입력·출력 없음)
   | 'vault.rpc_failed'
-  // 새 PC 연결(ADR-048 결정 3): 계정 루트 키 봉인·넘겨받기. 결과·사유만(키·봉인문·상대 키 없음)
   | 'vault.rk_sealed' | 'vault.rk_seal_denied' | 'vault.rk_imported' | 'vault.rk_import_failed'
   | 'vault.npki_listed'
-  // 계좌 자동조회(CODEF) 로그인 봉인: 결과·사유만(인증서 id·경로·비밀번호·길이 없음)
   | 'vault.codef_sealed' | 'vault.codef_seal_refused' | 'vault.codef_password_stored' | 'vault.codef_password_forgotten'
-  // PDF 저장(save_pdf): 경로·종류·사유·크기만(파일 이름·URL·내용 없음)
   | 'vault.pdf_saved' | 'vault.pdf_refused' | 'vault.download_armed' | 'vault.download_arm_refused' | 'vault.download_unexpected' | 'vault.download_stalled'
   | 'vault.staging_swept'
-  // 계정 갱신 토큰(ADR-038 (f)): 이벤트 이름만(토큰 값·길이·해시 없음)
   | 'vault.account_refresh_stored' | 'vault.account_refresh_forgotten' | 'vault.account_refresh_write_failed' | 'vault.account_refresh_corrupt';
 
-/** 전용 프로필 Preferences 필수 값(D05 §3.6). */
 /**
  * Chrome 자체 안내를 끈다(대표 지시 2026-11-13: 앱 안 브라우저처럼). 동기화 로그인 안내, 기본 브라우저 확인, 번역 말풍선 같은 것이다.
  * 기록만 하고 비밀 창 개시 조건(verifyProfileSettings)에는 넣지 않는다. Chrome이 판에 따라 값을 고쳐 써도 발급이 멈추지 않게.

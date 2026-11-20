@@ -1,6 +1,3 @@
-// 온보딩(08 §4 O-01~O-06, D14 M4-2)의 동의 레코드와 이어 하기 상태. 데스크톱 #69 요청(팀장 승인 2026-11-05).
-// 동의 레코드는 지우거나 고치지 않고 쌓는다(마지막 행이 현재 결정). 값·비밀은 없다: 무엇을·어느 판 고지로·언제·어떻게 정했는지만.
-// 위임 동의(①)는 금고가 만드는 ConsentRecord(@sax/vault, D05 §9)가 정본이고, 여기에는 그 사실(판·시각)만 같은 필드명으로 남긴다.
 import { ValidationError } from './repo.ts';
 import type { Db } from './open.ts';
 
@@ -11,19 +8,14 @@ export const CONSENT_VIAS = ['onboarding', 'settings', 'T-06'] as const;
 export type ConsentVia = (typeof CONSENT_VIAS)[number];
 
 export interface ConsentInput {
-  /** null: 프로필을 만들기 전(온보딩 첫 화면 약관). 프로필이 생기면 attachToProfile로 잇는다 */
   profileId: string | null;
   kind: ConsentKind;
-  /** 고지 문구 키. 빼면 `consent.<kind>` */
   noticeKey?: string;
   noticeVersion: string;
-  /** 모델 국외 이전만: 그때 보인 처리자 표의 판 */
   processorsVersion?: string;
   choice: 'agreed' | 'declined';
-  /** ISO 8601 UTC */
   at: string;
   via: ConsentVia;
-  /** 동의한 기기의 서명(Phase 2, `SAX-consent-v1`) */
   deviceSig?: string;
 }
 
@@ -77,7 +69,6 @@ export class ConsentRepo {
     return toConsent(this.db.prepare('SELECT * FROM consents WHERE seq = ?').get(seq) as Row);
   }
 
-  /** 현재 결정(그 종류의 마지막 행). 없으면 null */
   latest(profileId: string | null, kind: ConsentKind): Consent | null {
     const r = this.db.prepare('SELECT * FROM consents WHERE profile_id IS ? AND kind = ? ORDER BY seq DESC LIMIT 1').get(profileId, kind);
     return r ? toConsent(r as Row) : null;
@@ -87,7 +78,6 @@ export class ConsentRepo {
     return this.db.prepare('SELECT * FROM consents WHERE profile_id IS ? ORDER BY seq').all(profileId).map((r) => toConsent(r as Row));
   }
 
-  /** 프로필을 만들기 전에 남긴 동의(profile_id NULL)를 그 프로필에 잇는다. 이은 행 수 */
   attachToProfile(profileId: string): number {
     need(!!this.db.prepare('SELECT 1 FROM profiles WHERE id = ?').get(profileId), 'profile_not_found');
     return this.db.prepare('UPDATE consents SET profile_id = ? WHERE profile_id IS NULL').run(profileId).changes;
@@ -97,9 +87,7 @@ export class ConsentRepo {
 export interface OnboardingState {
   profileKind: 'business' | 'personal';
   profileId: string | null;
-  /** 멈춘 질문(데스크톱 ONB_STEPS 이름, 예: 'biz-confirm'). 뜻은 데스크톱이 갖는다 */
   step: string;
-  /** 데스크톱 OnbState 그대로(비밀 없음). DB는 모양을 해석하지 않는다 */
   state: unknown;
   updatedAt: string;
 }
@@ -135,7 +123,6 @@ export class OnboardingRepo {
     return this.load(kind)!;
   }
 
-  /** 온보딩을 끝냈거나 처음부터 다시 할 때 */
   clear(profileKind: OnboardingState['profileKind'] = 'business'): boolean {
     return this.db.prepare('DELETE FROM onboarding_state WHERE profile_kind = ?').run(profileKind).changes > 0;
   }

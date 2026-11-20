@@ -1,6 +1,3 @@
-// 보안 스위트 실행기(D14 M5-1, D13 §1 "전용 스위트, 릴리스 필수"). tests/security/**/*.sec.ts를 development 조건으로 돌린다.
-// pnpm test(*.test.ts)와 분리한다: 퍼징·실브라우저 누출 시험이 길고, 릴리스 게이트로 따로 본다.
-// 사용: node scripts/ci-security.mjs [이름 일부...]   환경 변수: SAX_FUZZ_ITER(기본 300), SAX_FUZZ_SEED
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';

@@ -1,5 +1,3 @@
-// SES v2 메일 어댑터(ADR-015 어댑터 한 곳, D09 §1·§3): SigV4 서명·본문·오류 분류·재시도 여부·송신 허용 목록·본문 PII.
-// 실제 AWS에는 붙지 않는다. 가짜 SES(127.0.0.1 HTTP 서버)가 받은 요청을 실제 SES처럼 서명 검증한다. 자격 증명은 시험용 가짜 값이다.
 import assert from 'node:assert/strict';
 import { createHash, createHmac } from 'node:crypto';
 import fs from 'node:fs';
@@ -14,7 +12,6 @@ import { MailError, SES_PATH, SesMailSender, amzDate, buildAccount, mailContent,
 
 const SES_HOST = 'email.ap-northeast-2.amazonaws.com';
 const SES_URL = `https://${SES_HOST}${SES_PATH}`;
-// 시험용 가짜 자격 증명(형식만 맞다)
 const AKID = 'AKIATESTTESTTEST0000';
 const SECRET = 'testSecretKeyForSigV4OnlyNotReal0000AAAA';
 const FROM = 'no-reply@mail.test.invalid';
@@ -25,7 +22,6 @@ const realFetch = globalThis.fetch;
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 const hmac = (k: Buffer | string, s: string) => createHmac('sha256', k).update(s).digest();
 
-/** 가짜 SES의 서명 검증(어댑터 코드를 쓰지 않고 다시 계산한다). host는 실제 SES가 볼 값으로 둔다(시험은 127.0.0.1로 돌려 보낸다) */
 function verifySig(method: string, p: string, h: http.IncomingHttpHeaders, body: string): { ok: boolean; why?: string } {
   const m = /^AWS4-HMAC-SHA256 Credential=([^/]+)\/(\d{8})\/([^/]+)\/([^/]+)\/aws4_request, SignedHeaders=([a-z0-9;-]+), Signature=([0-9a-f]{64})$/.exec(String(h.authorization ?? ''));
   if (!m) return { ok: false, why: 'authorization 모양' };
@@ -84,7 +80,6 @@ describe('SES v2 메일 어댑터', () => {
     reply = { status: 200, body: '{"MessageId":"m-1"}' };
   });
 
-  /** SES 원점을 가짜 서버로 돌린다. 어댑터가 부른 URL은 그대로 기록한다 */
   const fetchFn: typeof fetch = (input, init) => {
     const u = String(input);
     urls.push(u);
@@ -120,7 +115,6 @@ describe('SES v2 메일 어댑터', () => {
     assert.equal(g.headers['x-amz-date'], amzDate(T0));
     assert.deepEqual(verifySig(g.method, g.path, g.headers, g.body), { ok: true });
     assert.match(String(g.headers.authorization), new RegExp(`Credential=${AKID}/20261107/ap-northeast-2/ses/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, `));
-    // 비밀 키는 어떤 헤더·본문에도 없다
     assert.ok(!JSON.stringify(g.headers).includes(SECRET) && !g.body.includes(SECRET));
     const b = JSON.parse(g.body) as { FromEmailAddress: string; Destination: { ToAddresses: string[] }; Content: { Simple: { Subject: { Data: string; Charset: string }; Body: { Text: { Data: string; Charset: string } } } } };
     assert.deepEqual(Object.keys(b).sort(), ['Content', 'Destination', 'FromEmailAddress']);
@@ -131,7 +125,6 @@ describe('SES v2 메일 어댑터', () => {
     assert.ok(b.Content.Simple.Body.Text.Data.includes('123456'));
     assert.ok(!JSON.stringify(b.Content).includes(TO), '수신 주소는 내용에 없다');
     assert.deepEqual(events, ['account.mail_ses.sent']);
-    // 가짜 SES 검증기 자체 확인: 본문이나 서명 헤더를 바꾸면 통과하지 않는다
     assert.equal(verifySig(g.method, g.path, g.headers, g.body + ' ').ok, false);
     assert.equal(verifySig(g.method, g.path, { ...g.headers, 'x-amz-date': '20261107T030406Z' }, g.body).ok, false);
     assert.equal(verifySig('PUT', g.path, g.headers, g.body).ok, false);
@@ -156,7 +149,6 @@ describe('SES v2 메일 어댑터', () => {
     ];
     for (const [status, type, code, retryable] of cases) {
       events.length = 0;
-      // 실제 SES 오류 본문은 주소를 되풀이할 수 있다. 오류·이벤트로 새지 않아야 한다
       reply = { status, headers: type ? { 'x-amzn-errortype': type } : {}, body: JSON.stringify({ message: `Email address is not verified: ${TO}` }) };
       const e = await sender().sendNotice(TO, 'device_enrolled').then(
         () => assert.fail(`${status} ${type}: 성공하면 안 된다`),
@@ -175,7 +167,6 @@ describe('SES v2 메일 어댑터', () => {
     await assert.rejects(down.sendLoginCode(TO, '123456'), (e: MailError) => e.code === 'mail.unavailable' && e.retryable);
     reply = 'hang';
     await assert.rejects(sender({ timeoutMs: 100 }).sendLoginCode(TO, '123456'), (e: MailError) => e.code === 'mail.unavailable' && e.retryable);
-    // 리디렉션: 다른 곳으로 가지 않는다(가짜 서버에 한 번만 닿는다)
     got.length = 0;
     reply = { status: 307, headers: { location: `${base}/elsewhere` } };
     await assert.rejects(sender().sendLoginCode(TO, '123456'), (e: MailError) => e.code === 'mail.unavailable');
@@ -218,7 +209,6 @@ describe('SES v2 메일 어댑터', () => {
   });
 
   it('본문 PII: 모든 종류의 제목·본문에 이메일 주소·식별자 모양이 없고, 값은 코드 6자리뿐(제목에는 코드도 없음)', async () => {
-    // Record로 두어 NoticeKind가 늘면 컴파일이 깨진다(이 시험이 새 종류를 빠뜨리지 않게)
     const NOTICES: Record<NoticeKind, true> = {
       device_enrolled: true,
       device_suspended: true,
@@ -245,7 +235,6 @@ describe('SES v2 메일 어댑터', () => {
       if (k === 'code' || k === 'reset_code' || k === 'reauth_code') assert.deepEqual(digits.filter((d) => d.length > 2), [CODE], k);
       else assert.ok(!all.includes(CODE) && digits.every((d) => d.length <= 2), `${k}: 알림에 코드·숫자 값`);
     }
-    // 실제로 보낸 요청: 주소는 FromEmailAddress·Destination에만, 내용에는 주소·계정 값이 없다
     const s = sender();
     for (const k of kinds) {
       got.length = 0;
@@ -257,7 +246,6 @@ describe('SES v2 메일 어댑터', () => {
       const content = JSON.stringify(b.Content);
       assert.ok(!content.includes('@') && !content.includes('example.com'), k);
     }
-    // 이벤트에는 이름만(주소·코드 없음)
     assert.ok(events.every((e) => /^account\.mail_ses\.[a-z_]+$/.test(e)));
   });
 
@@ -300,7 +288,6 @@ describe('SES v2 메일 어댑터', () => {
       await assert.rejects(buildAccount({ ...env, MAIL_PROVIDER: 'ses' }), /config_SES_FROM_ADDRESS/);
       const m = await buildAccount({ ...env, MAIL_PROVIDER: 'mock' });
       await m.db.close();
-      // ses: 어댑터가 만들어질 때의 fetch를 쓴다. 시험 동안만 가짜 SES로 돌린다(실제 AWS에 닿지 않게)
       globalThis.fetch = fetchFn;
       const sink: string[] = [];
       const s = await buildAccount({ ...env, MAIL_PROVIDER: 'ses', SES_FROM_ADDRESS: FROM, SES_ACCESS_KEY_ID: AKID, SES_SECRET_ACCESS_KEY: SECRET }, { logger: new Logger('account', (l) => void sink.push(l)) });

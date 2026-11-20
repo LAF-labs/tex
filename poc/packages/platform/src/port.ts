@@ -1,4 +1,3 @@
-// Electron MessagePortMain과 Node worker_threads MessagePort를 같은 모양으로 다룬다.
 export interface PortLike {
   postMessage(msg: unknown): void;
   onMessage(fn: (msg: unknown) => void): void;

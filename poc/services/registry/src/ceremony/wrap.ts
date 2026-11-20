@@ -1,22 +1,3 @@
-// 서명 키 감싸기(macOS Secure Enclave)와 백업 파일 형식 — 바이트 규약(CEREMONY.md 부록 A, SIGNING.md 스타일). Swift 도우미(macos/sax-keychain.swift)와 같은 바이트를 낸다.
-//
-// 감싸기 SAX-ceremony-wrap-v1 (Ed25519 시드 32B를 Secure Enclave P-256 키 W로):
-//   e      = 새 P-256 임시 키(감쌀 때마다)
-//   Z      = ECDH(e, W_pub)의 x 좌표 32B
-//   info   = utf8("SAX-ceremony-wrap-v1") ‖ X9.63(e_pub) 65B ‖ X9.63(W_pub) 65B ‖ utf8(keyId)
-//   KEK    = HKDF-SHA256(ikm = Z, salt = 빈 값, info, 32B)
-//   aad    = utf8("SAX-ceremony-wrap-v1") ‖ utf8(keyId)
-//   ct‖tag = ChaCha20-Poly1305(KEK, nonce 12B 난수, seed, aad)
-//   블롭   = JCS({v:1, alg:"SAX-ceremony-wrap-v1", keyId, pub: b64(Ed25519 공개키), epk: b64(e_pub), nonce: b64, ct: b64(ct‖tag 48B)})
-// 풀기는 W(Secure Enclave)가 ECDH(W, e_pub)를 한다. W의 접근 제어가 privateKeyUsage + biometryCurrentSet이라 풀 때마다 Touch ID다.
-// 푼 시드로 Ed25519(seed)의 공개키가 블롭 pub과 같아야 한다.
-//
-// 백업 SAX-ceremony-backup-v1 (오프라인 파일 1개, 강한 암호):
-//   key    = scrypt(passphrase NFC utf8, salt 16B, N=2^17, r=8, p=1, 32B)
-//   header = {v:1, alg:"SAX-ceremony-backup-v1", kdf:{name:"scrypt", N, r, p, salt}, nonce, createdAt}
-//   aad    = utf8("SAX-ceremony-backup-v1") ‖ JCS(header)
-//   ct‖tag = ChaCha20-Poly1305(key, nonce 12B, JCS({keys:[{keyId, pub, seed}]}), aad)
-//   파일   = JCS({...header, ct})
 import { createCipheriv, createDecipheriv, createECDH, createPrivateKey, createPublicKey, hkdfSync, randomBytes, scryptSync } from 'node:crypto';
 import { canonicalJson } from '@sax/engine/core';
 import { CeremonyError } from './content.ts';
@@ -67,7 +48,7 @@ export function wrapSeed(keyId: string, seed: Uint8Array, wrapPub: Uint8Array, f
   const e = createECDH('prime256v1');
   if (fixed) e.setPrivateKey(Buffer.from(fixed.ephemeral));
   else e.generateKeys();
-  const epk = e.getPublicKey(); // 비압축 65B
+  const epk = e.getPublicKey();
   const z = e.computeSecret(Buffer.from(wrapPub));
   const kek = Buffer.from(hkdfSync('sha256', z, Buffer.alloc(0), wrapInfo(epk, Buffer.from(wrapPub), keyId), 32));
   z.fill(0);
@@ -108,8 +89,6 @@ export function unwrapSeed(w: WrappedKey, wrapPriv: Uint8Array): Buffer {
   }
   return seed;
 }
-
-// ---- 백업 ----
 
 export interface BackupEntry {
   keyId: string;
@@ -156,7 +135,6 @@ export function openBackup(file: string, passphrase: string): BackupEntry[] {
   const N = Number(kdf.N);
   const r = Number(kdf.r);
   const p = Number(kdf.p);
-  // 너무 약한(N < 2^14) 파일·이상한 매개변수는 받지 않는다. 만들 때는 늘 BACKUP_SCRYPT(N = 2^17)다.
   if (!Number.isSafeInteger(N) || N < 1 << 14 || N > 1 << 20 || (N & (N - 1)) !== 0 || r !== 8 || p !== 1) throw new CeremonyError('ceremony.backup_invalid', 'kdf');
   const header = { v: 1, alg: BACKUP_ALG, kdf: { name: 'scrypt', N, r, p, salt: kdf.salt }, nonce: o.nonce, createdAt: o.createdAt };
   const salt = unb64(kdf.salt, 16);

@@ -1,5 +1,3 @@
-// CODEF 은행 기관 코드·오류 코드(developer.codef.io 개발 가이드 「은행 개요」「오류 코드」, 2026-11-12 열람). 출처는 PR 본문.
-
 /** 은행 기관 코드(organization). 화면은 이름만 보인다. 우리은행이 대표 계좌(첫 지원) */
 export const CODEF_BANKS = {
   '0020': '우리은행',
@@ -84,18 +82,14 @@ const MAP: Record<string, CodefFailure> = {
   'CF-12808': 'cert_expired',
   'CF-12810': 'cert_kind',
   'CF-03002': 'two_way_required',
-  // 2026-11-18 실기기: 인증서 비밀번호까지 맞았는데 계정 등록이 이 코드로 거절됐다(CODEF 오류코드 표: 본인인증 후 서비스 이용 가능)
   'CF-12831': 'identity_required',
-  // 뱅킹 종류 오류(2026-11-19 03:57 우리은행·개인): 이 인증서·계좌는 다른 뱅킹(기업)에 묶여 있다. 다른 뱅킹으로 넘어간다
   'CF-12811': 'banking_kind',
-  // 인터넷뱅킹 미가입: 웹 로그인 전에 은행(지점·앱)에서 가입이 먼저다
   'CF-12812': 'not_enrolled',
   'CF-04008': 'session_lost',
   'CF-04019': 'session_lost',
   'CF-04014': 'session_lost',
   'CF-04038': 'session_lost',
   'CF-12100': 'bank_error',
-  // 계좌 비밀번호(개인 API accountPassword)는 보내지 않는다(09 §4.5: 은행이 요구할 때만). 요구하면 이 코드로 사람에게
   'CF-13031': 'account_password_required',
   'CF-13032': 'account_password_required',
   'CF-01004': 'bank_busy',
@@ -115,20 +109,11 @@ export function failureOf(code: string): CodefFailure {
 
 export class CodefError extends Error {
   readonly code: CodefFailure;
-  /** CODEF 결과 코드(CF-xxxxx). 화면 보조 표시·지원 문의용. 값·원문 메시지는 담지 않는다 */
   readonly cf: string | null;
-  /** too_soon: 다시 할 수 있는 시각(ISO) */
   readonly retryAt: string | null;
-  /** CF-12401: CODEF가 빠졌다고 한 계정 등록 키 이름(값 없음, 로그·진단용) */
   readonly param: string | null;
-  /** 모르는 거절의 단서: CODEF 안내문 단어(숫자 없음, 로그 전용, 화면에 내지 않는다) */
   hint: string | null = null;
-  /** 어느 뱅킹(B 기업·P 개인)에서 난 실패인가(둘 다 해 봤을 때 화면 문구용) */
   clientType: CodefClientType | null = null;
-  /**
-   * 화면에 보이는 실패 말고 다른 뱅킹에서 사람이 할 수 있는 일(코드만, 값 없음).
-   * 개인 뱅킹이 계좌번호를 묻고 기업 뱅킹이 은행 본인인증을 요구하면, 계좌번호 카드에 "은행에서 한 번 로그인" 길도 같이 보인다(2026-11-19 실기기: 우리은행)
-   */
   also: { clientType: CodefClientType; code: CodefFailure } | null = null;
   withClientType(t: CodefClientType): this {
     this.clientType = t;

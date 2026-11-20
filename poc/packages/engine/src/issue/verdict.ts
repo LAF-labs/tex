@@ -1,4 +1,3 @@
-// 칸이 끝난 뒤의 판정(D03 §4.2): 실행의 자기 보고가 아니라 같은 발급 키의 원장 행으로 정한다. Verdict는 이 모듈만 만든다.
 import type { LedgerRow, LedgerState } from '@sax/db';
 import { branchOf } from './routes.ts';
 import type { AttemptEnd, IssueRows, RouteId, Verdict } from './types.ts';

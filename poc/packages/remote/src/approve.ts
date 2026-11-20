@@ -1,8 +1,3 @@
-// 폰 승인(ADR-052): 승인 키(Px, 폰 하드웨어 P-256)의 등록 알림과 gate.response 서명 입력·검증.
-// PC main(검증)과 폰(서명 입력 만들기)이 같은 함수를 쓴다. 순수 TS(noble)라 Electron·Node·Hermes에서 같은 결과다.
-//   등록 알림  sig = Ed25519_Vm("SAX-px-enroll-v1" ‖ CBOR([pairId, deviceId, pxPub, hw]))
-//   승인 답    sig = ECDSA-P256-SHA256("SAX-approve-v1" ‖ CBOR([pairId, reqId, challenge(32B), actionHash(32B), decision]))
-//             와이어 sig는 r‖s 64바이트. high-S도 받는다(Secure Enclave는 low-S를 보장하지 않는다. 재사용은 챌린지 1회용이 막는다).
 import { p256 } from '@noble/curves/nist.js';
 import { concat, fromHex, toHex, utf8 } from './bytes.ts';
 import { encodeCbor } from './cbor.ts';
@@ -42,11 +37,8 @@ export function verifyPxEnroll(vmPub: Uint8Array, pairId: string, deviceId: stri
 
 export interface ApproveInput {
   pairId: string;
-  /** gate.request.reqId(ULID) */
   reqId: string;
-  /** 32바이트 */
   challenge: Uint8Array;
-  /** sha256 hex 64자 */
   actionHash: string;
   decision: 'approve' | 'deny';
 }

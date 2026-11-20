@@ -1,6 +1,3 @@
-// 서명 의식: 문서 종류별 서명 입력 바이트와 서명이 들어갈 자리(SIGNING.md §1·§2·§4, API.md "서명 규칙" 표).
-// 서명 입력은 utf8(JCS(내용))이고 맥락 문자열이 없다. Ed25519는 다이제스트가 아니라 이 바이트 전체에 서명한다(PureEdDSA).
-// 사람이 대조하는 값은 SHA-256(서명 입력)이다(의식 진행자가 읽고, 보유자가 자기 화면의 값과 맞춰 본 뒤에만 서명한다).
 import { createHash } from 'node:crypto';
 import { canonicalJson, canonicalWithout, timestampBody } from '@sax/engine/core';
 import { rootChangeContent, type ReleaseManifest, type Role } from '../verify.ts';
@@ -54,14 +51,14 @@ export function signingBytes(kind: DocKind, doc: unknown): Buffer {
     case 'revoked_keys':
     case 'status':
     case 'policy':
-    case 'index': // ADR-043: 인덱스도 신선도 필드를 뺀 내용에 서명한다
+    case 'index':
       return canonicalWithout(d, FRESHNESS);
     case 'manifest':
     case 'hotfix':
     case 'data_descriptor':
     case 'trust_root':
       return canonicalWithout(d, ['signatures']);
-    case 'release': // 기간·타임스탬프는 게시 관문과 재서명 cron이 붙인다(services/registry verify.ts RELEASE_FRESHNESS)
+    case 'release':
       return canonicalWithout(d, ['signature', 'issuedAt', 'expiresAt', 'timestamp']);
     case 'root_change':
       if (!d.rootChange || typeof d.rootChange !== 'object') throw new CeremonyError('ceremony.doc_invalid', 'rootChange 없음');
@@ -87,11 +84,9 @@ export const sha256 = (b: Uint8Array) => createHash('sha256').update(b).digest('
  */
 export interface ToSign {
   kind: DocKind;
-  /** 'content'(역할 키) 또는 'timestamp'(타임스탬프 키) */
   part: 'content' | 'timestamp';
   bytes: Buffer;
   sha256: string;
-  /** 화면에 보이는 요약(값 없음): 종류·keyEpoch·monotonic·버전 */
   summary: string;
 }
 

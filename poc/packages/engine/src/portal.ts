@@ -1,6 +1,3 @@
-// H-01 포털 설정: URL·셀렉터 사전(D02 §2.1의 PoC 부분집합)·verify 정책. 두 벌이다.
-// - fixture: 가짜 H-01 페이지(apps/desktop/src/h01-fixture.ts)에 맞춘 실제 값.
-// - hometax: PoC-3(로그인·셀렉터) 전까지 자리표시. 자리표시가 하나라도 있으면 실행을 시작하지 않는다.
 import { READBACK_KEYS, type ReadbackKey } from './gate.ts';
 
 /** readback 대상 fieldKey. 순서는 gate.ts READBACK_KEYS(게이트 fields 순서)다. */
@@ -8,10 +5,8 @@ export const READBACK_FIELDS = READBACK_KEYS;
 export type { ReadbackKey };
 
 export interface SelectorEntry {
-  /** 후보(PoC는 하나). id·name·data-*·aria-label 셀렉터만(D02 §2.1). 'TODO(PoC-3)'이면 자리표시. */
   css: string;
   role: string;
-  /** 접근성 이름 패턴. ^…$ 앵커 필수, 랜드마크 안에서 정확히 1개에 맞아야 한다(SV-04·R-A1). */
   name: string;
   landmark?: SelectorKey;
   commits: boolean;
@@ -27,41 +22,27 @@ export const SELECTOR_KEYS = [
 export type SelectorKey = (typeof SELECTOR_KEYS)[number];
 
 export interface LookupDef {
-  /** 조회 화면 경로와 질의 이름(fieldKey → 질의 파라미터). */
   path: string;
   query: Partial<Record<ReadbackKey | 'approvalNo', string>>;
-  /**
-   * 결과가 다 그려졌다는 신호(건수 속성 data-count를 가진 요소). 없으면 조회 실패이고 부재 증거가 아니다.
-   * 빈 표와 아직 그리지 않은 표를 가르기 위해서다(기준선이 비어 보이면 예전 건이 새 건으로 잡힌다).
-   */
   ready: string;
-  /** 결과 행. 행 안의 [data-k] 칸을 읽는다(가짜 페이지 모양, PoC-3에서 실제 표로 바꾼다). */
   rows: string;
 }
 
 export interface PortalConfig {
   kind: 'fixture' | 'hometax';
   origin: string;
-  /** 로그인 단계가 있는가(fixture는 세션이 있다고 본다. 홈택스 로그인은 PoC-3). */
   login: boolean;
   issueForm: string;
   selectors: Record<SelectorKey, SelectorEntry>;
-  /**
-   * 발급 화면의 명시적 실패 신호(D02 §4.4): (셀렉터, ^…$ 문구 패턴) 쌍. 클릭 뒤 새로 보이고 문구까지 맞는 요소만
-   * not_committed 근거다. 빈 배열이면 not_committed가 성립하지 않는다(in_doubt로만 끝난다).
-   */
   failureSignal: ReadonlyArray<FailureSignal>;
   invoiceLookup: LookupDef;
   mailLookup: LookupDef;
-  /** policy.verify(D02 §4.4). 홈택스는 앱 하한(60초·2회·상한 300초)보다 느슨할 수 없다. maxMs는 클릭 뒤 조회를 이어 가는 상한이다. */
   verify: { minElapsedMs: number; lookups: number; intervalMs: number; maxMs: number };
-  /** 로그인 화면 경로(PoC-3에서 채운다). 기대 경로 집합에 들어간다. */
   loginPaths?: readonly string[];
 }
 
 export interface FailureSignal {
   css: string;
-  /** 보이는 문구(NFKC·공백 접기 뒤)에 거는 정규식. ^…$ 앵커 필수. */
   text: string;
 }
 
@@ -124,7 +105,6 @@ export function fixturePortal(origin: string): PortalConfig {
     failureSignal: [{ css: '#issue-error', text: '^발급할 수 없습니다\\. 입력 값을 확인하세요\\.$' }],
     invoiceLookup: { path: '/invoice/list', query: { counterpartBizNo: 'bizNo', issueDate: 'date' }, ready: '#invoice-list[data-count]', rows: '#invoice-list tr[data-row]' },
     mailLookup: { path: '/mail/list', query: { approvalNo: 'approvalNo' }, ready: '#mail-list[data-count]', rows: '#mail-list tr[data-row]' },
-    // 가짜 페이지는 반영이 바로 된다. 시험이 빨리 끝나게 짧게 둔다(홈택스 값과 섞이지 않게 kind로 나눈다).
     verify: { minElapsedMs: 600, lookups: 2, intervalMs: 200, maxMs: 3_000 },
   };
 }
@@ -155,7 +135,6 @@ export const HOMETAX_PORTAL: PortalConfig = {
     'form.receiptType': todoEntry('combobox', 'receiptType'),
     'form.issueButton': todoEntry('button', undefined, true),
   },
-  // PoC-3 S1 산출물(실패 문구 쌍)로 채운다. 비어 있는 동안은 not_committed가 성립하지 않는다.
   failureSignal: [],
   invoiceLookup: { path: TODO, query: {}, ready: TODO, rows: TODO },
   mailLookup: { path: TODO, query: {}, ready: TODO, rows: TODO },

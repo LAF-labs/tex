@@ -1,4 +1,3 @@
-// D08 §6 바탕: 결정적 CBOR, 정규형 base64, ULID, 패딩 버킷, ctr 창, 결정적 rekey, 변조 거부.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
@@ -46,7 +45,7 @@ describe('base64 정규형', () => {
       const b = randomBytes(n);
       assert.deepEqual(fromB64(b64(b)), b);
     }
-    assert.throws(() => fromB64('AB=='.replace('B', 'C')) /* 남는 비트 */);
+    assert.throws(() => fromB64('AB=='.replace('B', 'C')));
     assert.throws(() => fromB64('AAA'));
     assert.throws(() => fromB64('AA*A'));
   });
@@ -120,7 +119,7 @@ describe('전송 프레임', () => {
     a._testSetSendCtr(REKEY_INTERVAL - 2n);
     const f1 = a.seal(Uint8Array.of(1));
     const f2 = a.seal(Uint8Array.of(2));
-    const f3 = a.seal(Uint8Array.of(3)); // 새 epoch
+    const f3 = a.seal(Uint8Array.of(3));
     const f4 = a.seal(Uint8Array.of(4));
     assert.deepEqual(b.open(f3), Uint8Array.of(3));
     assert.deepEqual(b.open(f1), Uint8Array.of(1), '직전 epoch도 창 안이면 연다');

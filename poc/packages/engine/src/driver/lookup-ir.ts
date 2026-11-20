@@ -1,18 +1,3 @@
-// 조회 포트: 서명 조회 패키지(kind: lookup, manifest.lookupsUsed) IR을 팝업에서 돌린다(팀장 결정 2026-11-09 (가), D03 §5.6, D02 §4.4).
-// 조회 화면으로 가는 길(goto·wait·fill·select·click)과 결과 표·열 이름·건수 문구가 모두 서명 패키지 안에 있다.
-// 그래서 실기기에서 조회 셀렉터가 틀리면 앱 재배포 없이 조회 패키지를 다시 게시해 고친다(scripts/h01-republish.mjs).
-//
-// 조회는 읽기만 한다(V-22, 실행 시에도 다시 본다).
-// - 실행 전에 lookupViolations를 다시 본다. 어기면 팝업을 열지 않고 lookup.package_invalid다(로더가 이미 거른다. 이중 방어).
-// - 핸들러는 V-22가 허용하는 종류만 준다(goto·wait·assert·extract·select·fill·click·end). submit·gate·human·decide 등은 핸들러가 없다.
-// - 동작은 팝업 탭의 GuardedActuator로만 한다. 무장(commitArmed)은 언제나 거짓이라 commits:true 항목을 누를 수 없다. 원래 탭은 건드리지 않는다.
-//
-// 부재 증거가 되려면 결과가 다 왔다는 것을 알아야 한다(PopupLookupPort의 data-count와 같은 뜻).
-// - IR이 success로 끝나야 하고, 변수 count(건수 문구 extract)가 정수이며 읽은 행 수와 같아야 한다. 아니면 lookup.incomplete(조회 실패, 부재 아님).
-// - match의 열과 승인번호 열은 strings `lookup.column.<열>`(머리글 문구)로 표 머리글에서 찾는다. 하나라도 없으면 lookup.columns_missing.
-//   빈 표·덜 그린 표·열을 못 찾은 표가 "없음"으로 읽히면 기준선이 틀리거나 not_committed(재발급)로 갈 수 있기 때문이다.
-// - 실패는 judgeVerify·takeBaseline이 받는다: 게이트 전 기준선 실패는 verify.baseline_missing(핸드오프, 발급 0), verify 중 실패는 부재 증거가 아니다.
-// 값(행 문구)은 저널·로그에 남기지 않는다(⑦). 저널에는 코드와 스텝 id만.
 import type { Page, Response } from 'playwright-core';
 import { GuardedActuator, type ActionPolicy, type ActuatorEvents } from '../core/actuator.ts';
 import { Interpreter } from '../core/interp.ts';
@@ -37,27 +22,12 @@ const LOOKUP_HANDLERS: Handlers = Object.fromEntries(LOOKUP_STEP_TYPES.map((t) =
 export const LOOKUP_COLUMN_PREFIX = 'lookup.column.';
 const ROW_CSS = 'lookup.table.rowCss';
 const CELL_CSS = 'lookup.table.cellCss';
-/**
- * 카드 목록(머리글 행 없음, 홈택스 민원신청 처리결과): 행마다 이름·값 쌍이 있다. 둘 다 있으면 이 모양으로 읽는다.
- * 행 안의 이름 요소(labelCss)와 값 요소(valueCss)는 같은 수이고, 모든 행의 이름 차례가 같아야 한다(아니면 lookup.incomplete).
- * 머리글은 첫 행의 이름이다. 행이 0개면 열을 볼 수 없으니 건수 문구(count = 0)가 결과가 다 왔다는 근거다.
- */
 const LABEL_CSS = 'lookup.table.labelCss';
 const VALUE_CSS = 'lookup.table.valueCss';
 const DEFAULT_ROW_CSS = 'tr, [role="row"]';
 const DEFAULT_CELL_CSS = ':scope > th, :scope > td, :scope > [role="columnheader"], :scope > [role="rowheader"], :scope > [role="gridcell"], :scope > [role="cell"]';
-/** 열 속성 모드(IR rev v1.3.5): 칸을 머리글 문구 대신 이 속성 값(lookup.column.<열> = 값)으로 찾는다. WebSquare 그리드는 data-col_id. */
 const COL_ATTR = 'lookup.table.colAttr';
-/**
- * 칸 id 모드(5차 예행 run-a82e53d3, 홈택스 민원신청 처리결과): WebSquare generator 카드 목록은 머리글도 이름표도 없이
- * 칸마다 id가 <목록>_<행 번호>_<칸 이름>이다. 이 문자열은 정규식이고 1번 묶음이 행 번호, 2번 묶음이 칸 이름이다.
- * 표 안에서 id가 맞는 요소를 행 번호로 묶고, 첫 행의 칸 이름 차례를 머리글로 쓴다(lookup.column.<열> = 칸 이름).
- */
 const CELL_ID = 'lookup.table.cellIdPattern';
-/**
- * 건수 문구가 없는 화면의 완결 판정(IR rev v1.3.5): 'idle'이면 rows extract 바로 앞 스텝이 wait for:idle(요청 0개 500ms)이어야 하고,
- * 행 수가 pageSize(한 쪽 행 수) 미만이어야 다 온 것으로 본다(한 쪽이 꽉 차면 다음 쪽이 있을 수 있다).
- */
 const COMPLETE = 'lookup.table.complete';
 const PAGE_SIZE = 'lookup.table.pageSize';
 
@@ -81,17 +51,13 @@ export const LOOKUP_ROWS_VAR = 'rows';
 export const LOOKUP_COUNT_VAR = 'count';
 
 export interface IrLookupInput {
-  /** 실행 탭(조회 팝업을 여는 곳). 이 탭에는 동작하지 않는다. */
   page: Page;
-  /** verify.lookup.playbook → 서명 조회 패키지(로더를 지난 것). */
   packages: ReadonlyMap<string, LoadedPackage>;
   policy: LookupPolicy & ActionPolicy;
   events: ActuatorEvents;
   clock: Clock;
   fixtureGrant?: FixtureOriginGrant | null;
-  /** 팝업 열기 대기 상한(기본 10초). */
   timeoutMs?: number;
-  /** 조회 스텝이 멈추면 팝업을 닫기 전에 부른다(예행 화면 기록). 6초 안에 끝나지 않으면 기다리지 않는다. */
   onFail?: (popup: Page, at: { stepId: string; code: string }) => Promise<void>;
 }
 
@@ -128,7 +94,6 @@ export class IrLookupPort implements LookupPort {
         // 주소가 아니면 포털 응답이 아니다
       }
       if (!portal) return;
-      // 팝업의 첫 문서 요청은 프레임이 생기기 전에 나가 r.frame()이 던진다(Playwright). 리스너에서 던지면 엔진이 죽으므로 그 응답은 문서 응답으로 본다.
       let f: ReturnType<Response['frame']> | null;
       try {
         f = r.frame();
@@ -178,7 +143,6 @@ export class IrLookupPort implements LookupPort {
       const h1 = halted();
       if (h1) return h1;
       if (stop.t !== 'end' || stop.status !== 'success') {
-        // 실기기 디버깅: 조회 패키지의 어느 스텝·셀렉터 키에서 멈췄는지(값 없음, ⑦). RunService가 엔진 로그 run.lookup_failed로도 남긴다.
         const at = [...flattenSteps(ir.steps)].find((x) => x.id === stop.at) as (Step & { target?: unknown; for?: unknown; value?: unknown }) | undefined;
         const target = typeof at?.target === 'string' ? at.target : at?.type === 'wait' && at.for === 'selector' && typeof at.value === 'string' ? at.value : '';
         const code = ('code' in stop && stop.code) || stop.t;
@@ -190,7 +154,6 @@ export class IrLookupPort implements LookupPort {
         return { ok: false, code: 'lookup.failed' };
       }
 
-      // 결과 표: rows extract의 대상 항목. 표를 다시 해석해 머리글·행을 읽는다(읽기만).
       const rowsStep = [...flattenSteps(ir.steps)].find((x) => x.type === 'extract' && x.name === LOOKUP_ROWS_VAR) as (Step & { from: { a11y?: { target: string }; selector?: string } }) | undefined;
       const tableKey = rowsStep?.from.a11y?.target ?? rowsStep?.from.selector;
       if (!tableKey) return { ok: false, code: 'lookup.package_invalid' };
@@ -201,7 +164,6 @@ export class IrLookupPort implements LookupPort {
       const colAttr = files.strings[COL_ATTR];
       const cellId = files.strings[CELL_ID];
       if (cellId !== undefined) {
-        // 행 번호·칸 이름 두 캡처 그룹이 없는 패턴은 표를 조용히 비우므로 패키지 오류로 본다.
         let groups = 0;
         try {
           groups = (new RegExp(`${cellId}|`).exec('')?.length ?? 1) - 1;
@@ -248,7 +210,6 @@ export class IrLookupPort implements LookupPort {
             const cs = cells(r);
             if (!cs.length) continue;
             if (css.attr) {
-              // 열 속성 모드(WebSquare 그리드 data-col_id): 머리글은 다른 표에 있다. 행마다 속성이 있는 칸만, 속성 값을 머리글로 쓴다.
               const named = cs.filter((c) => c.hasAttribute(css.attr!));
               if (!named.length || named.every(isHead)) continue;
               header ??= named.map((c) => c.getAttribute(css.attr!) ?? '');
@@ -273,16 +234,12 @@ export class IrLookupPort implements LookupPort {
           cellId: cellId ?? '',
         },
       );
-      // 실화면 예행 진단: 스텝은 다 지났는데 표 판정에서 멈춘 까닭(코드·행 수·건수 글자만, 행 글 없음 ⑦). 5차 예행 H-08 run-11a67c29
       const tableFail = (code: string) => {
         this.i.events.journal('lookup.table_failed', { playbook: req.playbook, purpose: req.purpose, code, rows: String(table.body.length), count: (scope.vars.get(LOOKUP_COUNT_VAR) ?? '').replace(/[^\d]/g, '').slice(0, 6), bad: String(table.bad), header: String((table.header ?? []).length) });
         return { ok: false as const, code };
       };
       if (table.bad || !lookupComplete(ir.steps, files.strings, scope.vars.get(LOOKUP_COUNT_VAR), table.body.length)) return tableFail('lookup.incomplete');
-      // 카드 목록이 비었으면(건수 0과 같음) 열을 볼 수 없다. 머리글 표는 빈 표도 머리글이 있으니 아래 열 검사를 그대로 한다.
       if ((labelled || byId) && table.body.length === 0) return halted() ?? { ok: true, rows: [] };
-      // 열 이름 → 머리글 위치(열 속성 모드면 속성 값). 필요한 열(match·승인번호)이 하나라도 없으면 조회 실패다(그 열을 빈칸으로 읽으면 "없음"이 된다).
-      // 열 속성 모드에서 행이 0개면 머리글을 읽을 수 없다: 그때는 열이 있다고 본다(빈 결과는 행 수 판정이 이미 받았다).
       const head = (table.header ?? []).map(norm);
       const col = new Map<string, number>();
       for (const [k, v] of Object.entries(files.strings)) {

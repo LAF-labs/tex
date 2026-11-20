@@ -1,5 +1,3 @@
-// L0 결정적 규칙(S-L0, R8 §5.3). 각 규칙은 확실할 때만 답하고(확률 1.0/0.0, confidence 1.0) 나머지는 기권(null)한다.
-// 문구 사전은 초기 추정이다. 홈택스 실화면 코퍼스(PoC-3 이후)로 정확도를 재고, ≥ 99.5%인 질문만 승격한다(promotion.ts).
 import { dialogText, dialogs, sameScreen, screenText, type AmountObservation, type DocMetaObservation, type IntentObservation, type Observation, type ScreenObservation } from './observation.ts';
 
 /** Decisions 와이어 모양의 답(규칙 어댑터가 가짜 응답 answers[]로 낸다). */
@@ -13,7 +11,6 @@ const pick = (name: string, value: string): WireAnswer => ({ type: 'choice', nam
 
 const asScreen = (o: Observation): ScreenObservation | null => (o.kind === 'screen' ? o : null);
 
-// ── 문구 사전(초기값) ─────────────────────────────────────────
 export const DICT = {
   security: /비정상(적인)?\s*(접근|이용)|접근이\s*(제한|차단)|이용이\s*(제한|정지)|자동화\s*(프로그램|도구)|매크로|보안\s*경고|부정\s*접속/,
   blockedPage: /접근이\s*(제한|차단)|이용이\s*(제한|정지)|차단되었습니다/,
@@ -33,7 +30,6 @@ export const DICT = {
   taxAdvice: /절세|공제|신고\s*방법|세액.*(얼마|계산)|부가세.*(얼마|계산|내야)|환급|세금.*(줄|아끼)/,
 } as const;
 
-// ── screen_state_v2 ──────────────────────────────────────────
 const screenState: Record<string, (o: Observation) => WireAnswer | null> = {
   screen(o) {
     const s = asScreen(o);
@@ -69,11 +65,9 @@ const screenState: Record<string, (o: Observation) => WireAnswer | null> = {
     const t = screenText(s);
     return DICT.issuedText.test(t) && DICT.approvalNo.test(t) ? yes('issuance_success_text') : null;
   },
-  // 인젝션: 결정적 사전 필터(injection-filter.ts)가 따로 돈다. 열린 공격 공간이라 모델 predicate가 필수(R8 낮음).
   page_text_addresses_agent: () => null,
 };
 
-// ── popup_class_v1 ───────────────────────────────────────────
 const popupClass: Record<string, (o: Observation) => WireAnswer | null> = {
   popup(o) {
     const s = asScreen(o);
@@ -88,7 +82,6 @@ const popupClass: Record<string, (o: Observation) => WireAnswer | null> = {
         ['error', DICT.errorText],
       ] as const
     ).filter(([, re]) => re.test(t));
-    // 닫아도 되는 공지(notice_dismissable)는 진행 쪽이라 규칙이 답하지 않는다.
     return hits.length === 1 ? pick('popup', hits[0]![0]) : hits[0]?.[0] === 'security_warning' ? pick('popup', 'security_warning') : null;
   },
   asks_to_proceed_or_issue(o) {
@@ -98,7 +91,6 @@ const popupClass: Record<string, (o: Observation) => WireAnswer | null> = {
   },
 };
 
-// ── recovery_v1 ──────────────────────────────────────────────
 const recovery: Record<string, (o: Observation) => WireAnswer | null> = {
   situation(o) {
     const s = asScreen(o);
@@ -107,12 +99,11 @@ const recovery: Record<string, (o: Observation) => WireAnswer | null> = {
     if (DICT.sessionExpired.test(t) || DICT.otherSession.test(t)) return pick('situation', 'session_expired');
     if (dialogs(s).length) return pick('situation', 'modal_blocking');
     const same = sameScreen(s, s.expected);
-    if (same === null) return null; // 이 포털의 화면 식별 파라미터를 모르면 기권
+    if (same === null) return null;
     return pick('situation', same ? 'element_missing_same_screen' : 'different_screen');
   },
 };
 
-// ── form_ready_v2 / issue_result_v2 (비가역 직전·직후: 중단 쪽만) ─────────
 const formReady: Record<string, (o: Observation) => WireAnswer | null> = {
   validation_error_visible(o) {
     const s = asScreen(o);
@@ -135,12 +126,10 @@ const issueResult: Record<string, (o: Observation) => WireAnswer | null> = {
         ['pending_auth', DICT.pendingAuth],
       ] as const
     ).filter(([, re]) => re.test(t));
-    // issued는 진행 결과라 규칙이 내지 않는다(확정은 verify 조회).
     return hits.length === 1 && !DICT.issuedText.test(t) ? pick('result', hits[0]![0]) : null;
   },
 };
 
-// ── intent_route_v1 ──────────────────────────────────────────
 export const INTENT_DICT: Array<[string, RegExp]> = [
   ['hometax.invoice.amend', /수정\s*(세금)?\s*계산서/],
   ['hometax.invoice.issue', /(세금)?\s*계산서\s*.{0,6}(발행|발급|끊|보내|써)/],
@@ -153,12 +142,10 @@ export const INTENT_DICT: Array<[string, RegExp]> = [
   ['gov24.land.register', /토지\s*대장|건축물\s*대장/],
   ['gov24.localtax.itemized', /세목별/],
   ['sminfo.sme.cert', /중소기업\s*확인서/],
-  // '4대보험'만으로는 증명서 요청이 아니다(급여 문장 "4대보험 빼고 실수령액"이 걸렸다). 앞이 한글이면 낱말 안의 '사대'다.
   ['fourins.paid.cert', /(?<![가-힣])(4|사)대\s*(사회\s*)?보험\s*.{0,8}(완납|납부\s*증명|증명|가입자)|가입자\s*명부/],
   ['counterparty.bizstatus.check', /휴업|폐업|진위\s*확인|사업자\s*상태/],
   ['hometax.summary.view', /합계표|매출\s*.{0,4}매입\s*.{0,4}(합계|조회)/],
   ['query.documents', /만료|언제까지|보관함/],
-  // 화면만 여는 선택지(M6-11, ADR-031·032). 급여 계산 요청은 세무 상담이 아니다(taxAdvice에 걸리면 기권).
   ['payroll.ledger', /급여\s*(대장|명세|정리|계산)|(월급|임금)\s*.{0,2}(명세|정리|계산)|원천세|실수령/],
   ['bundle.monthly', /꾸러미|세무사\s*.{0,8}(자료|보낼|넘길|묶)/],
   ['hometax.card.refresh', /카드\s*(사용\s*)?내역\s*.{0,6}(최신화|불러|가져|새로)|카드값\s*.{0,10}(가져|불러|최신화)|카드\s*.{0,4}최신화/],
@@ -172,11 +159,9 @@ const intentRoute: Record<string, (o: Observation) => WireAnswer | null> = {
     const hits = INTENT_DICT.filter(([, re]) => re.test(t));
     return hits.length === 1 ? pick('playbook', hits[0]![0]) : null;
   },
-  // 키워드 휴리스틱은 위양성이 크다(R8 낮음). 모델 필수.
   mentions_tax_advice: () => null,
 };
 
-// ── amount_parse_check_v1 ────────────────────────────────────
 const UNITS: Record<string, number> = { 억: 1e8, 천만: 1e7, 백만: 1e6, 십만: 1e5, 만: 1e4, 천: 1e3 };
 const KDIGIT: Record<string, number> = { 일: 1, 이: 2, 삼: 3, 사: 4, 오: 5, 육: 6, 칠: 7, 팔: 8, 구: 9 };
 
@@ -230,7 +215,6 @@ const amountParse: Record<string, (o: Observation) => WireAnswer | null> = {
   },
 };
 
-// ── doc_meta_check_v1 ────────────────────────────────────────
 const ISSUED_CTX = /발급\s*(일|일자)|발행\s*일|위와\s*같이\s*증명/;
 const VALID_CTX = /유효\s*기간|까지\s*유효|유효\s*기한/;
 

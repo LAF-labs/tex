@@ -1,4 +1,3 @@
-// PoC-10(Mac 선행분): 요청률 정책(D03 §7) 단위 시험. 브라우저 없이 카운터·상한·쿨다운·시계 역행·차단 신호 사전을 본다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -10,10 +9,9 @@ import { FIXTURE_POLICY, HOMETAX_POLICY, kstDay, matchSignal, policyFor, RateGua
 import type { Page } from 'playwright-core';
 import { openDatabase, RateRepo, type Db } from '@sax/db';
 
-const T = Date.parse('2026-11-02T14:59:50Z'); // KST 23:59:50
+const T = Date.parse('2026-11-02T14:59:50Z');
 const H = 3_600_000;
 
-/** 벽시계와 단조 시계를 함께 움직이는 시험 시계. back()은 벽시계만 되돌린다. */
 function testClock(start = T) {
   let wall = start;
   let mono = 0;
@@ -27,7 +25,6 @@ function testClock(start = T) {
     back(ms: number) {
       wall -= ms;
     },
-    /** 앱 재시작: 단조 시계가 0부터 다시 간다. */
     restart() {
       mono = 0;
     },
@@ -78,8 +75,8 @@ describe('요청률 정책(D03 §7)', () => {
     for (let i = 0; i < 100; i++) g.admit('p1', { irreversible: false });
     assert.throws(() => g.admit('p1', { irreversible: false }), /policy\.runs_per_day/);
     assert.equal(repo.count('hometax', 'p1', 'runs_day', '2026-11-02'), 100, '거부된 시도는 세지 않는다');
-    g.admit('p2', { irreversible: false }); // 프로필별
-    c.tick(10_000); // KST 00:00
+    g.admit('p2', { irreversible: false });
+    c.tick(10_000);
     assert.equal(kstDay(c.wall), '2026-11-03');
     g.admit('p1', { irreversible: false });
     assert.equal(repo.count('hometax', 'p1', 'runs_day', '2026-11-03'), 1);
@@ -90,7 +87,7 @@ describe('요청률 정책(D03 §7)', () => {
     for (let i = 0; i < 50; i++) g.countCommit('p1');
     assert.throws(() => g.countCommit('p1'), /policy\.irreversible_per_day/);
     assert.throws(() => g.admit('p1', { irreversible: true }), /policy\.irreversible_per_day/);
-    g.admit('p1', { irreversible: false }); // 조회성 실행은 비가역 여유를 보지 않는다
+    g.admit('p1', { irreversible: false });
     assert.equal(repo.count('hometax', 'p1', 'irreversible_day', '2026-11-02'), 50);
     assert.equal(repo.sum('hometax', '', 'navigations_min', '2026-11-02T00:00:00', '2026-11-02T23:59:59'), 50, '발급 버튼 클릭은 네비게이션으로도 센다');
   });
@@ -101,7 +98,7 @@ describe('요청률 정책(D03 §7)', () => {
     c.tick(30_000);
     for (let i = 0; i < 6; i++) g.countNavigation();
     assert.equal(g.navigationWaitMs(), 1_000);
-    c.tick(29_000); // 처음 6회에서 59초
+    c.tick(29_000);
     assert.equal(g.navigationWaitMs(), 1_000, '분 경계가 아니라 60초 창');
     c.tick(1_000);
     assert.equal(g.navigationWaitMs(), 0);
@@ -134,10 +131,10 @@ describe('요청률 정책(D03 §7)', () => {
   });
 
   it('시계 역행: 유효 시각은 뒤로 가지 않아 날짜 버킷·쿨다운이 풀리지 않고, 보수 모드(지연 1.5배, 상한 절반)가 재시작 뒤에도 이어진다', () => {
-    const { db, g, c, repo } = guard(HOMETAX_POLICY, T + 20_000); // KST 11-03 00:00:10
+    const { db, g, c, repo } = guard(HOMETAX_POLICY, T + 20_000);
     for (let i = 0; i < 50; i++) g.admit('p1', { irreversible: false });
     assert.equal(g.clock().conservative, false);
-    c.back(H); // 11-02 23:00:10(KST)로 되돌림
+    c.back(H);
     const k = g.clock();
     assert.equal(k.conservative, true);
     assert.ok(k.now >= T + 20_000, '유효 시각은 마지막으로 본 시각보다 앞이다');
@@ -145,12 +142,10 @@ describe('요청률 정책(D03 §7)', () => {
     assert.equal(repo.count('hometax', 'p1', 'runs_day', '2026-11-02'), 0, '전날 버킷이 새로 열리지 않았다');
     assert.equal(g.delay([1_000, 1_000], true), 1_500);
     assert.equal(g.cap(HOMETAX_POLICY.limits.navigationsPerMin, true), 6);
-    // 재시작(단조 시계 0부터, 벽시계는 여전히 뒤)
     c.restart();
     const g2 = new RateGuard(db, 'hometax', HOMETAX_POLICY, c.clock);
     assert.equal(g2.clock().conservative, true);
     assert.equal(g2.status('p1').conservative, true);
-    // 역행 중 유효 시각은 절반 속도로 간다: 역행한 만큼(1시간) 지나도 아직 보수 모드, 두 배가 지나면 벽시계가 따라잡는다
     c.tick(H + 5_000);
     assert.equal(g2.clock().conservative, true);
     c.tick(H);
@@ -166,7 +161,7 @@ describe('요청률 정책(D03 §7)', () => {
       g.loginSucceeded('p1');
     }
     assert.throws(() => g.beforeLogin(), /policy\.logins_per_day/);
-    for (let i = 1; i < 30; i++) g.continueSession('p1'); // 로그인한 실행이 1회째
+    for (let i = 1; i < 30; i++) g.continueSession('p1');
     assert.throws(() => g.continueSession('p1'), /policy\.runs_per_session/);
     g.loginSucceeded('p1');
     g.continueSession('p1');
@@ -188,7 +183,7 @@ describe('요청률 정책(D03 §7)', () => {
       frames: () => [{ url: () => 'http://127.0.0.1:9/notice', evaluate: () => new Promise((r) => setTimeout(() => r({ text: '', status: 200 }), 50)) }],
     });
     const watch = new SignalWatch(page as unknown as Page, { dict: SIGNAL_DICT.fixture, portalHost: () => true, onHit: () => {}, onDialog: () => {}, mono: () => performance.now() });
-    const reload = setInterval(() => page.emit('domcontentloaded'), 20); // 확인(50ms)보다 잦은 새로고침
+    const reload = setInterval(() => page.emit('domcontentloaded'), 20);
     try {
       await new Promise((r) => setTimeout(r, 60));
       const done = await Promise.race([watch.idle().then(() => 'idle'), new Promise((r) => setTimeout(() => r('hang'), 1_000))]);
@@ -206,8 +201,6 @@ describe('요청률 정책(D03 §7)', () => {
     assert.equal(matchSignal(fx, { url: 'http://127.0.0.1:9/notice/blockedness' }), null);
     assert.deepEqual(matchSignal(fx, { url: 'http://127.0.0.1:9/auth/captcha', text: '비정상적인 접근이 감지되어 이용이 제한되었습니다' }), { kind: 'block', id: 'fixture.block.text' });
     assert.equal(matchSignal(fx, { text: '전자세금계산서 건별발급' }), null);
-    // 홈택스: 근거 있는 것은 NetFunnel 대기열 문구(busy)와 시스템 점검 안내(maintenance, IR rev v1.3.7)뿐이다(둘 다 차단 아님).
-    // 차단·추가 인증·캡차는 PoC-3에서 채운다.
     const ht = SIGNAL_DICT.hometax;
     assert.deepEqual(matchSignal(ht, { text: '서비스 접속대기 중입니다. 예상대기시간 : 3초' }), { kind: 'busy', id: 'hometax.netfunnel.wait' });
     assert.deepEqual(matchSignal(ht, { text: '접속대기 중입니다.' }), { kind: 'busy', id: 'hometax.netfunnel.wait' }, '모바일 스킨 문구');
@@ -232,7 +225,6 @@ describe('받은 서명 정책 ∧ 내장 값: 필드마다 더 엄격한 쪽 (�
     dbs.push(d);
     return d;
   };
-  /** 내장 값보다 어떤 필드는 엄격하고 어떤 필드는 느슨한 받은 값. */
   const mixed = (): RatePolicy => ({
     pace: { stepDelayMs: [1_000, 2_000], afterNavSettleMs: [500, 2_000], slowFactor: 2 },
     limits: { runsPerDayPerProfile: 5, irreversiblePerDayPerProfile: 99, runsPerLoginSession: 99, navigationsPerMin: 6, loginsPerDay: 99, concurrent: 1 },

@@ -1,4 +1,3 @@
-// 대화 짧은 응대 배선(apps/desktop/src/chat-reply.ts, 엔진 chat.respond 계약 LAF-labs/tex#261): 응답 검사·오류 코드·되묻기 이어 가기·main/렌더러 배선.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
@@ -28,7 +27,6 @@ describe('parseChatReply: 엔진 응답을 믿지 않는다', () => {
       { ...ok, suggest: ['run.start'] },
       { ...ok, suggest: ['hometax.invoice.issue', 'hometax.invoice.issue'] },
       { ...ok, suggest: ['hometax.invoice.issue', 'hometax.invoice.issue', 'hometax.invoice.issue', 'hometax.invoice.issue'] },
-      // 증명서는 지금 못 하는 일이라 제안 목록에 없다(#291)
       { ...ok, suggest: ['hometax.cert.taxpayment'] },
       { ...ok, suggest: 'hometax.invoice.issue' },
     ])
@@ -94,7 +92,6 @@ describe('배선(main·렌더러)', () => {
     assert.match(send, /return \{ kind: 'chat', text: c\.reply\.reply, suggest: suggestChips\(c\.reply\.suggest\), filtered: c\.reply\.filtered, via, note: null, sent \};/);
     const chatPart = send.slice(send.indexOf("r.route.outcome === 'unknown'"), send.indexOf('const to = routed('));
     assert.doesNotMatch(chatPart, /interpret\(/);
-    // 로그에는 결과 종류만(문장·답 없음)
     assert.match(send, /log\.event\('main\.chat', 'reply' in c \? \{ result: 'ok', kind: c\.reply\.kind, filtered: c\.reply\.filtered \?\? 'none', suggest: c\.reply\.suggest\.length \} : \{ result: c\.error \}\);/);
   });
   it('렌더러: 답은 텍스트로, 칩은 입력창 채우기, 다시 시도는 retry일 때만. chat.respond는 렌더러 IPC 표에 없다', () => {

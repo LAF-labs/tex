@@ -1,8 +1,3 @@
-// 비밀번호 저장·정책(ADR-038 (b)(c), D09 §2.1). 평문은 이 모듈의 함수 인자로만 지나가고 저장·로그에 남지 않는다.
-// - 해시: argon2id(m=64MiB, t=3, p=1, 솔트 16B, 출력 32B). 입력은 HMAC-SHA256(pepper, utf8(NFKC(pw)))다. 페퍼는 환경 변수에만 있다(DB에 없음).
-// - 매개변수 버전 문자열에 페퍼 키 ID를 넣는다. 현재 버전보다 낮거나 페퍼 키가 다르면 로그인 성공 때 다시 해시한다(페퍼 회전).
-// - argon2id는 Node 내장(node:crypto argon2, Node 24.7+)이다. 네이티브 애드온이 없어 함수 묶음에 따로 넣을 파일이 없다.
-// - 한 인스턴스에서 동시에 도는 해시 수와 대기 줄을 제한한다(64MiB × 동시 수). 넘으면 429로 거절한다.
 import { argon2, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -15,7 +10,6 @@ export const PARAMS_VERSION = 'a2id-v1';
 const paramsOf = (kid: string) => `${PARAMS_VERSION}:m${ARGON2ID.memoryKiB}:t${ARGON2ID.passes}:p${ARGON2ID.parallelism}:k${kid}`;
 const PARAMS_RE = /^(a2id-v\d+):m(\d+):t(\d+):p(\d+):k([A-Za-z0-9_-]{1,16})$/;
 
-/** 서비스명(대소문자 무시, ADR-038 (c) 세부) */
 const SERVICE_NAMES = ['sovereignax', 'sovereign', '소버린'];
 
 /** 페퍼 키들. `PASSWORD_PEPPER_KEYS` = `kid:hex64[,kid:hex64…]`, 첫 키가 현재 키(새 해시), 나머지는 회전 중 옛 키(검증만) */
@@ -53,7 +47,6 @@ export class CommonPasswords {
   has(pw: string): boolean {
     return this.set.has(normPassword(pw).toLowerCase());
   }
-  /** `.txt`(줄마다 하나) 또는 `.txt.gz` */
   static fromFile(file: string): CommonPasswords {
     const raw = fs.readFileSync(file);
     const text = (file.endsWith('.gz') ? gunzipSync(raw) : raw).toString('utf8');
@@ -126,7 +119,6 @@ function argon2id(message: Buffer, salt: Buffer, c: Cost): Promise<Buffer> {
   );
 }
 
-/** 저장된 매개변수 해석. 검증은 그 레코드를 만든 비용으로 한다(올린 뒤에도 옛 해시가 맞고, 맞으면 재해시). 상한 밖이면 null(DB 변조로 비용 폭탄 방지) */
 function parseParams(params: string): { cost: Cost; kid: string } | null {
   const m = PARAMS_RE.exec(params);
   if (!m) return null;
@@ -145,7 +137,6 @@ export class PasswordHasher {
   private readonly peppers: PepperKeys;
   constructor(peppers: PepperKeys) {
     this.peppers = peppers;
-    // 더미 레코드: 없는 계정·비밀번호 없는 계정도 같은 매개변수로 argon2id를 한 번 돈다
     this.dummy = { hash: b64u(randomBytes(ARGON2ID.tagBytes)), salt: b64u(randomBytes(ARGON2ID.saltBytes)), params: paramsOf(peppers.current) };
   }
 
@@ -155,17 +146,12 @@ export class PasswordHasher {
     return createHmac('sha256', key).update(normPassword(pw), 'utf8').digest();
   }
 
-  /** 새 해시(현재 페퍼 키) */
   async hash(pw: string): Promise<StoredHash> {
     const salt = randomBytes(ARGON2ID.saltBytes);
     const out = await this.gate.run(() => argon2id(this.peppered(pw, this.peppers.current), salt, CURRENT));
     return { hash: b64u(out), salt: b64u(salt), params: paramsOf(this.peppers.current) };
   }
 
-  /**
-   * 검증. stored가 null이면 더미로 같은 일을 하고 false. 모르는 매개변수·페퍼 키면 더미로 돌고 false(설정 오류는 이름만 이벤트로).
-   * needsRehash: 맞았는데 매개변수·페퍼 키가 현재와 다르다.
-   */
   async verify(pw: string, stored: StoredHash | null): Promise<{ ok: boolean; needsRehash: boolean }> {
     const parsed = stored ? parseParams(stored.params) : null;
     const rec = stored && parsed && this.peppers.keys.has(parsed.kid) ? stored : null;

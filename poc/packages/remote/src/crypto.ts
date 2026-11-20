@@ -1,5 +1,3 @@
-// 암호 원시 연산 래퍼(D08 §2). @noble/*만 쓴다(폰·PC 공용, 네이티브 의존 없음).
-
 import { chacha20poly1305, xchacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { ed25519, x25519 } from '@noble/curves/ed25519.js';
 import { blake2b } from '@noble/hashes/blake2.js';

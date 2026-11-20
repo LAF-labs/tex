@@ -1,4 +1,3 @@
-// 폰 대화 툴셋 chat_phone·chat_digest(ADR-047): 손으로 맞추는 목록 대조(툴셋 id·게이트웨이 등록·머리말), 발급 도구 없음, PC 툴셋과 같은 문법.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
@@ -52,7 +51,6 @@ describe('폰 대화 툴셋 등록(목록 대조)', () => {
 
   it('chat_phone 도구는 chat_agent 표에서 폰에 없는 것을 빼고 폰 화면 도구(open_screen)만 더한 것이다(겹치는 도구는 이름·인자 모양이 PC와 같다)', () => {
     const pc = new Map(CHAT_AGENT_TOOLS.map((t) => [t.name as string, t.parameters]));
-    // PC에도 open_screen이 있다(화면 목록이 다르다): 폰은 PC 것을 빼고 폰 화면 도구를 끝에 단다
     assert.deepEqual(CHAT_PHONE_TOOLS.map((t) => t.name), [...CHAT_AGENT_TOOLS.map((t) => t.name as string).filter((n) => !(PHONE_OMITTED_TOOLS as readonly string[]).includes(n) && n !== 'open_screen'), 'open_screen']);
     for (const t of CHAT_PHONE.tools) {
       assertStrict(t.parameters as Strict, t.name);
@@ -87,7 +85,6 @@ describe('chat_phone 머리말', () => {
   it('모든 도구 이름·status·슬롯 위치·슬롯 칸·답 종류·되묻기 칸·사본 상태·입력 묶음을 적는다', () => {
     for (const w of [...CHAT_PHONE_TOOLS.map((t) => t.name), ...PHONE_TOOL_STATUSES, ...SLOT_POSITIONS, ...SLOT_FIELDS, 'sum.supply', 'sum.total', 'count', ...PHONE_REPLY_KINDS, ...AGENT_ASKS, ...PHONE_COPY_STATES]) assert.ok(p.includes(w), w);
     for (const block of ['[요약]', '[앞 대화]', '[사실]', '[지금]', '사본:']) assert.ok(p.includes(block), block);
-    // 대화는 기기마다 따로다(ADR-046 결정 7): 다른 기기에서 한 말이라는 표시를 머리말에 두지 않는다
     assert.ok(!p.includes('(PC에서)'));
   });
 

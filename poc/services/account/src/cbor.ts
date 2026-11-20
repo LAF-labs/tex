@@ -1,4 +1,3 @@
-// WebAuthn용 최소 CBOR 디코더(RFC 8949, 정한 길이만). attestationObject·COSE 키만 읽는다. 깊이·길이 상한으로 거부한다.
 export class CborError extends Error {}
 
 const MAX_DEPTH = 8;

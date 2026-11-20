@@ -1,17 +1,11 @@
-// xlsx(OOXML) 읽기. 라이브러리를 쓰지 않는다(선정 근거는 packages/docparse/README.md §엑셀):
-// - 필요한 것은 "보이는 시트의 저장된 칸 값"뿐이다. 수식 계산·외부 연결·매크로·데이터 연결은 아예 열지 않는다.
-// - 항목 이름을 고른 것만 푼다: workbook.xml, workbook.xml.rels, sharedStrings.xml, styles.xml, 보이는 시트.
-// - .xls(BIFF)·암호 걸린 xlsx(OLE 컨테이너)는 받지 않는다(unsupported_format). 사장님에게 "xlsx로 다시 저장"을 안내한다.
 import { SandboxError, SHEET_LIMITS } from './limits.ts';
 import { emptyFlags, looksLikeFormula, trimRow, type Cell, type SheetOutput, type SheetTable } from './sheet.ts';
 import { localName, tokenize, type XmlToken } from './xml.ts';
 import { ZipReader } from './zip.ts';
 
-/** 내장 날짜·시각 서식 번호(ECMA-376 18.8.30) */
 const BUILTIN_DATE_FMTS = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47]);
 
 export function isDateFormatCode(code: string): boolean {
-  // 따옴표 글자·대괄호(색·조건·[$-412] 지역)·역슬래시 글자를 빼고 y·m·d·h·s가 남으면 날짜 서식이다
   const s = code.replace(/"[^"]*"/g, '').replace(/\[[^\]]*\]/g, '').replace(/\\./g, '');
   return /[yd]/i.test(s) || /h.*m|m.*s/i.test(s) || /[년월일]/.test(code);
 }
@@ -121,7 +115,6 @@ function workbookSheets(wb: string, rels: string | null): { sheets: SheetRef[]; 
     const rid = Object.entries(t.attrs).find(([k]) => localName(k) === 'id')?.[1];
     const target = rid ? targets.get(rid) : undefined;
     if (!target) return;
-    // 대상은 xl/ 기준 상대 경로(또는 /xl/… 절대)다. 다른 곳을 가리키면 읽지 않는다.
     const p = target.startsWith('/') ? target.slice(1) : `xl/${target}`;
     const norm = p.replace(/^xl\/\.\//, 'xl/');
     if (!/^xl\/worksheets\/[\w.-]+\.xml$/.test(norm)) return;
@@ -230,7 +223,6 @@ function readSheet(xml: string, ctx: SheetCtx): { rows: Cell[][]; hiddenRows: nu
       else if (n === 'v' || n === 't' || n === 'f') field = null;
     } else if (c && field === 'v') c.v = (c.v ?? '') + t.text;
     else if (c && field === 't') c.inline.push(t.text);
-    // field === 'f': 수식 글자는 버린다(계산하지 않는다)
   });
   return { rows: rows.map((r) => trimRow(r ?? [])), hiddenRows };
 }

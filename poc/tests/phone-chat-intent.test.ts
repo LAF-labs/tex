@@ -1,4 +1,3 @@
-// 발급 의도(사장님이 "세금계산서"라고 말하지 않아도): 규칙 issueIntent, 폰 대화의 "앱 판단" 줄과 안전망, PC 켜짐 줄.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { PhoneChat, issueIntent, type PhoneChatPorts, type PhoneCopy, type PhoneModel, type PhoneRespondRequest, type PhoneRespondResult, type PhoneTurnResult } from '@sax/chat-core';

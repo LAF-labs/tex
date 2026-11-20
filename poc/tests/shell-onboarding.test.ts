@@ -1,4 +1,3 @@
-// 온보딩 상태 기계(08 §4 O-01~O-06, D14 M4-2)와 동의 화면 4종(F-06 자리표시, 팀장 승인 2026-11-05). Electron 없이 돈다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -80,7 +79,6 @@ describe('온보딩: 한 번에 하나씩', () => {
       { step: 'biz-number', choice: 'submit', fields: { bizNo: '123-45-67891' } },
     ]);
     assert.equal(await code(flow.answer({ step: 'biz-confirm', choice: 'confirm' })), 'biz_inactive', '그냥 [맞아요]로는 확정하지 않는다');
-    // 번호로 등록하면 상호가 비어 있다: 확정 전에 채워야 한다(0.1.6 실사용: 상호 없이 확정되어 제목줄에 번호가 보였다)
     assert.equal(flow.state.notice, BIZ_NAME_NOTICE);
     assert.equal(await code(flow.answer({ step: 'biz-confirm', choice: 'confirm_unverified' })), 'name_required');
     await flow.answer({ step: 'biz-confirm', choice: 'edit', fields: { name: '가나다상사' } });
@@ -152,7 +150,6 @@ describe('온보딩: 한 번에 하나씩', () => {
   });
 
   it('공동인증서는 이 PC에서 찾은 것만 고를 수 있다. 잘 모르겠어요는 이 PC의 첫 인증서(공동인증서)로 정하고 넘어간다', async () => {
-    // 모르면 공동인증서(대표 지시 2026-11-14): 설명에 머무르지 않고 기본 인증서로 정한다. 바꾸기는 설정 › 발급 인증
     const unsure = make();
     await walk(unsure.flow, [
       { step: 'terms', choice: 'agree' },
@@ -179,18 +176,15 @@ describe('온보딩: 한 번에 하나씩', () => {
 
 describe('동의 화면 4종', () => {
   it('키에 판이 붙은 자리표시 문구(F-06 초안 전), 문구에 세무 판단 표현이 없다', () => {
-    // ① 위임 등록(보안카드·홈택스 아이디)은 없앴다(대표 결정 2026-11-19 보안카드 지원 안 함)
     assert.deepEqual([...CONSENT_KINDS].sort(), ['model', 'telemetry', 'terms']);
     for (const k of CONSENT_KINDS) {
       const n = CONSENT_NOTICES[k];
       assert.equal(n.key, `consent.${k}`);
-      // 약관(④)은 사이트 전문과 같은 판(terms-YYYY-MM-DD), 나머지는 F-06 자리표시 판
       assert.match(n.version, k === 'terms' ? /^terms-\d{4}-\d{2}-\d{2}$/ : /^f06-pre\.\d+$/);
       assert.equal(n.draft, 'F-06 초안 전 문구');
       const text = [n.title, ...n.lines].join(' ');
       for (const bad of ['세액 산정', '절세', '신고 대리', '가산세', '납부할 세액']) assert.ok(!text.includes(bad), `${k}: ${bad}`);
     }
-    // 약관 화면은 전문 두 개(약관·처리방침)를 열 수 있고, 가리기의 한계를 숨기지 않는다(R13 §2.5)
     assert.deepEqual(CONSENT_NOTICES.terms.links?.map((l) => l.doc), ['terms', 'privacy']);
     assert.match(CONSENT_NOTICES.terms.lines.join(' '), /일부가 남을 수 있어요/);
   });
@@ -220,7 +214,6 @@ describe('동의 화면 4종', () => {
     await assert.rejects(flow.answer({ step: 'auth', choice: 'card' as never }), /bad_choice/);
     assert.equal(flow.state.step, 'auth');
     assert.equal(saved.length, 0);
-    // 렌더러 답 후보 줄에도 없다
     const ui = fs.readFileSync(path.resolve(import.meta.dirname, '../apps/desktop/static/shell/shell-onboarding.js'), 'utf8');
     assert.doesNotMatch(ui, /\['card'|보안카드를 쓰려면|shell-card|cardRegister|delegation/);
   });
@@ -239,15 +232,11 @@ describe('동의 화면 4종', () => {
     const src = fs.readFileSync(path.resolve(import.meta.dirname, '../apps/desktop/src/shell-app.ts'), 'utf8');
     const i = src.indexOf("if (opts.onboarding) onb = new OnboardingFlow(onbPorts);");
     const body = src.slice(i, src.indexOf('await win.loadURL', i));
-    // 이어 하기는 DB(엔진 onboarding.load)에서, 없으면 옛 목업 파일을 한 번 옮긴다(onboarding-store.ts).
     assert.match(body, /const saved = \(await onbStore\.load\(\)\) \?\? \(await onbStore\.importLegacyFile\(legacyOnbFile\)\);/);
-    // 모델 거절이 저장된 끝낸 온보딩은 ②를 다시 묻는다(reaskModel): 보일지는 불러온 뒤의 단계로 정한다.
     assert.match(body, /onb = new OnboardingFlow\(onbPorts, saved\);\s*onbShow = !onb\.done;/);
     assert.ok(body.indexOf('onbStore.load') < body.indexOf('!business'), '저장을 먼저 본다');
-    // 저장은 엔진 명령으로만(앱 폴더 JSON에 쓰지 않는다). 목업은 바깥 일에만.
     assert.doesNotMatch(src, /MockOnboardingPorts/, '제품 셸은 견본 바깥 일을 만들지 않는다(시연 연결 ShellDev.sample만)');
     assert.match(src, /const onbPorts = onboardingPorts\(onbExternal, onbStore, refresh\);/);
-    // 제품 공동인증서 목록은 금고 npki.list → 샌드박스 certInfo(npki-certs.ts). 목업 목록은 fixture만.
     assert.match(src, /const onbExternal: OnboardingExternal = fixture\s*\? sample!\.onboarding\(\)/);
     assert.match(src, /findCerts: \(\) => listNpkiCerts\(\(m, p\) => host\.control\(m, p\), \(der\) => certInfoInSandbox\(der\)/);
     assert.ok(!src.includes('persistOnb') && !/writeFile\([^)]*onb/i.test(src));
@@ -273,7 +262,6 @@ describe('동의 화면 4종', () => {
     assert.doesNotMatch(JSON.stringify(v), /대신 입력|알아서 입력|금고에 한 번 등록/);
     await resumed.answer({ step: 'auth', choice: 'simple' });
     assert.equal(resumed.state.step, 'first', '다른 인증을 고르면 ①을 거치지 않는다');
-    // ② 다시 묻기(reaskModel)로 ①이 resumeStep에 남은 저장도 같다
     const parked = parseOnbState({ ...JSON.parse(JSON.stringify(a.flow.state)), step: 'model', resumeStep: 'delegation', auth: 'card' });
     assert.equal(parked?.resumeStep, 'auth');
     assert.equal(parked?.auth, null);
@@ -321,7 +309,6 @@ describe('동의 화면 4종', () => {
     );
     assert.equal(flow.modelAllowed(), true);
     assert.equal(flow.state.step, 'first');
-    // 모델 동의 없이 인증까지 온 옛 저장은 인증 뒤 ②를 묻는다
     const old = make();
     const s0 = parseOnbState({ step: 'auth', tasks: [], skipped: ['biz'], log: [], consents: { terms: { version: 'f06-pre.1', choice: 'agreed', at: 'x' } } })!;
     const f = new OnboardingFlow(old.ports, s0, NOW);
@@ -346,14 +333,11 @@ describe('동의 화면 4종', () => {
       assert.equal(flow.modelAllowed(), true);
       assert.deepEqual(ports.consents.map((c) => [c.kind, c.choice]), [['model', 'agreed']]);
     }
-    // ②를 아직 지나지 않았거나 이미 동의했으면 그대로
     const { ports } = make();
     assert.equal(new OnboardingFlow(ports, parseOnbState({ ...base, step: 'auth' })!, NOW).state.step, 'auth');
     assert.equal(new OnboardingFlow(ports, parseOnbState({ ...base, step: 'done', consents: { ...base.consents, model: { ...declined, choice: 'agreed' } } })!, NOW).state.step, 'done');
-    // 없어진 화면(텔레메트리·업무·거래처)에 멈춘 옛 저장은 요약에서 마친다
     assert.equal(new OnboardingFlow(ports, parseOnbState({ ...base, step: 'tasks' })!, NOW).state.resumeStep, 'summary');
     assert.equal(parseOnbState({ ...base, step: 'telemetry', consents: { ...base.consents, model: { ...declined, choice: 'agreed' } } })?.step, 'summary');
-    // 기억해 둔 단계가 모르는 값이면 저장을 버린다(처음부터)
     assert.equal(parseOnbState({ ...base, step: 'model', resumeStep: 'nope' }), null);
   });
 });
@@ -367,9 +351,7 @@ describe('요약·첫 작업·이어 하기', () => {
       { step: 'auth', choice: 'later' },
     ]);
     assert.equal(flow.state.step, 'first');
-    // 민원증명(PR #272)도 지금 되는 일이다. 출시판에서 숨긴 납세증명서(H-04, cert-docs hidden)는 들어가지 않는다
     assert.deepEqual(flow.state.tasks, ['H-01', 'H-03']);
-    // 옛 요약 화면에 멈춘 저장은 [확인했어요]로 마친다
     const old = make();
     const f = new OnboardingFlow(old.ports, { ...flow.state, step: 'summary' }, NOW);
     await f.answer({ step: 'summary', choice: 'ok' });
@@ -400,7 +382,6 @@ describe('요약·첫 작업·이어 하기', () => {
     ]);
     assert.equal(skipped.saved.length, 0);
     assert.deepEqual(
-      // 인증을 [나중에]로 넘겨도 공동인증서로 둔다(대표 지시 2026-11-14). 할 일에는 사업자만 남는다
       onboardingTodos({ ...skipped.flow.state, step: 'done' }).map((t) => t.id),
       ['biz'],
     );

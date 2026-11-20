@@ -1,7 +1,3 @@
-// 기기 범위 토큰(D09 §2.1)과 DPoP 증명(SAX-dpop-v1). 형식 정본은 services/shared/CONTRACT.md.
-// - 토큰은 계정 서비스가 자기 Ed25519 키(KMS 주입)로 서명한다. 게이트웨이·릴레이는 공개키로만 검증한다(서명 키는 계정 서비스에만).
-// - 토큰은 기기 서명 키 Vx(cnf)에 결속된다. 요청마다 Vx로 서명한 DPoP 증명이 있어야 한다.
-// - 계정 세션 토큰(sxs1.)은 여기서 받지 않는다. 게이트웨이·블롭·깨우기는 기기 범위 토큰만(E-07, ADR-029 결정 3).
 import { randomBytes, type KeyObject } from 'node:crypto';
 import { b64u, fromB64, fromB64u, jcs, safeEqual, sha256, signCtx, verifyCtx } from './crypto.ts';
 import { fail, type ErrorCode } from './errors.ts';
@@ -31,9 +27,7 @@ export interface DeviceClaims {
   dev: string;
   role: 'desktop' | 'mobile';
   scp: Scope[];
-  /** 기기 서명 공개키 Vx(표준 base64, 32B) */
   cnf: string;
-  /** 유료 기능 등급(게이트웨이 일 한도): 체험 trial | 구독 paid. 계정 서비스가 유료 범위(gateway·chat)를 줄 때만 싣는다. 없으면 게이트웨이는 trial로 본다 */
   tier?: 'trial' | 'paid';
   iat: number;
   exp: number;
@@ -58,7 +52,6 @@ export class TokenIssuer {
 }
 
 export class TokenVerifier {
-  /** kid → Ed25519 공개키 원자료(32B). 키 회전 동안 둘 이상을 둔다. */
   private readonly keys: Map<string, Buffer>;
   constructor(keys: Record<string, Buffer>) {
     this.keys = new Map(Object.entries(keys));
@@ -75,7 +68,6 @@ export class TokenVerifier {
     }
     if (claims?.v !== 1 || claims.typ !== 'device' || typeof claims.kid !== 'string') fail(code);
     const pub = this.keys.get(claims.kid);
-    // 서명 대상은 받은 바이트가 아니라 JCS 재직렬화다(필드 순서·공백 변형을 같은 토큰으로 보지 않는다).
     if (!pub || !canonical(claims, p!) || !verifyCtx('SAX-token-v1', claims, pub, fromB64u(s!))) fail(code);
     if (!Number.isSafeInteger(claims.exp) || claims.exp <= now) fail(code);
     if (!Array.isArray(claims.scp) || !fromB64(claims.cnf, 32)) fail(code);
@@ -86,7 +78,6 @@ export class TokenVerifier {
 export interface DpopProof {
   htm: string;
   htu: string;
-  /** 초 단위 */
   iat: number;
   jti: string;
   ath: string;
@@ -102,7 +93,6 @@ export class JtiCache {
   constructor(max = 100_000) {
     this.max = max;
   }
-  /** 처음 보면 true */
   add(jti: string, now: number): boolean {
     if (this.seen.size > this.max || this.seen.size % 1000 === 0) for (const [k, t] of this.seen) if (t <= now) this.seen.delete(k);
     const t = this.seen.get(jti);
@@ -112,7 +102,6 @@ export class JtiCache {
   }
 }
 
-/** 받은 바이트가 JCS 정규형과 같은가(정수 아닌 수 등으로 JCS가 실패하면 false). */
 /** 바깥 형식의 가운데 JSON이 JCS 정규형인가(정규형이 아니면 같은 클레임을 여러 바이트열로 쓸 수 있다). */
 export function canonical(obj: unknown, b64: string): boolean {
   try {
@@ -131,7 +120,6 @@ export function makeDpop(proof: DpopProof, deviceKey: KeyObject): string {
 
 export interface DpopCheck {
   method: string;
-  /** 서비스 공개 origin + 경로(쿼리 없음) */
   htu: string;
   token: string;
   cnf: Buffer;

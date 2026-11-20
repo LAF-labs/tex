@@ -1,4 +1,3 @@
-// 세무사 꾸러미 PC 입력(08 D-05, D14 M6-2·M6-4): 현금매출 하루 숫자, 종이 증빙 확인, 항목 상태 표시(해당 없음·파일 칸). main 전용, 모델 없음.
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -68,7 +67,6 @@ describe('현금매출 PC 입력', () => {
     assert.equal(oct.total, 130_000);
     assert.deepEqual(await call('cash.remove', { profileId, day: '2026-10-31' }), { removed: true });
     assert.deepEqual(await call('cash.remove', { profileId, day: '2026-10-31' }), { removed: false });
-    // 꾸러미 상태는 넣은 날 수를 센다
     const st = await call<ItemStatus[]>('db.query.bundle.status', { profileId, month: '2026-10' });
     const cash = st.find((s) => s.item.kind === 'cash_sales')!;
     assert.deepEqual([cash.status, cash.basis, cash.counts.days], ['partial', 'derived', 1]);
@@ -99,7 +97,6 @@ describe('종이 증빙 확인', () => {
     assert.ok(list.receipts.every((r) => !('phoneMsgId' in r)));
     assert.deepEqual(list.receipts.find((r) => r.docId === pcDoc)!.ocr, { amount: { value: 15_000 } });
 
-    // 카드 한 건(15,000원) — 확인 전 증빙은 대조에 쓰지 않는다
     const runId = randomUUID();
     new RunRepo(db).create({ id: runId, playbookId: 'H-12', playbookVersion: '1', packageDigest: 'd', profileId, trigger: 'local', inputsHash: 'i' });
     new CardRepo(db).replaceRange({ runId, profileId, rangeFrom: '2026-10-01', rangeTo: '2026-10-31', completedAt: '2026-11-01T00:00:00.000Z' }, [
@@ -111,7 +108,6 @@ describe('종이 증빙 확인', () => {
     const c = await call<ReceiptView>('receipt.confirm', { profileId, docId: pcDoc, issuedOn: '2026-10-10', amount: 15_000, merchant: ' 문구점 ', merchantBizNo: '123-45-67890' });
     assert.deepEqual([c.issuedOn, c.amount, c.merchant, c.merchantBizNo, c.confirmedAt], ['2026-10-10', 15_000, '문구점', '1234567890', '2026-11-09T01:00:00.000Z']);
     assert.equal(await missing(), 0, '확인한 증빙과 대조된다');
-    // 다시 불러 고칠 수 있다(빈 사업자번호·가게 이름은 null)
     const again = await call<ReceiptView>('receipt.confirm', { profileId, docId: pcDoc, issuedOn: '2026-10-10', amount: 15_000, merchant: '', merchantBizNo: '' });
     assert.deepEqual([again.merchant, again.merchantBizNo], [null, null]);
     assert.equal((await call<{ unconfirmed: number }>('db.query.receipt.list', { profileId, month: '2026-10' })).unconfirmed, 1);
@@ -144,7 +140,6 @@ describe('항목 상태 표시(해당 없음·파일 칸)', () => {
     assert.deepEqual([(await status('cash_sales')).status, (await status('cash_sales')).basis], ['not_applicable', 'entry']);
     assert.deepEqual(await call('bundle.setEntry', { profileId, itemId: cash.id, month: '2026-10', status: null }), { period: '2026-10', entry: null });
     assert.deepEqual([(await status('cash_sales')).status, (await status('cash_sales')).basis], ['partial', 'derived']);
-    // 3층 분기 항목은 분기 기간으로
     const q = (await call<{ id: string }>('bundle.addItem', { profileId, name: '차량 운행일지', cadence: 'quarterly' })).id;
     assert.equal((await call<{ period: string }>('bundle.setEntry', { profileId, itemId: q, month: '2026-11', status: 'ready' })).period, '2026-Q4');
   });
@@ -152,7 +147,6 @@ describe('항목 상태 표시(해당 없음·파일 칸)', () => {
   it('파일 칸: 그 프로필 문서만 붙인다. 급여 기능을 끈 업체의 급여대장은 파일 칸이다', async () => {
     const pay = item('payroll');
     const file = doc(profileId, 'other', '2026-10-25T03:00:00.000Z');
-    // 직원이 없으면 급여 기능 꺼짐 → 파일 칸
     const r = await call<{ entry: BundleEntry }>('bundle.setEntry', { profileId, itemId: pay.id, month: '2026-10', status: 'ready', docIds: [file, file] });
     assert.deepEqual([r.entry.status, r.entry.docIds], ['ready', [file]]);
     assert.deepEqual([(await status('payroll')).status, (await status('payroll')).docIds], ['ready', [file]]);

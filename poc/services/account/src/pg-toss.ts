@@ -1,13 +1,3 @@
-// 토스페이먼츠 자동결제(빌링) 어댑터(사용자 결정 2026-11-16: 토스페이먼츠 직접 연동). 공급사 종속 코드는 이 파일 한 곳이다(ADR-015).
-// 켜는 조건: PG_PROVIDER=toss(기본은 mock). 키는 배포 환경 변수로만 주입한다(저장소·CI에 없음). test_ 키면 테스트 결제(실제 청구 없음).
-//
-// 흐름: checkout → 우리 카드 등록 창(GET /v1/billing/card, 토스 SDK requestBillingAuth) → 토스가 successUrl로 authKey를 돌려줌
-//   → 서버가 빌링키 발급(POST /v1/billing/authorizations/issue) → 봉인 저장 → 첫 달 청구(POST /v1/billing/{billingKey}).
-//   다음 달부터는 정리 cron이 갱신일에 청구한다. 토스는 정기 청구를 스스로 하지 않고 웹훅 서명도 없어서 웹훅을 쓰지 않는다.
-//
-// 송신 허용 목록(이 파일이 강제): https://api.tosspayments.com 의 빌링키 발급·청구·결제 취소(청약철회) 경로뿐이다. 리디렉션은 따르지 않는다.
-// 토스에는 무작위 고객 참조(customerKey = pgCustomerRef)와 금액·주문 이름만 보낸다. 이메일·계정 ID는 보내지 않는다.
-// 로그·이벤트·오류에는 키·빌링키·응답 본문을 넣지 않는다(고정 코드만).
 import type { BillingKeyGateway, ChargeResult, PaymentEvent, PaymentGateway, PLAN } from './adapters.ts';
 
 export const TOSS_API = 'https://api.tosspayments.com';
@@ -28,15 +18,12 @@ export function tossEndpointAllowed(url: string): boolean {
   return u.pathname === ISSUE_PATH || /^\/v1\/billing\/[A-Za-z0-9%_=-]{1,200}$/.test(u.pathname) || /^\/v1\/payments\/[A-Za-z0-9%_=-]{1,200}\/cancel$/.test(u.pathname);
 }
 
-/** 확정이 아닌 결과(다시 같은 주문·같은 멱등 키로 물어야 함): 네트워크·시간 초과·5xx·토스가 처리 중 */
 const UNCERTAIN_CODES = new Set(['IDEMPOTENT_REQUEST_PROCESSING', 'FAILED_INTERNAL_SYSTEM_PROCESSING', 'PROVIDER_ERROR', 'FAILED_PAYMENT_INTERNAL_SYSTEM_PROCESSING', 'UNKNOWN_PAYMENT_ERROR']);
-/** 우리 설정 문제(카드와 무관, 사용자 카드 실패로 세지 않는다) */
 const CONFIG_CODES = new Set(['UNAUTHORIZED_KEY', 'INVALID_API_KEY', 'NOT_SUPPORTED_METHOD', 'INVALID_BILLING_AUTH', 'FORBIDDEN_REQUEST', 'NOT_REGISTERED_BUSINESS']);
 
 export interface TossConfig {
   clientKey: string;
   secretKey: string;
-  /** 카드 등록 창·결과 페이지가 있는 공개 origin(ACCOUNT_PUBLIC_ORIGIN) */
   publicOrigin: string;
   fetchFn?: typeof fetch;
   timeoutMs?: number;
@@ -59,9 +46,7 @@ export class TossPaymentGateway implements PaymentGateway {
     const sk = KEY_RE.exec(c.secretKey);
     if (!ck || !/ck$/.test(ck[2]!)) throw new Error('config_TOSS_CLIENT_KEY');
     if (!sk || !/sk$/.test(sk[2]!)) throw new Error('config_TOSS_SECRET_KEY');
-    // 결제위젯 키(gck/gsk)는 자동결제에 쓸 수 없다: "API 개별 연동 키"가 필요하다
     if (ck[2] !== 'ck' || sk[2] !== 'sk') throw new Error('config_TOSS_KEY_KIND');
-    // 테스트 키와 라이브 키를 섞지 않는다
     if (ck[1] !== sk[1]) throw new Error('config_TOSS_KEY_MODE');
     this.mode = ck[1] as 'test' | 'live';
     this.c = { fetchFn: fetch, timeoutMs: 15_000, ...c };
@@ -79,12 +64,10 @@ export class TossPaymentGateway implements PaymentGateway {
     return { checkoutUrl: `${this.c.publicOrigin}/v1/billing/card?ref=${encodeURIComponent(o.pgCustomerRef)}` };
   }
 
-  /** 토스 자동결제는 웹훅으로 상태를 바꾸지 않는다(서명 없음). 항상 거부 */
   verifyWebhook(): PaymentEvent | null {
     return null;
   }
 
-  /** 해지는 우리 쪽에서 빌링키를 지우고 더 청구하지 않는 것이다(토스 쪽 정기 일정이 없다) */
   async cancel(): Promise<void> {}
 
   private auth(): string {
@@ -101,7 +84,7 @@ export class TossPaymentGateway implements PaymentGateway {
       const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       return { status: res.status, json: json && typeof json === 'object' ? json : {} };
     } catch {
-      return null; // 네트워크·시간 초과: 결과 모름
+      return null;
     }
   }
 
@@ -117,14 +100,12 @@ export class TossPaymentGateway implements PaymentGateway {
     if (!r) return { ok: false, uncertain: true, code: 'network' };
     if (r.status === 200 && r.json.status === 'DONE' && r.json.orderId === o.orderId && r.json.totalAmount === o.amountKrw) return typeof r.json.paymentKey === 'string' ? { ok: true, paymentKey: r.json.paymentKey } : { ok: true };
     const c = code(r.json);
-    // 같은 주문번호가 이미 결제됨(앞선 시도가 실은 성공): 성공으로 본다. 주문번호는 기간·시도마다 하나다
     if (c === 'ALREADY_PROCESSED_PAYMENT') return { ok: true };
     if (r.status >= 500 || r.status === 409 || UNCERTAIN_CODES.has(c)) return { ok: false, uncertain: true, code: c };
     if (CONFIG_CODES.has(c) || r.status === 401) return { ok: false, uncertain: true, code: `config.${c}` };
     return { ok: false, uncertain: false, code: c };
   }
 
-  /** 결제 취소(청약철회 환불). 멱등 키가 같으면 두 번 취소되지 않는다. 이미 취소된 결제는 성공으로 본다 */
   private async cancelPayment(o: { paymentKey: string; amountKrw: number; reason: string; idempotencyKey: string }): Promise<{ ok: true } | { ok: false; uncertain: boolean; code: string }> {
     const r = await this.post(cancelPath(o.paymentKey), { cancelReason: o.reason, cancelAmount: o.amountKrw }, o.idempotencyKey);
     if (!r) return { ok: false, uncertain: true, code: 'network' };
@@ -136,12 +117,10 @@ export class TossPaymentGateway implements PaymentGateway {
   }
 }
 
-/** 토스 오류 코드(대문자·밑줄만 남겨 이벤트 이름에 쓴다. 메시지는 쓰지 않는다) */
 function code(j: Record<string, unknown>): string {
   return typeof j.code === 'string' && /^[A-Z_]{1,64}$/.test(j.code) ? j.code : 'unknown';
 }
 
-/** 'YYYY년 M월 D일'(KST) */
 const kstDate = (ms: number) => {
   const k = new Date(ms + 9 * 3600_000);
   return `${k.getUTCFullYear()}년 ${k.getUTCMonth() + 1}월 ${k.getUTCDate()}일`;
@@ -149,14 +128,9 @@ const kstDate = (ms: number) => {
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 
-/**
- * 카드 등록 창. 결제 버튼 바로 위에 결제 직전 고지(전자상거래법 §13②: 총액·결제일·자동 갱신·해지·청약철회·결제 실패)와
- * 약관·처리방침 동의 체크를 둔다. 체크해야 버튼이 열린다. 값은 JSON으로만 스크립트에 넣는다(HTML 문맥에서 깨지지 않게 '<'를 이스케이프)
- */
 function cardPageHtml(clientKey: string, o: { customerKey: string; successUrl: string; failUrl: string; amountKrw: number; nonce: string; trialEndsAt?: number }): string {
   const data = JSON.stringify({ clientKey, customerKey: o.customerKey, successUrl: o.successUrl, failUrl: o.failUrl }).replace(/</g, '\\u003c');
   const won = `${o.amountKrw.toLocaleString('ko-KR')}원`;
-  // 체험 중 첫 구독: 오늘은 결제 없음, 체험이 끝나는 날 첫 결제(약관 제12조)
   const trial = o.trialEndsAt ? kstDate(o.trialEndsAt) : null;
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>구독 결제</title><style nonce="${esc(o.nonce)}">${PAGE_CSS}</style></head><body><main>

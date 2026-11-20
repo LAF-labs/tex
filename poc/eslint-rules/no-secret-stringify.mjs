@@ -1,9 +1,3 @@
-// D05 §2 `no-secret-stringify`: 비밀은 Uint8Array/네이티브 버퍼로만 다루고 문자열·JSON으로 만들지 않는다.
-// 타입 정보 없이 이름으로 판정한다: camelCase 단어에 비밀 단어(secret·password·passwd·passphrase·pin·otp)가 있고
-// 마지막 단어가 값 단어(비밀 단어 자체·bytes·buf·buffer·value·plain·text·raw)인 식별자·속성.
-// `secretKind`·`secretTitle`·`passwordField`처럼 값이 아닌 이름은 걸리지 않는다.
-// 잡는 형태: JSON.stringify(x)·String(x)·x.toString()·`${x}`·'' + x·new TextDecoder().decode(x)·
-// Buffer.from(x).toString()·console.*(x)·x.join(). 객체 리터럴 인자 안의 속성 값과 속성 이름(단축 속성)도 본다.
 const SECRET_WORDS = new Set(['secret', 'secrets', 'password', 'passwd', 'passphrase', 'pin', 'otp']);
 const VALUE_WORDS = new Set([...SECRET_WORDS, 'bytes', 'buf', 'buffer', 'value', 'plain', 'text', 'raw']);
 
@@ -23,7 +17,6 @@ export function isSecretName(name) {
 
 const WRAPPERS = new Set(['TSAsExpression', 'TSNonNullExpression', 'TSTypeAssertion', 'TSSatisfiesExpression', 'ChainExpression']);
 
-/** 감싼 식을 벗긴다: `as`·`!`·`<T>`·`satisfies`·옵셔널 체인(held?.pin). 이름·객체·배열 판정 모두 벗긴 뒤의 노드로 한다. */
 function unwrap(node) {
   while (node && WRAPPERS.has(node.type)) node = node.expression;
   return node;
@@ -59,7 +52,6 @@ function secretIn(node) {
     const s = secretIn(e);
     if (s) return s;
   }
-  // Buffer.from(secret) 같은 감싸기
   if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && nameOf(node.callee.object) === 'Buffer') return secretIn(node.arguments[0]);
   return null;
 }
@@ -99,8 +91,6 @@ export default {
           if (s) return report(e, s);
         }
       },
-      // `+`에 비밀이 한쪽이라도 있으면 막는다: '' + secret뿐 아니라 secret + otherSecret도 문자열이 된다
-      // (Uint8Array + Uint8Array === '[object Uint8Array]…', 숫자 PIN끼리면 값이 섞인다).
       BinaryExpression(node) {
         if (node.operator !== '+') return;
         const s = secretIn(node.left) ?? secretIn(node.right);

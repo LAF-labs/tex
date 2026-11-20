@@ -1,15 +1,7 @@
-// 대화 짧은 응대 chat.respond(팀장 지시 2026-11-10, D04 §4.1). 작업으로 분류되지 않은 입력(intent.resolve unknown)에 모델이 짧게 답한다.
-// main → 엔진 chat.respond({text}) → 마스킹(Redactor, 대화 세션 범위) → 게이트웨이 /v1/respond(chat_reply) → 출력 검증.
-// - 답은 "이 앱이 할 수 있는 일 안내·되묻기·짧은 응대"까지다. 세무 판단은 하지 않는다(D04 §3): 모델이 tax_advice라 하거나
-//   답 문장에 세무 판단 말이 보이면 문장을 버리고 고정 문구로 바꾼다.
-// - 응답은 신뢰하지 않는다: 출력 스키마(어댑터가 Ajv로 검증)·툴셋 해시가 다르거나 답이 길이 상한을 넘으면 chat.bad_response.
-// - 오프라인 대체 없음: 게이트웨이 설정이 없거나 경로가 실패하면 chat.unavailable(예산·월 한도는 따로 코드).
-// - 모델에는 이번 문장 하나만 보낸다(이전 대화 턴 없음). 로그·저널에 문장·답을 남기지 않는다.
 import { CHAT_CAPABILITIES, CHAT_REPLY, CHAT_REPLY_KINDS, CHAT_REPLY_MAX_CHARS, CHAT_SUGGEST_MAX, type RedactedText, type RespondRequest, type RespondResult, type RunToken } from '@sax/model';
 import { CHAT_ADVICE_TEXT, chatAdviceMentioned, unsafeText } from '@sax/chat-core';
 import { TOKEN_RE, normalizeForRedaction, utf8Length } from '@sax/redaction';
 
-// 답 검사 규칙(세무 판단 말·식별자·비밀 유도 말)은 @sax/chat-core로 옮겼다(폰과 같은 코드, ADR-047 결정 4). 이름은 여기서 그대로 다시 내보낸다.
 export { CHAT_ADVICE_PATTERNS, CHAT_ADVICE_TEXT, chatAdviceMentioned, chatSecretShaped, unsafeText } from '@sax/chat-core';
 
 /** 답 문장을 쓸 수 없을 때(식별자·링크·토큰이 섞임, 모델 거절)의 고정 안내 */
@@ -46,14 +38,9 @@ export type ChatErrorCode =
   | 'bad_text';
 
 export interface ChatModel {
-  /** 게이트웨이 /v1/respond(chat_reply). OpenAIResponsesAdapter(transport gateway)가 출력 스키마·툴셋 해시를 검증한다. */
   respond: (req: RespondRequest) => Promise<RespondResult>;
 }
 
-/**
- * 보여 주면 안 되는 답: 마스킹 토큰·숫자 식별자(전화·사업자번호 등)·이메일·링크, 그리고 D04 §4 표시 규칙(B-15)의
- * 비밀 입력 유도 말(비밀번호·인증서·보안카드·입력하세요). 우리 앱의 말로 보이게 사용자를 사회공학하는 경로를 막는다.
- */
 function unsafeReply(text: string): boolean {
   return new RegExp(TOKEN_RE.source).test(normalizeForRedaction(text)) || unsafeText(text);
 }
@@ -74,7 +61,6 @@ export function errorOf(reason: string | undefined): ChatErrorCode {
   if (reason === 'gateway:run_budget_exceeded' || reason === 'turn_limit') return 'chat.budget_exceeded';
   if (reason === 'gateway:quota_exceeded') return 'chat.quota_exceeded';
   if (reason === 'gateway:daily_limit') return 'chat.daily_limit';
-  // 체험이 끝나고 구독하지 않으면 기기 토큰에 gateway 범위가 없다(계정 서비스)
   if (reason === 'gateway:scope_denied') return 'chat.subscription_required';
   if (reason && ['output_schema_mismatch', 'toolset_digest_mismatch', 'unexpected_item', 'tool_call_rejected', 'gateway:bad_response', 'toolset_mismatch'].includes(reason)) return 'chat.bad_response';
   return 'chat.unavailable';
@@ -114,7 +100,6 @@ export function checkOutput(out: unknown): ChatReply {
   if (o.suggest.length > CHAT_SUGGEST_MAX || !o.suggest.every((s) => typeof s === 'string' && CAPABILITY_IDS.has(s))) throw new ChatError('chat.bad_response');
   const kind = o.kind as ChatReplyKind;
   const suggest = [...new Set(o.suggest as ChatSuggestion[])];
-  // 화면 표시 정리: 줄바꿈·연속 공백은 공백 하나로(뜻은 바뀌지 않는다). 길이는 정리 뒤 글자 수로 본다.
   const reply = o.reply.replace(/\s+/g, ' ').trim();
   if (kind === 'tax_advice') return { reply: CHAT_ADVICE_TEXT, kind, suggest, filtered: 'advice' };
   if (!reply || [...reply].length > CHAT_REPLY_MAX_CHARS) throw new ChatError('chat.bad_response');

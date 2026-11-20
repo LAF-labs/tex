@@ -1,15 +1,11 @@
-// e2e용 메모리 계정 서비스(AccountClient)와 소프트 금고 키. fake-account-http.ts로 localhost HTTP에 내놓고 제품 클라이언트로 닿는다.
-// 계정 e2e(shell-account-e2e)와 제품 경로 e2e(shell-product-e2e, 로그인이 먼저인 온보딩)가 같이 쓴다.
 import { randomBytes } from 'node:crypto';
 import { AIK_PURPOSES, fromB64, softNoiseStatic, softSigner, VD_PURPOSES, verifyDeviceList, x25519Public, type DesktopKeys } from '@sax/remote';
 import type { AccountClient } from '../dist/remote-ports.js';
 
 export const PASSWORD = 'mangwon-kimchi-12';
 
-/** 서버 목록에만 있다고 치는 비밀번호(앱 번들 목록에는 없다): 서버 거부 문구를 보는 데 쓴다. */
 export const SERVER_ONLY_BREACHED = 'gwangjang-bindae-3';
 
-/** 메모리 계정 서비스: 코드 123456, 비밀번호 PASSWORD. /v1/aik는 AIK 서명 첫 목록을 실제로 검증한다. hasPassword가 거짓이면 계정 만들기 뒤 비밀번호 단계가 뜬다. */
 export function fakeAccount(o: { hasPassword?: boolean } = {}) {
   const calls: string[] = [];
   let hasPw = o.hasPassword ?? true;
@@ -24,7 +20,6 @@ export function fakeAccount(o: { hasPassword?: boolean } = {}) {
     },
     passwordLogin: async (email, password) => {
       calls.push('password');
-      // 틀림·없는 계정·잠금은 서버가 같은 응답을 준다(ADR-038 (d)).
       if (email !== 'owner@gyeonbon-test.example' || password !== PASSWORD) throw fail('account.credentials_invalid');
       return { session: 'sxs1.fake', expiresInSec: 3600 };
     },
@@ -82,7 +77,6 @@ export function fakeAccount(o: { hasPassword?: boolean } = {}) {
     putDeviceList: async () => {},
     devices: async () => [],
     leaveDevice: async () => {},
-    // 새 PC 연결(ADR-048 결정 3)은 이 대역에서 쓰지 않는다
     devicesBySession: async () => [],
     deviceListByDevice: async () => ({ aikPub: null, deviceList: null }),
     enrollDesktop: async () => {},
@@ -94,7 +88,6 @@ export function fakeAccount(o: { hasPassword?: boolean } = {}) {
     pcLinkChallenge: async () => {},
     pcLinkGrant: async () => {},
     pcLinkDrop: async () => {},
-    // 계정 열쇠 맡기기(ADR-050): 이 대역에는 그 기능이 없다(서버가 꺼 둔 것과 같다)
     keyEscrowState: async () => {
       throw Object.assign(new Error('escrow'), { code: 'request.not_found' });
     },
@@ -112,7 +105,6 @@ export function fakeAccount(o: { hasPassword?: boolean } = {}) {
     renewIssueLock: async () => ({ expiresAt: Date.now() + 90_000 }),
     releaseIssueLock: async () => {},
     wakePhone: async () => ({ sent: false }),
-    // 계정 공유 기록: 이 대역은 기기가 하나라 동기화가 서버를 부르지 않는다
     putShareRow: async () => ({ seq: 1 }),
     shareRows: async () => ({ rows: [], head: 0, epoch: 0, more: false }),
     shareTasks: async () => [],

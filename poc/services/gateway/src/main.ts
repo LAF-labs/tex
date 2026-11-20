@@ -1,4 +1,3 @@
-// 기동: 환경 변수(ENV.md) → DB 마이그레이션 → HTTP. 공급사 키·K_sid·캐시 비밀은 KMS가 환경 변수로 주입한다(D09 §3 키 관리).
 import { fileURLToPath } from 'node:url';
 import { BundleCatalog } from '@sax/model';
 import { HttpDeviceDirectory, InternalClient, Logger, TokenVerifier, createServer, ed25519Private, fromB64, key32, listen, migrate, openFromEnv, LIMITS_MIGRATIONS_DIR, sqlLimits, type DeviceDirectory } from '@sax/svc-shared';
@@ -58,16 +57,14 @@ export function parseTokenKeys(v: string | undefined): Record<string, Buffer> {
 }
 
 function openRouterFromEnv(env: NodeJS.ProcessEnv, onEvent?: (e: string) => void): OpenRouterProvider {
-  // ZDR·데이터 수집 거부·공급자 고정이 환경에 정확히 없으면 기동하지 않는다(R14 ①)
   const routing = parseOpenRouterRouting(env);
   if (!routing) fail('OPENROUTER_ROUTING');
-  // 판정·에이전트 호출의 보관 조건(OPENROUTER_AGENT_PRIVACY): 모르는 값이면 기동하지 않는다
   const agentPrivacy = parseAgentPrivacy(env.OPENROUTER_AGENT_PRIVACY) ?? fail('OPENROUTER_AGENT_PRIVACY');
   return new OpenRouterProvider({ apiKey: env.OPENROUTER_API_KEY ?? fail('OPENROUTER_API_KEY'), routing, onEvent, agentPrivacy });
 }
 
 /** Anthropic 쪽 기본 모델(GW_RESPOND_PROVIDER=anthropic일 때만 쓴다). 바꾸려면 ANTHROPIC_MODEL_RESPOND·ANTHROPIC_MODEL_AGENT */
-export const ANTHROPIC_DEFAULT_MODEL = 'claude-haiku-5-5'; // 대표 2026-11-19: jev 밖 생성은 Haiku 5.5
+export const ANTHROPIC_DEFAULT_MODEL = 'claude-haiku-5-5';
 
 /**
  * 생성 호출 공급사(GW_RESPOND_PROVIDER). 없거나 `base`면 GW_PROVIDER가 다 한다(지금까지와 같다).
@@ -100,7 +97,6 @@ function baseProviderFromEnv(env: NodeJS.ProcessEnv, onEvent?: (e: string) => vo
     case 'openrouter':
       return openRouterFromEnv(env, onEvent);
     case 'openai+openrouter': {
-      // L1 판정은 OpenAI Decisions 직결, 응답은 OpenRouter(팀장 결정 2026-11-05). 키는 서버 환경 변수만.
       const openai = new OpenAICompatProvider({ baseUrl: env.OPENAI_BASE_URL ?? 'https://api.openai.com', apiKey: env.OPENAI_API_KEY ?? fail('OPENAI_API_KEY') });
       return new SplitProvider(openai, openRouterFromEnv(env, onEvent));
     }
@@ -118,23 +114,20 @@ function baseProviderFromEnv(env: NodeJS.ProcessEnv, onEvent?: (e: string) => vo
 export interface GatewayBuildDeps {
   provider?: ModelProvider;
   nts?: BizStatusSource;
-  /** CODEF 토큰 원천(시험 주입). 없으면 CODEF_ENV로 만든다(없으면 꺼짐) */
   codef?: CodefTokenSource | null;
-  /** 같은 배포 안의 계정 서비스(함수 직접 호출). 없으면 ACCOUNT_INTERNAL_URL로 서명 HTTP */
   directory?: DeviceDirectory;
   suspender?: DeviceSuspender;
 }
 
 /** 조립(라우터·서비스·정리). 상시 서버와 함수 진입점(`@sax/svc-cloud`)이 같은 것을 쓴다. 함수는 DDL을 하지 않는다(migrate: false). */
 export async function buildGateway(env: NodeJS.ProcessEnv = process.env, deps: GatewayBuildDeps = {}, o: { migrate: boolean } = { migrate: true }) {
-  if (env.GW_ALLOW_IMAGES && env.GW_ALLOW_IMAGES !== 'false') fail('GW_ALLOW_IMAGES'); // Phase 1: 이미지 없음(B-18)
+  if (env.GW_ALLOW_IMAGES && env.GW_ALLOW_IMAGES !== 'false') fail('GW_ALLOW_IMAGES');
   const db = openFromEnv(env);
   if (o.migrate) {
     await migrate(db, 'gateway', MIGRATIONS_DIR);
     await migrate(db, 'limits', LIMITS_MIGRATIONS_DIR);
   }
   const prices: Prices = env.GW_PRICES_JSON ? { ...ZERO_PRICES, ...(JSON.parse(env.GW_PRICES_JSON) as Partial<Prices>) } : ZERO_PRICES;
-  // 계정 서비스가 다른 호스트일 때만 서명 HTTP(주입받으면 키·주소가 필요 없다)
   const remote = () => ({ base: env.ACCOUNT_INTERNAL_URL ?? fail('ACCOUNT_INTERNAL_URL'), key: key32(env.INTERNAL_CALL_KEY, 'INTERNAL_CALL_KEY') });
   const nts = deps.nts ?? ntsFromEnv(env);
   const logger = new Logger('gateway');

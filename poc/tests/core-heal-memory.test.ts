@@ -1,5 +1,3 @@
-// 고친 선택자 기억(core/heal-memory.ts)과 폴백 0단계(core/fallback.ts): 고친 후보가 통과하면 남기고, 다음 실행은 처음부터 그 후보로 맞히며,
-// 틀리면 바로 버린다. 커밋·비밀 칸·게이트 뒤 항목은 남기지 않고, 이름 규칙을 바꾼 고침도 남기지 않는다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { entryFingerprint, FallbackChain, HEAL_TTL_MS, HealMemory, healableKeys, MemoryHealStore, type PlaybookIR, type SelectorDict, type SelectorEntry, type Step } from '@sax/engine/core';
@@ -27,7 +25,6 @@ const steps: Step[] = [
 ] as unknown as Step[];
 const ir = { ir: 2, id: 't', version: '1', steps } as unknown as PlaybookIR;
 
-// 화면: 품목 칸 id가 바뀌었다(#oldItem → #newItem). 접근성 이름은 그대로.
 const els = (): FEl[] => [
   { id: 'body', role: 'document', name: '', css: ['body'] },
   { id: 'it', role: 'textbox', name: '품목', parent: 'body', css: ['#newItem'] },
@@ -48,7 +45,6 @@ describe('고친 선택자 기억', () => {
     const store = new MemoryHealStore();
     const pkg = dict();
     const healable = healableKeys(ir, pkg, new Set(['s4']));
-    // 1회차
     const d1 = { ...pkg, entries: { ...pkg.entries } };
     const m1 = new HealMemory({ store, pkg, healable, now: () => 1_000 });
     assert.equal(m1.seed(d1).size, 0);
@@ -59,15 +55,12 @@ describe('고친 선택자 기억', () => {
     c1.confirmed('s1');
     assert.deepEqual(store.f?.entries.item?.cand, { kind: 'role', role: 'textbox', name: '품목' });
     assert.equal(store.f?.entries.item?.via, 'refind');
-    // 2회차: 같은 저장소
     const d2 = { ...pkg, entries: { ...pkg.entries } };
     const m2 = new HealMemory({ store, pkg, healable, now: () => 2_000 });
     const seeded = m2.seed(d2);
     assert.deepEqual([...seeded.keys()], ['item']);
     assert.deepEqual(d2.entries.item!.candidates[0], { kind: 'role', role: 'textbox', name: '품목' });
-    // 원본 패키지 사전은 그대로
     assert.deepEqual(pkg.entries.item!.candidates[0], { kind: 'css', value: '#oldItem' });
-    // 남은 후보에 같은 것이 두 번 있지 않다
     assert.equal(d2.entries.item!.candidates.filter((c) => c.kind === 'role').length, 1);
   });
 
@@ -88,7 +81,6 @@ describe('고친 선택자 기억', () => {
     assert.deepEqual(j, ['fallback.heal_dropped']);
     assert.deepEqual(d.entries.item!.candidates, pkg.entries.item!.candidates);
     assert.equal(c.fastEscalate(steps[0]!, 'step.identity_mismatch'), false, '버린 뒤에는 재시도를 건너뛰지 않는다');
-    // 화면이 늦었을 수도 있어 저장소에서는 아직 지우지 않는다
     assert.ok(store.f?.entries.item);
     c.confirmed('s1');
     assert.equal(store.f?.entries.item, undefined);
@@ -127,7 +119,6 @@ describe('고친 선택자 기억', () => {
     const pkg = dict();
     const j: string[] = [];
     const c = chain({ ...pkg, entries: { ...pkg.entries } }, undefined, undefined, j);
-    // 대상을 못 찾음: 재시도는 한 번만 하고 다시 찾기로(실모델 예행: 재시도 3번 약 90초)
     assert.equal(c.fastEscalate(steps[0]!, 'step.selector_miss', 0), false);
     assert.equal(c.fastEscalate(steps[0]!, 'step.selector_miss', 1), true);
     assert.equal(c.fastEscalate(steps[0]!, 'step.timeout', 1), false);

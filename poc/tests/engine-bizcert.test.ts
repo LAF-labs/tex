@@ -1,6 +1,3 @@
-// 사업자등록증 OCR 해석(엔진 parseBizCert, PoC-5, 08 §4 O-02, ADR-014): OCR로 깨진 상호는 후보로 내지 않고 missing으로 보낸다.
-// #219 관찰: 신뢰도 67 회차에서 상호 줄이 `가나상사상호 _ :： 가나상사`로 깨졌는데 null이 아니어서 missing에 들어가지 않았다.
-// 실제 상호(괄호·&·점·하이픈·가운뎃점, '상호저축은행'·'대성명품'처럼 라벨 글자가 든 이름)는 그대로 둔다. 시험은 글자만 쓴다(tesseract 없음).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { syntheticBizNo } from '@sax/db';
@@ -52,8 +49,6 @@ describe('parseBizCert: 깨진 상호는 missing으로(#219)', () => {
   });
 });
 
-// 2026-11-10 설치본: 실제 등록증 JPEG에서 6칸 중 4칸이 비었다(대표자 포함). 실제 양식의 표기 변형을 OCR 글자 견본(가상 값)으로 본다.
-// 원칙: 못 뽑은 칸은 null(사용자가 채운다). 잘못 채우는 것이 비우는 것보다 나쁘다.
 describe('parseBizCert: 실제 양식 표기 변형(OCR 글자 견본)', () => {
   const b = syntheticBizNo(31);
   const dashed = `${b.slice(0, 3)}-${b.slice(3, 5)}-${b.slice(5)}`;
@@ -135,12 +130,10 @@ describe('parseBizCert: 실제 양식 표기 변형(OCR 글자 견본)', () => {
     assert.equal(q(dashed.replace(/0/g, 'O').replace(/1/g, 'l')).fields.bizNo, b);
     assert.equal(q(dashed.replace(/-/g, '–')).fields.bizNo, b);
     assert.equal(q(dashed.replace(/-/g, ' _ ')).fields.bizNo, b);
-    // 한 자리 더 읽힌 번호(합성 스캔에서 본 "1900-16-62990")를 잘라 맞추지 않는다
     assert.equal(q(`1${dashed}`).fields.bizNo, null);
     const corp = parseBizCert('발급번호 : 0000-000-0000-000\n법인등록번호 : 131111-0012345\n법인명(단체명) : 주식회사 가나');
     assert.equal(corp.fields.bizNo, null);
     assert.equal(corp.fields.corpNo, '1311110012345');
-    // 라벨이 깨져도 문서 안의 3-2-5는 찾는다
     assert.equal(parseBizCert(`등 롤 번 호 ; ${dashed}`).fields.bizNo, b);
   });
 

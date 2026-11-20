@@ -1,6 +1,3 @@
-// 설정 > 구독(월 19,900원, 부가세 포함, 토스페이먼츠 자동결제). 상태는 main(billing.view)이 계정 서비스에서 받아 온 것만 그린다.
-// [구독하기]는 기본 브라우저로 결제 창(계정 origin)을 연다. 카드 정보는 이 앱을 거치지 않는다. 해지는 구독만큼 쉽게: 한 번 확인 뒤 바로.
-// 청약철회(결제 후 7일)는 금액을 먼저 보이고 확인을 한 번 더 받는다. 결과·오류는 이 화면 안 글로 남긴다.
 import { btn, h, kv } from './shell-views.js';
 
 const ERR = {
@@ -20,7 +17,6 @@ const day = (ms) => {
   return `${d.getUTCFullYear()}년 ${d.getUTCMonth() + 1}월 ${d.getUTCDate()}일`;
 };
 
-/** ctx: { call, rerender, errText } */
 export function createBilling(ctx) {
   const s = { loading: false, view: null, err: null, msg: null, confirm: null, busy: false };
   const set = (p) => {

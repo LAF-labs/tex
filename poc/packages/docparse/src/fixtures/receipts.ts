@@ -1,5 +1,3 @@
-// 합성 종이 증빙 24장(가짜 상호·가짜 사업자번호, 체크섬만 맞춘다. 실명·실사업자번호 없음).
-// receiptText: OCR이 낼 법한 글자(띄어쓰기·혼동 문자 잡음 선택). receiptHtml: e2e가 그림으로 찍어 샌드박스 OCR에 넣는 서식.
 import { isValidBizNo } from '../util.ts';
 
 /** 합성 사업자번호: 가운데 두 자리를 '99'로 고정해 실번호와 겹칠 가능성을 줄이고 체크섬만 맞춘다 */
@@ -25,7 +23,6 @@ export interface SyntheticReceipt {
   items: Array<{ name: string; qty: number; price: number }>;
   approvalNo: string | null;
   cardTail: string | null;
-  /** 날짜 표기 방식 */
   dateStyle: 'dash' | 'dot' | 'slash2' | 'korean';
   expected: { amount: number; supply: number | null; vat: number | null; issuedOn: string; merchant: string; bizNo: string };
 }
@@ -42,7 +39,6 @@ export function syntheticReceipts(): SyntheticReceipt[] {
     const items = [{ name: n1, qty: 1 + (i % 3), price: p1 }, ...(i % 2 ? [{ name: n2, qty: 1, price: p2 }] : [])];
     const amount = items.reduce((s, x) => s + x.qty * x.price, 0);
     const layout = LAYOUTS[i % LAYOUTS.length]!;
-    // 공급가액·부가세는 카드·POS·세금계산서 서식에만 적는다(합계 = 공급가액 + 부가세, 공급가액은 1/1.1 반올림)
     const supply = layout === 'simple' || layout === 'cash' ? null : Math.round(amount / 1.1);
     const vat = supply === null ? null : amount - supply;
     const day = 1 + ((i * 3) % 27);

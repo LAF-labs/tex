@@ -1,5 +1,3 @@
-// PC 쪽 폰 발급 명령·폰 사본(remote-envelope v1.8, ADR-046 결정 2·5): apps/desktop/src/phone-issue.ts·phone-copy.ts·phone-session.ts.
-// 단위(입력 해석·단계·답) + 라이브 세션 한 번(폰이 사본을 받고, cmd.run → cmd.ack pc_only → run.event).
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -132,7 +130,6 @@ describe('셸 실행 → 폰 단계', () => {
     assert.equal(ev.event, 'end');
     assert.deepEqual(ev.result, { approvalNo: '20261117-41000000-12345678', total: 880_000, emailSent: true, docId });
     assert.ok(!JSON.stringify(ev).includes(CP.name) && !JSON.stringify(ev).includes(CP.email));
-    // 스키마 통과
     assert.ok(encodeEnvelope(makeEnvelope('run.event', ev, { pairId: ulid(), from: 'desktop', seq: 1 })));
     const v = eventOf(run({ status: 'issuing', at: 6, verifyAttempt: 3 }), ulid(NOW), ulid(NOW), NOW);
     assert.equal(v.attempt, 3);
@@ -144,13 +141,10 @@ describe('셸 실행 → 폰 단계', () => {
     assert.equal(t.phase, 'login');
     assert.equal(t.code, 'login.simple_auth');
     assert.ok(encodeEnvelope(makeEnvelope('run.event', t, { pairId: ulid(), from: 'desktop', seq: 1 })));
-    // 코드가 없거나 규칙 밖이면 종류만
     assert.equal(eventOf(run({ status: 'turn', at: 0, handoff: { phase: 'login', afterGate: false, kind: 'login' } }), ulid(), ulid(), NOW).code, 'turn.login');
     assert.equal(eventOf(run({ status: 'turn', at: 2, handoff: { phase: 'fill', afterGate: false, kind: 'other', code: 'Bad Code!' } }), ulid(), ulid(), NOW).code, 'turn.other');
-    // 발급 없이 멈춤
     assert.equal(eventOf(run({ status: 'stopped', redo: true }), ulid(), ulid(), NOW).code, 'not_issued');
     assert.equal(eventOf(run({ status: 'stopped' }), ulid(), ulid(), NOW).code, undefined);
-    // 앱 판이 낮아 시작하지 않음: 폰이 "PC 앱을 업데이트해 주세요"를 말할 수 있게 코드를 따로 보낸다(not_issued보다 먼저)
     const old = eventOf(run({ status: 'stopped', redo: true, endCode: 'package.app_old' }), ulid(), ulid(), NOW);
     assert.equal(old.code, 'app_old');
     assert.ok(encodeEnvelope(makeEnvelope('run.event', old, { pairId: ulid(), from: 'desktop', seq: 1 })));
@@ -167,7 +161,6 @@ describe('셸 실행 → 폰 단계', () => {
     x.p.update(turn);
     x.p.update({ ...r, status: 'preparing', steps: run({ at: 0 }).steps, handoff: null });
     assert.deepEqual(sink.events.map((e) => [e.event, e.phase, e.code ?? '']), [['phase', 'login', ''], ['turn', 'login', 'login.simple_auth'], ['phase', 'login', '']]);
-    // v1.11: 보낼 때마다 판 번호가 하나씩 오른다(폰이 늦게 온 옛 이벤트를 버리는 기준)
     assert.deepEqual(sink.events.map((e) => e.rev), [1, 2, 3]);
   });
 });
@@ -180,7 +173,6 @@ describe('PhoneIssue 인증서 다시 시도', () => {
     x.p.attach('p', sink);
     const ack = await x.p.handle('p', sink, issueCmd(ulid(NOW), req));
     const r = x.runs.get('run-1')!;
-    // 차례가 아닐 때의 cmd.resume은 받지 않고 지금 상태를 다시 보낸다
     x.runs.set('run-1', { ...r, status: 'preparing', steps: run({ at: 0 }).steps });
     assert.equal(await x.p.resume('p', sink, { runId: ack.runId! }), false);
     const turn = { ...r, status: 'turn' as const, steps: run({ at: 0 }).steps, handoff: { phase: 'login', afterGate: false, kind: 'login' as const, code: 'login.simple_auth' } };
@@ -210,14 +202,11 @@ describe('PhoneIssue', () => {
     assert.ok(ack.runId);
     assert.deepEqual(x.drafts, [{ supply: 800_000, item: '과일' }]);
     await until(() => x.prepared.length === 1);
-    // cmdId는 디스크에 있다
     const file = JSON.parse(await fs.readFile(path.join(x.dir, 'remote-cmds.json'), 'utf8'));
     assert.equal(file.cmds[0].cmdId, body.cmdId);
-    // 재전송: 새 PhoneIssue(앱을 다시 켠 것)에서도 duplicate + 같은 runId
     const y = new PhoneIssue({ counterparty: () => CP, createDraft: () => assert.fail('다시 만들면 안 된다'), prepare: async () => assert.fail(), anyActive: () => false, get: () => undefined, cmds: new CmdLog(path.join(x.dir, 'remote-cmds.json')), now: () => NOW });
     const again = await y.handle('pair-1', new Sink(), body);
     assert.deepEqual(again, { cmdId: body.cmdId, state: 'rejected', reason: 'duplicate', runId: ack.runId });
-    // 진행: 단계가 바뀔 때만 보낸다
     const r = x.runs.get('run-1')!;
     x.p.update({ ...r, status: 'preparing', steps: run({ at: 0 }).steps });
     x.p.update({ ...r, status: 'preparing', steps: run({ at: 0 }).steps });
@@ -249,7 +238,6 @@ describe('PhoneIssue', () => {
     assert.deepEqual([a.state, b.state].sort(), ['pc_only', 'rejected']);
     assert.equal((a.state === 'rejected' ? a : b).reason, 'duplicate');
     assert.equal(x.drafts.length, 1);
-    // 처음 읽기 전에 겹친 put 두 개
     const log = new CmdLog(path.join(x.dir, 'other.json'));
     const c1 = ulid(), c2 = ulid();
     await Promise.all([log.put(c1, ulid(), NOW), log.put(c2, ulid(), NOW)]);
@@ -268,7 +256,6 @@ describe('PhoneIssue', () => {
     const s = new Sink();
     x.p.attach('p', s);
     assert.deepEqual(s.events.map((e) => [e.runId, e.phase]), [[ack.runId, 'done']]);
-    // 못 보낸 것도 번호를 썼다: 다시 보낸 끝 소식은 그보다 크다
     assert.equal(s.events[0]!.rev, 2);
   });
 
@@ -351,7 +338,6 @@ describe('폰 사본', () => {
   });
 });
 
-// ---- 라이브 세션 한 번 ----
 const asRelayLink = (l: Link): RelayLink => Object.assign(l, { onEnv() {}, closeCode: null }) as unknown as RelayLink;
 const seal: TokenSeal = { seal: (p) => `sealed:${b64(p)}`, open: (s) => fromB64(s.slice(7)) };
 const emptyQueue = () => ({ bundle: null, list: async () => [], listPage: async () => ({ items: [], more: false }), ack: async () => {}, putBundle: async () => {} });
@@ -404,7 +390,6 @@ describe('라이브 세션(phone-link + phone-session)', () => {
     const ev = await sess.channel.recv(3000);
     assert.equal(ev?.type, 'run.event');
     assert.deepEqual([(ev!.body as RunEventBody).runId, (ev!.body as RunEventBody).phase], [runId, 'login']);
-    // sync.v1을 알리지 않은 폰에는 판 번호를 싣지 않는다(옛 폰 스키마는 모르는 칸을 받지 않는다)
     assert.equal('rev' in (ev!.body as RunEventBody), false);
     sess.channel.close();
     phLink.close();

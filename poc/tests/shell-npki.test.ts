@@ -1,4 +1,3 @@
-// 온보딩 O-03 공동인증서 목록(npki-certs.ts): 금고 npki.list(#93) → 샌드박스 certInfo(#95) → 표시 행. Electron 없이.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -30,7 +29,6 @@ const info = (cn: string, notAfter = '2027-03-01T14:59:59Z', issuerO = 'yessign'
   notAfter,
 });
 
-// 합성 DER(서명 검증은 하지 않으므로 빈 서명 비트열). ocr-e2e.ts의 작성기와 같다.
 const len = (n: number) => (n < 0x80 ? [n] : n < 0x100 ? [0x81, n] : [0x82, n >> 8, n & 0xff]);
 const T = (tag: number, ...body: Uint8Array[]) => {
   const v = Buffer.concat(body);
@@ -97,7 +95,6 @@ describe('공동인증서 목록: 금고 열거 → 샌드박스 해석 → 표�
     const infos: Record<number, CertInfo> = { 1: info('가나다컴퍼니()0012345678901234'), 2: info('김가나()0099'), 3: info('옛인증서()01', '2026-10-01T14:59:59Z', '') };
     const rows = await listNpkiCerts(control, async (d) => infos[d[2]!]!, { today: TODAY, log: (n, d) => void logs.push([n, d]) });
     assert.deepEqual(rows, [
-      // kind: 주체 OU로 본 종류만(개인용·법인용). OU 원문은 행에 없다(은행 자동 연결의 뱅킹 순서용)
       { id: '0000000000000001', owner: '가나다컴퍼니', usage: 'yessign', expiresOn: '2027-03-01', usable: true, kind: 'personal' },
       { id: '0000000000000002', owner: '김가나', usage: 'yessign', expiresOn: '2027-03-01', usable: false, why: 'no_key', kind: 'personal' },
       { id: '0000000000000003', owner: '옛인증서', usage: 'yessign', expiresOn: '2026-10-01', usable: false, why: 'expired', kind: 'personal' },
@@ -153,7 +150,6 @@ describe('공동인증서 목록: 금고 열거 → 샌드박스 해석 → 표�
   it('스키마 실패: main은 샌드박스 출력을 validateSandboxOutput(certInfo)로만 받고, 틀린 모양은 schema로 버린다(목록에서 빠지고 개수만 센다)', async () => {
     const src = fs.readFileSync(path.resolve(import.meta.dirname, '../apps/desktop/src/docparse.ts'), 'utf8');
     const fn = src.slice(src.indexOf('export async function certInfoInSandbox'), src.indexOf('/** @sax/docparse parse()가 부르는 샌드박스 host'));
-    // 크기 경계는 샌드박스 전에(0·8193 input_size), 실행은 기존 runJob, 검증은 기존 validateSandboxOutput. main에서 DER를 읽지 않는다.
     assert.match(fn, /der\.length === 0 \|\| der\.length > CERT_MAX_BYTES\) throw new DocparseError\('input_size'\)/);
     assert.match(fn, /await runJob\(\{ kind: 'certInfo', bytes: der\.slice\(\) \}/);
     assert.match(fn, /const v = validateSandboxOutput\('certInfo', out\);\s*if \(!v\) throw new DocparseError\('schema'\);/);
@@ -162,7 +158,6 @@ describe('공동인증서 목록: 금고 열거 → 샌드박스 해석 → 표�
     const mjs = fs.readFileSync(path.resolve(import.meta.dirname, '../apps/desktop/static/docparse/docparse.mjs'), 'utf8');
     assert.match(mjs, /kind === 'certInfo' \? readCertInfo\(data\.bytes\)/);
     assert.match(mjs, /data\?\.kind === 'certInfo' \? 'cert_invalid'/);
-    // 틀린 모양(덧붙인 칸·빠진 칸·날짜 모양·긴 주체)은 스키마가 거부한다.
     const ok = info('가()1');
     for (const bad of [{ ...ok, extra: 1 }, { subject: ok.subject, issuer: ok.issuer, notBefore: ok.notBefore }, { ...ok, notAfter: '2027-01-02' }, { ...ok, subject: 'x'.repeat(1025) }]) assert.equal(validateSandboxOutput('certInfo', bad), null);
     const logs: Array<Record<string, number>> = [];

@@ -1,5 +1,3 @@
-// 모의 모델 게이트웨이(services/gateway/API.md 와이어, M4-6). /v1/decide·/v1/respond·/v1/run-tokens.
-// 게이트웨이가 하는 일 중 클라이언트가 보는 것만 흉내 낸다: 질문 주입·questionsDigest·cached_tokens 제거·태그·오류 코드.
 import { createHash } from 'node:crypto';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -13,23 +11,14 @@ export interface GatewayMockCall {
 }
 
 export interface GatewayMockOptions {
-  /** 경로별 다음 응답을 강제(오류 코드 시험) */
   fail?: Partial<Record<string, { status: number; code?: string }>>;
-  /** questionsDigest를 바꿔치기(신뢰 지점 대조 시험) */
   tamperDigest?: boolean;
-  /** toolsetDigest를 바꿔치기 */
   tamperToolset?: boolean;
-  /** decide 답: 질문 이름 → 확률(predicate) 또는 선택값(choice) */
   answers?: Record<string, number | string>;
-  /** choice 답의 신뢰도(기본 0.97). 낮추면 매핑 문턱(예: intent_route_v1 route ≥ 0.8) 아래로 간다 */
   choiceConfidence?: number;
-  /** /v1/decide 응답 model(기본 별칭이 풀린 버전 typesafe/jev-1.14-20261014) */
   decideModel?: string;
-  /** respond 응답 output(기본: query_parse 구조화 출력 한 건) */
   respondOutput?: Array<Record<string, unknown>>;
-  /** respond 응답 status(기본 completed) */
   respondStatus?: string;
-  /** 요청 본문마다 output을 만든다(respondOutput보다 우선). 태그는 실제 게이트웨이처럼 64자 hex라 replay로 다시 보낼 수 있다. */
   respondScript?: (body: Record<string, unknown>) => Array<Record<string, unknown>>;
 }
 

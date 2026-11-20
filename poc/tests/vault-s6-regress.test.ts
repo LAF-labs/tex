@@ -1,8 +1,3 @@
-// S6c~S6f 회귀(D13 §4, AUDIT-D 보강)와 누출 스캐너 확장(D11 §115, D13 §6). vault-relay.test.ts가 이미 보는 것은 다시 보지 않고 빈 곳만 채운다.
-// - E-18: 워커·자식 프레임이 보낸 요청의 바디 — 포털은 받았고, 엔진이 받은 이벤트 어디에도 없다(CI 트랙 CdpLeakTap 재사용)
-// - S6f: 활성 창 동안 엔진에 닿는 이벤트 목록에 ACTIVE_WINDOW_DROP_EVENTS가 없고, ACTIVE_WINDOW_DENY_PREFIXES 전부가 거부된다(상수 표 그대로)
-// - S6d: 오염 상태 Runtime.getProperties(값 속성 지움)를 실브라우저로
-// - 누출 스캐너: control 포트 IPC까지 담고, 장기 키 시드(D05 §5.1)·NPKI 개인키 파일 내용도 비밀 목록에 넣어 IPC·로그·앱 루트를 훑는다
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -24,7 +19,6 @@ async function userType(h: Harness, targetId: string, text: string): Promise<voi
   const t = h.vault.relay!.targets.get(targetId)!;
   await h.vault.relay!.send('Input.insertText', { text }, t.vaultSession);
 }
-/** 포털 페이지 자신의 스크립트 대역(금고 감시 세션에서 돈다, 엔진 경로 아님). */
 async function pageEval(h: Harness, targetId: string, expression: string): Promise<unknown> {
   const t = h.vault.relay!.targets.get(targetId)!;
   const r = await h.vault.relay!.send<{ result: { value?: unknown } }>('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, t.vaultSession);
@@ -37,7 +31,6 @@ async function until(pred: () => boolean, ms = 8000): Promise<void> {
     await sleep(50);
   }
 }
-/** 활성 창 거부 접두사마다 그 접두사로 시작하는 메서드 하나(접두사 자체가 메서드면 그것). */
 const sampleFor = (p: string): [string, Record<string, unknown>] => (p.endsWith('.') ? [`${p}${p === 'Runtime.' ? 'evaluate' : p === 'Input.' ? 'dispatchKeyEvent' : p === 'Emulation.' ? 'setFocusEmulationEnabled' : p === 'Accessibility.' ? 'getFullAXTree' : 'getSnapshot'}`, {}] : [p, {}]);
 
 describe('S6c~f 회귀·누출 스캐너 확장(금고 중계, 가짜 포털)', () => {
@@ -79,7 +72,6 @@ describe('S6c~f 회귀·누출 스캐너 확장(금고 중계, 가짜 포털)', 
     assert.deepEqual(await h.client.rpc('typist.fill', fill), { ok: true });
     await closed;
     const mark = eng.events.length;
-    // 포털 스크립트: 워커로 보내고(fetch), 같은 origin 자식 프레임 폼에 옮겨 제출한다
     await pageEval(h, targetId, `document.getElementById('pw').dispatchEvent(new Event('change'))`);
     await pageEval(h, targetId, `(() => { const d = document.getElementById('child').contentDocument; d.getElementById('cpw').value = document.getElementById('pw').value; d.querySelector('form').submit(); return true; })()`);
     await until(() => fx.bodies.some((b) => b === `w=${secret}`) && fx.bodies.some((b) => b === `cpw=${encodeURIComponent(secret)}`));
@@ -167,7 +159,6 @@ describe('S6c~f 회귀·누출 스캐너 확장(금고 중계, 가짜 포털)', 
     }
     await pageEval(h, targetId, `document.getElementById('pw').focus()`);
     await userType(h, targetId, secret);
-    // 포털 스크립트가 값을 콘솔·제목·속성·주소로 흘린다
     await pageEval(h, targetId, `(() => { const v = document.getElementById('pw').value; console.log('typed', v); document.title = v; document.body.setAttribute('data-x', v); history.replaceState(null, '', '#' + v); return true; })()`);
     await sleep(300);
     const closed = h.client.once('secret_window.closed', (d) => d.targetId === targetId, 5000);
@@ -181,7 +172,6 @@ describe('S6c~f 회귀·누출 스캐너 확장(금고 중계, 가짜 포털)', 
   });
 
   it('누출 스캐너 확장: engine·control IPC, 로그, 앱 루트에서 시험 비밀·장기 키 시드·NPKI 개인키 내용 0건', async () => {
-    // 장기 키를 만들고 쓴다(control 포트: 엔진 포트에는 crypto.*가 없다). 시드는 금고 KeyStore에만 있어야 한다.
     const pk = await h.control.rpc<{ vd: Uint8Array }>('crypto.publicKeys');
     assert.equal(pk.vd.length, 32);
     await h.control.rpc('crypto.signVd', { purpose: 'SAX-dpop-v1', msg: new Uint8Array([1, 2, 3]) });
@@ -189,7 +179,6 @@ describe('S6c~f 회귀·누출 스캐너 확장(금고 중계, 가짜 포털)', 
     const ks = (h.vault as unknown as { opts: { keyStore: KeyStore } }).opts.keyStore;
     const seeds: Buffer[] = [];
     for (const name of Object.values(CRYPTO_KEY_ITEMS)) seeds.push(Buffer.from((await ks.get(name, 32))!));
-    // NPKI: 개인키 파일 내용은 어디에도 나오지 않는다(열지 않으므로)
     const npkiRoot = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-s6-npki-'));
     const keySentinel = testSecret('TEST-NPKI-KEY');
     const dir = path.join(npkiRoot, 'yessign', 'USER', 'cn=TEST');
@@ -207,7 +196,6 @@ describe('S6c~f 회귀·누출 스캐너 확장(금고 중계, 가짜 포털)', 
     const logs = await scanDir(h.paths.logs, strSecrets);
     await h.vault.shutdown();
     const all = await scanDir(h.paths.root, strSecrets);
-    // 이진 파일에 시드 원시 바이트가 있는지도 본다
     const rawHits: string[] = [];
     const walk = async (d: string): Promise<void> => {
       for (const e of await fs.readdir(d, { withFileTypes: true }).catch(() => [])) {
@@ -236,7 +224,6 @@ describe('알려진 값 접두사·프로필 잔존물(단위)', () => {
     assert.ok(!v.includes('abcde'), `${KNOWN_VALUE_MIN_LEN}자 미만 없음`);
     assert.deepEqual(knownValuePrefixVariants('a'.repeat(KNOWN_PREFIX_MAX_LEN + 1)), knownValueVariants('a'.repeat(KNOWN_PREFIX_MAX_LEN + 1)));
     assert.deepEqual(knownValuePrefixVariants('abc'), []);
-    // 한글(코드 포인트 기준)
     assert.ok(knownValuePrefixVariants('가나다라마바사').includes('가나다라마바'));
     const sorted = [...v].sort((a, b) => b.length - a.length);
     let text = JSON.stringify({ url: 'https://x/#abcdefgh', title: 'abcdefg' });
@@ -254,7 +241,6 @@ describe('알려진 값 접두사·프로필 잔존물(단위)', () => {
         }
       };
       const busy = (code: string) => Object.assign(new Error(code), { code });
-      // History: 두 번 EBUSY 뒤 지워진다(Windows 자식 프로세스가 곧 놓는 경우)
       await make();
       let tries = 0;
       const failed: number[] = [];
@@ -265,7 +251,6 @@ describe('알려진 값 접두사·프로필 잔존물(단위)', () => {
       assert.equal(await removeProfileResidue(dir, { rm: flaky, retryDelayMs: 0, onFailed: (n) => failed.push(n) }), 3);
       assert.equal(tries, 3);
       assert.deepEqual(failed, []);
-      // Visited Links: 늘 EPERM → 그 경로만 남고 Favicons는 지워진다(예전에는 첫 실패에서 멈췄다), 실패 1을 알린다
       await make();
       let calls = 0;
       const stuck = async (p: string, o: { recursive: true; force: true }) => {
@@ -280,11 +265,9 @@ describe('알려진 값 접두사·프로필 잔존물(단위)', () => {
       assert.deepEqual(failed, [1]);
       assert.ok(await fs.lstat(path.join(dir, 'Default', 'Visited Links')));
       assert.equal(await fs.lstat(path.join(dir, 'Default', 'Favicons')).catch(() => null), null);
-      // 잠금이 아닌 오류는 다시 시도하지 않는다
       let other = 0;
       await removeProfileResidue(dir, { rm: async () => { other++; throw busy('EIO'); }, retryDelayMs: 0 });
       assert.equal(other, 1, 'Visited Links 한 번만');
-      // 크래시 덤프도 같다
       await fs.mkdir(path.join(dir, 'Crashpad', 'reports'), { recursive: true });
       await fs.writeFile(path.join(dir, 'Crashpad', 'reports', 'a.dmp'), 'x');
       let d = 0;
@@ -312,10 +295,8 @@ describe('알려진 값 접두사·프로필 잔존물(단위)', () => {
       for (const rel of PROFILE_RESIDUE_PATHS) assert.equal(await fs.lstat(path.join(dir, ...rel.split('/'))).catch(() => null), null, rel);
       for (const keep of ['Default/Cookies', 'Default/Preferences', 'Local State', 'Default/Local Storage']) assert.ok(await fs.lstat(path.join(dir, ...keep.split('/'))), keep);
       assert.equal(await removeProfileResidue(dir), 0);
-      // 링크: 너머를 지우지 않는다
       const outside = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-residue-out-'));
       await fs.writeFile(path.join(outside, 'Session_9'), 'keep');
-      // Windows는 개발자 모드·관리자가 아니면 심볼릭 링크를 만들 수 없다(EPERM). 디렉터리 링크는 정션으로 만든다(재분석 지점이라 lstat에서 링크로 보인다).
       await fs.symlink(outside, path.join(dir, 'Default', 'Sessions'), dirLink);
       assert.equal(await removeProfileResidue(dir), -1);
       assert.equal(await fs.readFile(path.join(outside, 'Session_9'), 'utf8'), 'keep');

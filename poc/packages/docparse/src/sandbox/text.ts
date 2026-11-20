@@ -1,5 +1,3 @@
-// docparse 텍스트 층 정리(순수 함수). 샌드박스 페이지(static/docparse/docparse.mjs가 dist/sandbox/text.js를 싣는다)와 Node 테스트가 같이 쓴다.
-// 이 폴더(src/sandbox)는 샌드박스 렌더러에서 돈다: 상대 경로 import만, node:·패키지 import·송신·eval 없음(docparse-self.test.ts가 본다).
 
 export interface TextItem {
   str: string;
@@ -25,12 +23,12 @@ export function itemsToLines(items: ReadonlyArray<unknown>): string[] {
   const runs: Run[] = [];
   for (const raw of items) {
     const it = raw as Partial<TextItem> | null;
-    if (!it || typeof it.str !== 'string' || !Array.isArray(it.transform) || it.str === '') continue; // 표시 내용 표지 항목
+    if (!it || typeof it.str !== 'string' || !Array.isArray(it.transform) || it.str === '') continue;
     const [a = 0, b = 0, c = 0, d = 0, x = 0, y = 0] = it.transform;
     const size = Math.hypot(c, d) || Math.hypot(a, b) || it.height || 1;
     runs.push({ str: it.str, x, y, end: x + (it.width || 0), size });
   }
-  runs.sort((p, q) => q.y - p.y || p.x - q.x); // PDF 좌표는 위로 증가
+  runs.sort((p, q) => q.y - p.y || p.x - q.x);
   const lines: Array<{ y: number; size: number; runs: Run[] }> = [];
   let cur: { y: number; size: number; runs: Run[] } | null = null;
   for (const r of runs) {
@@ -60,21 +58,21 @@ export function tidyText(text: string): string {
     // eslint-disable-next-line no-control-regex -- 텍스트 층의 제어 문자를 지우는 것이 목적이다
     .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, ' ')
     .split('\n')
-    .map((l) => l.replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').replace(/[ \t\u00A0\u2000-\u200A\u3000]+/g, ' ').trim()) // 폭 없는 문자는 지운다(글자 사이에 끼면 값이 끊긴다)
+    .map((l) => l.replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').replace(/[ \t\u00A0\u2000-\u200A\u3000]+/g, ' ').trim())
     .filter(Boolean)
     .join('\n');
 }
 
 const isGood = (c: number): boolean =>
-  (c >= 0xac00 && c <= 0xd7a3) || // 한글 음절
-  (c >= 0x3131 && c <= 0x318e) || // 호환 자모
-  (c >= 0x21 && c <= 0x7e) || // ASCII
-  (c >= 0x2010 && c <= 0x206f) || // 일반 문장부호(※ 포함)
-  (c >= 0x2460 && c <= 0x24ff) || // 원문자
-  (c >= 0x25a0 && c <= 0x25ff) || // 도형(□■○●)
-  (c >= 0x3000 && c <= 0x303f) || // CJK 문장부호(「」)
-  (c >= 0x4e00 && c <= 0x9fff) || // 한자(ToUnicode 없는 Identity CID는 이 범위까지 오지 않는다)
-  (c >= 0xff01 && c <= 0xffef) || // 전각
+  (c >= 0xac00 && c <= 0xd7a3) ||
+  (c >= 0x3131 && c <= 0x318e) ||
+  (c >= 0x21 && c <= 0x7e) ||
+  (c >= 0x2010 && c <= 0x206f) ||
+  (c >= 0x2460 && c <= 0x24ff) ||
+  (c >= 0x25a0 && c <= 0x25ff) ||
+  (c >= 0x3000 && c <= 0x303f) ||
+  (c >= 0x4e00 && c <= 0x9fff) ||
+  (c >= 0xff01 && c <= 0xffef) ||
   c === 0xb7 || c === 0x318d || c === 0x2027;
 const isBad = (c: number): boolean => (c >= 0xe000 && c <= 0xf8ff) || c === 0xfffd || c < 0x20 || c >= 0xf0000;
 

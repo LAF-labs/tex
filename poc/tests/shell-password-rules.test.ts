@@ -1,4 +1,3 @@
-// 비밀번호 칸의 조건 3줄(인계 명세 §3.1): 렌더러 미리 보기가 서버 정책(services/account checkPasswordPolicy)과 같은 판정을 내는지 본다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';

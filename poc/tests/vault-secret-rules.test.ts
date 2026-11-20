@@ -1,7 +1,3 @@
-// 비밀 종류별 입력 규칙과 1회용 비밀 창 결속(ADR-020 결정 2, ADR-025 결정 10, D05 §3.5·§4).
-// - 타이피스트는 포털 비밀번호만 넣는다. 인증서 비밀번호는 정책이 호스트를 허용해도 넣지 않는다.
-// - 보안카드는 지원하지 않는다(대표 결정 2026-11-19): 타이피스트·1회용 창 어디에서도 받지 않는다.
-// - 1회용 입력 창(secretInput oneshot)은 금고가 secret.needed로 부른 것만 붙는다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -52,10 +48,8 @@ describe('타이피스트 종류 규칙(ADR-020 결정 2·ADR-025 결정 10)', (
     assert.equal(f.page.value, '');
     assert.equal(count(f.log, 'vault.typist_kind_refused'), 1);
     assert.ok(!f.events.some((e) => e.name === 'secret.needed'));
-    // 1회용·등록 결속은 받지 않는다(포트를 붙이지 않는다)
     assert.equal(parseSecretInputBind({ runId: 'r1', kind: 'security_card', scope: 'business' }), null);
     assert.equal(parseSecretInputBind({ mode: 'store', kind: 'security_card', scope: 'business', notice: { version: 'v1' } }), null);
-    // 보안카드 창 입력 RPC는 어느 포트에도 없다
     assert.ok(!Object.values(RPC_BY_PORT).flat().some((m) => m.includes('Card')));
   });
 });
@@ -98,7 +92,6 @@ describe('1회용 비밀 창은 금고가 부른 것만(ADR-025 결정 10)', () 
       assert.equal(await noAnswer(b.port(bind).rpc('secret.provide', { bytes: enc('TEST-PW-unreq001') })), 'silent');
       assert.equal(count(b.log, 'vault.secret_input_unrequested'), 1);
       assert.equal(b.f.ops.secrets.size, 0);
-      // 다른 run·scope·종류의 요청으로는 열리지 않는다
       b.need({ ...bind, runId: 'r2' });
       b.need({ ...bind, scope: 'personal' });
       b.need({ runId: 'r1', kind: 'cert_password', scope: 'business' });
@@ -113,7 +106,6 @@ describe('1회용 비밀 창은 금고가 부른 것만(ADR-025 결정 10)', () 
   it('저장(store) 결속 포트는 secret.needed가 없어도 붙는다(설정 화면의 등록)', async () => {
     const b = await bareVault();
     try {
-      // 붙었으면 답이 온다(여기서는 금고가 잠겨 있어 vault_locked).
       await assert.rejects(
         b.port({ mode: 'store', kind: 'portal_password', scope: 'business', notice: { version: 'v1' } }).rpc('secret.store', { entries: [{ field: 'pw', bytes: enc('TEST-PW-store001') }] }),
         /vault_locked/,
@@ -180,7 +172,6 @@ describe('1회용 비밀 창은 금고가 부른 것만(ADR-025 결정 10)', () 
   it('타이피스트가 값이 없어 보낸 secret.needed가 그 결속을 연다(1회용 → 입력)', async () => {
     const b = await bareVault();
     try {
-      // Chrome 없이: ops의 emit을 금고 emit 경로(attachRelay)처럼 needs 기록으로 잇는다.
       const rec = (b.vault as unknown as { recordNeed(n: unknown): void }).recordNeed.bind(b.vault);
       const ops = b.f.ops as unknown as { emit: (to: unknown, name: string, data: Record<string, unknown>) => void };
       const orig = ops.emit;

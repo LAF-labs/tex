@@ -1,9 +1,3 @@
-// 만료 계산(D10 §4, D07 §3 유효기간 규칙표).
-// - documents.expires_at이 우선이다. 이 값은 엔진(DocumentService.decideExpiry)이 문서를 넣을 때 정했다: 문서에서 읽은 값은
-//   규칙 범위 안일 때만 쓰고, 아니면 규칙표 값 + 사용자 확인(needsUser). 데몬은 그 결정을 다시 하지 않고 meta.expiry를 읽는다.
-// - expires_at이 없으면 validity_rules 행으로 계산한다(fixed_days, fiscal_year_rule). 둘 다 없으면 "만료 미정"이고 알리지 않는다.
-// - 규칙표에서 나온 날짜는 추정이다(사업자등록증명 90일은 제출처 관행, 사용자 결정 2026-11-01: "추정"으로 표시).
-// - 같은 종류에 더 새 서류가 있으면 옛 서류는 superseded로 두고 알리지 않는다(다시 발급한 뒤 옛 알림이 계속 뜨지 않게).
 import type { DocumentRow } from '@sax/db';
 import { addDays, addMonthsToDay, daysBetween, isDate, lastDayOf } from './time.ts';
 
@@ -13,7 +7,6 @@ export interface ValidityRuleRow {
   defaultDays: number | null;
   rule: 'fixed_days' | 'fiscal_year_rule' | 'none';
   userOverrideDays: number | null;
-  /** 알림 날짜(만료 n일 전, 쉼표 구분). D07 기본 '7,1' */
   remindDays: string;
 }
 
@@ -25,32 +18,21 @@ export type ExpiryBasis = 'document' | 'user' | 'rule' | 'fiscal_year_rule';
 export interface Expiry {
   docId: string;
   docType: string;
-  /** 사람이 읽는 이름(문서함 display_name). 알림 payload에는 넣지 않는다 */
   name: string;
   expiresOn: string | null;
   basis: ExpiryBasis | null;
-  /** 규칙표에서 나온 날짜(문서에 적힌 값·사용자 확인 값이 아님) → 화면에 "추정" */
   estimated: boolean;
-  /** 사용자 확인 필요(엔진 meta.expiry.needsUser) */
   needsUser: boolean;
-  /** 오늘부터 만료일까지(당일 0, 지나면 음수) */
   daysLeft: number | null;
-  /** schedules.next_due_at 후보: 제출 예정일이 있으면 그날, 없으면 만료일 − lead_days */
   nextDueOn: string | null;
-  /** 알림 날짜(만료 n일 전), 큰 것부터 */
   remindDays: number[];
-  /** 같은 종류에 더 새 서류가 있다(알리지 않는다) */
   superseded: boolean;
 }
 
 export interface ExpiryOptions {
-  /** 한국 시간 오늘 */
   today: string;
-  /** D10 §4 lead_days(기본 7, 사용자 조정) */
   leadDays?: number;
-  /** 사업연도 끝 달(1~12, 기본 12월). fiscal_year_rule 평가용 */
   fiscalYearEndMonth?: number;
-  /** 문서별 제출 예정일(D10 §4 "제출 예정일 입력 시 그 날짜 기준") */
   submitOn?: Readonly<Record<string, string>>;
 }
 
@@ -75,7 +57,6 @@ export function fiscalYearExpiry(issuedOn: string, fyEndMonth = 12): string {
   const m = String(Math.min(12, Math.max(1, Math.trunc(fyEndMonth)))).padStart(2, '0');
   const year = Number(issuedOn.slice(0, 4));
   let y = year;
-  // 발급일 이전(당일 포함)에 시작한 구간 중 가장 늦은 것. 결산 달이 어떻든 두 해 안에 있다.
   while (y > year - 2 && addDays(addMonthsToDay(lastDayOf(`${y}-${m}`), 3), 1) > issuedOn) y--;
   return addMonthsToDay(lastDayOf(`${y}-${m}`), 15);
 }
@@ -98,7 +79,6 @@ function fromRule(d: ExpiryDocInput, r: ValidityRuleRow | undefined, fyEndMonth:
   if (r.rule === 'fixed_days') {
     const days = r.userOverrideDays ?? r.defaultDays;
     if (!days || days < 1) return null;
-    // 엔진 decideExpiry와 같은 셈: 발급일 포함 days일 → 만료일 = 발급일 + (days − 1)
     return { expiresOn: addDays(d.issuedAt, days - 1), basis: 'rule' };
   }
   if (r.rule === 'fiscal_year_rule') return { expiresOn: fiscalYearExpiry(d.issuedAt, fyEndMonth), basis: 'fiscal_year_rule' };
@@ -131,7 +111,6 @@ export function computeExpiries(docs: readonly ExpiryDocInput[], rules: readonly
       superseded: false,
     };
   });
-  // 종류별 가장 새 서류(발급일, 같으면 만료일)만 알림 대상
   const newest = new Map<string, Expiry>();
   const key = (e: Expiry) => `${docs.find((d) => d.id === e.docId)?.issuedAt ?? ''}|${e.expiresOn ?? ''}|${e.docId}`;
   for (const e of out) {

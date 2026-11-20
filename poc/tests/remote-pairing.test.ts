@@ -1,4 +1,3 @@
-// D08 §4 페어링(SP-2 페어링 SAS): PC 역할·폰 역할을 한 프로세스에서 메모리 릴레이로 돌린다.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { describe, it } from 'node:test';
@@ -170,7 +169,6 @@ describe('폰 스캔 검사(3단계)', () => {
 
 describe('PAIR_OK 기기 목록 검사(3단계를 7단계에서)', () => {
   it('PAIR_OK 목록에 QR의 Sd가 데스크톱으로 없으면 중단(키를 저장하지 않는다)', async () => {
-    // 같은 AIK의 다른 PC 목록을 들고 온 PC: 서명은 맞지만 자기 Sd가 목록에 없다.
     const aik = ed25519Keygen().secretKey;
     const a = await mockDesktop(Date.now() - 30 * DAY, aik);
     const b = await mockDesktop(Date.now() - 30 * DAY, aik);
@@ -187,7 +185,6 @@ describe('PAIR_OK 기기 목록 검사(3단계를 7단계에서)', () => {
   });
 
   it('PAIR_OK 목록이 PAIR_OK의 AIK로 서명되지 않았으면 거부', async () => {
-    // 장악된 PC: 인증서는 계정 AIK로 서명하지만 기기 목록은 다른 키로 서명해 보낸다.
     const desk = await mockDesktop();
     const forged = softSigner(ed25519Keygen().secretKey, AIK_PURPOSES);
     const real = desk.keys.aik;
@@ -225,7 +222,6 @@ describe('핸드셰이크 공격', () => {
   });
 
   it('다시 연결할 때 PAIR_OK의 AIK가 앞서 고정한 AIK와 다르면 중단(가짜 PC)', async () => {
-    // 폰은 앞선 페어링에서 계정 AIK_A를 고정했는데, 가짜 PC는 자기 AIK_B로 서명한 목록을 보낸다.
     const realDesk = await mockDesktop(Date.now() - 30 * DAY);
     const fake = await mockDesktop(Date.now() - 30 * DAY);
     const w = await pairWorld({ desk: fake, knownAik: realDesk.keys.aik.publicKey });
@@ -250,13 +246,10 @@ describe('기기 해제·폐기 레코드(§9.2)', () => {
     assert.equal(v3.listVersion, 3);
     assert.ok(chk.ok && chk.revokedIds.has(w.phone.keys.deviceId));
     assert.ok(chk.ok && !chk.devices.some((d) => d.deviceId === w.phone.keys.deviceId));
-    // 폐기 숨기기: 옛 목록(v2)을 다시 주면 거부
     assert.equal(verifyDeviceList(phone.deviceList, w.desk.keys.aik.publicKey, 3).ok, false);
-    // 섞기: v3의 폐기 레코드를 빼고 v2 항목을 넣으면 version_mix로 거부
     const mixed = { ...v3, revoked: [], entries: [...v3.entries, phone.deviceList.entries.find((e) => e.entry.role === 'mobile')!] };
     const r = verifyDeviceList(mixed, w.desk.keys.aik.publicKey, 3);
     assert.equal(r.ok, false);
-    // 폐기된 기기를 목록에 다시 넣으면 거부
     await assert.rejects(() => addDevice(w.desk.keys.aik, v3, { deviceId: w.phone.keys.deviceId, role: 'mobile', noisePub: w.phone.keys.noise.publicKey, signPub: w.phone.keys.vmPub, registeredAt: 1 }));
   });
 
@@ -267,7 +260,7 @@ describe('기기 해제·폐기 레코드(§9.2)', () => {
     const w = await pairWorld();
     const aik = w.desk.keys.aik;
     const info = (role: 'desktop' | 'mobile') => ({ deviceId: randomUUID(), role, noisePub: ed25519Keygen().publicKey, signPub: ed25519Keygen().publicKey, registeredAt: 1 });
-    let l = w.desk.deviceList; // PC 1
+    let l = w.desk.deviceList;
     for (let i = 0; i < MAX_MOBILES; i++) l = await addDevice(aik, l, info('mobile'));
     await assert.rejects(() => addDevice(aik, l, info('mobile')), /too many devices/);
     for (let i = 1; i < MAX_DESKTOPS; i++) l = await addDevice(aik, l, info('desktop'));
@@ -275,7 +268,6 @@ describe('기기 해제·폐기 레코드(§9.2)', () => {
     assert.equal(l.entries.length, MAX_DEVICES);
     const chk = verifyDeviceList(l, aik.publicKey);
     assert.ok(chk.ok && chk.devices.length === MAX_DEVICES);
-    // 하나를 끊으면 그 역할 자리만 빈다
     const gone = l.entries.find((x) => x.entry.role === 'mobile')!.entry.device_id;
     l = await revokeDevice(aik, l, gone);
     await assert.rejects(() => addDevice(aik, l, info('desktop')), /too many devices/);
@@ -396,10 +388,8 @@ describe('계정 확인 주장 acct_claim(설계 #120, 팀장 결정 2026-11-06)
     assert.deepEqual(verifyAcctClaim(f, { accountKeys: [old.publicKey], aikPub: aik }), { ok: false, reason: 'signature' });
     assert.deepEqual(verifyAcctClaim(f, { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: ed25519Keygen().publicKey }), { ok: false, reason: 'aik_mismatch' });
     assert.deepEqual(verifyAcctClaim(f, { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: aik, now: Date.now() + 3_600_000 }), { ok: false, reason: 'expired' });
-    // 시각은 UTC 밀리초(SIGNING.md §8). 초 단위 exp가 오면 만료로 거절한다.
     const sec = Math.floor(Date.now() / 1000);
     assert.deepEqual(verifyAcctClaim(testAcctClaim(aik, { iat: sec, exp: sec + 600 }), { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: aik }), { ok: false, reason: 'expired' });
-    // 경계: exp = iat + 600000은 통과, 지금 = exp면 만료.
     const t = Date.now();
     const edge = testAcctClaim(aik, { iat: t, exp: t + 600_000 });
     assert.equal(verifyAcctClaim(edge, { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: aik, now: t + 599_999 }).ok, true);

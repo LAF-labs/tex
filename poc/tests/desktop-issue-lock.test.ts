@@ -1,5 +1,3 @@
-// 발급 잠금(ADR-048 결정 7): main 쪽 IssueLockHost(apps/desktop/src/issue-lock-host.ts)와 엔진 쪽 포트(packages/engine/src/issue-lock.ts).
-// 계정 서비스는 대역이다(서버 규칙은 services-account.test.ts). 엔진이 언제 묻는지는 h01-golden.test.ts·run-controller.test.ts에 있다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,7 +18,6 @@ async function lists(): Promise<{ one: DeviceListJson; two: DeviceListJson; oneP
   return { one, two: await addDevice(aik, one, dev('desktop')), onePhone: await addDevice(aik, one, dev('mobile')) };
 }
 
-/** 계정 서비스 발급 잠금 대역: 계정에 하나, 다른 기기가 잡고 있으면 account.issue_locked. */
 function server() {
   const st = { holder: null as string | null, lockId: null as string | null, seq: 0, down: false, unauthorized: 0, calls: [] as string[] };
   const gate = (name: string) => {
@@ -117,7 +114,6 @@ describe('발급 잠금(main): PC 2대 이상', () => {
     assert.equal(await h.host.handle({ t: 'lock.release' }), null);
     assert.deepEqual(h.srv.st.calls, ['acquire', 'renew', 'renew', 'release']);
     assert.deepEqual([h.host.held, h.srv.st.holder, h.ticks.length], [false, null, 0]);
-    // 놓은 뒤 커밋 직전 갱신이 오면(쉬었다가 게이트를 거치지 않고 온 경우) 누르지 못하게 한다
     assert.equal(await h.answer('lock.renew'), 'issue.lock_lost');
     assert.ok(!JSON.stringify(h.logs).includes('lock-'), '잠금 값은 기록하지 않는다');
   });
@@ -154,7 +150,6 @@ describe('발급 잠금(main): PC 2대 이상', () => {
     assert.equal(await h.answer('lock.renew'), 'issue.lock_lost');
     assert.equal(h.host.held, false);
     assert.equal(await h.answer('lock.acquire'), 'issue.locked_elsewhere');
-    // 30초 갱신이 먼저 알아채도 같다
     const h2 = mk((await lists()).two);
     await h2.answer('lock.acquire');
     h2.srv.st.holder = 'other';
@@ -182,10 +177,8 @@ describe('발급 잠금(main): PC 2대 이상', () => {
     assert.equal(h.srv.st.calls.length, before, '서버를 부르지 않았다');
     assert.equal(h.ticks.length, 0);
     assert.ok(h.logs.includes('hold:max_hold'));
-    // 서버 잠금이 그 사이 풀려 다른 PC가 잡았다
     h.srv.st.holder = 'other';
     assert.equal(await h.answer('lock.renew'), 'issue.lock_lost');
-    // 다시 잡으면 20분을 새로 센다
     h.srv.st.holder = null;
     assert.equal(await h.answer('lock.acquire'), 'held');
     assert.equal(h.ticks.length, 1);
@@ -221,7 +214,6 @@ describe('발급 잠금(main): PC 2대 이상', () => {
 });
 
 describe('발급 잠금: auth 포트 양쪽', () => {
-  /** 엔진 쪽 포트와 main 쪽 응답기를 한 줄로 잇는다. */
   function wire(handler: () => ((m: unknown) => Promise<IssueLockResult | null>) | null) {
     let toEngine: (m: unknown) => void = () => {};
     const sent: unknown[] = [];
@@ -271,7 +263,6 @@ describe('발급 잠금: auth 포트 양쪽', () => {
       toEngine({ t: 'lock.result', id: sent.at(-1)!.id, ...bad });
       assert.deepEqual(await p, { ok: false, code: 'issue.lock_unavailable' }, JSON.stringify(bad));
     }
-    // 늦은 답·다른 번호는 버린다
     toEngine({ t: 'lock.result', id: sent[0]!.id, ok: true, held: true });
     const p = lock.renew();
     toEngine({ t: 'lock.result', id: sent.at(-1)!.id + 100, ok: true, held: true });
@@ -308,7 +299,6 @@ describe('발급 잠금: 배선(소스 검사)', () => {
     assert.match(runs, /\.\.\.\(this\.d\.issueLock && !a\.rehearsal \? \{ issueLock: this\.d\.issueLock \} : \{\}\),/);
     const ir = read('packages/engine/src/run/service-ir.ts');
     assert.match(ir, /const lock = kind === 'invoice' \? i\.issueLock : undefined;/);
-    // 기준선보다 먼저 잡는다
     assert.match(ir, /const locked = await this\.takeIssueLock\(clock\);\s*if \(!locked\.ok\) return locked;\s*return takeBaseline\(verifyDeps, ir, g\);/);
   });
 

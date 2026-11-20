@@ -1,5 +1,3 @@
-// M1-4 패키지 로더(D03 §3.1 1~8단계, B-01·B-08·B-22·C-26, ADR-021): 서명 2-of-3·폐기 키, 원시 바이트 내용 결속, 버전 내림 금지,
-// 번들 허용 목록(BV-06), 조회 하위 패키지(V-22), 정적 검증, 핫픽스(적격·서명·단조·14일·정책 만료·재검증), 승인 바 요약 표, 보류.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { BUNDLE_ALLOWLIST } from '@sax/model';
@@ -18,7 +16,6 @@ const baseCtx = (o: Partial<LoaderContext> = {}): LoaderContext => ({
   storedVersion: null, installedDigest: null, hold: false, policyFresh: true, now: NOW, ...o,
 });
 
-/** 조회 패키지 2개를 먼저 로드한다(lookupsUsed 순서). */
 function installedLookups(): Map<string, LoadedPackage> {
   const out = new Map<string, LoadedPackage>();
   for (const [id, files] of lookups()) {

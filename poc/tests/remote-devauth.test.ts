@@ -1,5 +1,3 @@
-// AIK 서명 객체(기기 목록·폐기·Cert)와 DPoP·기기 토큰: services/shared/CONTRACT.md §1~§3 바이트 규약과 맞는지,
-// 서버 쪽과 같은 방식(node:crypto Ed25519, utf8(ctx) ‖ JCS)으로 독립 검증한다.
 import assert from 'node:assert/strict';
 import { createHash, createPublicKey, verify as edVerify } from 'node:crypto';
 import { describe, it } from 'node:test';
@@ -12,7 +10,6 @@ import { DAY, mockDesktop, mockPhone, pairOnce, pairWorld } from './remote-suppo
 
 const SPKI_ED25519 = Buffer.from('302a300506032b6570032100', 'hex');
 const pubKey = (raw: Uint8Array) => createPublicKey({ key: Buffer.concat([SPKI_ED25519, Buffer.from(raw)]), format: 'der', type: 'spki' });
-/** 서버(services/shared verifyCtx)와 같은 검증: Ed25519(utf8(ctx + JCS(obj))). */
 const serverVerify = (ctx: string, obj: unknown, pub: Uint8Array, sigB64: string) =>
   edVerify(null, Buffer.from(ctx + engineJcs(obj), 'utf8'), pubKey(pub), Buffer.from(sigB64, 'base64'));
 const b64u = (b: Buffer) => b.toString('base64url');
@@ -111,7 +108,6 @@ describe('기기 인증서 검증', () => {
   });
 });
 
-/** 서버(services/shared verifyDpop)와 같은 검사. */
 function serverCheckDpop(header: string, o: { method: string; htu: string; boundTo: string; vx: Uint8Array; now: number }) {
   const [p, s, extra] = header.split('.');
   assert.ok(p && s && extra === undefined);

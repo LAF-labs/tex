@@ -1,4 +1,3 @@
-// D06 마스킹 최소판: 식별자 토큰화, 같은 값 같은 번호, 금액 기본 치환(needsAmounts만 원값), SCREEN_DATA 구분자 이스케이프.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { ChatTokenMaps, CHAT_MAP_IDLE_MS, RECEIPT_CAP, Redactor, RedactionError, apply, applyImage, detokenize, maskRgba, normalizeForDetection, renderTree, wasMinted, type A11yNode } from '@sax/redaction';
@@ -199,7 +198,6 @@ describe('M1-5 역치환(D06 §8, B-19)', () => {
     assert.deepEqual(detokenize({ counterparty: '가나상사' }, r.map, { recordFields: ['counterparty'] }), { ok: false, reason: 'record_field_invalid' });
     assert.deepEqual(detokenize({ bizNo: '999-88-77777' }, r.map), { ok: false, reason: 'literal_identifier' });
     assert.deepEqual(detokenize({ email: 'evil@x.com' }, r.map), { ok: false, reason: 'literal_identifier' });
-    // 마스킹과 같은 정규화: 유니코드 대시·전각 숫자·한글 숫자도 식별자로 본다(Bugbot #44)
     for (const lit of ['999\u201088\u201077777', '999\u221288\u221277777', '９９９-８８-７７７７７', '구구구-팔팔-칠칠칠칠칠'])
       assert.deepEqual(detokenize({ bizNo: lit }, r.map), { ok: false, reason: 'literal_identifier' }, lit);
     assert.deepEqual(detokenize({ bizNo: '999-88-77777' }, r.map, { userText: '사업자 999 88 77777로 끊어줘' }), { ok: true, value: { bizNo: '999-88-77777' } });
@@ -259,7 +257,6 @@ describe('Redactor.addSpanFinder(대화 경로 추가 마스킹, PR #296 판정 
     r.addSpanFinder((t) => [...t.matchAll(/\d{5,}|가나/g)].map((m) => ({ start: m.index!, end: m.index! + m[0].length, kind: m[0] === '가나' ? ('NAME' as const) : ('AMT' as const) })));
     assert.equal(r.apply('가나상사에 550000 보내', { frame: 'none' }).redacted, '[NAME_1]에 [AMT_1] 보내');
     assert.equal(r.apply('550000', { frame: 'none', needsAmounts: true }).redacted, '550000');
-    // 추가 구간은 가리는 것만 한다: 기본 규칙이 가린 전화번호는 그대로 PHONE
     assert.equal(r.apply('01012345678', { frame: 'none' }).redacted, '[PHONE_1]');
   });
 });

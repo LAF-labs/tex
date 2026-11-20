@@ -1,4 +1,3 @@
-// acct_claim(서버 서명 계정 클레임, D08 §4.2 7단계, 팀장 결정 2026-11-06): 서명 검증, 만료, 다른 계정·폰·세션 토큰 거부, 전용 키 분리.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -33,14 +32,12 @@ describe('acct_claim 발급(GET /v1/acct-claim, 데스크톱 기기 토큰)', ()
     assert.deepEqual(body.claim, { account_id: pc.accountId, email: 'owner@example.com', aik_pub: pc.aik.b64, iat: now, exp: now + 10 * 60_000 });
     assert.deepEqual(Object.keys(body).sort(), ['claim', 'sig']);
     assert.ok(verifyAcctClaim(s.acctClaimPub!, body, now, pc.aik.b64));
-    // 필드 변조·추가, 다른 AIK 기대, 다른 공개키(기기 토큰 키 등)는 모두 실패
     for (const claim of [{ ...body.claim, email: 'attacker@example.com' }, { ...body.claim, account_id: 'x' }, { ...body.claim, exp: body.claim.exp + 1 }, { ...body.claim, extra: 1 }]) {
       assert.equal(verifyAcctClaim(s.acctClaimPub!, { ...body, claim }, now), false, JSON.stringify(claim));
     }
     assert.equal(verifyAcctClaim(s.acctClaimPub!, body, now, pc.aik.b64.replace(/^./, (c) => (c === 'A' ? 'B' : 'A'))), false);
     assert.equal(verifyAcctClaim(new AcctClaimSigner(ed25519Private(randomBytes(32))).publicKey, body, now), false);
     assert.equal(verifyAcctClaim(s.acctClaimPub!, { claim: body.claim, sig: 'AAAA' }, now), false);
-    // 맥락 분리: 같은 키로 다른 맥락(SAX-token-v1)에 서명한 값은 acct_claim이 아니다
     const seed = randomBytes(32);
     const signer = new AcctClaimSigner(ed25519Private(seed));
     const other = signCtx('SAX-token-v1', body.claim, ed25519Private(seed)).toString('base64');
@@ -58,7 +55,6 @@ describe('acct_claim 발급(GET /v1/acct-claim, 데스크톱 기기 토큰)', ()
     const again = (await get(pc)).json as unknown as SignedAcctClaim;
     assert.equal(again.claim.iat, s.clock.now());
     assert.ok(verifyAcctClaim(s.acctClaimPub!, again, s.clock.now(), pc.aik.b64));
-    // 서명은 맞아도 수명이 10분을 넘거나 iat가 미래(60초 넘게)면 거부
     const seed = randomBytes(32);
     const signer = new AcctClaimSigner(ed25519Private(seed));
     const now = s.clock.now();
@@ -78,7 +74,6 @@ describe('acct_claim 발급(GET /v1/acct-claim, 데스크톱 기기 토큰)', ()
     assert.equal(body.claim.email, 'attacker@example.com');
     assert.equal(body.claim.aik_pub, other.aik.b64);
     assert.equal(verifyAcctClaim(s.acctClaimPub!, body, s.clock.now(), pc.aik.b64), false);
-    // 쿼리로 다른 계정을 지정해도 토큰 계정의 클레임만 나온다
     const t = await other.token();
     const q = await s.req('GET', `${PATH}?account_id=${pc.accountId}`, { headers: other.headers('GET', ACCOUNT_ORIGIN, `${PATH}?account_id=${pc.accountId}`, t) });
     if (q.status === 200) assert.equal((q.json as unknown as SignedAcctClaim).claim.account_id, other.accountId);
@@ -86,15 +81,12 @@ describe('acct_claim 발급(GET /v1/acct-claim, 데스크톱 기기 토큰)', ()
 
   it('다른 계정의 기기 토큰·다른 기기 키의 DPoP·폰 토큰·계정 세션·토큰 없음은 거부한다', async () => {
     const other = await signedDesktop(s, 'attacker@example.com');
-    // 다른 계정 PC의 토큰을 이 PC 키로 증명(토큰 탈취): DPoP cnf 불일치 401
     const stolen = await other.token();
     assert.equal((await get(pc, stolen)).status, 401);
-    // 폰 기기 토큰은 403
     const phone = await signedPhone(s, pc);
     const rp = await get(phone);
     assert.equal(rp.status, 403, rp.text);
     assert.equal(rp.json.error, 'account.scope_denied');
-    // 계정 세션·인증 없음은 401
     assert.equal((await s.req('GET', PATH, { headers: { authorization: `Bearer ${pc.session}` } })).status, 401);
     assert.equal((await s.req('GET', PATH)).status, 401);
   });
@@ -104,7 +96,6 @@ describe('acct_claim 발급(GET /v1/acct-claim, 데스크톱 기기 토큰)', ()
     for (let i = 0; i < DEVICE.acctClaimsPerHour; i++) assert.equal((await get(pc, t)).status, 200, String(i));
     assert.equal((await get(pc, t)).json.error, 'policy.rate_limited');
     await s.db.run("UPDATE devices SET state = 'suspended' WHERE device_id = $1", [pc.d.id]);
-    // 정지는 한도보다 먼저 본다(같은 토큰이라도 정지 뒤에는 403)
     assert.equal((await get(pc, t)).json.error, 'account.device_suspended');
   });
 });

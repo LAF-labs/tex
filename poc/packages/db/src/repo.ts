@@ -24,13 +24,10 @@ export interface Profile {
   email: string | null;
   signMethod: SignMethod;
   keepSession: boolean;
-  /** 홈택스 아이디 로그인의 아이디. 비밀이 아니라 프로필 정보다(팀장 결정 2026-11-05). 비밀번호는 금고만 */
   portalLoginId: string | null;
-  /** 홈택스 인증서 창에서 고를 인증서 이름(인증서 소유자 글, 공개 정보). 실행이 사람이 고른 행에서 저장한다(H-01 2.3.0). 비밀 아님 */
   certName: string | null;
   createdAt: string;
   updatedAt: string;
-  /** 홈택스 화면에서 채운 칸 중 값이 그대로인 칸(fillFromPortal). 사용자가 고치면 빠진다. */
   fromPortal: PortalProfileKey[];
 }
 
@@ -67,9 +64,7 @@ export interface Counterparty {
 /** 거래처 저장 품목(08 §144 "자주 쓰는 품목을 저장한다"). 세금계산서 요청 때 고르는 후보일 뿐 발급 값이 아니다 */
 export interface CounterpartyItem {
   name: string;
-  /** 원 단위 정수(0 이상). 정하지 않았으면 null */
   unitPrice: number | null;
-  /** 예: 개, 식, 시간. 없으면 null */
   unit: string | null;
 }
 
@@ -103,7 +98,6 @@ const toProfile = (r: Row): Omit<Profile, 'fromPortal'> => ({
   bizItem: (r.biz_item as string) ?? null,
   address: (r.address as string) ?? null,
   email: (r.email as string) ?? null,
-  // 옛 값(보안카드)은 되돌리기 전에도 "고르지 않음"으로 읽는다
   signMethod: r.sign_method === 'cert' || r.sign_method === 'simple_auth' ? r.sign_method : null,
   keepSession: r.keep_session === 1,
   portalLoginId: (r.portal_login_id as string) ?? null,
@@ -204,10 +198,6 @@ export class ProfileRepo {
     return { ...p, fromPortal: (Object.keys(PORTAL_PROFILE_COL) as PortalProfileKey[]).filter((k) => m[k] !== undefined && m[k] === p[k]) };
   }
 
-  /**
-   * 홈택스 화면의 공급자 값으로 비어 있는 칸만 채운다(상호는 nameMissing일 때). 있는 값은 건드리지 않는다.
-   * 채운 칸은 settings에 값과 함께 적어 두고, 값이 그대로인 동안만 fromPortal로 보인다. 채운 칸 키를 돌려준다.
-   */
   fillFromPortal(id: string, values: Partial<Record<PortalProfileKey, string>>): PortalProfileKey[] {
     return this.db.transaction(() => {
       const cur = this.get(id);
@@ -233,22 +223,17 @@ export class ProfileRepo {
     })();
   }
 
-  /**
-   * 발급 인증이 옛 값(보안카드, RETIRED_SIGN_METHOD)인 프로필을 "고르지 않음"(NULL)으로 되돌린다(대표 결정 2026-11-19).
-   * 기동마다 불러도 된다: 되돌린 뒤에는 바꿀 행이 없다. 바꾼 프로필 수를 돌려준다.
-   */
   resetRetiredSignMethod(): number {
     return this.db.prepare('UPDATE profiles SET sign_method = NULL, updated_at = ? WHERE sign_method = ?').run(now(), RETIRED_SIGN_METHOD).changes;
   }
 
-  /** 종류별 1개: 같은 종류가 있으면 갱신, 없으면 만든다. */
   upsert(input: ProfileInput): Profile {
     if (!input.displayName.trim()) throw new ValidationError('display_name_required');
     let bizNo = input.bizNo ? normalizeBizNo(input.bizNo) : null;
     if (input.kind === 'business') {
       if (!bizNo || !isValidBizNo(bizNo)) throw new ValidationError('invalid_biz_no');
     } else {
-      bizNo = null; // 개인 프로필에는 사업자번호를 두지 않는다
+      bizNo = null;
     }
     checkEmail(input.email);
     const existing = this.byKind(input.kind);
@@ -264,7 +249,6 @@ export class ProfileRepo {
       biz_item: input.bizItem ?? null,
       address: input.address ?? null,
       email: input.email ?? null,
-      // 고르지 않았으면 공동인증서(대표 지시 2026-11-14: 서비스 기본 발급 인증). 간편인증은 사용자가 고를 때만.
       sign_method: input.signMethod ?? existing?.signMethod ?? 'cert',
       keep_session: input.keepSession ? 1 : 0,
       portal_login_id: input.portalLoginId === undefined ? (existing?.portalLoginId ?? null) : input.portalLoginId === null ? null : normalizeLoginId(input.portalLoginId),
@@ -281,7 +265,6 @@ export class ProfileRepo {
     return this.get(row.id)!;
   }
 
-  /** 금고 등록(T-06) 결과의 포털 아이디만 바꾼다. null이면 지운다. 없는 프로필은 profile_not_found */
   setPortalLoginId(id: string, loginId: string | null): Profile {
     const v = loginId === null ? null : normalizeLoginId(loginId);
     const n = this.db.prepare('UPDATE profiles SET portal_login_id = ?, updated_at = ? WHERE id = ?').run(v, now(), id).changes;
@@ -289,7 +272,6 @@ export class ProfileRepo {
     return this.get(id)!;
   }
 
-  /** 인증서 이름만 바꾼다(실행의 pick.remember, 지우기는 null). NFKC·공백 접기, 100자까지. 없는 프로필은 profile_not_found */
   setCertName(id: string, name: string | null): Profile {
     const v = name === null ? null : name.normalize('NFKC').replace(/\s+/g, ' ').trim().slice(0, 100) || null;
     const n = this.db.prepare('UPDATE profiles SET cert_name = ?, updated_at = ? WHERE id = ?').run(v, now(), id).changes;
@@ -349,7 +331,6 @@ export class CounterpartyRepo {
     checkEmail(patch.email);
     const next = { ...cur, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) };
     if (!String(next.name).trim()) throw new ValidationError('name_required');
-    // 정보가 바뀌면 진위확인 결과를 비운다(다시 확인해야 한다).
     const changed = next.name !== cur.name || next.repName !== cur.repName;
     this.db
       .prepare(`UPDATE counterparties SET name=?, rep_name=?, address=?, email=?, verified_at=?, verified_status=? WHERE id=?`)
@@ -357,7 +338,6 @@ export class CounterpartyRepo {
     return this.get(id)!;
   }
 
-  /** 홈택스 화면 값으로 비어 있는 대표자·주소만 채운다. 홈택스가 보인 값이라 진위확인 결과는 그대로 둔다. */
   fillFromPortal(id: string, values: { repName?: string; address?: string }): Array<'repName' | 'address'> {
     const cur = this.get(id);
     if (!cur) throw new ValidationError('not_found');
@@ -376,7 +356,6 @@ export class CounterpartyRepo {
     return this.get(id)!;
   }
 
-  /** 저장 품목(저장 순서). 거래처가 없으면 not_found */
   getItems(id: string): CounterpartyItem[] {
     const r = this.db.prepare('SELECT saved_items_json FROM counterparties WHERE id = ?').get(id) as { saved_items_json: string | null } | undefined;
     if (!r) throw new ValidationError('not_found');
@@ -388,7 +367,6 @@ export class CounterpartyRepo {
     }
   }
 
-  /** 저장 품목을 통째로 바꾼다(빈 배열이면 지운다). 검사한 목록을 돌려준다 */
   setItems(id: string, items: unknown): CounterpartyItem[] {
     const list = normalizeCounterpartyItems(items);
     const json = list.length ? JSON.stringify(list) : null;

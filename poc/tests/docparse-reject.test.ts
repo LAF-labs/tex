@@ -1,5 +1,3 @@
-// M6-12 대비 "거부해야 하는 것"(Electron 없음): 퍼징 시드 코퍼스를 샌드박스 모듈(표·그림 머리)과 parse 입구에 넣는다.
-// PDF 시드(자바스크립트·URI·Launch 동작)는 pdf.js 경로라 Electron e2e가 송신 0으로 본다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { DocparseError, parse, type DocparseHost } from '@sax/docparse';
@@ -8,7 +6,6 @@ import { imageInfo, parseCsvText, readSheetBytes, SandboxError, SHEET_LIMITS, ZI
 
 const code = (e: unknown) => (e instanceof SandboxError || e instanceof DocparseError ? e.code : `throw:${(e as Error)?.message}`);
 
-/** 표는 샌드박스 모듈을 그대로(이 테스트 안에서만, 제품은 샌드박스 창), 그림·PDF는 부르면 안 된다 */
 const hostNoDecode: DocparseHost = {
   pdf: () => Promise.reject(new Error('pdf host called')),
   image: () => Promise.reject(new Error('image host called')),
@@ -27,7 +24,6 @@ describe('퍼징 시드: 표(xlsx·CSV)', () => {
       const bytes = await seed.bytes();
       if ('reject' in seed.expect) {
         const got = await readSheetBytes(bytes).then(() => 'ok', code);
-        // 머리로 거르는 형식(표 없는 HTML·UTF-16)은 parse 입구에서 unsupported_format
         const viaParse = await parse(bytes, 'settlement', hostNoDecode).then(() => 'ok', code);
         assert.ok(seed.expect.reject.includes(got) || seed.expect.reject.includes(viaParse), `${got} / ${viaParse}`);
         assert.notEqual(viaParse, 'ok');
@@ -59,7 +55,6 @@ describe('퍼징 시드: 그림 머리·크기', () => {
     it(seed.name, async () => {
       const bytes = await seed.bytes();
       assert.ok('reject' in seed.expect);
-      // parse 입구는 디코드 전에 거른다(샌드박스 host를 부르지 않는다)
       const got = await parse(bytes, 'receipt', hostNoDecode).then(() => 'ok', code);
       assert.ok(seed.expect.reject.includes(got), got);
     });

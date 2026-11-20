@@ -1,4 +1,3 @@
-// 활동 기록의 모델·우리 서버 줄은 실제 송신(run.sent)으로만 만든다(팀장 결정 2026-11-07: "via + 실제 송신 대상", 사실과 다르면 안 된다).
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
@@ -27,7 +26,6 @@ describe('활동 기록 줄 = 실제 송신', () => {
     assert.deepEqual(views.modelRow(['gateway.run_tokens', 'gateway.decide']), ['AI', '요청 이해에 씀 · 이름·번호를 가린 요청 문장만 보냄']);
     assert.deepEqual(views.serverRow(['gateway.run_tokens', 'gateway.decide']), ['우리 서버', '실행 허가 받기(문장 없음), 이름·번호를 가린 요청 문장']);
     assert.equal(views.modelCell(['gateway.decide']), '우리 서버');
-    // 판정 요청 전에 실패해도(실행 토큰만 받음) 우리 서버로 간 것은 적는다. 모델은 쓰지 않았다.
     assert.deepEqual(views.serverRow(['gateway.run_tokens']), ['우리 서버', '실행 허가 받기(문장 없음)']);
     assert.deepEqual(views.modelRow(['gateway.run_tokens']), ['AI', '쓰지 않음(요청은 이 PC 안에서 이해함)']);
   });
@@ -70,7 +68,6 @@ describe('활동 기록 줄 = 실제 송신', () => {
     const shell = src('apps/desktop/static/shell/shell.js');
     const viewsSrc = src('apps/desktop/static/shell/shell-views.js');
     for (const s of [shell, viewsSrc]) assert.doesNotMatch(s, /modelRow\([^)]*interp\)/);
-    // 고정 "보낸 것 없음" 줄은 없다. 이번 실행 줄은 serverRow(sent)로만, 지난 실행(row.past)은 보낸 곳을 남기지 않아 줄을 두지 않는다.
     for (const s of [shell, viewsSrc]) assert.equal(s.match(/\['우리 서버', '보낸 것 없음'\]/g), null);
     assert.ok(shell.includes('serverRow(r.sent)') && shell.includes('serverRow(row.g24.sent)'));
     assert.doesNotMatch(shell, /interp\) === 'model' \? h\('td', \{\}, 'OpenRouter/);

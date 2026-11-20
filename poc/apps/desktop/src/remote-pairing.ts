@@ -1,32 +1,21 @@
-// 폰 연결(S-03, D08 §4.2) main 쪽: 룸 열기 → QR → 폰 핸드셰이크 → 사용자가 폰의 6자리를 PC에 입력 → 7단계(대리 등록·목록·우편함·acctClaim) → pair.ok.
-// 이 파일은 Electron을 쓰지 않는다(배선은 shell-app.ts, 화면은 설정 > 기기 연결 안의 연결 칸 shell-pair.js). 화면에 가는 값은 PairView뿐이고, QR은 SVG data URL 이미지로만 간다(remote-qr.ts, psk가 든 글자를 넘기지 않는다).
-// - 계정 확인 주장(acctClaim)은 GET /v1/acct-claim을 받아 b64(JCS({claim, sig}))로 pair.ok에 싣는다(DeviceSession.acctClaimField).
-// - 우편함을 등록한 뒤 페어링이 실패하면 우편함을 지운다(D08 §4.2, 기기당 3회 상한을 아끼려고).
-// - 로그는 단계·결과 코드만(폰 이름·키·SAS·QR 없음).
 import { b64, b64url, DesktopPairing, SAS_MAX_TRIES, type DesktopKeys, type DesktopPairResult, type Link, type RelayClient } from '@sax/remote';
 import type { DeviceSession } from './remote-account.ts';
 import type { AccountClient, RelayHttpClient } from './remote-ports.ts';
 
-/** QR 글자 → 이미지 data URL(data:image/svg+xml;base64,…). 제품은 remote-qr.ts qrSvgDataUrl. */
 type QrImage = (text: string) => string;
 
 export interface PairView {
   step: 'idle' | 'opening' | 'waiting_phone' | 'awaiting_sas' | 'checking' | 'paired' | 'failed';
-  /** waiting_phone일 때만. SVG data URL(화면은 <img src>로만 쓴다). */
   qr: string | null;
-  /** QR 만료(ms). */
   expiresAt: number | null;
-  /** 폰이 알린 이름(awaiting_sas 뒤, textContent로만 그린다). */
   phoneName: string | null;
   triesLeft: number | null;
-  /** 실패·틀린 입력 코드(문구는 화면이 고른다). */
   error: string | null;
 }
 
 interface PairingHostOptions {
   account: AccountClient;
   relayHttp: RelayHttpClient;
-  /** 룸 링크(WSS, 개발 스택은 ws://localhost). 시험은 MemoryRelay. */
   relay: RelayClient;
   relayHost: string;
   device: DeviceSession;
@@ -35,11 +24,8 @@ interface PairingHostOptions {
   desktopName?: string;
   now?: () => number;
   log?: (name: string, data: Record<string, string | number>) => void;
-  /** 페어링이 끝났다(우편함 토큰·채널이 든 결과). 보관·수신 배선은 받는 쪽 몫. */
   onPaired?: (r: DesktopPairResult) => void;
-  /** 화면 갱신 알림. */
   onView?: (v: PairView) => void;
-  /** pair.ok를 보낸 뒤 채널을 닫기까지(폰이 받을 시간). */
   closeAfterMs?: number;
 }
 
@@ -61,9 +47,7 @@ export class PairingHost {
   #p: DesktopPairing | null = null;
   #link: Link | null = null;
   #timer: ReturnType<typeof setTimeout> | null = null;
-  /** 이번 시도에서 등록한 우편함(실패하면 지운다). */
   #mbx: { id: Uint8Array; tokWrite: Uint8Array } | null = null;
-  /** 7단계 안에서 난 오류(DesktopPairing은 실패 이유를 돌려주지 않는다). */
   #stepError: string | null = null;
   #gen = 0;
 
@@ -82,7 +66,6 @@ export class PairingHost {
     this.#o.onView?.(this.#view);
   }
 
-  /** [폰 연결]: 룸을 열고 QR을 띄운다. 이미 진행 중이면 그대로 둔다. */
   async start(): Promise<PairView> {
     if (['opening', 'waiting_phone', 'awaiting_sas', 'checking'].includes(this.#view.step)) return this.#view;
     const gen = ++this.#gen;
@@ -135,7 +118,6 @@ export class PairingHost {
     return this.#view;
   }
 
-  /** 사용자가 폰의 6자리를 넣었다("일치" 버튼은 없다). 3회 틀리거나 시간이 지나면 끝. */
   async submitSas(code: string): Promise<PairView> {
     const p = this.#p;
     if (!p || this.#view.step !== 'awaiting_sas') return this.#view;
@@ -167,14 +149,12 @@ export class PairingHost {
     return this.#view;
   }
 
-  /** 연결을 마친 칸을 [닫기]: 화면만 쉬는 자리로 돌린다. 채널은 pair.ok를 보낸 뒤 closeAfterMs에 닫히니 여기서 끊지 않는다. 진행 중이면 cancel과 같다. */
   dismiss(): PairView {
     if (this.#view.step !== 'paired') return this.cancel();
     this.#set(IDLE);
     return this.#view;
   }
 
-  /** [취소]·로그아웃. */
   cancel(): PairView {
     const step = this.#view.step;
     this.#gen++;

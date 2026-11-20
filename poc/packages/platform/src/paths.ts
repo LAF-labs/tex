@@ -1,9 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
 
-// D07 §1.1. 모든 앱 경로는 한 루트 아래에 둔다.
-// Windows: %LOCALAPPDATA%\SovereignAX (설계 정본)
-// macOS: ~/Library/Application Support/SovereignAX (개발 동등 경로, D07 §1 Phase 3 위치)
 export interface AppPaths {
   root: string;
   userData: string;

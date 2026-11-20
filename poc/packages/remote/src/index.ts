@@ -1,4 +1,3 @@
-// @sax/remote: D08 리모트 프로토콜. PC main(데스크톱 트랙이 배선)과 폰 앱(taxoff-mobile, vendor 사본)이 같이 쓴다.
 export * from './bytes.ts';
 export * from './cbor.ts';
 export * from './channel.ts';

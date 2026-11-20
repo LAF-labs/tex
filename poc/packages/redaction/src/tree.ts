@@ -1,37 +1,25 @@
-// D06 §3 접근성 트리 추출과 절단. 입력은 금고 중계 필터를 지난 스냅샷을 엔진이 이 모양으로 옮긴 것(D05 §3.4)이고,
-// 이 모듈은 Playwright·CDP에 의존하지 않는다(엔진이 CDP Accessibility·DOMSnapshot 결과를 A11yNode로 바꿔 넘긴다).
-// 규칙: scope 서브트리 → 숨김·장식·스크립트·보이지 않는 텍스트 제거 → 표는 머리글 + 첫 3행 + 행 수 → 입력값 제거 →
-// 이름 출처 표식·이스케이프·200자 → 역할·상태 허용 목록 → 크기 상한(깊은 곳부터 접기). 실패하면 던진다(fail-closed, D06 §4).
 import { utf8Length } from './normalize.ts';
 
 export type NameSource = 'contents' | 'aria' | 'alt' | 'title' | 'label' | 'placeholder' | 'related';
 
 export interface A11yLayout {
-  /** 뷰포트 밖 절대 위치 */
   offscreen?: boolean;
   width?: number;
   height?: number;
   opacity?: number;
-  /** 전경색 = 배경색 */
   fgEqualsBg?: boolean;
-  /** clip·clip-path로 숨김 */
   clipped?: boolean;
 }
 
 export interface A11yNode {
   role: string;
   name?: string;
-  /** CDP name.sources에서 이긴 출처. aria·alt는 `(aria)` 표식, title은 제거한다(D06 §3, D-25). */
   nameSource?: NameSource;
-  /** 입력 요소의 값. 기본 제거한다(D06 §4 입력값 기본 거부). */
   value?: string;
   states?: string[];
-  /** CDP ignored / aria-hidden / display:none */
   hidden?: boolean;
   layout?: A11yLayout;
-  /** type=password·secretSlot·최근 타이피스트 대상: 값은 물론 길이도 남기지 않는다. */
   secret?: boolean;
-  /** 스텝 scope가 가리키는 노드 ID(엔진이 붙인다) */
   scopeId?: string;
   children?: A11yNode[];
 }
@@ -44,18 +32,13 @@ export interface A11yLine {
   aria: boolean;
   states: string[];
   group: number;
-  /** 접힌 노드 요약 줄(…(+N nodes)) */
   fold?: number;
-  /** 표 행 수 요약 줄 */
   rows?: number;
 }
 
 export interface RenderOptions {
-  /** scope 노드 ID. 없거나 못 찾으면 main·dialog 역할 우선, 그다음 루트. */
   scopeId?: string;
-  /** UTF-8 바이트 상한(L1 6KB, L2 8KB) */
   maxBytes: number;
-  /** 표 데이터 행 몇 개를 남길지(기본 3) */
   tableRows?: number;
 }
 
@@ -111,7 +94,6 @@ function findScope(root: A11yNode, id: string): A11yNode | null {
 }
 
 function findLandmark(root: A11yNode): A11yNode | null {
-  // 열린 대화상자가 있으면 그것이 우선(모달이 주된 화면), 그다음 main.
   for (const role of LANDMARKS) {
     const stack = [root];
     while (stack.length) {
@@ -181,7 +163,6 @@ export function renderTree(root: A11yNode, opts: RenderOptions): { lines: A11yLi
     if (DROP_ROLES.has(n.role)) return;
     const kids = n.children ?? [];
     const decor = DECOR_ROLES.has(n.role);
-    // 이름 없는 generic·장식 노드는 줄을 만들지 않고 자식을 같은 깊이·같은 묶음으로 편다.
     const flatten = decor || ((n.role === 'generic' || n.role === 'group') && !n.name);
     if (!flatten) {
       let name = n.name ?? '';
@@ -191,7 +172,6 @@ export function renderTree(root: A11yNode, opts: RenderOptions): { lines: A11yLi
       }
       if (INPUT_ROLES.has(n.role) || n.secret) {
         if (n.value !== undefined && n.value !== '') stats.droppedValues++;
-        // 입력 요소는 라벨(이름)·상태만. 값은 없다. 비밀 칸은 길이도 남기지 않는다.
       }
       const role = ROLE_ALLOW.has(n.role) ? n.role : 'generic';
       const states = (n.states ?? []).filter((s) => STATE_ALLOW.has(s));
@@ -202,7 +182,6 @@ export function renderTree(root: A11yNode, opts: RenderOptions): { lines: A11yLi
     const childDepth = flatten ? depth : depth + 1;
     const childGroup = flatten ? group : ++groups;
     if (TABLE_ROLES.has(n.role)) {
-      // 머리글 행 + 첫 keepRows 데이터 행 + 행 수(D06 §3)
       const rows: A11yNode[] = [];
       const collect = (x: A11yNode) => {
         for (const c of x.children ?? []) {
@@ -226,12 +205,10 @@ export function renderTree(root: A11yNode, opts: RenderOptions): { lines: A11yLi
   };
   walk(scope, 0, 0);
 
-  // 크기 상한: 가장 깊은 줄부터 접어 부모 바로 아래 …(+N nodes) 한 줄로 바꾼다.
   let out = lines;
   while (bytes(out) > opts.maxBytes) {
     const maxDepth = Math.max(...out.map((l) => l.depth));
     if (maxDepth === 0) {
-      // 루트 깊이만 남았는데도 크면 끝에서부터 잘라 요약한다.
       let cut = 0;
       while (out.length > 1 && bytes(out) > opts.maxBytes) {
         const last = out.pop()!;

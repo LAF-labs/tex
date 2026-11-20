@@ -1,5 +1,3 @@
-// 스테이징 파일 한 번 읽기(@sax/platform readRegularFile): 경로를 두 번 따라가지 않고, 확인한 파일과 연 파일이 같은지 bigint dev·ino로 본다.
-// 쓰는 곳: 금고 PDF 내려받기 마무리(pdf/save.ts), 엔진 PDF 저장(driver/pdf.ts). #199(NPKI)와 같은 결함 유형.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -39,7 +37,7 @@ describe('readRegularFile(스테이징 파일 한 번 읽기)', () => {
     try {
       await fs.symlink(target, link);
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'EPERM') return; // Windows: 개발자 모드·관리자가 아니면 링크를 못 만든다
+      if ((e as NodeJS.ErrnoException).code === 'EPERM') return;
       throw e;
     }
     assert.deepEqual(await readRegularFile(link, 100), { ok: false, reason: 'not_file' });
@@ -53,7 +51,6 @@ describe('readRegularFile(스테이징 파일 한 번 읽기)', () => {
     const growBig: SafeReadFs = { ...nodeSafeReadFs, open: async (q, f) => (await fs.appendFile(q, 'x'.repeat(200)), nodeSafeReadFs.open(q, f)) };
     assert.deepEqual(await readRegularFile(p, 100, { fs: growBig }), { ok: false, reason: 'too_large' });
     const q2 = await file('grow-small.pdf', 'aaaa');
-    // 열고 fstat한 뒤에 커진다: 읽기가 fstat 크기보다 많이 나온다
     const growAfterOpen: SafeReadFs = {
       ...nodeSafeReadFs,
       open: async (q, f) => {

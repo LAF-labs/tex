@@ -1,5 +1,3 @@
-// 승인 카드 id별 게이트 요청(팀장 지시 2026-11-09, D03 §3, ADR-021): invoice.confirm = H-01 13칸, cert.confirm = 민원증명 4칸(H-03·H-04·H-08·H-09 공통).
-// readbackCard·buildGateRequest·gateSelfCheck가 같은 앱 내장 표(GATE_CARDS)를 본다. 표에 없는 카드는 게이트를 열지 않는다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { buildGateRequest, CERT_READBACK_KEYS, GATE_CARDS, gateSelfCheck, READBACK_KEYS, readbackCard, readbackHash, type GateField } from '@sax/engine';

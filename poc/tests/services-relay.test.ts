@@ -1,4 +1,3 @@
-// M7-3 릴레이·푸시(D08 §4.2·§7·§8·§8.1·§9.3, D09 §4·§4.2·§10). 계정 서비스가 실제로 발급한 기기 범위 토큰으로 붙는다. 푸시 공급사는 모의.
 import assert from 'node:assert/strict';
 import { createVerify, generateKeyPairSync, randomBytes } from 'node:crypto';
 import http2 from 'node:http2';
@@ -36,7 +35,6 @@ interface Env {
   wsHeaders(who: Who, path: string, extra?: Record<string, string>): Promise<Record<string, string>>;
 }
 
-/** 기기 토큰 캐시(계정 서비스 발급 한도 60회/시를 시험이 태우지 않게). 시계가 10분 넘게 가면 새로 받는다. */
 function cached(who: Who, s: Stack): Who {
   let t: { token: string; at: number } | null = null;
   return {
@@ -67,7 +65,6 @@ async function start(flags: { rooms?: boolean; live?: boolean; wsOrigin?: string
   const pbase = await listen(push);
   const r = client(rbase);
   const p = client(pbase);
-  // 계정 서비스의 정지 훅 → 릴레이·푸시 내부 API(룸 호스트와 같은 서명 HTTP 경로)
   s.pairing.impl = httpPairingRooms(rbase, INTERNAL_KEY);
   for (const base of [rbase, pbase]) s.hooks.push(httpStopHook(base, INTERNAL_KEY));
   const pc0 = await signedDesktop(s, 'relay@example.com');
@@ -89,7 +86,6 @@ async function start(flags: { rooms?: boolean; live?: boolean; wsOrigin?: string
     logs,
     pc,
     phone,
-    // DPoP htu = origin + 경로(쿼리 제외, RFC 9449 §4.3)
     call: async (who, method, path, o = {}) => r(method, path, { headers: { ...who.headers(method, RO, path.split('?')[0]!, await who.token()), ...(o.headers ?? {}) }, body: o.body }),
     pcall: async (who, method, path, body) => p(method, path, { headers: who.headers(method, PO, path, await who.token()), body }),
     wsHeaders: async (who, path, extra = {}) => ({ ...who.headers('GET', RO, path, await who.token()), ...extra }),
@@ -131,7 +127,6 @@ interface Sock {
   next(pred?: (m: Buffer | Record<string, unknown>) => boolean): Promise<Buffer | Record<string, unknown>>;
 }
 
-/** WebSocket 연결. 열리면 Sock, 업그레이드가 거절되면 null. */
 async function open(url: string, headers: Record<string, string> = {}): Promise<Sock | null> {
   const ws = new WebSocket(url, { headers } as never);
   ws.binaryType = 'arraybuffer';
@@ -179,19 +174,16 @@ describe('M7-3 릴레이: 우편함 등록·능력 토큰·기기 토큰', () =>
     assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: m })).json.error, 'request.param_rejected');
     assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: { ...newMailbox(), tokWrite: m.tokRead } })).status, 201);
     assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: newMailbox() })).status, 201);
-    // 폰을 알리지 않는 예전 PC의 우편함은 자리를 세지 않는다(v2, 자리는 아래 시험)
     assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: newMailbox() })).status, 201);
     assert.equal((await e.call(e.phone, 'POST', '/v1/mailboxes', { body: newMailbox() })).json.error, 'account.scope_denied');
     assert.equal((await e.r('POST', '/v1/mailboxes', { headers: { authorization: `Bearer ${e.pc.session}` }, body: newMailbox() })).json.error, 'relay.unauthorized');
     const x = newMailbox();
     assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: { ...x, tokRead: x.mbxId } })).json.error, 'request.param_rejected');
     assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: { ...x, extra: 1 } })).json.error, 'request.param_rejected');
-    // 삭제하면 개수가 돌아온다(재발급 mbx.reissue)
     assert.equal((await e.call(e.pc, 'DELETE', `/v1/mailboxes/${m.mbxId}`, { headers: { 'x-mbx-write': m.tokRead } })).json.error, 'relay.mailbox_not_found');
     assert.equal((await e.call(e.pc, 'DELETE', `/v1/mailboxes/${m.mbxId}`, { headers: { 'x-mbx-write': m.tokWrite } })).status, 204);
     const n = newMailbox();
     assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: n })).status, 201);
-    // 같은 우편함을 동시에 지워도 한 번만 지워진다
     const del = () => e.call(e.pc, 'DELETE', `/v1/mailboxes/${n.mbxId}`, { headers: { 'x-mbx-write': n.tokWrite } });
     const both = await Promise.all([del(), del(), del()]);
     assert.ok(both.every((r) => r.status === 204 || r.json.error === 'relay.mailbox_not_found'));
@@ -202,31 +194,25 @@ describe('M7-3 릴레이: 우편함 등록·능력 토큰·기기 토큰', () =>
     const pc0 = e.pc as unknown as Signed;
     const mk = (peer?: string) => e.call(e.pc, 'POST', '/v1/mailboxes', { body: { ...newMailbox(), ...(peer ? { peer } : {}) } });
     const slots = async (owner: string) => (await e.db.all<{ peer_dev: string }>('SELECT peer_dev FROM mailbox_slots WHERE owner_dev = $1', [owner])).map((x) => x.peer_dev).sort();
-    // 같은 계정의 쓰이는 폰: 자리 하나. 다시 연결해도 자리를 더 쓰지 않는다
     assert.equal((await mk(e.phone.id)).status, 201);
     assert.equal((await mk(e.phone.id)).status, 201);
     assert.deepEqual(await slots(pc0.d.id), [e.phone.id]);
-    // 모르는 폰·PC 자신은 받지 않는다(남의 기기 ID로 자리를 만들지 못하게)
     assert.equal((await mk(device('mobile', 0).id)).json.error, 'request.param_rejected');
     assert.equal((await mk(pc0.d.id)).json.error, 'request.param_rejected');
-    // 폰을 끊어 지우면(x-mbx-peer) 그 자리도 빈다
     const m = { ...newMailbox(), peer: e.phone.id };
     assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: m })).status, 201);
     assert.equal((await e.call(e.pc, 'DELETE', `/v1/mailboxes/${m.mbxId}`, { headers: { 'x-mbx-write': m.tokWrite, 'x-mbx-peer': e.phone.id } })).status, 204);
     assert.deepEqual(await slots(pc0.d.id), []);
-    // 계정 서비스가 폰을 정지하면(정지 훅) 그 자리가 빈다
     assert.equal((await mk(e.phone.id)).status, 201);
     assert.equal((await e.s.req('POST', `/v1/devices/${e.phone.id}/suspend`, { headers: { authorization: `Bearer ${pc0.session}` } })).status, 204);
     assert.deepEqual(await slots(pc0.d.id), []);
 
-    // 자리는 PC당 RELAY.mailboxesPerDevice: 쓰이는 폰이 다 차면 다음 폰은 막히고, 쓰이지 않게 된 폰의 자리는 새로 만들 때 비운다
     const owner = 'pc-limit';
     const peers = Array.from({ length: RELAY.mailboxesPerDevice + 1 }, () => device('mobile', 0).id);
     for (const p of peers.slice(0, -1)) await e.svc.createMailbox(owner, { ...newMailbox(), peer: p }, async () => true);
     await assert.rejects(e.svc.createMailbox(owner, { ...newMailbox(), peer: peers.at(-1)! }, async () => true), /relay\.mailbox_limit/);
     await e.svc.createMailbox(owner, { ...newMailbox(), peer: peers.at(-1)! }, async (p) => p !== peers[0]);
     assert.deepEqual(await slots(owner), peers.slice(1).sort());
-    // 예전 PC(폰을 알리지 않음)의 우편함은 자리를 세지 않는다(지우기에 실패한 v1 개수가 남아도 막히지 않는다)
     await e.db.run("INSERT INTO mailbox_quota (device_id, n) VALUES ($1, 3) ON CONFLICT (device_id) DO UPDATE SET n = 3", [owner]);
     await e.svc.createMailbox(owner, newMailbox());
   });
@@ -242,7 +228,6 @@ describe('M7-3 릴레이: 우편함 등록·능력 토큰·기기 토큰', () =>
     assert.equal((await e.call(e.pc, 'GET', `/v1/mailboxes/${m.mbxId}/envelopes`, { headers: { 'x-mbx-read': m.tokRead } })).json.error, 'policy.rate_limited');
     e.s.clock.advance(RELAY.authFailureWindowMs);
     assert.equal((await e.call(e.pc, 'GET', `/v1/mailboxes/${m.mbxId}/envelopes`, { headers: { 'x-mbx-read': m.tokRead } })).status, 200);
-    // DB 장애는 토큰 추측으로 세지 않는다(장애가 끝나면 맞는 토큰은 바로 통한다)
     const auth = e.svc.auth.bind(e.svc);
     e.svc.auth = () => Promise.reject(new Error('db down'));
     for (let i = 0; i < RELAY.authFailuresPerIp + 2; i++) assert.equal((await e.call(e.pc, 'GET', `/v1/mailboxes/${m.mbxId}/envelopes`, { headers: { 'x-mbx-read': m.tokRead } })).status, 500);
@@ -271,18 +256,16 @@ describe('M7-3 릴레이: 오프라인 의도 봉투 큐(72시간·160건·6 MiB
     assert.equal((await e.call(e.pc, 'POST', path, { headers: { 'x-mbx-write': m.tokWrite }, body: envelope() })).json.error, 'account.scope_denied');
     const got = await e.call(e.pc, 'GET', path, { headers: { 'x-mbx-read': m.tokRead } });
     assert.deepEqual(got.json, { envelopes: [{ seq: 1, env: env1 }], more: false });
-    // 저장은 봉인본: 암호문 원문도 DB에 그대로 있지 않다
     const raw = await e.db.all<{ sealed: Buffer }>('SELECT sealed FROM queue');
     assert.ok(!raw[0]!.sealed.toString('latin1').includes(env1.ct.slice(0, 40)));
     for (let i = 0; i < 4; i++) assert.equal((await e.call(e.phone, 'POST', path, { headers: { 'x-mbx-write': m.tokWrite }, body: envelope() })).status, 202);
     for (let i = 5; i < RELAY.queueMaxEnvelopes; i++) {
-      e.s.clock.advance(1000); // 우편함당 초당 메시지 한도 밖으로
+      e.s.clock.advance(1000);
       assert.equal((await e.call(e.phone, 'POST', path, { headers: { 'x-mbx-write': m.tokWrite }, body: envelope() })).status, 202);
     }
     assert.equal((await e.call(e.phone, 'POST', path, { headers: { 'x-mbx-write': m.tokWrite }, body: envelope() })).json.error, 'relay.queue_full');
     assert.deepEqual((await e.call(e.pc, 'POST', `/v1/mailboxes/${m.mbxId}/ack`, { headers: { 'x-mbx-read': m.tokRead }, body: { seq: 3 } })).json, { deleted: 3 });
     assert.deepEqual(((await e.call(e.pc, 'GET', path, { headers: { 'x-mbx-read': m.tokRead } })).json.envelopes as Array<{ seq: number }>).map((x) => x.seq), Array.from({ length: RELAY.queueMaxEnvelopes - 3 }, (_, i) => i + 4));
-    // 72시간 만료
     e.s.clock.advance(72 * H);
     assert.deepEqual((await e.call(e.pc, 'GET', path, { headers: { 'x-mbx-read': m.tokRead } })).json, { envelopes: [], more: false });
     await e.svc.sweep();
@@ -328,19 +311,16 @@ describe('M7-3 릴레이: 오프라인 의도 봉투 큐(72시간·160건·6 MiB
     const perPage = Math.floor(RELAY.queuePageMaxBytes / one);
     assert.ok(sent.length > perPage, `${sent.length} > ${perPage}`);
     const get = (q = '') => e.call(e.pc, 'GET', path + q, { headers: { 'x-mbx-read': m.tokRead } });
-    // 첫 쪽: 상한 안, 응답 본문은 Vercel 상한 아래
     const p1 = await get();
     const e1 = p1.json.envelopes as Array<{ seq: number; env: unknown }>;
     assert.equal(p1.json.more, true);
     assert.equal(e1.length, perPage);
     assert.ok(Buffer.byteLength(p1.text) < 4_500_000, `${Buffer.byteLength(p1.text)}`);
     assert.deepEqual(e1.map((x) => x.env), sent.slice(0, perPage));
-    // ACK 전에 after로 다음 쪽
     const p2 = await get(`?after=${e1.at(-1)!.seq}`);
     const e2 = p2.json.envelopes as Array<{ seq: number; env: unknown }>;
     assert.deepEqual([...e1, ...e2].map((x) => x.env), sent.slice(0, e1.length + e2.length));
     assert.equal(p2.json.more, e1.length + e2.length < sent.length);
-    // 옛 클라이언트: 첫 쪽만 보고 ACK → 다시 읽으면 나머지
     await e.call(e.pc, 'POST', `/v1/mailboxes/${m.mbxId}/ack`, { headers: { 'x-mbx-read': m.tokRead }, body: { seq: e1.at(-1)!.seq } });
     const rest: unknown[] = [];
     for (let guard = 0; guard < 10; guard++) {
@@ -352,13 +332,11 @@ describe('M7-3 릴레이: 오프라인 의도 봉투 큐(72시간·160건·6 MiB
       if (!p.json.more) break;
     }
     assert.deepEqual(rest, sent.slice(perPage));
-    // 봉투 하나는 상한과 무관하게 들어간다(서비스 계층)
     e.s.clock.advance(1000);
     await e.call(e.phone, 'POST', path, { headers: { 'x-mbx-write': m.tokWrite }, body: big() });
     const key = (await e.db.one<{ mbx_key: string }>('SELECT mbx_key FROM queue LIMIT 1'))!.mbx_key;
     const tiny = await e.svc.list(key, 0, 1);
     assert.equal(tiny.envelopes.length, 1);
-    // 형식: after는 0 또는 양의 정수 한 개, 다른 쿼리 키는 거부
     for (const q of ['?after=-1', '?after=01', '?after=x', '?after=1&after=2', '?limit=5', '?after=1e3', '?after=9999999999999999']) {
       assert.equal((await get(q)).json.error, 'request.param_rejected', q);
     }
@@ -379,7 +357,6 @@ describe('M7-3 릴레이: 오프라인 의도 봉투 큐(72시간·160건·6 MiB
 });
 
 describe('룸 호스트: WSS DPoP origin(RELAY_WS_ORIGIN)', () => {
-  // 운영 룸 호스트: HTTP(/v1/rooms, Vercel 재작성)는 https://tax.laf-co.com, WSS는 QR 호스트 https://rooms.tax.laf-co.com으로 htu를 만든다
   const WS_ORIGIN = 'https://rooms.example';
   let e: Env;
   beforeEach(async () => (e = await start({ wsOrigin: WS_ORIGIN })));
@@ -430,16 +407,13 @@ describe('M7-3 릴레이: 라이브 우편함(WSS)', () => {
     const f2 = data(1000);
     pc.ws.send(f2);
     assert.deepEqual(await ph.next(Buffer.isBuffer), f2);
-    // 폰이 의도 봉투를 넣으면 붙어 있는 PC에 내용 없이 알린다
     await e.call(e.phone, 'POST', `/v1/mailboxes/${m.mbxId}/envelopes`, { headers: { 'x-mbx-write': m.tokWrite }, body: envelope() });
     assert.deepEqual(await pc.next((x) => !Buffer.isBuffer(x) && x.t === 'env'), { t: 'env' });
-    // 틀린 버전·ENV kind·길이 불일치·텍스트는 전달하지 않고 센다
     const bad = [Buffer.from([2, 1, 0, 0]), Buffer.from([1, 3, 0, 0]), Buffer.concat([hs(10).subarray(0, 4), randomBytes(3)])];
     for (const b of bad) ph.ws.send(b);
     ph.ws.send('hello');
     ph.ws.send(Buffer.from([9]));
     await ph.closed;
-    // PC가 받은 바이너리는 폰이 보낸 f1 하나뿐이다(f2는 PC가 보낸 것). 틀린 프레임은 하나도 오지 않았다
     assert.ok(pc.msgs.filter(Buffer.isBuffer).length === 1, '형식이 틀린 프레임은 전달되지 않았다');
     assert.deepEqual(await pc.next(isPeer), { t: 'peer', online: false });
     const stats = await e.db.all<{ kind: string; size_bucket: number; n: number }>('SELECT kind, size_bucket, n FROM relay_stats ORDER BY kind');
@@ -455,7 +429,6 @@ describe('M7-3 릴레이: 라이브 우편함(WSS)', () => {
     const ph = (await live(m, e.phone))!;
     await ph.next(isPeer);
     await pc.next(isPeer);
-    // 실패 한도(5)를 넘는 횟수라도 끊기지 않는다. 초당 1번을 넘는 ping은 답하지 않는다
     for (let i = 0; i < 6; i++) pc.ws.send('{"t":"ping"}');
     assert.deepEqual(await pc.next((x) => !Buffer.isBuffer(x) && x.t === 'pong'), { t: 'pong' });
     await new Promise((r) => setTimeout(r, 50));
@@ -544,7 +517,6 @@ describe('폰 대리 등록(팀장 결정 2026-11-06): PC가 데스크톱 기기
     const t = await who.token();
     return e.s.req('POST', '/v1/devices/enroll', { headers: who.headers('POST', ACCOUNT_ORIGIN, '/v1/devices/enroll', t), body });
   };
-  /** PC가 룸을 만들고 두 쪽이 붙는다(폰은 아직 기기 토큰이 없다: 룸 참가에는 인증이 없다) */
   const pairedRoom = async (join = 2) => {
     const roomId = newRoomId();
     assert.equal((await e.call(e.pc, 'POST', '/v1/rooms', { body: { roomId } })).status, 201);
@@ -559,12 +531,10 @@ describe('폰 대리 등록(팀장 결정 2026-11-06): PC가 데스크톱 기기
     const r = await enroll(enrollBody(phone, roomId));
     assert.equal(r.status, 201, r.text);
     assert.ok(e.s.mail.outbox.some((m) => m.kind === 'device_enrolled'));
-    // 같은 룸 두 번째 enroll은 409(1회용): 다른 폰이든 같은 폰(같은 키)이든
     const second = await enroll(enrollBody(device('mobile', e.s.clock.now()), roomId));
     assert.equal(second.status, 409);
     assert.equal(second.json.error, 'relay.room_used');
     assert.equal((await enroll(enrollBody(phone, roomId))).json.error, 'relay.room_used');
-    // 그 뒤 PUT /v1/device-list(같은 PC의 AIK 서명)로 활성
     const cur = (await e.s.req('GET', '/v1/device-list', { headers: { authorization: `Bearer ${e.pc.session}` } })).json.deviceList as { listVersion: number; entries: unknown[] };
     const t = await e.pc.token();
     const up = await e.s.req('PUT', '/v1/device-list', {
@@ -581,7 +551,6 @@ describe('폰 대리 등록(팀장 결정 2026-11-06): PC가 데스크톱 기기
     const lone = await pairedRoom(1);
     assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), lone.roomId))).json.error, 'relay.room_unavailable');
     assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), newRoomId()))).json.error, 'relay.room_unavailable');
-    // 다른 PC(다른 계정)는 이 PC가 만든 룸을 쓸 수 없다
     const { roomId, socks } = await pairedRoom();
     const pc2 = await signedDesktop(e.s, 'other-pc@example.com');
     assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), roomId), pc2)).json.error, 'relay.room_unavailable');
@@ -589,7 +558,6 @@ describe('폰 대리 등록(팀장 결정 2026-11-06): PC가 데스크톱 기기
     e.s.clock.advance(120_000);
     assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), late.roomId))).json.error, 'relay.room_unavailable');
     for (const s of [...lone.socks, ...socks, ...late.socks]) s.ws.close();
-    // 실패한 시도는 기기를 만들지 않는다
     assert.equal((await e.s.db.one<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE role = 'mobile'"))!.n, 1);
   });
 
@@ -600,7 +568,6 @@ describe('폰 대리 등록(팀장 결정 2026-11-06): PC가 데스크톱 기기
     for (const bad of [{ role: 'desktop' }, { platform: 'windows' }, { roomId: 'short' }, { extra: 1 }]) assert.equal((await enroll({ ...enrollBody(phone, roomId), ...bad })).status, 400, JSON.stringify(bad));
     const viaSession = await e.s.req('POST', '/v1/devices/enroll', { headers: { authorization: `Bearer ${e.pc.session}` }, body: enrollBody(phone, roomId) });
     assert.equal(viaSession.status, 400);
-    // 위 거절들은 룸을 소비하지 않았다
     assert.equal((await enroll(enrollBody(phone, roomId))).status, 201);
     for (const s of socks) s.ws.close();
   });
@@ -616,13 +583,11 @@ describe('폰 대리 등록(팀장 결정 2026-11-06): PC가 데스크톱 기기
       mails: e.s.mail.outbox.filter((m) => m.kind === 'device_enrolled').length,
     });
     const before = await countState();
-    // PC 목록이 낡아 같은 폰을 다시 연결: 새 룸으로 다시 등록 → 200 기존 기록(pending)
     const again = await pairedRoom();
     const r2 = await enroll(enrollBody(phone, again.roomId));
     assert.equal(r2.status, 200, r2.text);
     assert.deepEqual(r2.json, { holdUntil: r1.json.holdUntil, state: 'pending' });
     assert.deepEqual(await countState(), before);
-    // 이미 쓴 첫 룸으로는 같은 키라도 409
     assert.equal((await enroll(enrollBody(phone, first.roomId))).json.error, 'relay.room_used');
     for (const s of [...first.socks, ...again.socks]) s.ws.close();
   });
@@ -640,11 +605,9 @@ describe('폰 대리 등록(팀장 결정 2026-11-06): PC가 데스크톱 기기
       assert.equal(r.json.error, 'relay.room_used');
     }
     assert.equal(Number((await e.s.db.one<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE role = 'mobile'"))!.n), before);
-    // 룸은 PAIR_OK 전까지 열려 있다: 두 쪽 연결이 그대로 프레임을 주고받는다
     const f = hs(96);
     socks[0]!.ws.send(f);
     assert.deepEqual(await socks[1]!.next(), f);
-    // 다른 PC는 이 룸이 쓰였는지 알 수 없다(여전히 404)
     const pc2 = await signedDesktop(e.s, 'other-pc@example.com');
     assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), roomId), pc2)).json.error, 'relay.room_unavailable');
     for (const s of [...a.socks, ...socks]) s.ws.close();
@@ -661,16 +624,13 @@ describe('폰 대리 등록(팀장 결정 2026-11-06): PC가 데스크톱 기기
       assert.equal(r.status, 400, JSON.stringify(keys));
       assert.equal(r.json.error, 'request.param_rejected');
     }
-    // 데스크톱 기기 ID(같은 계정)·다른 계정 PC가 이 폰 ID로는 400
     assert.equal((await enroll({ ...enrollBody(phone, roomId), deviceId: e.pc.d.id })).status, 400);
     const pc2 = await signedDesktop(e.s, 'other-pc@example.com');
     assert.equal((await enroll(enrollBody(phone, roomId), pc2)).status, 400);
-    // 정지·폐기된 같은 키 기록은 멱등이 아니다
     await e.s.db.run("UPDATE devices SET state = 'suspended' WHERE device_id = $1", [phone.id]);
     assert.equal((await enroll(enrollBody(phone, roomId))).status, 400);
     await e.s.db.run("UPDATE devices SET state = 'revoked' WHERE device_id = $1", [phone.id]);
     assert.equal((await enroll(enrollBody(phone, roomId))).status, 400);
-    // 위 거절들은 룸을 소비하지 않았다: 새 기기 ID로 같은 룸에 등록된다
     assert.equal((await enroll(enrollBody(other, roomId))).status, 201);
     for (const s of [...a.socks, ...socks]) s.ws.close();
   });
@@ -698,7 +658,6 @@ describe('폰 대리 등록(팀장 결정 2026-11-06): PC가 데스크톱 기기
       assert.equal((await enroll(enrollBody(p, roomId))).status, 200);
       for (const s of socks) s.ws.close();
     }
-    // 여전히 꽉 차 있다(재등록이 칸을 더 쓰지도 비우지도 않았다). 상한 거절은 룸을 쓰지 않는다
     const { roomId, socks } = await pairedRoom();
     assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), roomId))).json.error, 'account.device_limit');
     await e.s.db.run("UPDATE devices SET state = 'revoked' WHERE device_id = $1", [phones[0]!.id]);
@@ -714,7 +673,6 @@ describe('폰 대리 등록(팀장 결정 2026-11-06): PC가 데스크톱 기기
     }
     const { roomId, socks } = await pairedRoom();
     assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), roomId))).json.error, 'account.device_limit');
-    // 한 대를 폐기 처리(여기서는 DB로 대신)하면 같은 룸으로 등록할 수 있다
     await e.s.db.run("UPDATE devices SET state = 'revoked' WHERE device_id = $1", [e.phone.id]);
     assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), roomId))).status, 201);
     for (const s of socks) s.ws.close();
@@ -767,7 +725,6 @@ describe('M7-3 푸시: 내용 없는 깨우기(/v1/wake)', () => {
     }
     e.s.clock.advance(61_000);
     assert.equal((await e.pcall(e.pc, 'POST', '/v1/wake', { deviceId: e.phone.id })).json.error, 'policy.rate_limited');
-    // 다른 계정의 PC는 이 폰을 깨울 수 없다(없는 기기와 같은 응답)
     const other = await signedDesktop(e.s, 'other@example.com');
     assert.equal((await e.pcall(other, 'POST', '/v1/wake', { deviceId: e.phone.id })).json.error, 'push.target_not_found');
   });
@@ -833,7 +790,6 @@ describe('M7-3 푸시 어댑터: 내용 없는 페이로드(APNs 샌드박스·F
     assert.equal(await s.send('apns', 'bad0'.repeat(16), 'update'), 'invalid', '400 BadDeviceToken은 무효');
     assert.equal(await s.send('apns', 'bad0'.repeat(16), 'update'), 'retry', '400 BadTopic(설정 오류)은 토큰을 지우지 않는다');
     s.close();
-    // 샌드박스 모드(production 아님): 운영 토큰은 보내지 않고 지우지도 않는다
     const sb = new ApnsSender({ origins: { apns: local, apns_dev: local }, teamId: 'TEAM123456', keyId: 'KEY1234567', p8, topic: 'dev.sax.app', now });
     const before = seen.length;
     assert.equal(await sb.send('apns', 'ab'.repeat(32), 'approve'), 'retry');

@@ -1,7 +1,4 @@
-// Electron e2e: docparse 샌드박스 OCR·공동인증서 certInfo. 앱 폴더·키체인을 쓰지 않는다.
-// 승인 바(ADR-021) e2e는 shell-e2e.ts(PoC-9)로 옮겼다.
-// 실행: electron apps/desktop/e2e-dist/ocr-e2e.js (옛 src/e2e.ts, 개발 콘솔 삭제 W-1 때 옮겼다)
-import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
+import './os-guard.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, BrowserWindow, protocol, session } from 'electron';
@@ -11,14 +8,13 @@ import { certInfoInSandbox, DOCPARSE_SCHEME, ocrImageInSandbox, ocrInSandbox, pa
 
 protocol.registerSchemesAsPrivileged([{ scheme: DOCPARSE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.setPath('userData', path.join(app.getPath('temp'), `sax-e2e-${process.pid}`));
-app.on('window-all-closed', () => {}); // 창이 모두 닫혀도 e2e가 끝날 때까지 유지
+app.on('window-all-closed', () => {});
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const results: Array<{ name: string; ok: boolean; detail?: unknown }> = [];
 const check = (name: string, ok: boolean, detail?: unknown) => results.push({ name, ok, detail });
 
 async function docparseTests(): Promise<void> {
-  // 등록증 이미지를 숨김 창에서 그려 캡처한다(테스트 입력 생성용).
   const w = new BrowserWindow({ show: false, width: 1000, height: 760, webPreferences: { offscreen: true } });
   const html = `<!doctype html><meta charset="utf-8"><body style="font-family:'Apple SD Gothic Neo','Malgun Gothic',sans-serif;font-size:24px;padding:40px;background:#fff">
 <h1 style="text-align:center;letter-spacing:12px">사업자등록증</h1><p style="text-align:center">(일반과세자)</p><p style="text-align:center">등록번호 : 220-81-62517</p>
@@ -31,7 +27,6 @@ async function docparseTests(): Promise<void> {
   const ocr = await ocrInSandbox(new Uint8Array(png));
   const parsed = parseBizCert(ocr.text);
   check('docparse 샌드박스 OCR(kor) → 등록번호·대표자·개업일', parsed.fields.repName === '최마바' && parsed.fields.openDate === '20210630' && (parsed.fields.bizNo === '2208162517' || parsed.bizNoSuggestions.includes('2208162517')), { ms: ocr.ms, confidence: ocr.confidence, fields: parsed.fields });
-  // 온보딩 O-02 경로(M4-3): 고른 파일(그림·글자 층 PDF) → 실제 샌드박스 → bizcert.parse와 같은 해석 → 온보딩 칸
   const logs: unknown[] = [];
   const read = (bytes: Buffer) =>
     readBizCert({
@@ -53,7 +48,6 @@ async function docparseTests(): Promise<void> {
   check('빈 입력 거부', bad === 'input_size', bad);
 }
 
-// ── 공동인증서 certInfo(샌드박스, #95). 합성 DER: 서명은 검증하지 않으므로 빈 서명 비트열이면 된다 ──
 const len = (n: number) => (n < 0x80 ? [n] : n < 0x100 ? [0x81, n] : [0x82, n >> 8, n & 0xff]);
 const T = (tag: number, ...body: Uint8Array[]) => {
   const v = Buffer.concat(body);

@@ -1,5 +1,3 @@
-// 제품 배선(remote-wiring.ts): 실제 클라우드 포트(cloudPorts → @sax/net Egress cloudDevLocal)로 개발 스택(실제 계정·릴레이 서비스)에 붙어
-// 로그인·첫 PC 등록 → 폰 연결(룸·QR 이미지·WS·6자리·대리 등록·목록·우편함·acct_claim)까지. 금고 키만 소프트 키로 바꾼다(키체인 없음).
 import assert from 'node:assert/strict';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -25,7 +23,6 @@ describe('제품 배선: 어느 클라우드에 붙는가', () => {
     assert.equal(r.keys, vaultDesktopKeys);
     assert.equal(r.cloud?.relayHost, 'rooms.tax.laf-co.com');
     assert.equal(r.cloud?.insecureLocal, false);
-    // 운영 룸 호스트가 떠서 설치본도 폰 연결을 연다(PROD_PHONE_PAIRING)
     assert.equal(r.pairing, PROD_PHONE_PAIRING);
     assert.equal(PROD_PHONE_PAIRING, true);
   });
