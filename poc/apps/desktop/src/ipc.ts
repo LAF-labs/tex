@@ -2,7 +2,7 @@
 // - renderer → main: 호출 채널 하나(IPC.call, invoke). main → renderer: 이벤트 채널 하나(IPC.event, ShellEvent). preload는 이 둘만 연다.
 // - main → 창 preload: 포트 넘김 채널(IPC.secretPort 비밀 입력 창, IPC.docparsePort docparse 샌드박스). main은 포트 내용을 보지 않는다.
 // - main ↔ engine: 중계 통로(엔진 parentPort, @sax/engine/protocol READ_QUERIES·COMMANDS)와 게이트 포트(GatePortMessage, answerGate 하나). engine-host.ts.
-// - main ↔ vault: control 포트(rpc 답 + VaultControlEvent 알림)와 비밀 입력 포트(창 직결, 결속값과 함께). engine-host.ts.
+// - main ↔ vault: control 포트(rpc 답 + 이벤트 알림)와 비밀 입력 포트(창 직결, 결속값과 함께). engine-host.ts.
 // 렌더러 요청은 SHELL_METHODS 표로 검사한다: 표에 없는 메서드는 unknown_method, 표에 없는 필드·틀린 형·넘친 길이는 bad_request.
 // JSON Schema 정본(design/schemas/ipc/renderer-request.schema.json)이 나오기 전의 "수신부 열거형·필수 필드 검사"다(D-48(N-77)).
 // Electron 값은 타입으로만 받는다(node --test로 시험, tests/shell-ipc.test.ts).
@@ -15,7 +15,7 @@ export type { GatePortMessage, GateRequest, LocalApproval } from '@sax/engine/ga
 export type { EngineInit, EnginePortal } from '@sax/engine/protocol';
 // main ↔ 금고 계약(#42). 값은 금고 프로토콜이 정본이고 main은 타입으로만 받는다.
 export type { ConsentRecord, OneShotBind, ProfileScope, RunBeginParams, SecretInputBind, SecretStoreResult, StoreBind, VaultEventName } from '@sax/vault';
-import type { ProfileScope, VaultEventName } from '@sax/vault';
+import type { ProfileScope } from '@sax/vault';
 
 /** 채널 이름. preload(.cjs)는 이 파일을 불러올 수 없어 글자를 그대로 쓴다(tests/shell-ipc.test.ts가 맞춰 본다). */
 export const IPC = {
@@ -26,23 +26,17 @@ export const IPC = {
 } as const;
 
 /** 금고 control 포트로 main에 오는 알림(secret.needed·진행 안내 등). 판단은 받는 쪽이 main 내장 표로 한다. */
-export interface VaultControlEvent {
-  t: 'ev';
-  name: VaultEventName;
-  data: unknown;
-}
-
 // ---- 렌더러 요청 표 ----
 
 type Opt = { required?: false };
 type Req = { required: true };
-export type FieldSpec =
+type FieldSpec =
   | ({ t: 'string'; max: number; nullable?: boolean } & (Opt | Req))
   | ({ t: 'number' } & (Opt | Req))
   | ({ t: 'boolean' } & (Opt | Req))
   | ({ t: 'enum'; of: readonly string[]; nullable?: boolean } & (Opt | Req))
   | ({ t: 'object'; fields: Readonly<Record<string, FieldSpec>> } & (Opt | Req));
-export type MethodSpec = Readonly<Record<string, FieldSpec>>;
+type MethodSpec = Readonly<Record<string, FieldSpec>>;
 
 type Nul<F> = F extends { nullable: true } ? null : never;
 type ValueOf<F> = F extends { t: 'string' }

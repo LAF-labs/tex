@@ -1,7 +1,7 @@
 // 금고·엔진 utilityProcess에 넘길 환경 변수 허용 목록(ADR-025 결정 9, D11 §4).
 // main의 DEBUG·DEBUG_FILE·NODE_OPTIONS·프록시·TLS·API 키 변수가 자식에 닿지 않게 한다. Electron 없이 시험한다.
 
-export const CHILD_ENV_ALLOWLIST = [
+const CHILD_ENV_ALLOWLIST = [
   'PATH', 'SystemRoot', 'SystemDrive', 'windir', 'USERPROFILE', 'USERNAME', 'LOCALAPPDATA', 'APPDATA', 'TEMP', 'TMP',
   'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TMPDIR', 'DISPLAY', 'XDG_RUNTIME_DIR',
   // Linux X11·xvfb: DISPLAY만으로는 X 서버 인증 파일을 못 찾는다(금고가 띄우는 Chrome이 화면을 못 연다).

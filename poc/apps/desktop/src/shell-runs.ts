@@ -20,7 +20,7 @@ export const REPLACED_NOTE = '고친 값으로 바꿔서 멈췄어요. 보낸 �
 export const QUEUED_NOTE = '앞 건이 끝나면 이어서 준비해요';
 
 /** 발급 뒤 확인(발급목록 조회)은 몇 분 걸린다. 카드가 멈춘 것처럼 보이지 않게 지금 하는 일과 걸리는 시간을 같이 말한다. */
-export const VERIFY_NOW = '발급 목록 확인 중 · 1~2분 걸려요';
+const VERIFY_NOW = '발급 목록 확인 중 · 1~2분 걸려요';
 /** 조회를 되풀이할 때(엔진 attempt). 횟수 대신 "다시 보고 있어요"로 말한다. */
 export const verifyNow = (attempt?: number) => (attempt && attempt > 1 ? `발급 목록 다시 확인 중(${attempt}번째)` : VERIFY_NOW);
 
@@ -52,12 +52,11 @@ export const REGATE_NOTE = {
   date_changed: '준비한 날과 오늘(한국 시간) 날짜가 달라요. 작성일자를 다시 확인하고 새로 승인해 주세요.',
   value_changed: '홈택스 값을 다시 읽었어요. 바뀐 값으로 새로 승인해야 해요. 앞의 승인은 쓰지 않아요.',
 } as const;
-export type RegateReason = keyof typeof REGATE_NOTE;
+type RegateReason = keyof typeof REGATE_NOTE;
 const isRegate = (x: unknown): x is RegateReason => typeof x === 'string' && Object.hasOwn(REGATE_NOTE, x);
 
 /** 핸드오프(HandedOff, D03 §2): 앱이 진행하지 못해 사람에게 넘긴 단계. [다 했어요]·[직접 발급함]은 재개·확인으로만 가고 발급하지 않는다. */
-export const HANDOFF_TEXT = '여기서는 사장님 손이 필요해요';
-export const HANDOFF_HINT = '마치면 [다 했어요], 직접 발급했으면 [직접 발급함]을 눌러 주세요.';
+const HANDOFF_HINT = '마치면 [다 했어요], 직접 발급했으면 [직접 발급함]을 눌러 주세요.';
 /** 사람 차례 한 줄(실화면 기준, 부장 2026-11-12). 실행은 끝나지 않았고 30분 안에 마치지 않으면 멈춘다(run.handoff_timeout). */
 export const HANDOFF_LOGIN = { text: '홈택스 창에서 로그인해 주세요', note: '로그인을 마치면 [이어서]를 눌러 주세요. 30분 안에 마치지 않으면 멈춰요.' };
 export const HANDOFF_SIGN = { text: '홈택스 창에서 인증 방법을 고르고 인증서 비밀번호를 직접 넣어 주세요. 끝나면 자동으로 이어집니다', note: '자동으로 넘어가지 않으면 [다 했어요]를 눌러 주세요.' };
@@ -278,7 +277,7 @@ export const CERT_NOTE: Record<string, string> = {
 const note = (code?: string, r?: RunView) => (code && ((r?.cert && CERT_NOTE[code]) || NOTE[code])) || UNKNOWN_STOP_NOTE;
 
 /** 중복 카드 문장(ADR-027 UX). 발급 확정 / 발급 여부 모름 / 이전 시도 미발급. */
-export const DUP_NOTE = {
+const DUP_NOTE = {
   committed: '이 거래와 같은 건이 이미 발급돼 있어요(승인번호 있음). 한 번 더 발급하면 같은 계산서가 2건이 돼요.',
   unknown: '같은 건이 발급됐는지 아직 확인하지 못했어요. 홈택스 발급목록을 먼저 확인해 주세요.',
   notCommitted: '이전 시도는 발급되지 않았어요. 다시 발급하기 전에 홈택스 발급목록을 한 번 확인해 주세요.',
@@ -297,7 +296,7 @@ function dupWarnings(req: GateRequest, text: Record<keyof typeof DUP_NOTE, strin
   return out;
 }
 /** 민원증명 중복 문장(업무 키: 같은 날·같은 서류·같은 신청 값, 엔진 certBusinessKey). */
-export const CERT_DUP_NOTE: Record<keyof typeof DUP_NOTE, string> = {
+const CERT_DUP_NOTE: Record<keyof typeof DUP_NOTE, string> = {
   committed: '오늘 같은 서류를 같은 용도로 이미 뗐어요. 한 번 더 떼면 같은 증명서가 하나 더 생겨요.',
   unknown: '오늘 같은 서류가 발급됐는지 아직 확인하지 못했어요. 홈택스 민원증명 발급 내역을 먼저 확인해 주세요.',
   notCommitted: '이전 시도는 발급되지 않았어요.',
@@ -305,7 +304,7 @@ export const CERT_DUP_NOTE: Record<keyof typeof DUP_NOTE, string> = {
 };
 
 /** 금고가 전용 Chrome에서 확장을 보고 비밀 창을 거절했다(extension_not_allowed). 확장 ID·개수·경로는 화면에 두지 않는다(금고 로그에만). */
-export const EXTENSION_REFUSED_TEXT = 'Chrome 확장이 감지돼 안전을 위해 멈췄어요. 다시 시도해 주세요.';
+const EXTENSION_REFUSED_TEXT = 'Chrome 확장이 감지돼 안전을 위해 멈췄어요. 다시 시도해 주세요.';
 
 /** 금고 이벤트(I-2) → 카드 문장. runId가 없으면 진행 중인 실행에 붙인다. 모르는 이벤트는 null. retry면 끝난 카드에 [다시 시도]. */
 export function vaultNotice(name: string, data: unknown): { runId?: string; text: string; retry?: 'extension' } | null {
@@ -376,7 +375,7 @@ const attestShapeOk = (req: AttestRequest | null | undefined): boolean => {
   }
 };
 
-export interface ShellRunsSource {
+interface ShellRunsSource {
   counterparties(): Counterparty[];
   auth(): string;
   /**
@@ -396,7 +395,7 @@ export interface ShellRunsSource {
 }
 
 /** 홈택스 시스템 점검 정지(엔진 portal.maintenance, H-01 2026-11-14 실화면 00:00~06:00). 사람 차례로 넘기지 않는다. */
-export const MAINTENANCE_CODE = 'portal.maintenance';
+const MAINTENANCE_CODE = 'portal.maintenance';
 /** 끝 시각 뒤 이만큼 더 기다렸다가 다시 시작한다(점검 해제 직후 화면이 늦게 바뀐다). */
 const MAINTENANCE_GRACE_MS = 2 * 60_000;
 /** 다른 실행이 진행 중이면 이 간격으로 다시 본다. */
@@ -431,24 +430,23 @@ const issuedDoc = (r: RunView): Doc => r.cert
   : { id: `d-${r.id}`, name: `세금계산서 · ${r.counterparty.name}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(0), expiresOn: null, source: '앱이 발급', noFile: true };
 
 /** 묶음 승인은 처음 승인한 때부터 이만큼만 뒤 건에 쓴다(그 뒤 건은 승인 카드를 다시 띄운다). */
-export const BATCH_APPROVAL_MAX_MS = 30 * 60_000;
+const BATCH_APPROVAL_MAX_MS = 30 * 60_000;
 /**
  * 이 코드로 끝나면 남은 건을 시작하지 않는다(묶음)·다시 시작하지 않는다(깨어남): 차단·정책·점검 신호, 엔진·금고·패키지·원장·토큰 문제,
  * 발급 여부 모름(in_doubt·verify.unknown). 사람이 멈춘 것(stopped)과 발급 여부를 모르는 끝(inDoubt)도 그렇다.
  */
-export const RUN_HALT = /^(portal\.blocked|portal\.maintenance|policy\.|vault\.|engine\.|package\.|ir\.|ledger\.|token\.invalid|verify\.unknown|in_doubt|profile_missing|busy$)/;
+const RUN_HALT = /^(portal\.blocked|portal\.maintenance|policy\.|vault\.|engine\.|package\.|ir\.|ledger\.|token\.invalid|verify\.unknown|in_doubt|profile_missing|busy$)/;
 /** 한 묶음의 최대 건수. 승인 카드가 건마다 한 줄씩 길어져 작은 창에서도 다 보이는 수다. 넘는 초안은 묶지 않는다. */
-export const BATCH_MAX = 5;
+const BATCH_MAX = 5;
 /** 바쁨(다른 실행 진행 중)이면 이 간격으로 이만큼 다시 본다. 그래도 바쁘면 묶음을 세운다. */
 const BATCH_BUSY_RETRY_MS = 15_000;
 const BATCH_BUSY_TRIES = 8;
-export const BATCH_SKIPPED_NOTE = '이 건은 시작하지 못해 건너뛰었어요. 값을 고친 뒤 [홈택스에서 준비]를 누르면 승인 카드를 다시 띄워요. 아무것도 발급하지 않았어요.';
+const BATCH_SKIPPED_NOTE = '이 건은 시작하지 못해 건너뛰었어요. 값을 고친 뒤 [홈택스에서 준비]를 누르면 승인 카드를 다시 띄워요. 아무것도 발급하지 않았어요.';
 export const BATCH_AUTO_NOTE = '묶음 승인으로 이어서 발급해요. 2초 안에 [중지]하면 발급하지 않아요';
-export const BATCH_REASK_NOTE = '이 건은 승인 카드에서 따로 승인해 주세요(홈택스 값이 처음 승인 때와 다르거나 처음 거래·처음 보내는 주소예요)';
-export const BATCH_HALTED_NOTE = '묶음을 멈췄어요. 남은 건은 [홈택스에서 준비]를 누르면 승인 카드에서 한 건씩 승인해요. 아무것도 발급하지 않았어요.';
+const BATCH_REASK_NOTE = '이 건은 승인 카드에서 따로 승인해 주세요(홈택스 값이 처음 승인 때와 다르거나 처음 거래·처음 보내는 주소예요)';
 export const BATCH_CHANGED_NOTE = '승인 카드를 띄운 뒤 묶음 값이 바뀌어 묶음 승인으로 받지 않았어요. 남은 건은 하나씩 승인해 주세요.';
 /** 승인 바를 띄울 때 찍은 묶음(바의 2~N건 줄과 그때 초안 값). 클릭 때 초안이 달라졌으면 묶음 승인으로 받지 않는다. */
-export interface BatchOffer {
+interface BatchOffer {
   batchId: string;
   count: number;
   /** 2~N건(묶은 순서): 상호·합계. 바에 그대로 보인다. */
@@ -463,20 +461,20 @@ interface Batch {
   /** 세운 묶음: 남은 건은 사람이 [홈택스에서 준비]로 한 건씩(묶음 카드 없이) 한다. */
   halted: boolean;
 }
-export const RESUMED_NOTE = '앱이 다시 켜져 멈췄던 건을 같은 내용으로 이어서 해요. 앞 시도는 승인 전이라 아무것도 발급하지 않았어요.';
+const RESUMED_NOTE = '앱이 다시 켜져 멈췄던 건을 같은 내용으로 이어서 해요. 앞 시도는 승인 전이라 아무것도 발급하지 않았어요.';
 /** 공동인증서 로그인이 안 돼 같은 값으로 한 번 더 해 본다(2026-11-19 대표: "실패했을 경우 당연히 인증서로 다시 시도해 봐야지"). */
 export const CERT_RETRY_NOTE = '공동인증서로 한 번 더 로그인해 볼게요. 아직 발급 전이에요.';
 /** 공동인증서 로그인 실패 핸드오프 코드(H-01 s7e). 엔진이 간편인증 화면까지 열어 두고 기다린다. */
-export const CERT_LOGIN_FAILED = 'login.simple_auth';
+const CERT_LOGIN_FAILED = 'login.simple_auth';
 /** 폰이 시작한 간편인증 요청을 보냈고 인증 앱 승인을 기다린다(셸이 정한 차례 코드, 엔진은 여전히 login.simple_auth 차례). */
 export const SIMPLE_SENT = 'login.simple_sent';
 /** 홈택스 간편인증 승인 제한 시간(짐작: 민간인증서 요청은 대개 5분 안에 끝나야 한다. 실화면에서 확인 전) */
-export const SIMPLE_AUTH_MS = 5 * 60_000;
+const SIMPLE_AUTH_MS = 5 * 60_000;
 /** 인증 앱 코드 → 사람 말(엔진 run/simple-auth.ts OACX_PROVIDERS와 같은 코드) */
-export const SIMPLE_APP_LABEL: Readonly<Record<string, string>> = { kakao: '카카오톡', naver: '네이버', toss: '토스', pass: 'PASS 앱', kb: 'KB국민은행 앱', shinhan: '신한 앱', woori: '우리은행 앱', hana: '하나은행 앱', nh: 'NH 앱', ibk: 'IBK 앱', kakaobank: '카카오뱅크', samsung: '삼성패스', banksalad: '뱅크샐러드' };
+const SIMPLE_APP_LABEL: Readonly<Record<string, string>> = { kakao: '카카오톡', naver: '네이버', toss: '토스', pass: 'PASS 앱', kb: 'KB국민은행 앱', shinhan: '신한 앱', woori: '우리은행 앱', hana: '하나은행 앱', nh: 'NH 앱', ibk: 'IBK 앱', kakaobank: '카카오뱅크', samsung: '삼성패스', banksalad: '뱅크샐러드' };
 /** 다시 해도 공동인증서 로그인이 안 됐다: 인증서로 한 번 더, 또는 간편인증(아래 홈택스 화면이나 폰에서). */
 export const CERT_FAILED_TWICE = { text: '공동인증서 로그인이 두 번 안 됐어요', note: '인증서로 다시 하거나 간편인증으로 로그인해 주세요.' };
-export const WAKE_RESUMED_NOTE = '맥이 잠들었다 깨어나 멈춘 건을 같은 내용으로 다시 시작했어요. 앞 시도는 승인 전이라 아무것도 발급하지 않았어요.';
+const WAKE_RESUMED_NOTE = '맥이 잠들었다 깨어나 멈춘 건을 같은 내용으로 다시 시작했어요. 앞 시도는 승인 전이라 아무것도 발급하지 않았어요.';
 /** 맥이 깨어난 뒤 이 안에 승인 전 단계에서 멈춘 실행은 같은 값으로 한 번 다시 시작한다. */
 const WAKE_RESUME_MS = 5 * 60_000;
 /** 승인 대조 값(공급받는자 번호·공급가액·세액·합계·품목·받는 이메일·작성일자). 초안은 카드 값, 게이트는 홈택스 되읽기 값. */

@@ -13,7 +13,7 @@ import type { ParamsOf } from './ipc.ts';
 export type EngineRpc = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
 export type PickKind = 'statement' | 'invoices';
 
-export interface BankHostPorts {
+interface BankHostPorts {
   rpc: EngineRpc;
   /** 사업자 프로필 id(없으면 null: "내 사업장을 먼저 등록해 주세요") */
   profileId: () => Promise<string | null>;
@@ -260,7 +260,7 @@ interface CashFlowResultLike {
 }
 
 /** 대화 도구 cash_flow가 받는 요약(값은 PC 안에서 만들고, 모델에는 이 칸만 간다) */
-export interface CashFlowBrief {
+interface CashFlowBrief {
   month: string;
   through: string;
   complete: boolean;

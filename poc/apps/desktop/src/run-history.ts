@@ -30,10 +30,10 @@ export interface PastRun {
 /** 활동 기록에 남기는 실행: 세금계산서 발급(H-01)만. */
 export const INVOICE_PLAYBOOK = 'hometax.invoice.issue';
 
-export const UNSURE_TEXT = '발급됐는지 확인하지 못했어요. 홈택스 발급목록을 직접 확인해 주세요. 다시 발급하지 마세요.';
-export const STOPPED_BEFORE_GATE_TEXT = '승인 전에 앱이 꺼져 멈췄어요. 아무것도 발급하지 않았어요.';
-export const NOT_COMMITTED_TEXT = '발급되지 않은 것으로 판정됐어요. 홈택스에는 아무것도 발급되지 않았어요.';
-export const INTERRUPTED_TEXT = '앱이 꺼져 멈췄어요. 아무것도 발급하지 않았어요.';
+const UNSURE_TEXT = '발급됐는지 확인하지 못했어요. 홈택스 발급목록을 직접 확인해 주세요. 다시 발급하지 마세요.';
+const STOPPED_BEFORE_GATE_TEXT = '승인 전에 앱이 꺼져 멈췄어요. 아무것도 발급하지 않았어요.';
+const NOT_COMMITTED_TEXT = '발급되지 않은 것으로 판정됐어요. 홈택스에는 아무것도 발급되지 않았어요.';
+const INTERRUPTED_TEXT = '앱이 꺼져 멈췄어요. 아무것도 발급하지 않았어요.';
 
 /** 발급된 실행에 붙이는 끝 코드(발급 뒤 단계의 일). 그 밖의 코드 문구는 "발급하지 않았어요"일 수 있어 발급된 실행에 붙이지 않는다. */
 const AFTER_COMMIT = new Set(['mail.not_confirmed', 'save_pdf.failed', 'portal.blocked_after_commit', 'post_commit.error']);

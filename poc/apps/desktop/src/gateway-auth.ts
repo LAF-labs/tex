@@ -22,7 +22,7 @@ export interface GatewayDevice {
   clearGatewayToken(): void;
 }
 
-export interface GatewayAuthHostOptions {
+interface GatewayAuthHostOptions {
   /** 로그인(첫 PC 등록)을 마쳤으면 기기 세션, 아니면 null. 계정을 처음 읽는 중이면 기다린다. */
   device: () => GatewayDevice | null | Promise<GatewayDevice | null>;
   log?: (name: string, data: Record<string, string | number>) => void;

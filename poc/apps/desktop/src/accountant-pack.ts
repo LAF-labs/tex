@@ -11,9 +11,9 @@ import type { Doc } from './shell-model.ts';
 import type { PastRun } from './run-history.ts';
 
 /** YYYY-MM */
-export type PackMonth = string;
+type PackMonth = string;
 
-export interface PackInvoice {
+interface PackInvoice {
   runId: string;
   day: string | null;
   who: string | null;
@@ -27,21 +27,21 @@ export interface PackInvoice {
 }
 
 /** 빠진 것 한 줄. 종류가 화면 문구와 순서를 정한다(GAP_LABEL). */
-export type PackGapKind = 'unsure' | 'no_pdf' | 'mail_unconfirmed' | 'not_issued' | 'no_bank' | 'paper_check';
-export interface PackGap {
+type PackGapKind = 'unsure' | 'no_pdf' | 'mail_unconfirmed' | 'not_issued' | 'no_bank' | 'paper_check';
+interface PackGap {
   kind: PackGapKind;
   who: string | null;
   day: string | null;
   total: number | null;
 }
 
-export interface PackReceivable {
+interface PackReceivable {
   who: string;
   writtenOn: string;
   remaining: number | null;
 }
 
-export interface PackSummary {
+interface PackSummary {
   month: PackMonth;
   /** 화면 글: "10월" */
   label: string;
@@ -70,14 +70,14 @@ export const GAP_LABEL: Record<PackGapKind, string> = {
 const GAP_ORDER: PackGapKind[] = ['unsure', 'no_pdf', 'mail_unconfirmed', 'not_issued', 'paper_check', 'no_bank'];
 
 /** 폰으로 찍은 종이 세금계산서 한 장(엔진 receipts.phone_ocr_json.paperInvoice + 보관함 원본 JPEG) */
-export interface PackPaperSource {
+interface PackPaperSource {
   docId: string;
   paper: PaperInvoice;
   /** 보관함 원본(JPEG). 없으면 null */
   file: string | null;
 }
 
-export interface PackPaper {
+interface PackPaper {
   docId: string;
   /** PC가 내 사업자번호로 정한 방향. 둘 다 아니면 null(확인 필요) */
   direction: 'sales' | 'purchase' | null;
@@ -94,7 +94,7 @@ export interface PackPaper {
   image: string | null;
 }
 
-export interface PackPorts {
+interface PackPorts {
   past(): Promise<PastRun[]>;
   docs(): Promise<Doc[]>;
   /** 문서 id → PDF 경로. 없으면 던진다 */
@@ -114,7 +114,7 @@ const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 export const isPackMonth = (m: unknown): m is PackMonth => typeof m === 'string' && MONTH_RE.test(m);
 
 /** KST 오늘 YYYY-MM-DD → 지난달·이번 달 */
-export function packMonths(today: string): { last: PackMonth; this: PackMonth } {
+function packMonths(today: string): { last: PackMonth; this: PackMonth } {
   const y = Number(today.slice(0, 4));
   const m = Number(today.slice(5, 7));
   const last = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;

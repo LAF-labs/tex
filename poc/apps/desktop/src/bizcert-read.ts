@@ -4,7 +4,7 @@
 // - 거래처 등록증 입력(같은 길)도 이 함수를 쓴다.
 import { BIZ_FIELD_MAX, type BizFields } from './onboarding.ts';
 
-export type BizCertFormat = 'pdf' | 'png' | 'jpeg';
+type BizCertFormat = 'pdf' | 'png' | 'jpeg';
 
 export interface BizCertReadPorts {
   /** 파일 고르기 → 바이트(일반 파일, 15MB까지). 고르지 않으면 null. */

@@ -80,7 +80,7 @@ import type { DemoModel, mergeParsed } from './demo-model.ts';
 import type { DemoSeed, startDemoSeed } from './demo-seed.ts';
 
 const STATIC = path.join(import.meta.dirname, '../static');
-export const SHELL_SCHEME = 'sax-shell';
+const SHELL_SCHEME = 'sax-shell';
 /** 제품에서 사업장·개인 프로필을 아직 등록하지 않았을 때의 자리(견본 이름을 쓰지 않는다). */
 const NO_BUSINESS: Profile = { kind: 'business', name: '내 사업장', email: '', auth: '' };
 
@@ -230,7 +230,7 @@ export interface ShellOptions {
 }
 
 /** 말풍선 반응(ADR-057)을 켰는가. 반응 알약 화면(static/shell/shell.js reactTo)과 같은 커밋에서 켠다. */
-export const CHAT_REACTIONS_ON = true;
+const CHAT_REACTIONS_ON = true;
 
 /** ShellOptions.remote. */
 export interface RemoteWiring {
@@ -271,7 +271,7 @@ export interface ShellDev {
 }
 
 /** 시연 견본: 견본 서류 저장소·사업장·대화·빠른 실행·꾸러미·카드·정부24 후보·온보딩 바깥 일·거래처 등록증. */
-export interface ShellSample {
+interface ShellSample {
   store(): DocStore;
   profiles: Record<Profile['kind'], Profile>;
   timeline(): unknown[];

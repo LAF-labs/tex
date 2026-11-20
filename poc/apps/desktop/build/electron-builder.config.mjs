@@ -48,12 +48,12 @@ export function signingFrom(env, platform) {
  *   여럿이면 SAX_MAC_IDENTITY(이름·팀 ID 일부)로 고른다.
  * - 공증: `xcrun notarytool store-credentials <프로필>`로 키체인에 저장해 둔 프로필 이름(SAX_NOTARY_PROFILE). Apple ID·앱 암호·팀 ID는 받지 않는다.
  */
-export const MAC_SIGNING_ENV = {
+const MAC_SIGNING_ENV = {
   identity: 'SAX_MAC_IDENTITY',
   notaryProfile: 'SAX_NOTARY_PROFILE',
 };
 
-export const DEVELOPER_ID_PREFIX = 'Developer ID Application: ';
+const DEVELOPER_ID_PREFIX = 'Developer ID Application: ';
 
 /** 키체인 코드 서명 신원 이름(`security find-identity -v -p codesigning`의 따옴표 안). 개인키·인증서 내용은 읽지 않는다. */
 export const parseIdentities = (out) => [...out.matchAll(/^\s*\d+\)\s+[0-9A-F]{40}\s+"([^"]+)"/gm)].map((m) => m[1]);

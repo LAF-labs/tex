@@ -23,7 +23,7 @@ const JUDGE_CODES = new Set([
   'step.not_clickable', 'step.ambiguous', 'step.dialog_mismatch', 'step.extract_miss',
 ]);
 
-export interface PageJudgeDeps extends ScreenDeps {
+interface PageJudgeDeps extends ScreenDeps {
   ir: PlaybookIR;
   irreversible: ReadonlySet<string>;
   model: JudgeModel;

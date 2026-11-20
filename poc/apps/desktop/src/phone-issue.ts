@@ -85,7 +85,7 @@ export function parseSimpleAnswer(v: unknown): { op: 'request'; d: { provider: s
   const m = typeof v === 'string' ? SA_REQ.exec(v) : null;
   return m ? { op: 'request', d: { provider: m[1]!, birth: m[3]!, phone: m[4]!, name: m[5]!, ...(m[2] ? { carrier: m[2].toUpperCase() } : {}) } } : null;
 }
-export function turnCode(h: NonNullable<RunView['handoff']>, r?: RunView): string {
+function turnCode(h: NonNullable<RunView['handoff']>, r?: RunView): string {
   if (h.code === 'login.simple_sent' && r?.simpleAuth && /^[a-z]{2,10}$/.test(r.simpleAuth.provider)) return `login.simple_sent.${r.simpleAuth.provider}`;
   if (h.code && TURN_CODE.test(h.code) && h.code.length <= 40) return h.code;
   return `turn.${h.kind ?? 'other'}`;

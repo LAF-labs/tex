@@ -46,7 +46,7 @@ export function cleanBizEdit(input: Partial<Record<BizFieldKey, unknown>>, base:
 
 export const changedKeys = (a: BizFields, b: BizFields): BizFieldKey[] => BIZ_FIELD_KEYS.filter((k) => a[k] !== b[k]);
 
-export interface ProfileEditPorts {
+interface ProfileEditPorts {
   list(): Promise<DbProfile[]>;
   upsert(row: Record<string, unknown>): Promise<DbProfile>;
   /** 국세청 상태조회(온보딩 checkBizNo와 같은 포트). */
@@ -55,7 +55,7 @@ export interface ProfileEditPorts {
   saved(biz: BizFields, changed: BizFieldKey[]): Promise<void>;
 }
 
-export type BizEditResult = { ok: true; changed: BizFieldKey[] } | { ok: false; confirm: BizCheck };
+type BizEditResult = { ok: true; changed: BizFieldKey[] } | { ok: false; confirm: BizCheck };
 
 export class ProfileEditor {
   private readonly ports: ProfileEditPorts;
@@ -113,7 +113,7 @@ export class ProfileEditor {
 }
 
 /** 고친 기록 한 줄(값 없음: 시각과 고친 칸 이름만). */
-export interface ProfileEditEntry {
+interface ProfileEditEntry {
   at: string;
   kind: 'business';
   fields: BizFieldKey[];

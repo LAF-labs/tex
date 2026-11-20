@@ -31,7 +31,7 @@ export const ONB_CHOICES = {
   summary: ['ok'],
   first: ['try', 'later'],
 } as const satisfies Record<Exclude<OnbStep, 'done'>, readonly string[]>;
-export type OnbChoice = (typeof ONB_CHOICES)[keyof typeof ONB_CHOICES][number];
+type OnbChoice = (typeof ONB_CHOICES)[keyof typeof ONB_CHOICES][number];
 export const ONB_ALL_CHOICES = [...new Set(Object.values(ONB_CHOICES).flat())] as OnbChoice[];
 
 // ---- 동의 화면 4종 ----
@@ -43,7 +43,7 @@ export const CONSENT_KINDS = ['terms', 'model', 'telemetry'] as const;
 export type ConsentKind = (typeof CONSENT_KINDS)[number];
 
 /** 고지 묶음 하나. key·version이 동의 레코드에 그대로 남는다. 문구는 F-06이 오기 전 자리표시다. */
-export interface ConsentNotice {
+interface ConsentNotice {
   kind: ConsentKind;
   key: `consent.${ConsentKind}`;
   version: string;
@@ -101,7 +101,7 @@ export const CONSENT_NOTICES: Readonly<Record<ConsentKind, ConsentNotice>> = {
 };
 
 /** ② 화면의 처리자 표 한 줄. 설정 데이터로 받는다(모델 상류 OpenRouter의 공급사 목록이 바뀔 수 있다). */
-export interface ModelProcessor {
+interface ModelProcessor {
   name: string;
   role: string;
   country: string;
@@ -185,13 +185,13 @@ export interface NpkiCert {
   /** 주체 OU로 본 종류(npki-certs certKind). 은행 자동 연결의 뱅킹 순서에만 쓴다 */
   kind?: 'corp' | 'personal';
 }
-export const CERT_EXPIRY_WARN_DAYS = 30;
+const CERT_EXPIRY_WARN_DAYS = 30;
 
 export type AuthKind = 'simple' | 'cert' | 'fincert';
 /** DB profiles.sign_method 값(packages/db SignMethod). 금융인증서는 cert와 같은 칸(D07 열이 하나). */
 export const AUTH_SIGN_METHOD: Record<AuthKind, 'simple_auth' | 'cert'> = { simple: 'simple_auth', cert: 'cert', fincert: 'cert' };
 /** 고르지 않았을 때 쓸 이 PC 인증서: 첫 사용 가능 인증서(온보딩 카드가 미리 고르는 것과 같다). 없으면 null. */
-export const defaultCertId = (certs: ReadonlyArray<{ id: string; usable?: boolean }>): string | null => certs.find((c) => c.usable !== false)?.id ?? null;
+const defaultCertId = (certs: ReadonlyArray<{ id: string; usable?: boolean }>): string | null => certs.find((c) => c.usable !== false)?.id ?? null;
 export const AUTH_LABEL: Record<AuthKind, string> = { simple: '사업자 간편인증', cert: '공동인증서', fincert: '금융인증서' };
 /** 옛 판의 ① 위임 등록 단계와 보안카드 인증(대표 결정 2026-11-19 지원 안 함). 이어 하기 저장에 남았으면 발급 인증을 다시 묻는다. */
 const RETIRED_STEP = 'delegation';
@@ -211,7 +211,7 @@ const NOW_TASKS = new Set(ONB_TASKS.filter((t) => t.now).map((t) => t.id));
 
 /** 건너뛴 항목(판의 "할 일", 08 §4). */
 export type SkipItem = 'biz' | 'auth' | 'tasks' | 'counterparties';
-export const SKIP_LABEL: Record<SkipItem, string> = { biz: '사업자 등록 마치기', auth: '발급 인증 고르기', tasks: '맡길 업무 고르기', counterparties: '거래처 등록하기' };
+const SKIP_LABEL: Record<SkipItem, string> = { biz: '사업자 등록 마치기', auth: '발급 인증 고르기', tasks: '맡길 업무 고르기', counterparties: '거래처 등록하기' };
 
 export interface OnbState {
   step: OnbStep;
@@ -319,7 +319,7 @@ export interface OnbAnswer {
 }
 
 /** 답을 처리한 결과. fill이 있으면 렌더러가 입력창에 채우기만 한다(보내지 않음). */
-export interface OnbResult {
+interface OnbResult {
   state: OnbState;
   fill?: string;
 }

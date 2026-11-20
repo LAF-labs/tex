@@ -14,7 +14,7 @@ export const INTENT_PLAYBOOKS = [
   'counterparty.bizstatus.check', 'gov24.resident.copy', 'gov24.localtax.cert', 'gov24.nhis.eligibility', 'gov24.land.register', 'gov24.localtax.itemized',
   'sminfo.sme.cert', 'fourins.paid.cert', 'query.documents', 'hometax.card.refresh', 'bundle.monthly', 'payroll.ledger',
 ] as const;
-export type IntentPlaybook = (typeof INTENT_PLAYBOOKS)[number];
+type IntentPlaybook = (typeof INTENT_PLAYBOOKS)[number];
 
 /** 엔진 `intent.resolve` 결과(계약 제안, desktop-pending.md 「M4-3 ③」). */
 export type IntentRoute =
@@ -58,7 +58,7 @@ const CERT: readonly IntentPlaybook[] = ['hometax.cert.business', 'hometax.cert.
 /** 옛 의도 id(intent_route_v1) → 이 앱이 떼는 민원증명(cert-docs 표). 나머지 CERT는 떼지 않는 증명서다. */
 const CERT_CODE: Partial<Record<IntentPlaybook, CertCode>> = { 'hometax.cert.business': 'H-03', 'hometax.cert.taxpayment': 'H-04' };
 
-export type Routed = { parsed: Parsed; note: string | null } | { say: string; note: null };
+type Routed = { parsed: Parsed; note: string | null } | { say: string; note: null };
 
 /**
  * 엔진이 고른 작업을 화면 해석(Parsed)으로 옮긴다. 인자는 로컬 파서(local) 그대로, 의도만 엔진 것으로 바꾼다.

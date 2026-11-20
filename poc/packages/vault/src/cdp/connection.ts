@@ -125,7 +125,7 @@ export class PortConnection extends CdpConnection {
   }
 }
 
-export class CdpError extends Error {
+class CdpError extends Error {
   constructor(method: string, message: string) {
     super(`${method}: ${message}`);
   }

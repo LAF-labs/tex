@@ -4,20 +4,10 @@
 // - 모델 제안은 그대로 쓰지 않는다. 제안 선택자를 이 실행의 사전 사본에서 그 항목 후보 맨 앞에 두고 resolveTarget(유일 일치·보임·역할·이름 패턴)을 통과할 때만 받는다.
 //   통과한 선택자는 이번 실행 동안 그 항목의 첫 후보로 남는다(같은 실행의 다음 스텝·GuardedActuator의 R-A1 재확인도 그것을 본다).
 // - 모델 호출은 스텝당 최대 2번이다(게이트웨이 실행당 L2 예산 2와 같다).
-import type { ElementRef, PageReader, Resolved } from './page.ts';
+import type { PageReader, Resolved } from './page.ts';
 import { maskScreenText, normalizeName } from './constants.ts';
 import { nameMatches, resolveTarget } from './resolve.ts';
 import { isSecretEntry, type SelectorDict, type SelectorEntry } from './types.ts';
-
-/** 프레임의 같은 역할 요소 한 줄(값 없음). */
-export interface ListedElement {
-  el: ElementRef;
-  name: string;
-  /** DOM id. 없으면 null. */
-  id: string | null;
-  visible: boolean;
-  enabled: boolean;
-}
 
 /** 모델이 낸 선택자 후보(selector_repair 출력과 같은 꼴). */
 export interface LocateCandidate {
@@ -56,7 +46,7 @@ export interface LocateEnv {
 }
 
 /** 스텝당 모델 호출 상한 */
-export const LOCATE_MAX_CALLS = 2;
+const LOCATE_MAX_CALLS = 2;
 
 /** 실행 사본 사전: 원본 패키지 사전을 바꾸지 않고 항목만 갈아 끼운다. */
 export function runLocalDict(d: SelectorDict): SelectorDict {

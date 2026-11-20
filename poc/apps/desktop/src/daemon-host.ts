@@ -10,7 +10,7 @@ import { DaemonScheduler, emptyDaemonState, notificationText, type DaemonClock, 
 export type EngineRpc = (method: string, params: Record<string, unknown>) => Promise<unknown>;
 /** OS 알림 한 건을 띄운다. 띄우지 못하면 던진다(스케줄러가 재시도한다). onClick은 알림을 누를 때. */
 export type ShowNotification = (text: { title: string; body: string }, onClick: () => void) => void;
-export type DaemonLog = (name: string, data?: Record<string, string | number | boolean>) => void;
+type DaemonLog = (name: string, data?: Record<string, string | number | boolean>) => void;
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isDayMap = (v: unknown) => isObj(v) && Object.values(v).every((d) => typeof d === 'string');
@@ -39,7 +39,7 @@ export class FileDaemonStateStore implements DaemonStateStore {
   }
 }
 
-export interface DaemonHostOptions {
+interface DaemonHostOptions {
   rpc: EngineRpc;
   show: ShowNotification;
   /** 알림을 낸 뒤(판 다시 그리기) */

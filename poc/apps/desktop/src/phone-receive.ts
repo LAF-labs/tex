@@ -6,9 +6,9 @@
 import { checkPaperInvoice, drainQueue, ReceiveQueue, type CashEntryBody, type DrainResult, type QueueReceiverOptions, type ReceiptOfferBody, type ReceiveLimits, type ReceiveSink } from '@sax/remote';
 
 export type EngineRpc = (method: string, params: Record<string, unknown>) => Promise<unknown>;
-export type PhoneLog = (name: string, data?: Record<string, string | number | boolean>) => void;
+type PhoneLog = (name: string, data?: Record<string, string | number | boolean>) => void;
 
-export interface PhoneReceiveOptions {
+interface PhoneReceiveOptions {
   /** 새 영수증이 보관함에 들어간 뒤(중복은 부르지 않는다). 문서함 다시 읽기 등 */
   onReceipt?: () => void;
   /** 현금 매출이 바뀐 뒤 */

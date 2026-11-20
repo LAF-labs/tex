@@ -17,7 +17,7 @@ import { NOTE } from './shell-runs.ts';
 import { importBytes } from './vault-import.ts';
 
 /** fixture 기본 3곳(A상사·B상사·C테크)에 더하는 견본 거래처. */
-export const SEED_COUNTERPARTIES = [
+const SEED_COUNTERPARTIES = [
   { name: '(주)가나다상사', repName: '가나다', email: 'tax@ganada-sangsa.example', item: '사무용품' },
   { name: '라마바물산', repName: '라마바', email: 'acc@ramaba.example', item: '포장재' },
   { name: '사아자디자인', repName: '사아자', email: 'hello@saaja.example', item: '디자인 용역' },
@@ -47,7 +47,7 @@ const HISTORY: Array<[number, string, string, number, SeedStatus]> = [
 ];
 
 /** 활동 기록·문서함에 보이는 지난 세금계산서(엔진 실행 이력과 같은 PastRun 모양). 발급 건의 견본 PDF는 문서함 줄 d-<runId>다. */
-export function seedPast(): PastRun[] {
+function seedPast(): PastRun[] {
   return HISTORY.map(([d, time, who, supply, status], i) => {
     const day = dayOffset(d);
     const s = splitVat(supply, 'separate');
@@ -69,7 +69,7 @@ const PAGE = '<!doctype html><meta charset="utf-8"><style>body{font-family:-appl
 const won = (n: number) => n.toLocaleString('ko-KR');
 
 /** 견본 전자세금계산서(발급본) 한 장. */
-export function invoiceHtml(o: { date: string; who: string; bizNo: string; rep: string; mail: string; item: string; supply: number; tax: number; approvalNo: string }): string {
+function invoiceHtml(o: { date: string; who: string; bizNo: string; rep: string; mail: string; item: string; supply: number; tax: number; approvalNo: string }): string {
   return `${PAGE}<h1>전자세금계산서</h1><p class="m">승인번호 ${o.approvalNo} · 작성일자 ${o.date}</p>
 <table><tr><th>공급자</th><td>${DEMO_PROFILE.displayName} (${formatBizNo(DEMO_PROFILE.bizNo)}) · 대표 ${DEMO_PROFILE.repName}</td></tr>
 <tr><th>공급받는자</th><td>${o.who} (${formatBizNo(o.bizNo)}) · 대표 ${o.rep}</td></tr><tr><th>받는 이메일</th><td>${o.mail}</td></tr></table>

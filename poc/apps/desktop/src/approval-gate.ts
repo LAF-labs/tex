@@ -34,7 +34,7 @@ const bizNo = (v: string) => `${v.slice(0, 3)}-${v.slice(3, 5)}-${v.slice(5)}`;
 /** 값에 제어문자·양방향·폭 없는 문자·한글 채움 문자(Cc·Cf·Default_Ignorable, 줄·문단 구분자, 점자 빈칸)가 있으면 무장하지 않는다. */
 export const UNSAFE_CHARS = /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\u2028\u2029\u2800]/u;
 
-export type ArmRefusal = { reason: 'missing' | 'unsafe' | 'overflow'; label: string } | { reason: 'hash' | 'duplicate' };
+type ArmRefusal = { reason: 'missing' | 'unsafe' | 'overflow'; label: string } | { reason: 'hash' | 'duplicate' };
 
 export const REFUSAL_TEXT = {
   missing: (l: string) => `${l} 값이 없어 승인할 수 없어요`,
@@ -57,18 +57,18 @@ export const attestRefusalText = (text: string) => text.replace('승인할 수 �
 export const ISSUED_OR_UNKNOWN = ['committed', 'in_doubt', 'armed', 'dispatched', 'observed_manual'];
 
 /** $dup.businessKey 값(원장 상태 목록)에 발급됐거나 모르는 건이 있는가. */
-export function dupMayBeIssued(f: Map<string, string>): boolean {
+function dupMayBeIssued(f: Map<string, string>): boolean {
   return (f.get('$dup.businessKey') ?? '').split(',').some((s) => ISSUED_OR_UNKNOWN.includes(s));
 }
 
-export type DupState = { flag: string; tone: 'normal' | 'attention'; action: string };
+type DupState = { flag: string; tone: 'normal' | 'attention'; action: string };
 
 /**
  * 중복 경고 표시(D02 §7, ADR-027 결정 3). 칸이 하나라 가장 위험한 것을 고른다:
  * 발급 확정 있음 → 발급 여부 모름 → 이전 시도 미발급 → 그 밖의 같은 건 기록 → 다른 PC 확인 불가. 카드에는 해당하는 경고를 모두 둔다.
  * 발급됐거나 모르는 건은 주의 색이다. 첫 클릭이 명시 확인이라는 ADR-021 규칙은 그대로다.
  */
-export function dupState(f: Map<string, string>): DupState | undefined {
+function dupState(f: Map<string, string>): DupState | undefined {
   const states = (f.get('$dup.businessKey') ?? '').split(',');
   if (states.includes('committed')) return { flag: '이미 발급됨(승인번호 있음)', tone: 'attention', action: ACTION_TEXT_DUP_COMMITTED };
   if (dupMayBeIssued(f)) return { flag: '발급 여부 확인 안 됨', tone: 'attention', action: ACTION_TEXT_DUP };
@@ -257,7 +257,7 @@ export interface CardTargets {
 }
 
 /** 동작 글자가 들어가는 데 필요한 버튼 폭(어림). */
-export const approveWidth = (action: string) => Math.ceil(cells(action) * CARD.btnUnit) + CARD.btnPadX * 2;
+const approveWidth = (action: string) => Math.ceil(cells(action) * CARD.btnUnit) + CARD.btnPadX * 2;
 
 /** 두 버튼 자리: 왼쪽 아래 [중지](112), 앱 상수 간격(48), 오른쪽 [동작](남은 폭 전부). */
 export function cardTargets(width: number, height: number): CardTargets {
@@ -323,10 +323,10 @@ export const ACTION_TEXT_DUP_COMMITTED = '그래도 한 번 더 발급';
 /** 비가역 한 줄(서류 종류별 앱 고정 문구, 패키지 문자열 아님). 받는 이메일 유무로 둘 중 하나다. */
 export const IRREVERSIBLE_TEXT = '승인하면 바로 발급되고 메일로 가요. 되돌릴 수 없어요.';
 export const IRREVERSIBLE_TEXT_NO_MAIL = '승인하면 바로 발급돼요. 메일은 보내지 않아요. 되돌릴 수 없어요.';
-export const ATTEST_IRREVERSIBLE_TEXT = '확인하면 이 건을 발급 안 됨으로 기록해요. 되돌릴 수 없어요.';
+const ATTEST_IRREVERSIBLE_TEXT = '확인하면 이 건을 발급 안 됨으로 기록해요. 되돌릴 수 없어요.';
 /** 민원증명 비가역 한 줄(팀장 결정 2026-11-09) */
 export const CERT_IRREVERSIBLE_TEXT = '발급하면 홈택스 발급 이력에 남습니다. 되돌릴 수 없어요.';
-export const STOP_TEXT = '중지';
+const STOP_TEXT = '중지';
 export const ATTEST_STOP_TEXT = '닫기';
 const DOC_TITLE = '세금계산서';
 
@@ -350,7 +350,7 @@ export const SIGN_AFTER: Readonly<Record<string, string>> = {
   '공동·금융인증서': '승인 뒤 인증서 비밀번호를 넣으면',
   '사업자 간편인증': '승인 뒤 휴대폰 간편인증을 마치면',
 };
-export const SIGN_AFTER_DEFAULT = '승인 뒤 홈택스 인증을 마치면';
+const SIGN_AFTER_DEFAULT = '승인 뒤 홈택스 인증을 마치면';
 export const irreversibleText = (auth: string | undefined, mail: boolean): string =>
   `${(auth && Object.hasOwn(SIGN_AFTER, auth) ? SIGN_AFTER[auth] : null) ?? SIGN_AFTER_DEFAULT} 발급${mail ? '·메일 전송' : ''}돼요. 되돌릴 수 없어요.`;
 /** 발급 인증을 모르면(시험·옛 호출) 예전 한 줄. 아는 경우 irreversibleText. */
@@ -393,7 +393,7 @@ export function buildCardHtml(lines: SummaryLine[], mode: BarMode, msg?: string,
 
 // ---- 색(앱 내장 팔레트, ADR-028 결정 7) ----
 
-export const BAR_COLOR_KEYS = ['accent', 'on-accent', 'accent-soft', 'ink', 'ink-3', 'surface', 'canvas', 'line-strong', 'attention', 'attention-soft', 'focus-ring'] as const;
+const BAR_COLOR_KEYS = ['accent', 'on-accent', 'accent-soft', 'ink', 'ink-3', 'surface', 'canvas', 'line-strong', 'attention', 'attention-soft', 'focus-ring'] as const;
 export type BarColors = Record<(typeof BAR_COLOR_KEYS)[number], string>;
 export type BarPalette = { light: BarColors; dark: BarColors };
 
@@ -490,14 +490,14 @@ ${theme(t.light)}
 
 // ---- 입력 판정 ----
 
-export interface MouseIn {
+interface MouseIn {
   type: string;
   x: number;
   y: number;
   button?: string;
 }
 
-export interface KeyIn {
+interface KeyIn {
   type: string;
   key: string;
   alt?: boolean;
@@ -511,7 +511,7 @@ export interface KeyIn {
  */
 export const KEYBOARD_APPROVAL = false;
 
-export type GateResult = { kind: 'approve' } | { kind: 'refused'; reason: keyof typeof BAR_MESSAGES } | null;
+type GateResult = { kind: 'approve' } | { kind: 'refused'; reason: keyof typeof BAR_MESSAGES } | null;
 
 /** 카드가 포커스를 가졌을 때 [중지]로 받는 키(기본 포커스가 [중지]다, ADR-021 결정 7 원칙 3). 승인 키는 없다. */
 export const STOP_KEYS: readonly string[] = ['Enter', ' ', 'Escape'];

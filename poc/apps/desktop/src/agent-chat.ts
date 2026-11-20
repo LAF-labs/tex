@@ -153,8 +153,8 @@ export interface AgentChatPorts {
   now?: () => number;
 }
 
-export type ResultKind = 'sales' | 'history' | 'receivables' | 'payables' | 'cash_flow';
-export interface TableRow {
+type ResultKind = 'sales' | 'history' | 'receivables' | 'payables' | 'cash_flow';
+interface TableRow {
   date: string;
   counterparty: string;
   total: number | null;
@@ -162,7 +162,7 @@ export interface TableRow {
   documentId: string | null;
   mail: MailState;
 }
-export type AgentShow = { type: 'card'; runId: string } | { type: 'table'; table: ResultKind; title: string; rows: TableRow[] };
+type AgentShow = { type: 'card'; runId: string } | { type: 'table'; table: ResultKind; title: string; rows: TableRow[] };
 export type AgentTurnResult =
   /** setup: 이 턴에 내 사업장·발급 인증이 빠져 카드를 못 만들었다(화면이 등록 버튼을 둔다). */
   /** unknown: 사장님이 쓴 거래처 이름이 장부에 없다(U8-1). 화면은 text와 그 이름으로 [거래처 추가]를 둔다. */

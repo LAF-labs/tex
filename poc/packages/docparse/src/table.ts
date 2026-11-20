@@ -15,7 +15,7 @@ export interface RoleRule<R extends string> {
   multi?: boolean;
 }
 
-export interface HeaderMatch<R extends string> {
+interface HeaderMatch<R extends string> {
   sheet: SheetTable;
   headerRow: number;
   columns: Array<{ role: R; index: number; header: string }>;

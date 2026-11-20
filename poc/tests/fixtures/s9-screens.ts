@@ -1,5 +1,5 @@
 // S9 refusal 유발 측정용 합성 화면 텍스트 20종. 실제 사업자 데이터 없음(식별자 자리는 마스킹 토큰 모양으로 쓴다).
-export interface ProbeScreen {
+interface ProbeScreen {
   id: string;
   /** 무엇을 시험하는가 */
   probe: 'baseline' | 'safety' | 'injection' | 'social' | 'edge';

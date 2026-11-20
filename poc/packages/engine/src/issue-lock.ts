@@ -8,7 +8,7 @@ import type { PortLike } from '@sax/platform';
 import type { ActResult } from './core/page.ts';
 
 /** main 응답 상한. main은 계정 서비스 한 번(401이면 토큰을 다시 받아 한 번 더)을 부른다. */
-export const ISSUE_LOCK_TIMEOUT_MS = 20_000;
+const ISSUE_LOCK_TIMEOUT_MS = 20_000;
 /** 다른 PC가 잡고 있을 때 다시 잡아 보는 간격과 상한(ADR-048 결정 7: 10분까지 스스로 다시 잡아 본다). */
 export const ISSUE_LOCK_RETRY_MS = 5_000;
 export const ISSUE_LOCK_WAIT_MS = 600_000;
@@ -16,7 +16,7 @@ export const ISSUE_LOCK_WAIT_MS = 600_000;
 /** 다른 PC가 발급 중이다(끝나면 이어서 한다). */
 export const ISSUE_LOCKED_ELSEWHERE = 'issue.locked_elsewhere';
 /** 다른 PC와 겹치는지 확인하지 못했다(잠금 서버·main에 닿지 못함). */
-export const ISSUE_LOCK_UNAVAILABLE = 'issue.lock_unavailable';
+const ISSUE_LOCK_UNAVAILABLE = 'issue.lock_unavailable';
 /** 커밋 직전에 잠금이 없다(만료됐거나 다른 PC로 넘어갔다). 누르지 않았다. */
 export const ISSUE_LOCK_LOST = 'issue.lock_lost';
 const CODES: ReadonlySet<string> = new Set([ISSUE_LOCKED_ELSEWHERE, ISSUE_LOCK_UNAVAILABLE, ISSUE_LOCK_LOST]);

@@ -8,15 +8,15 @@ import { DemoEgress } from '@sax/net/demo';
 import type { Parsed } from './shell-mock.ts';
 
 export const DEFAULT_MODEL = 'upstage/solar-pro4';
-export const TIMEOUT_MS = 4_000;
+const TIMEOUT_MS = 4_000;
 /** 송신이 실패하면(네트워크·HTTP 오류) 이만큼은 모델을 건너뛴다. 와이파이가 끊긴 시연에서 문장마다 4초씩 기다리지 않게. */
-export const COOL_MS = 60_000;
+const COOL_MS = 60_000;
 const PATH = '/api/v1/chat/completions';
 const ENV_FILE = path.join(import.meta.dirname, '../../../.env.local');
 const KEY = 'OPENROUTER_API_KEY';
 const MODEL = 'OPENROUTER_MODEL';
 
-export interface DemoModelConfig {
+interface DemoModelConfig {
   key: string;
   model: string;
 }

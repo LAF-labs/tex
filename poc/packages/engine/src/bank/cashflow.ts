@@ -6,8 +6,8 @@
 import { normalizePayerName } from '@sax/db';
 import { addDays } from './match.ts';
 
-export type OutCategory = 'payable' | 'own_transfer' | 'tax' | 'card_payment' | 'payroll' | 'other';
-export type InCategory = 'receivable' | 'own_transfer' | 'card_sales' | 'interest' | 'other';
+type OutCategory = 'payable' | 'own_transfer' | 'tax' | 'card_payment' | 'payroll' | 'other';
+type InCategory = 'receivable' | 'own_transfer' | 'card_sales' | 'interest' | 'other';
 /** 사람이 고를 수 있는 갈래(bank.categorize). unrelated = 사업과 무관(분석에서 뺀다) */
 export const HUMAN_CATEGORIES = ['own_transfer', 'tax', 'card_payment', 'payroll', 'card_sales', 'interest', 'other', 'unrelated'] as const;
 export type HumanCategory = (typeof HUMAN_CATEGORIES)[number];

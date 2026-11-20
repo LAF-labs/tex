@@ -28,7 +28,7 @@ type Params = Record<string, unknown>;
 export const DEFAULT_TERMS: PayTerms = { kind: 'days', n: 30 };
 /** 거래내역 기준일이 이보다 오래되면 "확인 못 함"(09 §8.3) */
 export const STALE_DAYS = 7;
-export const BANK_FILE_MAX = 15 * 1024 * 1024;
+const BANK_FILE_MAX = 15 * 1024 * 1024;
 const ROWS_MAX = 20_000;
 const METHODS: readonly AllocMethod[] = ['account', 'cash', 'other_account', 'offset', 'other'];
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
@@ -150,14 +150,14 @@ export interface PayableSummary {
 }
 
 /** 한 쪽 맞추기 결과 */
-export interface MatchRun {
+interface MatchRun {
   autoTxnIds: string[];
   review: string[];
   unknown: string[];
   candidates: Map<string, Candidate[]>;
 }
 
-export interface BankServiceOptions {
+interface BankServiceOptions {
   vaultDir: string;
   now?: () => Date;
 }

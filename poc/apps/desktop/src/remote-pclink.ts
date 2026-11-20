@@ -38,14 +38,14 @@ const NO_RETRY: ReadonlySet<string> = new Set(['account.device_limit', 'account.
 /** 새 PC가 6자리를 보인 뒤 이만큼 지나도 승인이 없으면 새로 신청한다(쓰던 PC의 승인 창 10분 + 여유). */
 export const PCLINK_RESTART_MS = PCLINK_STEP_MS + 30_000;
 /** 쓰던 PC가 "연결됐어요"를 보여 두는 시간. 새 PC의 사용자가 이 말을 보고 확인을 누른다. */
-export const PCLINK_DONE_SHOW_MS = 10 * 60_000;
+const PCLINK_DONE_SHOW_MS = 10 * 60_000;
 
 // ───────────────────────── 새 PC ─────────────────────────
 
 /** wait: 쓰던 PC의 답을 기다림 · code: 6자리를 보이는 중 · confirm: 열쇠가 왔고 사용자 확인을 기다림 */
-export type PcLinkJoinStage = 'wait' | 'code' | 'confirm';
+type PcLinkJoinStage = 'wait' | 'code' | 'confirm';
 
-export interface PcLinkJoinOptions {
+interface PcLinkJoinOptions {
   client: Pick<AccountClient, 'devicesBySession' | 'enrollDesktop' | 'pcLinkHello' | 'pcLinkAnswer' | 'pcLinkReveal' | 'pcLinkCancel'>;
   /** 계정 세션. 연결이 끝나면 호출자가 로그아웃한다 */
   session: string;
@@ -61,7 +61,7 @@ export interface PcLinkJoinOptions {
 }
 
 /** 연결이 끝난 새 PC의 신원 재료. 금고의 AIK는 이미 계정의 AIK다. */
-export interface PcLinkJoined {
+interface PcLinkJoined {
   deviceId: string;
   cert: SignedCert;
   deviceList: DeviceListJson;
@@ -209,7 +209,7 @@ const stateOf = (ap: PcLinkApprover): PcLinkApproveState => ap.state;
 
 type Call = <R>(g: (auth: DeviceAuth) => Promise<R>) => Promise<R>;
 
-export interface PcLinkHostOptions {
+interface PcLinkHostOptions {
   client: Pick<AccountClient, 'pcLinks' | 'pcLinkChallenge' | 'pcLinkGrant' | 'pcLinkDrop' | 'putDeviceList'>;
   /** 기기 목록을 바꾸는 일과 같은 줄에 선다(DeviceManager.exclusive). 로그인 전이면 account.signed_out */
   exclusive: <T>(f: (s: DeviceManagerSession, call: Call, pull: () => Promise<void>) => Promise<T>) => Promise<T>;

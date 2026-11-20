@@ -21,7 +21,7 @@ import {
 // 포트 정본은 remote-ports.ts(#143). 여기서는 그 타입을 구현한다.
 export type { AccountClient, CloudPorts, DeviceAuth, RelayHttpClient } from './remote-ports.ts';
 
-export interface CloudPortsOptions {
+interface CloudPortsOptions {
   egress: Egress;
   env: 'prod' | 'dev';
   /** env = 'dev'일 때만: 개발 스택 앞단(scripts/phone-stack/stack.ts, 예: http://localhost:8787 · localhost:8787). Egress도 cloudDevLocal을 켜야 열린다 */
@@ -31,7 +31,7 @@ export interface CloudPortsOptions {
 // ---- 구현 ----
 
 /** 코드만 담는 오류(메시지 = 코드) */
-export class CloudPortError extends Error {
+class CloudPortError extends Error {
   readonly code: string;
   constructor(code: string) {
     super(code);

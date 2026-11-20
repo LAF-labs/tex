@@ -85,13 +85,13 @@ export interface CodefLinkStore {
 }
 
 /** 하루 CODEF 호출 상한(데모 하루 100회, 여유 10). 계정 삭제는 막지 않는다(인증서를 CODEF에 남기지 않게) */
-export const CODEF_DAILY_CALLS = 90;
+const CODEF_DAILY_CALLS = 90;
 /** [최신화] 사이 최소 간격(같은 기간 반복 조회 막기) */
-export const CODEF_REFRESH_COOLDOWN_MS = 15 * 60_000;
+const CODEF_REFRESH_COOLDOWN_MS = 15 * 60_000;
 /** 같은 인증서 비밀번호가 하루 이만큼 틀리면 그날은 더 보내지 않는다(호출 아낌 + 은행 잠금 전) */
-export const CODEF_PW_FAIL_MAX = 3;
+const CODEF_PW_FAIL_MAX = 3;
 
-export type CodefPhase = 'password' | 'connecting' | 'accounts' | 'sms' | 'fetching' | 'done' | 'error' | 'next_banking' | 'banking_failed' | 'order';
+type CodefPhase = 'password' | 'connecting' | 'accounts' | 'sms' | 'fetching' | 'done' | 'error' | 'next_banking' | 'banking_failed' | 'order';
 export interface CodefEvent {
   phase: CodefPhase;
   code?: CodefFailure;
@@ -106,7 +106,7 @@ export interface CodefEvent {
   hint?: string;
 }
 
-export interface CodefLinkOptions {
+interface CodefLinkOptions {
   client: CodefClient;
   seal: CodefSealPort;
   store: CodefLinkStore;
@@ -121,7 +121,7 @@ export interface CodefLinkOptions {
 }
 
 /** 화면에 보이는 보유계좌(번호는 끝 4자리만) */
-export interface AccountChoice {
+interface AccountChoice {
   key: string;
   last4: string;
   name: string;
@@ -143,7 +143,7 @@ type Held =
 const CERT_ID_RE = /^[0-9a-f]{16}$/;
 
 /** 연결 결과: 보유계좌 고르기, 또는 SMS 인증번호 받기(step 'sms', accounts 비어 있음) */
-export interface ConnectResult {
+interface ConnectResult {
   sessionId: string;
   bankName: string;
   accounts: AccountChoice[];
@@ -161,7 +161,7 @@ export function bankingOrder(o: { explicit?: unknown; corporate: boolean; prefer
 }
 
 /** SMS 인증번호를 다시 넣을 수 있는 횟수 */
-export const SMS_TRIES = 3;
+const SMS_TRIES = 3;
 
 /** 이 뱅킹만의 사정이라 같은 인증서로 다른 뱅킹을 해 볼 실패 */
 const TRY_OTHER: ReadonlySet<CodefFailure> = new Set(['identity_required', 'withdraw_account_required', 'banking_kind', 'not_enrolled', 'cert_not_registered', 'cert_kind', 'rejected']);

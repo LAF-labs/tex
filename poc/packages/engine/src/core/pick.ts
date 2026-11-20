@@ -12,11 +12,11 @@ import { NEXT, waitTarget, type Outcome, type StepEnv } from './steps.ts';
 import type { StepOf } from './types.ts';
 
 /** 고른 뒤 선택 표지가 그 행으로 바뀌기를 기다리는 상한(ms). */
-export const PICK_SELECT_WAIT_MS = 3_000;
+const PICK_SELECT_WAIT_MS = 3_000;
 /** wait for:'gone': 대상이 이만큼 계속 없어야 사라졌다고 본다(처리 표시가 아직 안 뜬 순간을 사라짐으로 읽지 않게). */
-export const GONE_QUIET_MS = 500;
+const GONE_QUIET_MS = 500;
 
-export type PickResult = { ok: true; name: string } | { ok: false; code: string; none?: boolean };
+type PickResult = { ok: true; name: string } | { ok: false; code: string; none?: boolean };
 
 const none = (code: string): PickResult => ({ ok: false, code, none: true });
 

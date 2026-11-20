@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 let cached: Promise<string | undefined> | null = null;
 
 /** system_profiler -json 출력에서 machine_name을 꺼낸다. 글자가 이상하면 undefined. */
-export function parseMacModel(out: string): string | undefined {
+function parseMacModel(out: string): string | undefined {
   try {
     const v = (JSON.parse(out) as { SPHardwareDataType?: Array<{ machine_name?: unknown }> }).SPHardwareDataType?.[0]?.machine_name;
     if (typeof v !== 'string') return undefined;

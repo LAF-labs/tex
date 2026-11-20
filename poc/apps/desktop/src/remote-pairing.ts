@@ -8,7 +8,7 @@ import type { DeviceSession } from './remote-account.ts';
 import type { AccountClient, RelayHttpClient } from './remote-ports.ts';
 
 /** QR 글자 → 이미지 data URL(data:image/svg+xml;base64,…). 제품은 remote-qr.ts qrSvgDataUrl. */
-export type QrImage = (text: string) => string;
+type QrImage = (text: string) => string;
 
 export interface PairView {
   step: 'idle' | 'opening' | 'waiting_phone' | 'awaiting_sas' | 'checking' | 'paired' | 'failed';
@@ -23,7 +23,7 @@ export interface PairView {
   error: string | null;
 }
 
-export interface PairingHostOptions {
+interface PairingHostOptions {
   account: AccountClient;
   relayHttp: RelayHttpClient;
   /** 룸 링크(WSS, 개발 스택은 ws://localhost). 시험은 MemoryRelay. */

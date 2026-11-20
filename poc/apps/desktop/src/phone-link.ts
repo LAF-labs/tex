@@ -47,10 +47,10 @@ const FILE_VERSION = 1;
 export const DESKTOP_CAPS: readonly string[] = Object.freeze([CAP.receipt, CAP.receiptV2, CAP.cash]);
 
 /** 이 PC가 받는 승인 키 종류(ADR-052 결정 1). Android는 Key Attestation 검증기가 생긴 뒤에 더한다. */
-export const PX_ACCEPTED_HW: readonly PxHw[] = Object.freeze(['ios_se'] as const);
+const PX_ACCEPTED_HW: readonly PxHw[] = Object.freeze(['ios_se'] as const);
 
 /** 받은 승인 키(Px). pub은 SEC1 비압축 65바이트(b64). */
-export interface PxRecord {
+interface PxRecord {
   pub: string;
   hw: PxHw;
   enrolledAt: number;
@@ -58,13 +58,13 @@ export interface PxRecord {
   via: 'auto' | 'pc';
 }
 /** 폰 승인을 꺼 둔 동안 폰이 청한 키(PC에서 다시 허용해야 받는다). */
-export interface PxPending {
+interface PxPending {
   pub: string;
   hw: PxHw;
   askedAt: number;
 }
 
-export interface PhoneRecord {
+interface PhoneRecord {
   pairId: string;
   deviceId: string;
   name: string;
@@ -92,7 +92,7 @@ export interface PhoneRecord {
 }
 
 /** 지우지 못한 우편함(폰을 끊을 때 릴레이 삭제가 실패했다). 다음에 켤 때 다시 지운다(30일까지). */
-export interface MailboxTrash {
+interface MailboxTrash {
   mbxId: string;
   /** 봉인한 {read, write}(기록의 tok 그대로) */
   tok: string;
@@ -206,7 +206,7 @@ export class PhoneStore {
   }
 }
 
-export interface PhoneLinkKeys {
+interface PhoneLinkKeys {
   noise: NoiseStatic;
   vd: Pick<Signer<typeof CTX.qbundle>, 'sign'>;
   hpkeOpen: HpkeOpenFn;

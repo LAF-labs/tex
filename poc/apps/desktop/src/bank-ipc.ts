@@ -8,7 +8,7 @@ const COLS = {
     balance: { t: 'number' }, payer: { t: 'number' }, memo: { t: 'number' }, counter_account: { t: 'number' },
   },
 } as const;
-export const BANK_METHODS_LIST = ['account', 'cash', 'other_account', 'offset', 'other'] as const;
+const BANK_METHODS_LIST = ['account', 'cash', 'other_account', 'offset', 'other'] as const;
 
 export const BANK_SHELL_METHODS = {
   'bank.overview': {},

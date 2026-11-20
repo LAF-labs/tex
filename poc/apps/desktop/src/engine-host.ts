@@ -28,7 +28,7 @@ export interface InlineVault {
   shutdown(): Promise<void>;
 }
 
-export interface EngineHostOptions {
+interface EngineHostOptions {
   /** 'process'면 utilityProcess 금고(앱 폴더·OS 키체인). */
   vault: 'process' | InlineVault;
   /** 엔진 앱 폴더. 없으면 기본 위치. */

@@ -40,7 +40,7 @@ export interface DeviceManagerSession {
   setDeviceList(list: DeviceListJson): Promise<void>;
 }
 
-export interface DeviceManagerOptions {
+interface DeviceManagerOptions {
   client: Pick<AccountClient, 'devices' | 'deviceListByDevice' | 'putDeviceList' | 'leaveDevice'>;
   /** 로그인 전이면 null */
   session: () => DeviceManagerSession | null;

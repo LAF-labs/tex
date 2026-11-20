@@ -54,7 +54,7 @@ const BLOCKED_SCHEMES = /^(file|chrome|chrome-extension|devtools|view-source|sax
  * 설치 Chrome과 같은 꼴의 UA(줄인 판 Chrome/NNN.0.0.0). 앱 이름·Electron 토큰은 뺀다. 버전은 실제 엔진(Chromium) 판이라
  * Sec-CH-UA 브랜드 판과 맞는다. 홈택스는 Chrome·Edge만 지원 브라우저로 본다.
  */
-export function chromeLikeUserAgent(fallback = app.userAgentFallback, chromeVersion = process.versions.chrome): string {
+function chromeLikeUserAgent(fallback = app.userAgentFallback, chromeVersion = process.versions.chrome): string {
   const major = chromeVersion.split('.')[0];
   return fallback
     .split(' ')
@@ -73,7 +73,7 @@ export function keepDrawingWhenHidden(a: App = app): void {
   for (const s of ['disable-backgrounding-occluded-windows', 'disable-renderer-backgrounding', 'disable-background-timer-throttling']) a.commandLine.appendSwitch(s);
 }
 
-export interface EmbeddedBrowserOptions {
+interface EmbeddedBrowserOptions {
   win: BaseWindow;
   /** 금고로 가는 'browser' 포트 메시지({t:'cdp', m} 또는 {t:'cdp_closed'}). */
   post: (m: unknown) => void;

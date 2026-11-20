@@ -32,7 +32,7 @@ import {
   type VerifiedRelease,
 } from '@sax/updater';
 
-export type UpdateLog = (name: string, data?: Record<string, string | number | boolean>) => void;
+type UpdateLog = (name: string, data?: Record<string, string | number | boolean>) => void;
 
 /** 판정 원천. 모두 던지면 보류다(설치본 유지). */
 export interface UpdateSources {
@@ -56,7 +56,7 @@ export interface UpdateInstaller {
   install(): void;
 }
 
-export interface UpdateTimers {
+interface UpdateTimers {
   setInterval(f: () => void, ms: number): unknown;
   clearInterval(h: unknown): void;
 }
@@ -119,7 +119,7 @@ export function updatePolicy(o: { testBuild: boolean; setting?: { requireTranspa
 
 // ---- 상태 파일 ----
 
-export interface UpdaterFile {
+interface UpdaterFile {
   v: 1;
   /** 롤아웃 버킷용 설치 id(밖으로 보내지 않는다, @sax/updater가 해시만 쓴다) */
   installId: string;

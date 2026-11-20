@@ -104,7 +104,7 @@ export const SEMVER_RE = /^(\d{1,6})\.(\d{1,6})\.(\d{1,6})$/;
 const NAME_RE = /^[A-Za-z0-9._-]{1,128}$/;
 /** https 절대 주소: 소문자 호스트, 경로 조각은 비예약 문자만(쿼리·조각·인코딩 없음, YAML·셸에 안전) */
 const ABS_URL_RE = /^https:\/\/[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63}){1,8}(\/[A-Za-z0-9._~-]{1,128}){1,8}$/;
-export const isFileUrl = (u: unknown): u is string => typeof u === 'string' && ((NAME_RE.test(u) && !u.startsWith('.')) || (u.length <= 512 && ABS_URL_RE.test(u)));
+const isFileUrl = (u: unknown): u is string => typeof u === 'string' && ((NAME_RE.test(u) && !u.startsWith('.')) || (u.length <= 512 && ABS_URL_RE.test(u)));
 const SHA512_RE = /^[A-Za-z0-9+/]{86}==$/;
 const SIG_RE = /^[A-Za-z0-9_-]{86}$/;
 const KEYID_RE = /^[A-Za-z0-9._-]{1,64}$/;
@@ -122,7 +122,7 @@ function parseSig(v: unknown): Sig {
   return { keyId: v.keyId, alg: 'ed25519', sig: v.sig };
 }
 
-export const isTime = (v: unknown): v is string => typeof v === 'string' && TIME_RE.test(v) && Number.isFinite(Date.parse(v));
+const isTime = (v: unknown): v is string => typeof v === 'string' && TIME_RE.test(v) && Number.isFinite(Date.parse(v));
 
 /** latest.json 본문(이미 JSON.parse한 값)의 모양 검사. 통과한 값만 verify에 넘긴다. */
 export function parseManifest(v: unknown): ReleaseManifest {

@@ -23,14 +23,14 @@ const MAC_APP = '/Applications/MagicLine4NX/MagicLine4NX.app';
 /** Windows 설치 자리 후보(DreamSecurity 기본 설치 폴더). 못 찾으면 unknown이라 막지 않는다. */
 const WIN_DIRS = ['C:\\Program Files (x86)\\DreamSecurity\\MagicLine4NX', 'C:\\Program Files\\DreamSecurity\\MagicLine4NX'];
 
-export interface SecurityProbe {
+interface SecurityProbe {
   platform: NodeJS.Platform;
   exists(p: string): boolean;
   /** 이름이 같은 프로세스가 떠 있는가. 알 수 없으면 null. */
   running(name: string): boolean | null;
 }
 
-export const realProbe: SecurityProbe = {
+const realProbe: SecurityProbe = {
   platform: process.platform,
   exists: (p) => existsSync(p),
   running: (name) => {

@@ -46,7 +46,7 @@ const clean = (s: string): string | null => {
 };
 
 /** CODEF 거래 → 원천 행. 비고 칸은 resAccountDesc1~4 순서 그대로, 비고1(보낸분/받는분)은 payer로도 */
-export function codefSourceRows(txns: CodefTxn[]): SourceRow[] {
+function codefSourceRows(txns: CodefTxn[]): SourceRow[] {
   const out: SourceRow[] = [];
   for (const t of txns) {
     const m = /^(\d{4})(\d{2})(\d{2})$/.exec(t.date);

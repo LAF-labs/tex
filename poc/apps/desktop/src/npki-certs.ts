@@ -9,8 +9,8 @@ import type { NpkiCert } from './onboarding.ts';
 
 export type VaultControl = (method: string, params: Record<string, unknown>) => Promise<unknown>;
 /** der → 고정 4필드(샌드박스 certInfo, 스키마 검증 뒤). 못 읽으면 던진다. */
-export type CertInfoReader = (der: Uint8Array) => Promise<CertInfo>;
-export type NpkiLog = (name: string, data: Record<string, number>) => void;
+type CertInfoReader = (der: Uint8Array) => Promise<CertInfo>;
+type NpkiLog = (name: string, data: Record<string, number>) => void;
 
 /** 한 번에 보일 상한(금고도 상한이 있다, 그보다 많으면 앞에서부터). */
 export const NPKI_SHOW_MAX = 50;
