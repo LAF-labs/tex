@@ -663,7 +663,8 @@ describe('CODEF: 은행이 출금계좌번호를 요구하면(우리은행 개�
     assert.equal(e.code, 'withdraw_account_required');
     assert.deepEqual(e.also, { clientType: 'B', code: 'identity_required' });
     assert.ok(events.some((x) => x.phase === 'next_banking' && x.clientType === 'P' && x.code === 'withdraw_account_required'));
-    assert.ok(events.some((x) => x.phase === 'banking_failed' && x.clientType === 'B' && x.cf === 'CF-12831'), '마지막 뱅킹(기업)의 거절도 남는다');
+    assert.ok(events.some((x) => (x.phase === 'next_banking' || x.phase === 'banking_failed') && x.clientType === 'B' && x.cf === 'CF-12831'), '기업 뱅킹의 거절도 남는다');
+    assert.ok(events.some((x) => x.phase === 'banking_failed' && x.clientType === 'P' && x.code === 'withdraw_account_required'), '미뤄 둔 개인 뱅킹이 마지막이다');
     // 화면으로 가는 결과에는 코드만(값·빠진 키·단서 없음)
     const r = codefFailResult(e);
     assert.deepEqual(r, { ok: false, code: 'withdraw_account_required', cf: 'CF-12401', clientType: 'P', also: { clientType: 'B', code: 'identity_required' } });
@@ -677,6 +678,7 @@ describe('CODEF: 은행이 출금계좌번호를 요구하면(우리은행 개�
   it('사람이 넣은 계좌번호로 같은 비밀번호로 이어 간다(금고 창 한 번)', async () => {
     const { link, seal } = await setup();
     mock.scenario.needWithdraw = FAKE_ACCOUNT;
+    mock.scenario.createByType = { B: 'CF-12831' };
     const r = await link.connect({ certId: CERT, withdrawAccount: '1002-123-456789' });
     assert.equal(r.accounts.length, 2);
     assert.equal(seal.asks, 1);
@@ -695,15 +697,30 @@ describe('CODEF: 은행이 출금계좌번호를 요구하면(우리은행 개�
     const { link } = await setup({ seal });
     mock.scenario.needWithdraw = FAKE_ACCOUNT;
     mock.scenario.needWithdrawPass = true;
+    mock.scenario.createByType = { B: 'CF-12831' };
     const r = await link.connect({ certId: CERT, withdrawAccount: FAKE_ACCOUNT });
     assert.equal(r.accounts.length, 2);
     assert.deepEqual(fields, [undefined, 'account'], '인증서 비밀번호 한 번, 계좌 비밀번호 한 번');
     assert.equal(typeof creates().at(-1)!.withdrawAccountPassword, 'string');
   });
+  it('기업 뱅킹이 되면 개인 뱅킹의 계좌번호·계좌 비밀번호를 묻지 않는다(금고 창 한 번, 2026-11-20 실기기)', async () => {
+    const fields: Array<string | undefined> = [];
+    const base = fakeSeal();
+    const seal = { ...base, async seal(p: { certId: string; publicKey: string; mode: 'ask' | 'auto'; field?: 'account' }) { fields.push(p.field); return base.seal(p); } };
+    const { link, events } = await setup({ seal });
+    mock.scenario.needWithdraw = FAKE_ACCOUNT;
+    mock.scenario.needWithdrawPass = true;
+    const r = await link.connect({ certId: CERT, withdrawAccount: FAKE_ACCOUNT });
+    assert.equal(r.accounts.length, 2);
+    assert.deepEqual(fields, [undefined], '인증서 비밀번호 한 번뿐');
+    assert.equal(creates().at(-1)!.clientType, 'B');
+    assert.ok(events.some((x) => x.phase === 'next_banking' && x.clientType === 'P' && x.deferred === true));
+  });
   it('받을 돈에 넣어 둔 같은 은행 계좌가 있으면 묻지 않고 쓴다', async () => {
     const { link, call } = await setup();
     await call('bank.addAccount', { bank: '0020', number: FAKE_ACCOUNT, alias: null });
     mock.scenario.needWithdraw = FAKE_ACCOUNT;
+    mock.scenario.createByType = { B: 'CF-12831' };
     const r = await link.connect({ certId: CERT });
     assert.equal(r.accounts.length, 2);
     assert.equal(creates().at(-1)!.commWithdrawAccountNo, FAKE_ACCOUNT);
