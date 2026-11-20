@@ -11,7 +11,7 @@ import { attachQueue, nextFrame, type Link } from './relay.ts';
 export const PROTOCOL_VERSION = 1;
 export const SUITES: HelloBody['suites'] = ['noise-25519-chachapoly-blake2b'];
 /** v1.11: sync = run.event.rev와 gate.resolved(폰과 PC 연결 끊김에 강하게)를 받는다(폰) / 보낸다(PC). */
-export const CAP = { receipt: 'receipt.v1', receiptV2: 'receipt.v2', cash: 'cash.v1', issue: 'issue.v1', copy: 'copy.v1', share: 'share.v1', approve: 'approve.v1', sync: 'sync.v1' } as const;
+export const CAP = { receipt: 'receipt.v1', receiptV2: 'receipt.v2', cash: 'cash.v1', issue: 'issue.v1', copy: 'copy.v1', share: 'share.v1', approve: 'approve.v1', sync: 'sync.v1', issued: 'issued.v1' } as const;
 const ZERO_HASH = '0'.repeat(64);
 
 export const sessionPrologue = (pairId: string): Uint8Array => concat(utf8(CTX.session), utf8(pairId));

@@ -44,8 +44,8 @@ export function issueCmd(cmdId: string, r: PhoneIssueRequest): CmdRunBody {
 }
 
 /**
- * phone.copy가 한 프레임(MAX_INNER)에 들어가도록 거래처 목록을 뒤(오래 안 쓴 쪽)에서부터 줄인다.
- * 줄인 개수를 함께 돌려준다. 거래처를 모두 빼도 안 들어가면 null.
+ * phone.copy가 한 프레임(MAX_INNER)에 들어가도록 오래된 발급 기록부터 덜고, 그래도 넘치면 발급 기록을 모두 빼고 거래처 목록을 뒤(오래 안 쓴 쪽)에서부터 줄인다.
+ * 줄인 거래처 개수를 함께 돌려준다. 거래처를 모두 빼도 안 들어가면 null.
  */
 export function fitPhoneCopy(body: PhoneCopyBody, ctx: EnvelopeCtx): { body: PhoneCopyBody; dropped: number } | null {
   const size = (b: PhoneCopyBody): number => {
@@ -56,15 +56,26 @@ export function fitPhoneCopy(body: PhoneCopyBody, ctx: EnvelopeCtx): { body: Pho
       throw e;
     }
   };
+  const fits = (b: PhoneCopyBody) => size(b) <= MAX_INNER;
+  const longest = (n: number, ok: (k: number) => boolean): number => {
+    let lo = 0;
+    let hi = n;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (ok(mid)) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  };
   const all = body.counterparties.slice(0, 100);
-  let lo = 0;
-  let hi = all.length;
-  if (size({ ...body, counterparties: all }) <= MAX_INNER) return { body: { ...body, counterparties: all }, dropped: body.counterparties.length - all.length };
-  if (size({ ...body, counterparties: [] }) > MAX_INNER) return null;
-  while (lo < hi) {
-    const mid = Math.ceil((lo + hi) / 2);
-    if (size({ ...body, counterparties: all.slice(0, mid) }) <= MAX_INNER) lo = mid;
-    else hi = mid - 1;
+  const full = { ...body, counterparties: all };
+  if (fits(full)) return { body: full, dropped: body.counterparties.length - all.length };
+  const { issued, ...rest } = full;
+  if (issued?.length && fits({ ...rest, counterparties: all, issued: [] })) {
+    const keep = longest(issued.length, (k) => fits({ ...rest, issued: issued.slice(0, k) }));
+    return { body: { ...rest, issued: issued.slice(0, keep) }, dropped: body.counterparties.length - all.length };
   }
-  return { body: { ...body, counterparties: all.slice(0, lo) }, dropped: body.counterparties.length - lo };
+  if (!fits({ ...rest, counterparties: [] })) return null;
+  const keep = longest(all.length, (k) => fits({ ...rest, counterparties: all.slice(0, k) }));
+  return { body: { ...rest, counterparties: all.slice(0, keep) }, dropped: body.counterparties.length - keep };
 }

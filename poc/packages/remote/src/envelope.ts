@@ -263,9 +263,16 @@ export interface ShareKeyBody {
   shareSignPub: string;
   shareKeys: { epoch: number; shareKey: string }[];
 }
+export interface CopyIssued {
+  ref?: string;
+  name: string;
+  day: string;
+  total: number | null;
+}
 export interface PhoneCopyBody {
   asOf: number;
   counterparties: CopyCounterparty[];
+  issued?: CopyIssued[];
   toIssue?: { ref: string; supply: number; item: string; due?: string }[];
   money?: { asOf: number; accounts?: number; receivable: MoneySide; payable: MoneySide; cashflow?: CopyCashflow };
   todayApprovalsLeft?: number;

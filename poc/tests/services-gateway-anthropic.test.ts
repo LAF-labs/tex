@@ -110,7 +110,7 @@ describe('게이트웨이: 생성만 Anthropic(GW_RESPOND_PROVIDER)', () => {
     const turn1 = [
       { type: 'thinking', thinking: '', signature: 'SIG1' },
       { type: 'text', text: '찾아볼게요' },
-      { type: 'tool_use', id: 'toolu_1', name: CHAT_PHONE.tools[0]!.name, input: { counterparty: null } },
+      { type: 'tool_use', id: 'toolu_1', name: 'receivables', input: { counterparty: null } },
     ];
     const p = new AnthropicProvider({
       apiKey: 'k',
@@ -130,7 +130,7 @@ describe('게이트웨이: 생성만 Anthropic(GW_RESPOND_PROVIDER)', () => {
       ['reasoning', 'function_call'],
       '앞말 글은 출력 JSON이 아니므로 message로 내지 않는다',
     );
-    assert.deepEqual(r1.output[1], { type: 'function_call', call_id: 'toolu_1', name: CHAT_PHONE.tools[0]!.name, arguments: '{"counterparty":null}' });
+    assert.deepEqual(r1.output[1], { type: 'function_call', call_id: 'toolu_1', name: 'receivables', arguments: '{"counterparty":null}' });
     const parsed = parseRespond({ status: r1.status, output: r1.output.map((item) => ({ item, tag: 'a'.repeat(64) })) });
     assert.equal(parsed.status, 'completed');
 

@@ -3,12 +3,12 @@ import type { PhoneSessionHook } from './phone-link.ts';
 import type { GateSink, PhoneGate } from './phone-gate.ts';
 import type { CmdResumeBody, PhoneIssue, PhoneSink } from './phone-issue.ts';
 
-export const SESSION_CAPS: readonly string[] = Object.freeze([CAP.issue, CAP.copy, CAP.sync]);
+export const SESSION_CAPS: readonly string[] = Object.freeze([CAP.issue, CAP.copy, CAP.sync, CAP.issued]);
 export const APPROVE_CAPS: readonly string[] = Object.freeze([CAP.approve]);
 
 interface PhoneSessionOptions {
   issue: PhoneIssue;
-  copy: (pairId: string) => Promise<PhoneCopyBody>;
+  copy: (pairId: string, want: { issued: boolean }) => Promise<PhoneCopyBody>;
   approve?: {
     gate: PhoneGate;
     enroll: (pairId: string, body: PxEnrollBody) => Promise<PxAckBody>;
@@ -47,7 +47,7 @@ export function phoneSession(o: PhoneSessionOptions): PhoneSessionHook {
       if (approves(ch)) o.approve!.gate.attach(pairId, sink);
       if (have.has(CAP.issue)) o.issue.attach(pairId, sink);
       if (!have.has(CAP.copy)) return;
-      const body = await o.copy(pairId);
+      const body = await o.copy(pairId, { issued: have.has(CAP.issued) });
       const fit = fitPhoneCopy(body, { pairId, from: 'desktop', seq: 0xffffffff });
       if (!fit) {
         log('main.phone_copy', { result: 'too_large' });
@@ -55,7 +55,7 @@ export function phoneSession(o: PhoneSessionOptions): PhoneSessionHook {
       }
       if (ch.closed) return;
       ch.send('phone.copy', fit.body);
-      log('main.phone_copy', { result: 'sent', counterparties: fit.body.counterparties.length, dropped: fit.dropped, money: !!fit.body.money });
+      log('main.phone_copy', { result: 'sent', counterparties: fit.body.counterparties.length, dropped: fit.dropped, money: !!fit.body.money, issued: fit.body.issued?.length ?? -1 });
     },
     async handle(pairId, ch, env: Envelope) {
       if (env.type === 'px.enroll' || env.type === 'gate.response' || env.type === 'gate.refresh') {

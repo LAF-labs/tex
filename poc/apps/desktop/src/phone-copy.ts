@@ -1,4 +1,5 @@
-import type { CopyCashflow, CopyCounterparty, MoneySide, PhoneCopyBody } from '@sax/remote';
+import { monthOf, newestFirst } from '@sax/chat-core';
+import type { CopyCashflow, CopyCounterparty, CopyIssued, MoneySide, PhoneCopyBody } from '@sax/remote';
 import type { Counterparty, RunView } from './shell-model.ts';
 
 const CP_REF = /^[A-Za-z0-9_-]{1,40}$/;
@@ -35,6 +36,16 @@ export function lastIssues(runs: readonly RunView[]): Map<string, CopyCounterpar
     out.set(r.counterparty.id, { supply, vatMode: r.vat === 'included' ? 'incl' : 'excl', item: clip(r.item, 60), day: r.writeDate, at: r.writeDate });
   }
   return new Map([...out].map(([k, { at, ...v }]) => (void at, [k, v])));
+}
+
+const ISSUED_MONTHS = 13;
+const ISSUED_MAX = 400;
+
+export function copyIssued(rows: ReadonlyArray<{ counterpartyId: string | null; counterparty: string; date: string; total: number | null }>, today: string): CopyIssued[] {
+  const from = `${monthOf(today, 1 - ISSUED_MONTHS)}-01`;
+  return newestFirst(rows.filter((r) => DAY.test(r.date) && r.date >= from && r.date <= today && r.counterparty.trim()))
+    .slice(0, ISSUED_MAX)
+    .map((r) => ({ ...(r.counterpartyId && CP_REF.test(r.counterpartyId) ? { ref: r.counterpartyId } : {}), name: clip(r.counterparty.trim(), 60), day: r.date, total: r.total === null ? null : won(r.total) }));
 }
 
 export function issueCounts(runs: readonly RunView[]): Map<string, number> {
@@ -143,6 +154,8 @@ interface PhoneCopySource {
   runs: () => readonly RunView[];
   bank: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
   approval?: () => Promise<{ approver: boolean; left: number }>;
+  issued?: () => ReadonlyArray<{ counterpartyId: string | null; counterparty: string; date: string; total: number | null }> | Promise<ReadonlyArray<{ counterpartyId: string | null; counterparty: string; date: string; total: number | null }>>;
+  today?: () => string;
   now?: () => number;
 }
 
@@ -157,6 +170,10 @@ export async function buildPhoneCopy(src: PhoneCopySource): Promise<PhoneCopyBod
   const ap = (await src.approval?.().catch(() => null)) ?? null;
   const body: PhoneCopyBody = { asOf: now, counterparties: copyCounterparties(src.counterparties(), lastIssues(src.runs()), !!ap?.approver, issueCounts(src.runs())) };
   if (ap?.approver) body.todayApprovalsLeft = ap.left;
+  if (src.issued && src.today) {
+    const rows = await Promise.resolve().then(src.issued).catch(() => null);
+    if (rows) body.issued = copyIssued(rows, src.today());
+  }
   try {
     const o = (await src.bank('db.query.bank.overview')) as OverviewLike;
     if (o?.summary?.payable && Array.isArray(o.unpaid) && Array.isArray(o.accounts)) {

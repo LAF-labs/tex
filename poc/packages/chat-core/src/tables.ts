@@ -84,8 +84,8 @@ export const TOOL_NEEDS = ['amount', 'item', 'counterparty', 'date'] as const;
 export type ToolNeed = (typeof TOOL_NEEDS)[number];
 export type Vat = 'separate' | 'included';
 
-/** 폰에 없는 도구(장부 전체·통장 거래내역이 있어야 답하는 조회. 낼 돈·돈 흐름은 폰 사본에 아직 없다). 이런 요청은 defer로 답하고 PC가 켜지면 PC가 이어받는다. */
-export const PHONE_OMITTED_TOOLS = ['sales_summary', 'payables', 'cash_flow', 'reply'] as const;
+/** 폰에 없는 도구(통장 거래내역이 있어야 답하는 조회. 낼 돈·돈 흐름은 폰 사본에 아직 없다). 이런 요청은 defer로 답한다. */
+export const PHONE_OMITTED_TOOLS = ['payables', 'cash_flow', 'reply'] as const;
 /** 폰 앱 화면(말 한마디로 여는 곳). capture: 영수증·종이 증빙 찍기, cash: 현금 매출 적기, bizreg: 사업자등록증으로 거래처 추가, issue: 발급 작성(카드 없이) */
 export const PHONE_SCREENS = ['capture', 'cash', 'bizreg', 'issue'] as const;
 export type PhoneScreen = (typeof PHONE_SCREENS)[number];
@@ -99,7 +99,7 @@ export const CHAT_PHONE_TOOLS = [
 ] as ReadonlyArray<Exclude<(typeof CHAT_AGENT_TOOLS)[number], { name: (typeof PHONE_OMITTED_TOOLS)[number] | 'open_screen' }> | (typeof PHONE_ONLY_TOOLS)[number]>;
 export type ChatPhoneToolName = Exclude<ChatAgentToolName, (typeof PHONE_OMITTED_TOOLS)[number]> | (typeof PHONE_ONLY_TOOLS)[number]['name'];
 
-/** 답 종류: PC와 같고 defer(PC가 켜지면 이어서 할 일)만 더 있다. */
+/** 답 종류: PC와 같고 defer(지금 폰에서 못 하는 일)만 더 있다. */
 export const PHONE_REPLY_KINDS = [...AGENT_REPLY_KINDS, 'defer'] as const;
 export type PhoneReplyKind = (typeof PHONE_REPLY_KINDS)[number];
 

@@ -110,6 +110,7 @@ const extraOk = (a: Record<string, unknown>) => monthOffset(a.date_month_offset)
 
 /** 도구 인자 모양 검사. 표(CHAT_PHONE_TOOLS)의 JSON 스키마와 같은 판정이어야 한다(시험이 Ajv와 대조한다). */
 export const PHONE_TOOL_ARGS: { [K in ChatPhoneToolName]: (a: Record<string, unknown>) => boolean } = {
+  sales_summary: (a) => keysAre(a, ['month_offset']) && a.month_offset !== null && monthOffset(a.month_offset),
   invoice_history: (a) => keysAre(a, ['counterparty']) && nullableString(a.counterparty),
   receivables: (a) => keysAre(a, ['counterparty']) && nullableString(a.counterparty),
   invoice_draft: (a) => keysAre(a, ['counterparty', 'amount', 'vat', 'item', ...EXTRA_KEYS]) && typeof a.counterparty === 'string' && nullableString(a.amount) && vat(a.vat) && nullableString(a.item) && extraOk(a),
