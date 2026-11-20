@@ -1,4 +1,4 @@
-import { cleanItem, fillWithJosa, finalOf, fixJosa, koDate, SLOT_FIELDS, SLOT_PATHS, splitVat, won, type CashField } from '@sax/chat-core';
+import { cleanItem, fillWithJosa, finalOf, fixJosa, koDate, monthOf, newestFirst, salesOf, SLOT_FIELDS, SLOT_PATHS, sumOf, supplyOf, tally, won, type CashField } from '@sax/chat-core';
 import { draftDate, issueDateRule, lineSupply, parseQuantity } from '@sax/engine';
 import { TurnRecorder } from '@sax/engine';
 import type { AgentReply, DomainCall, DraftExtra, ReactionId, RouteStep, ScreenFrame, ShownReply, StepParams, StepResult, ToolOutput, TurnEvent, Vat } from '@sax/engine';
@@ -153,22 +153,8 @@ const TOOL_PHASE: Record<DomainCall['tool'], Exclude<AgentPhase, 'thinking'>> = 
 
 const out = (status: ToolOutput['status'], ref: string | null = null, needs: ToolNeed[] | null = null): ToolOutput => ({ ref, status, fields: null, needs });
 const validAmount = (n: number) => Number.isInteger(n) && n > 0 && n <= AMOUNT_MAX;
-const supplyOf = (total: number) => splitVat(total, 'included').supply;
-const sumOf = (rows: ReadonlyArray<{ total: number | null }>, field: 'supply' | 'total'): number | null =>
-  rows.some((r) => r.total === null) ? null : rows.reduce((a, r) => a + (field === 'total' ? r.total! : supplyOf(r.total!)), 0);
-function tally(rows: ReadonlyArray<{ total: number | null }>): string {
-  const known = rows.filter((x) => x.total !== null);
-  const gap = rows.length - known.length;
-  return `${rows.length}건 · 공급가 ${won(sumOf(known, 'supply')!)} · 합계 ${won(sumOf(known, 'total')!)}${gap ? `(금액 모르는 ${gap}건 빼고)` : ''}`;
-}
-
-export function monthOf(today: string, offset: number): string {
-  const n = Number(today.slice(0, 4)) * 12 + Number(today.slice(5, 7)) - 1 + offset;
-  return `${Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}`;
-}
 
 const tableRow = (x: IssuedRow): TableRow => ({ date: x.date, counterparty: x.counterparty, total: x.total, approvalNo: x.approvalNo ?? null, documentId: x.documentId ?? null, mail: x.mail ?? null });
-const newestFirst = <T extends { date: string }>(rows: T[]) => [...rows].sort((a, b) => b.date.localeCompare(a.date));
 
 export class AgentChat {
   private readonly ports: AgentChatPorts;
@@ -308,9 +294,7 @@ export class AgentChat {
     const cpOf = (id: string | null) => (id === null ? null : book.find((c) => c.id === id));
     switch (call.tool) {
       case 'sales_summary': {
-        const month = monthOf(this.ports.today(), call.monthOffset);
-        const rows = newestFirst((await this.ports.issued()).filter((x) => x.date.startsWith(`${month}-`)));
-        return this.remember(s, { kind: 'sales', title: `${Number(month.slice(5))}월 발급 ${tally(rows)}`, rows });
+        return this.remember(s, { kind: 'sales', ...salesOf(await this.ports.issued(), this.ports.today(), call.monthOffset) });
       }
       case 'invoice_history':
       case 'receivables':

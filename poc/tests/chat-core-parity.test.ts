@@ -92,7 +92,7 @@ describe('chat-core: 툴셋 정의와 같은 판정', () => {
       const v = ajv.compile(t.parameters);
       for (const s of samples) assert.equal(PHONE_TOOL_ARGS[t.name](s as Record<string, unknown>), v(s), `${t.name} ${JSON.stringify(s)}`);
     }
-    assert.equal(validPhoneToolCall('sales_summary', { month_offset: 0 }), false, '폰에 없는 도구');
+    assert.equal(validPhoneToolCall('payables', { counterparty: null }), false, '폰에 없는 도구');
     assert.equal(validPhoneToolCall('invoice_draft', ['x']), false);
     assert.equal(validPhoneToolCall('invoice_history', { counterparty: 'x'.repeat(401) }), false, '너무 긴 인자');
   });

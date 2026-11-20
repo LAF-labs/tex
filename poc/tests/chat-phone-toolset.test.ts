@@ -56,7 +56,7 @@ describe('폰 대화 툴셋 등록(목록 대조)', () => {
       assertStrict(t.parameters as Strict, t.name);
       if (t.name !== 'open_screen') assert.deepEqual(t.parameters, pc.get(t.name), t.name);
     }
-    assert.equal(CHAT_PHONE.tools.length, 6);
+    assert.equal(CHAT_PHONE.tools.length, 7);
   });
 
   it('출력 스키마는 strict이고 PC 답 종류에 defer만 더한다. chat_digest는 summary 한 칸', () => {

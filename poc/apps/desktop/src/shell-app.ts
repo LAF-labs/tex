@@ -991,23 +991,22 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const intent: IntentResolver = opts.intent ?? engineIntentResolver((m, p) => host.rpc(m, p));
   const chatReply: ChatResponder = opts.chat ?? engineChatResponder((m, p) => host.rpc(m, p));
   let agentCreated: RunView[] = [];
-  const agent = new AgentChat(
-    agentPorts({
-      rpc: (m, p) => (m === 'chat.step' && opts.agent ? opts.agent.step(p as unknown as StepParams) : m === 'chat.route' && opts.agent?.route ? opts.agent.route(p) : m === 'db.query.runs.history' && opts.agent?.history ? opts.agent.history(p) : host.rpc(m, p)),
-      route: CHAT_REACTIONS_ON && (!opts.agent || !!opts.agent.route),
-      onReaction: (reaction) => send({ type: 'chat-reaction', reaction }),
-      profileId: () => businessId,
-      runs,
-      setupMissing: () => setupMissing(profiles().business).length > 0 || !chromeReady(),
-      onCreated: (run) => agentCreated.push(run),
-      receivables: () => bank.receivables(),
-      payables: () => bank.payables(),
-      cashFlow: (month) => bank.cashFlowValues(month),
-      pastIssued: () => (seed?.past ?? []).flatMap((x) => (x.kind === 'issued' && x.approvalNo && x.who && x.day ? [{ counterpartyId: cps.find((c) => c.name === x.who)?.id ?? null, counterparty: x.who, date: x.day, total: x.total, approvalNo: x.approvalNo, documentId: x.documentId, mail: null }] : [])),
-      onProgress: (phase: AgentPhase) => send({ type: 'chat-progress', phase }),
-      openScreen: (screen: string) => send({ type: 'open-screen', screen }),
-    }),
-  );
+  const agentReads = agentPorts({
+    rpc: (m, p) => (m === 'chat.step' && opts.agent ? opts.agent.step(p as unknown as StepParams) : m === 'chat.route' && opts.agent?.route ? opts.agent.route(p) : m === 'db.query.runs.history' && opts.agent?.history ? opts.agent.history(p) : host.rpc(m, p)),
+    route: CHAT_REACTIONS_ON && (!opts.agent || !!opts.agent.route),
+    onReaction: (reaction) => send({ type: 'chat-reaction', reaction }),
+    profileId: () => businessId,
+    runs,
+    setupMissing: () => setupMissing(profiles().business).length > 0 || !chromeReady(),
+    onCreated: (run) => agentCreated.push(run),
+    receivables: () => bank.receivables(),
+    payables: () => bank.payables(),
+    cashFlow: (month) => bank.cashFlowValues(month),
+    pastIssued: () => (seed?.past ?? []).flatMap((x) => (x.kind === 'issued' && x.approvalNo && x.who && x.day ? [{ counterpartyId: cps.find((c) => c.name === x.who)?.id ?? null, counterparty: x.who, date: x.day, total: x.total, approvalNo: x.approvalNo, documentId: x.documentId, mail: null }] : [])),
+    onProgress: (phase: AgentPhase) => send({ type: 'chat-progress', phase }),
+    openScreen: (screen: string) => send({ type: 'open-screen', screen }),
+  });
+  const agent = new AgentChat(agentReads);
   const finishReply = (reply: ReturnType<typeof interpret>, via: 'model' | 'offline', note: string | null, sent: SentTo[]) => {
     if (reply.kind === 'draft') {
       reply.run.interp = via;
@@ -1338,12 +1337,13 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       capabilities: () => [...DESKTOP_CAPS, ...SESSION_CAPS, ...APPROVE_CAPS],
       session: phoneSession({
         issue: phoneIssueOf(),
-        copy: (pairId) =>
+        copy: (pairId, want) =>
           buildPhoneCopy({
             counterparties: () => cps,
             runs: () => runs.list(),
             bank: (m, p) => bank.call(m, p ?? {}),
             approval: async () => ({ approver: !!phoneLink?.px(pairId), left: await phoneGateOf().leftToday() }),
+            ...(want.issued ? { issued: () => agentReads.issued(), today: () => kstToday(Date.now()) } : {}),
           }),
         approve: { gate: phoneGateOf(), enroll: (pairId, body) => (phoneLink ? phoneLink.enrollPx(pairId, body) : Promise.resolve({ state: 'rejected' as const, pxId: '0'.repeat(16) })) },
         log: (n, d) => log.event(n, d ?? {}),

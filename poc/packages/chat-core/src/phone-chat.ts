@@ -1,6 +1,7 @@
 import { CHAT_MAP_IDLE_MS, Redactor, TOKEN_RE, detokenize, type RedactedText } from '@sax/redaction';
 import { capture, rebind, type ChatMessage, type MaskedText } from './chat-log.ts';
-import { cleanItem, fillWithJosa, finalOf, fixJosa, koDate, kstDate, splitVat, validAmount, won } from './fill.ts';
+import { cleanItem, fillWithJosa, finalOf, fixJosa, koDate, kstDate, validAmount, won } from './fill.ts';
+import { newestFirst, salesOf, sumOf, supplyOf, tally } from './ledger.ts';
 import { PhoneChatError, type PhoneChatErrorCode, type PhoneModel, type PhoneRespondResult, type PhoneToolCall, type ReplayItem } from './phone-gateway.ts';
 import { ReplyShapeError, braceTokens, chatSecretShaped, checkAgentReply, unsafeText, type CheckedReply, type ReplyFilter } from './reply-check.ts';
 import { chatInput, gluedName, issueIntent, parseKrw, registerChatRecords, type ChatRecord, type IssueIntent } from './rules.ts';
@@ -30,7 +31,7 @@ import { ACK_REPLY_HINT, REACTIONS, TurnRecorder, capStreak, isReaction, reacted
 /** 한 번 부를 때의 입력 상한(추정 토큰, 머리말·도구 정의 포함). 하루 한도(체험 50원·구독 300원) 안에서 대화 횟수를 지키는 값이다. */
 export const PHONE_CONTEXT_MAX_TOKENS = 8000;
 /** chat_phone 머리말 + 도구 정의 + 출력 스키마의 추정 토큰(넉넉하게). 시험이 실제 머리말의 추정값이 이보다 작은지 본다. */
-export const PHONE_PREFIX_EST_TOKENS = 5000;
+export const PHONE_PREFIX_EST_TOKENS = 5400;
 /** [앞 대화]에 두는 사용자 턴 수 상한. 넘으면 오래된 절반을 한꺼번에 요약으로 접는다. */
 export const PHONE_TURNS_MAX = 20;
 /** [사실]에 미리 조회해 넣는 거래처 수 상한 */
@@ -108,6 +109,7 @@ export interface PhoneCopy {
   counterparties: CopyCounterparty[];
   issued: CopyRow[] | null;
   receivables: CopyRow[] | null;
+  sales?: CopyRow[] | null;
 }
 
 export interface PhoneDraft {
@@ -139,7 +141,7 @@ export interface PhoneTableRow {
   total: number | null;
   approvalNo: string | null;
 }
-export type PhoneShow = { type: 'card'; draft: PhoneDraft; counterparty: string } | { type: 'screen'; screen: PhoneScreen } | { type: 'table'; table: 'history' | 'receivables'; title: string; rows: PhoneTableRow[]; copy: PhoneCopyState };
+export type PhoneShow = { type: 'card'; draft: PhoneDraft; counterparty: string } | { type: 'screen'; screen: PhoneScreen } | { type: 'table'; table: 'sales' | 'history' | 'receivables'; title: string; rows: PhoneTableRow[]; copy: PhoneCopyState };
 
 export type PhoneTurnResult =
   | {
@@ -165,7 +167,7 @@ interface State {
 }
 
 interface Result {
-  kind: 'history' | 'receivables';
+  kind: 'sales' | 'history' | 'receivables';
   title: string;
   rows: CopyRow[];
   copy: PhoneCopyState;
@@ -189,6 +191,7 @@ interface ToolOutput {
 
 type DraftAmount = { value: number } | { slot: string } | null;
 type DomainCall =
+  | { tool: 'sales_summary'; monthOffset: number }
   | { tool: 'invoice_history' | 'receivables'; counterpartyId: string | null }
   | { tool: 'invoice_draft'; counterpartyId: string; amount: DraftAmount; vat: Vat | null; item: string | null }
   | { tool: 'draft_edit'; draft: string; amount: DraftAmount; vat: Vat | null; item: string | null }
@@ -208,6 +211,7 @@ interface Turn {
   retry?: boolean;
   reaction: ReactionId | null;
   ackReply: boolean;
+  replied: ChatMessage | null;
 }
 
 const KINDS: ReadonlySet<PhoneReplyKind> = new Set(PHONE_REPLY_KINDS);
@@ -227,19 +231,10 @@ export function intentMissed(turn: Pick<Turn, 'intent' | 'done' | 'retry'>, repl
 const ASKS: ReadonlySet<AgentAsk> = new Set(AGENT_ASKS);
 const VAT_LABEL = { separate: '별도', included: '포함' } as const;
 const out = (status: PhoneToolStatus, ref: string | null = null, needs: ToolNeed[] | null = null): ToolOutput => ({ ref, status, fields: null, needs });
-const supplyOf = (total: number) => splitVat(total, 'included').supply;
-const sumOf = (rows: ReadonlyArray<{ total: number | null }>, field: 'supply' | 'total'): number | null =>
-  rows.some((r) => r.total === null) ? null : rows.reduce((a, r) => a + (field === 'total' ? r.total! : supplyOf(r.total!)), 0);
-function tally(rows: ReadonlyArray<{ total: number | null }>): string {
-  const known = rows.filter((x) => x.total !== null);
-  const gap = rows.length - known.length;
-  return `${rows.length}건 · 공급가 ${won(sumOf(known, 'supply')!)} · 합계 ${won(sumOf(known, 'total')!)}${gap ? `(금액 모르는 ${gap}건 빼고)` : ''}`;
-}
-const newestFirst = <T extends { date: string }>(rows: readonly T[]) => [...rows].sort((a, b) => b.date.localeCompare(a.date));
 function messageOf(v: unknown): ChatMessage | null {
   const m = v as Partial<ChatMessage> | null;
   if (!m || typeof m !== 'object' || typeof m.id !== 'string' || typeof m.at !== 'number' || (m.from !== 'user' && m.from !== 'app') || typeof m.text !== 'string') return null;
-  return { id: m.id, at: m.at, from: m.from, text: m.text, ...(m.ctx ? { ctx: m.ctx } : {}), ...(m.kind ? { kind: m.kind } : {}), ...(m.from === 'user' && isReaction(m.reaction) ? { reaction: m.reaction } : {}) };
+  return { id: m.id, at: m.at, from: m.from, text: m.text, ...(m.ctx ? { ctx: m.ctx } : {}), ...(m.kind ? { kind: m.kind } : {}), ...(m.from === 'user' && isReaction(m.reaction) ? { reaction: m.reaction } : {}), ...(m.from === 'user' && typeof m.replyTo === 'string' ? { replyTo: m.replyTo } : {}) };
 }
 
 const emptyState = (): State => ({ v: 1, seq: 0, phone: [], fold: null, drafts: [] });
@@ -265,9 +260,9 @@ export class PhoneChat {
     this.ports = ports;
   }
 
-  send(text: string): Promise<PhoneTurnResult> {
+  send(text: string, replyTo: string | null = null): Promise<PhoneTurnResult> {
     return this.queue(async () => {
-      const r = await this.turn(text).catch(async (e: unknown) => {
+      const r = await this.turn(text, replyTo).catch(async (e: unknown) => {
         if (this.state) await this.save(this.state).catch(() => undefined);
         return this.unavailable(e instanceof PhoneChatError ? e.code : 'chat.unavailable');
       });
@@ -349,7 +344,7 @@ export class PhoneChat {
     }
   }
 
-  private push(st: State, m: Pick<ChatMessage, 'from' | 'text'> & Partial<Pick<ChatMessage, 'ctx' | 'kind' | 'reaction'>>): ChatMessage {
+  private push(st: State, m: Pick<ChatMessage, 'from' | 'text'> & Partial<Pick<ChatMessage, 'ctx' | 'kind' | 'reaction' | 'replyTo'>>): ChatMessage {
     const msg: ChatMessage = { id: this.ports.newId(), at: this.ports.now(), ...m };
     st.phone.push(msg);
     return msg;
@@ -382,11 +377,11 @@ export class PhoneChat {
     return !copy ? 'none' : now - copy.asOf <= PHONE_COPY_FRESH_MS ? 'fresh' : 'stale';
   }
 
-  private async turn(text: string): Promise<PhoneTurnResult> {
+  private async turn(text: string, replyTo: string | null): Promise<PhoneTurnResult> {
     const rec = new TurnRecorder(this.ports.newId(), () => this.ports.now(), this.ports.onEvent);
     rec.emit({ type: 'turn.start', device: 'phone', msgId: '' });
     try {
-      const r = await this.turnIn(text, rec);
+      const r = await this.turnIn(text, rec, replyTo);
       rec.emit(r.kind === 'unavailable' ? { type: 'turn.end', status: 'failed', code: r.code } : { type: 'turn.end', status: 'completed' });
       return r;
     } catch (e) {
@@ -431,7 +426,7 @@ export class PhoneChat {
     }
   }
 
-  private async turnIn(text: string, rec: TurnRecorder): Promise<PhoneTurnResult> {
+  private async turnIn(text: string, rec: TurnRecorder, replyTo: string | null): Promise<PhoneTurnResult> {
     if (typeof text !== 'string' || !text.trim() || [...text].length > PHONE_TEXT_MAX) return this.unavailable('bad_text');
     if (chatSecretShaped(text)) return this.unavailable('chat.secret_rejected');
     const st = await this.load();
@@ -447,6 +442,7 @@ export class PhoneChat {
       return this.unavailable('chat.unavailable');
     }
     const cards = this.openCards(st, copy);
+    const replied = replyTo === null ? null : (st.phone.find((m) => m.id === replyTo) ?? null);
     const ack = await this.route(st, s, copy, now, user, cards);
     let reaction: ReactionId | null = null;
     if (ack) {
@@ -462,13 +458,13 @@ export class PhoneChat {
       }
       if (ack.mode === 'reaction_only' && reaction) {
         rec.emit({ type: 'path', path: 'reaction', tools: [] });
-        const msg = this.push(st, { from: 'user', text, ctx: capture(s.red, user) ?? undefined, reaction });
+        const msg = this.push(st, { from: 'user', text, ctx: capture(s.red, user) ?? undefined, reaction, ...(replied ? { replyTo: replied.id } : {}) });
         await this.save(st);
         return { kind: 'reaction', id: msg.id, reaction };
       }
     } else rec.emit({ type: 'route', act: null, domain: null, mode: 'answer', band: 'lt80', unsure: true, failed: true });
     rec.emit({ type: 'path', path: 'tools', tools: [] });
-    const turn: Turn = { user, replay: [], done: new Map(), made: [], created: [], frameRefs: new Set(cards.map((c) => c.ref)), intent: issueIntent(user), screens: [], reaction, ackReply: !!ack?.capped };
+    const turn: Turn = { user, replay: [], done: new Map(), made: [], created: [], frameRefs: new Set(cards.map((c) => c.ref)), intent: issueIntent(user), screens: [], reaction, ackReply: !!ack?.capped, replied };
     const facts = this.facts(st, s, copy, now, user);
     const message = this.compose(st, s, copy, now, turn, facts, cards);
     s.turns++;
@@ -550,7 +546,8 @@ export class PhoneChat {
         ? `화면: ${cards.map((c) => `카드 ${c.ref}(세금계산서, 거래처 ${mask(c.name)}, 금액 있음, 부가세 ${c.vat ? VAT_LABEL[c.vat] : '미정'}, 품목 ${c.item ? '있음' : '없음'})`).join('; ')}`
         : '화면: 열린 카드 없음';
       const hint = !turn.intent.issue ? '' : turn.retry ? '\n앱 판단: 세금계산서 발급 요청(앞 답이 발급으로 잇지 않았다. 카드를 만들거나 빈 칸 하나를 되묻는다)' : '\n앱 판단: 세금계산서 발급 요청';
-      const nowBlock = `[지금]\n${frame}${hint}${turn.ackReply ? `\n${ACK_REPLY_HINT}` : ''}\n사용자: ${turn.user}`;
+      const replied = turn.replied ? `\n답장한 말: ${turn.replied.from === 'user' ? '사용자' : '앱'}: ${this.line(s, recs, turn.replied)}` : '';
+      const nowBlock = `[지금]\n${frame}${hint}${turn.ackReply ? `\n${ACK_REPLY_HINT}` : ''}${replied}\n사용자: ${turn.user}`;
       const copyLine = `PC: ${this.ports.pcOnline?.() ? '켜짐' : '꺼짐'}\n사본: ${this.copyState(copy, now)}`;
       let nFacts = factBlocks.length;
       let from = 0;
@@ -656,6 +653,7 @@ export class PhoneChat {
     const vat = (v: unknown): Vat | null => (v === 'separate' || v === 'included' ? v : null);
     const pcOnly = () => ['date_month_offset', 'date_day', 'quantity', 'unit_price'].some((k) => a[k] !== null && a[k] !== undefined);
     const parse: { [K in ChatPhoneToolName]: () => DomainCall | ToolOutput } = {
+      sales_summary: () => ({ tool: 'sales_summary', monthOffset: a.month_offset as number }),
       invoice_history: () => {
         const id = a.counterparty === null ? null : cp(a.counterparty);
         return a.counterparty !== null && !id ? unknown(a.counterparty) : { tool: 'invoice_history', counterpartyId: id };
@@ -694,6 +692,20 @@ export class PhoneChat {
     return t && !/[[\]]/.test(t) && [...t].length <= NAME_MAX && turn.user.includes(t) ? t : null;
   }
 
+  private sales(st: State, copy: PhoneCopy | null, now: number, monthOffset: number): ToolOutput {
+    if (!copy?.sales) return out('not_on_phone');
+    const r = salesOf(copy.sales, kstDate(now), monthOffset);
+    if (!r.rows.length) return out('empty');
+    return this.keep(st, { kind: 'sales', ...r, copy: this.copyState(copy, now) });
+  }
+
+  private keep(st: State, r: Result): ToolOutput {
+    const ref = this.ref(st, 'r');
+    this.results.set(ref, r);
+    if (this.results.size > RESULTS_MAX) this.results.delete(this.results.keys().next().value!);
+    return { ref, status: 'ok', fields: [...SLOT_FIELDS], needs: null };
+  }
+
   private lookup(st: State, copy: PhoneCopy | null, now: number, tool: 'invoice_history' | 'receivables', cpId: string | null): ToolOutput {
     if (!copy) return out('not_on_phone');
     const cp = cpId === null ? null : copy.counterparties.find((c) => c.id === cpId);
@@ -703,10 +715,7 @@ export class PhoneChat {
     const rows = newestFirst(cp ? all.filter((x) => x.counterpartyId === cp.id || (x.counterpartyId === null && x.counterparty === cp.name)) : all);
     if (!rows.length) return out('empty');
     const name = cp ? `${cp.name} ` : '';
-    const ref = this.ref(st, 'r');
-    this.results.set(ref, { kind: tool === 'receivables' ? 'receivables' : 'history', title: tool === 'receivables' ? `${name}입금 확인 전 ${tally(rows)}` : `${name}발급 기록 ${tally(rows)}`, rows, copy: this.copyState(copy, now) });
-    if (this.results.size > RESULTS_MAX) this.results.delete(this.results.keys().next().value!);
-    return { ref, status: 'ok', fields: [...SLOT_FIELDS], needs: null };
+    return this.keep(st, { kind: tool === 'receivables' ? 'receivables' : 'history', title: tool === 'receivables' ? `${name}입금 확인 전 ${tally(rows)}` : `${name}발급 기록 ${tally(rows)}`, rows, copy: this.copyState(copy, now) });
   }
 
   private exec(st: State, copy: PhoneCopy | null, now: number, call: DomainCall, turn: Turn): ToolOutput {
@@ -714,6 +723,8 @@ export class PhoneChat {
       case 'open_screen':
         if (!turn.screens.includes(call.screen)) turn.screens.push(call.screen);
         return out('screen_shown');
+      case 'sales_summary':
+        return this.sales(st, copy, now, call.monthOffset);
       case 'invoice_history':
       case 'receivables':
         return this.lookup(st, copy, now, call.tool, call.counterpartyId);
@@ -860,7 +871,7 @@ export class PhoneChat {
     for (const screen of turn.screens) show.push({ type: 'screen', screen });
     const name = reply.filtered ? undefined : turn.unknownName?.trim();
     const unknown = name && !copy?.counterparties.some((c) => c.name === name) ? { name, text: `${name}${finalOf(name) ? fixJosa(name, '은 폰에 받아 둔 거래처 목록에 없어요.') : '은(는) 폰에 받아 둔 거래처 목록에 없어요.'}` } : undefined;
-    const userMsg = this.push(st, { from: 'user', text: said, ctx: capture(s.red, turn.user) ?? undefined, ...(turn.reaction ? { reaction: turn.reaction } : {}) });
+    const userMsg = this.push(st, { from: 'user', text: said, ctx: capture(s.red, turn.user) ?? undefined, ...(turn.reaction ? { reaction: turn.reaction } : {}), ...(turn.replied ? { replyTo: turn.replied.id } : {}) });
     const app = this.push(st, { from: 'app', text, kind: reply.kind, ctx: capture(s.red, ctxText) ?? { t: PHONE_NUMBER_TEXT, e: {} } });
     await this.save(st);
     return {

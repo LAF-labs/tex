@@ -50,4 +50,5 @@ export interface ChatMessage {
   ctx?: MaskedText;
   kind?: PhoneReplyKind;
   reaction?: ReactionId;
+  replyTo?: string;
 }
