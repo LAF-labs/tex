@@ -48,7 +48,7 @@ import { BUNDLE_REQUEST_COMMANDS } from './protocol.ts';
 import { CARD_COMMANDS, CARD_READ_QUERIES } from './protocol.ts';
 import { PAYROLL_EMPLOYEE_COMMANDS, PAYROLL_EMPLOYEE_READ_QUERIES } from './protocol.ts';
 import { BUNDLE_PC_COMMANDS, BUNDLE_PC_READ_QUERIES } from './protocol.ts';
-import { bankServicePort, CODEF_COMMANDS, CodefClient, CodefError, CodefLink, codefTxnSource, settingsCodefStore, vaultCodefSeal } from './codef/index.ts';
+import { bankServicePort, CODEF_COMMANDS, CodefClient, CodefError, codefFailResult, CodefLink, codefTxnSource, settingsCodefStore, vaultCodefSeal } from './codef/index.ts';
 import { RunService, type StartParams } from './runs.ts';
 import type { CertStartParams } from './cert.ts';
 import { closeOnShutdown } from './shutdown.ts';
@@ -367,7 +367,7 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
     try {
       return { ok: true, ...(await run()) };
     } catch (e) {
-      if (e instanceof CodefError) return { ok: false, code: e.code, ...(e.cf ? { cf: e.cf } : {}), ...(e.retryAt ? { retryAt: e.retryAt } : {}), ...(e.clientType ? { clientType: e.clientType } : {}) };
+      if (e instanceof CodefError) return codefFailResult(e);
       throw e;
     }
   }

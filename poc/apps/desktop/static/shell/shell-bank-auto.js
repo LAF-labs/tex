@@ -85,6 +85,23 @@ export function failText(code, bank, clientType) {
   );
 }
 
+/** 계좌번호는 전체(숫자 10~16자리)만 은행에 간다(main bank-auto.ts가 그 밖은 버린다). 짧으면 보내지 않고 칸에서 바로 알린다 */
+export const WITHDRAW_LEN_TEXT = '계좌번호를 숫자 10~16자리로 모두 넣어 주세요. 하이픈(-)은 넣어도 돼요.';
+export const withdrawOk = (digits) => /^\d{10,16}$/.test(digits);
+
+/**
+ * 계좌번호 카드 아래 한 줄: 다른 뱅킹에서 은행에 한 번 할 일이 있으면 그 길도 알린다(엔진 also, 코드만).
+ * 2026-11-19 실기기(라프·우리은행): 개인 뱅킹은 계좌번호, 기업 뱅킹은 본인인증(CF-12831)이었는데 화면에는 계좌번호만 보여 은행에서 할 일을 몰랐다.
+ */
+export function otherWayText(also, bank) {
+  if (!also || typeof also !== 'object') return null;
+  const b = bankName(bank || '0020');
+  const where = also.clientType === 'P' ? `${b} 개인 인터넷뱅킹` : `${b} 기업 인터넷뱅킹`;
+  if (also.code === 'identity_required' || also.code === 'banking_kind') return `또는 ${where}에 이 인증서로 한 번 로그인한 뒤, 칸을 비운 채 [계속]을 눌러 주세요.`;
+  if (also.code === 'cert_not_registered') return `또는 ${b} 인터넷뱅킹에서 [인증센터 > 타기관 인증서 등록]을 한 뒤, 칸을 비운 채 [계속]을 눌러 주세요.`;
+  return null;
+}
+
 const PHASE_TEXT = {
   password: '금고 창에 공동인증서 비밀번호를 넣어 주세요.',
   connecting: '은행에 연결하는 중이에요.',
@@ -112,7 +129,7 @@ const esc = (fn) => (e) => {
  */
 export function createBankAuto(ctx) {
   // certs: null = 불러오는 중. msg = 이 카드에 남기는 알림 한 줄(단계가 바뀌면 지운다)
-  const s = { step: 'loading', status: null, checks: {}, certs: null, certId: null, bank: '0020', clientType: null, withdraw: '', smsCode: '', smsMsg: null, session: null, accounts: [], pick: null, phase: null, error: null, last: null, msg: null };
+  const s = { step: 'loading', status: null, checks: {}, certs: null, certId: null, bank: '0020', clientType: null, withdraw: '', also: null, smsCode: '', smsMsg: null, session: null, accounts: [], pick: null, phase: null, error: null, last: null, msg: null };
   const go = (patch) => {
     if ('step' in patch && patch.step !== s.step && !('msg' in patch)) s.msg = null;
     Object.assign(s, patch);
@@ -156,12 +173,15 @@ export function createBankAuto(ctx) {
   }
   async function connect() {
     if (!s.certId) return;
+    const withdraw = (s.withdraw || '').replace(/\D/g, '');
+    // 덜 넣은 번호는 은행에 가지 않는다: 비밀번호를 묻기 전에 이 칸에서 알린다(2026-11-19 실기기: 4자리로 세 번 실패했는데 화면은 "은행이 받지 않았어요")
+    if (s.step === 'withdraw' && withdraw && !withdrawOk(withdraw)) return go({ msg: WITHDRAW_LEN_TEXT });
     go({ step: 'working', phase: 'password', error: null });
     // 기업·개인 뱅킹은 고르지 않는다: 엔진이 같은 인증서·비밀번호로 차례로 해 본다(대표 2026-11-19)
-    const withdraw = (s.withdraw || '').replace(/\D/g, '');
-    const r = await ask('bankAuto.connect', { certId: s.certId, bank: s.bank, ...(s.clientType ? { clientType: s.clientType } : {}), ...(withdraw ? { withdrawAccount: withdraw } : {}) });
-    // 은행이 그 은행 계좌번호를 함께 확인하자고 하면(개인 뱅킹 일부) 카드에 계좌번호 칸 하나만
-    if (!r.ok && r.code === 'withdraw_account_required') return go({ step: 'withdraw', phase: null, error: null, msg: withdraw ? `${bankName(s.bank)}이 이 계좌번호를 받지 않았어요. 이 인증서로 쓰는 ${bankName(s.bank)} 계좌번호인지 확인해 주세요.` : null });
+    const r = await ask('bankAuto.connect', { certId: s.certId, bank: s.bank, ...(s.clientType ? { clientType: s.clientType } : {}), ...(withdrawOk(withdraw) ? { withdrawAccount: withdraw } : {}) });
+    // 은행이 그 은행 계좌번호를 함께 확인하자고 하면(개인 뱅킹 일부) 카드에 계좌번호 칸 하나만. 다른 뱅킹에서 은행에 한 번 할 일이 있으면 그 길도 한 줄로
+    if (!r.ok && r.code === 'withdraw_account_required')
+      return go({ step: 'withdraw', phase: null, error: null, also: r.also || null, msg: withdrawOk(withdraw) ? `${bankName(s.bank)}이 이 계좌번호를 받지 않았어요. 이 인증서로 쓰는 ${bankName(s.bank)} 계좌번호인지 확인해 주세요.` : null });
     // 받을 돈의 계좌 기록 동의가 없으면 다른 화면으로 보내지 않고 이 카드에서 받는다(2026-11-18 실기기: [받을 돈 보기]로 가면 [계좌 추가]를 눌러야 동의가 나와 막혔다)
     if (!r.ok && r.code === 'bank_consent_required') return go({ step: 'bankConsent', phase: null, error: null });
     if (!r.ok) return fail(r);
@@ -323,6 +343,7 @@ export function createBankAuto(ctx) {
               ),
             ),
             h('div', { class: 'sx-actions' }, btn('계속', connect, 'sx-btn-primary', { 'data-bank-withdraw-go': '' }), btn('그만두기', () => load(), 'sx-btn-quiet')),
+            otherWayText(s.also, s.bank) ? h('p', { class: 'sx-body-sm', 'data-bank-other-way': '' }, otherWayText(s.also, s.bank)) : null,
             h('p', { class: 'sx-meta' }, '누르면 금고 창이 인증서 비밀번호를 한 번 더 물어요.'),
           );
         case 'sms':
