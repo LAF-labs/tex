@@ -10,12 +10,13 @@ const { REGATE_NOTE, NOTE, HANDOFF_LOGIN, REHEARSAL_NEXT, LOGIN_NOW, STEP_LABELS
 const { OnboardingFlow, initialOnbState } = await import(`${DESK}/dist/onboarding.js`);
 const { MockOnboardingPorts } = await import(`${DESK}/dist/onboarding-mock.js`);
 const { buildCardHtml, barCss, barPalette, summarize, BAR_CSP } = await import(`${DESK}/dist/approval-gate.js`);
-const { barBounds, SHELL } = await import(`${DESK}/dist/shell-layout.js`);
+const { barBounds, browserPanelWidth, SHELL, WINDOW_MIN } = await import(`${DESK}/dist/shell-layout.js`);
 const { appHeaders } = await import(`${DESK}/dist/harden.js`);
 const { qrSvgDataUrl } = await import(`${DESK}/dist/remote-qr.js`);
 
 const ARGS = process.argv.slice(process.argv.findIndex((a) => a.endsWith('shell-preview.mjs')) + 1);
-const W = Number(ARGS[1] ?? 1440);
+// 앱 창처럼 최소 폭 아래로는 줄지 않는다.
+const W = Math.max(Number(ARGS[1] ?? 1440), WINDOW_MIN.width);
 const H = Number(ARGS[2] ?? 900);
 const OUT = ARGS[0] || path.resolve(import.meta.dirname, `../reports/raw/design-sync/${W}x${H}${process.env.DARK ? '-dark' : ''}`);
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
@@ -352,7 +353,7 @@ const scenes = {
   async browser(win) {
     await js(win, `(() => { const i = document.querySelector('#composer'); i.value = 'A상사에 330만원 세금계산서'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
     await sleep(300);
-    ev(win, { type: 'browser', shown: false, available: true, embedded: true, width: Math.round((W - SHELL.rail) * SHELL.browserShare) });
+    ev(win, { type: 'browser', shown: false, available: true, embedded: true, width: browserPanelWidth(W, null, false, false) });
     ev(win, { type: 'run', run: mkRun('preparing', { done: 2, now: true }) });
     ev(win, { type: 'screen', runId: 'run-1', url: 'https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml' });
     await sleep(200);
