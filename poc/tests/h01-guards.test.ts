@@ -57,7 +57,7 @@ describe('H-01 승인 경계(ADR-021)', () => {
     const host = read('apps/desktop/src/engine-host.ts');
     assert.equal(count(host, 'gatePort.postMessage('), 2);
     assert.ok(between(host, 'answerGate(approval: LocalApproval)', 'answerAttest(').includes('gatePort.postMessage('));
-    assert.ok(between(host, 'answerAttest(attestation: LocalAttestation', 'secretInputPort()').includes("gatePort.postMessage({ t: 'attest.answer'"));
+    assert.ok(between(host, 'answerAttest(attestation: LocalAttestation', 'secretInputPort(bind: SecretInputBind)').includes("gatePort.postMessage({ t: 'attest.answer'"));
     const entry = read('packages/engine/src/entry.ts');
     assert.equal(count(entry, '.answer('), 1);
     assert.ok(between(entry, 'gate.onMessage(', 'runs.on(').includes('runs!.answer(g.approval)'));

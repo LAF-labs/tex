@@ -95,7 +95,7 @@ describe('상호가 비었거나 번호로 저장된 프로필(0.1.6 실사용: 
     assert.match(biz, /name: b\.bizNo && !b\.nameMissing \? b\.name : ''/);
     assert.match(biz, /has && b\.nameMissing \? note\(BIZ_NAME_MISSING_NOTE, true\) : null/);
     const shell = read('apps/desktop/static/shell/shell.js');
-    assert.match(shell, /state\.bizEdit = null;\s*\/\/ [^\n]*\n\s*render\(\);\s*renderTitlebar\(\);\s*renderToday\(\);/);
+    assert.match(shell, /state\.bizEdit = null;\s*render\(\);\s*renderTitlebar\(\);\s*renderToday\(\);/);
     const onb = read('apps/desktop/static/shell/shell-onboarding.js');
     assert.match(onb, /active && named \? answer\('맞아요', 'confirm'\)/);
     assert.match(onb, /unknown && named \? \{ \.\.\.answer\('맞습니다', 'confirm_unverified'\)/);

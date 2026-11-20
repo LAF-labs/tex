@@ -324,7 +324,7 @@ describe('증언 경계(소스)', () => {
     assert.ok(open.includes("this.req?.kind === 'gate'") && open.includes("this.finish({ decision: 'closed', reason: 'gate' })"));
     const openAttest = between(bar, '  openAttest(req: AttestRequest)', '  close(reason');
     assert.ok(openAttest.includes("if (this.req) return Promise.resolve({ decision: 'closed', reason: 'busy' })") && openAttest.includes('attestSelfCheck(req)') && openAttest.includes('this.text = attestText('));
-    const approve = between(bar, '  private approve(): void {', '  /** 창 크기와');
+    const approve = between(bar, '  private approve(): void {', '  private decide(');
     assert.ok(approve.includes("req.kind === 'gate'") && approve.includes('issueLocalApproval(this.key, req.gate') && approve.includes('issueLocalAttestation(this.key, req.attest)'));
     assert.ok(bar.includes("reason: 'kind_mismatch'"));
     assert.ok(bar.includes("if (this.req?.kind === 'gate' && this.shown && !this.refusal"));

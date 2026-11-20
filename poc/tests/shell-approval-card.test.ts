@@ -96,7 +96,7 @@ describe('음성 ①: main이 관찰한 [승인하고 발급] 클릭 없이는 �
   it('승인 근거(LocalApproval)는 카드가 관찰한 승인 판정에서만 발급된다', () => {
     const bar = read('apps/desktop/src/approval-bar.ts');
     assert.equal(count(bar, 'issueLocalApproval('), 1);
-    assert.ok(between(bar, '  private approve(): void {', '  /** 창 크기와').includes('issueLocalApproval(this.key, req.gate'));
+    assert.ok(between(bar, '  private approve(): void {', '  private decide(').includes('issueLocalApproval(this.key, req.gate'));
     assert.equal(count(bar, 'this.approve()'), 2);
     assert.ok(between(bar, '  private onMouse(', '  private paintBackground(').includes("if (r.kind === 'approve') return this.approve();"));
     assert.match(bar, /this\.gate\.key\(\{[^}]*\}\)\?\.kind === 'approve'\) this\.approve\(\);/);

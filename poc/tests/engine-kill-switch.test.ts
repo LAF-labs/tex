@@ -309,6 +309,6 @@ describe('제품 entry 배선(서버 긴급 정지)', () => {
     assert.match(src, /permit: \(id\) => runPermit\(registry\?\.status\(\) \?\? null, 'hometax', id, portal\.kind === 'hometax' \? \(registry\?\.policy\(\) \?\? \{ freshness: 'none', policy: null \}\) : undefined\)/);
     assert.match(src, /closeBrowser: \(\) => slot\.close\(\)/);
     assert.match(src, /receivedPolicy: \(\) => registry\?\.policy\(\)\.policy \?\? null/);
-    assert.match(src, /const r = await registry\.handle\(method\);\s*\/\/[^\n]*\n\s*runs\?\.recheckPermit\(\);/);
+    assert.match(src, /const r = await registry\.handle\(method\);\s*runs\?\.recheckPermit\(\);/);
   });
 });
