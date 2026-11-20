@@ -38,7 +38,7 @@ import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.t
 import { SECRET_LABELS, SecretWindowCoordinator, type SecretInputBind as OneShotInputBind } from './secret-labels.ts';
 import { openVaultInputWindow } from './secret-window.ts';
 import { bankAutoHandlers, CODEF_WINDOW_TITLE, codefPageHtml, parseCodefNeeded, type CodefNeeded } from './bank-auto.ts';
-import { barBounds, browserPanelWidth, SHELL } from './shell-layout.ts';
+import { barBounds, browserPanelWidth, SHELL, WINDOW_MIN } from './shell-layout.ts';
 import { EmbeddedBrowser, keepDrawingWhenHidden } from './embedded-browser.ts';
 import { engineIntentResolver, INTENT_UNAVAILABLE_TEXT, MODEL_CONSENT_FIRST_TEXT, routed, type IntentResolver } from './intent-route.ts';
 import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder } from './chat-reply.ts';
@@ -347,10 +347,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const docFile = async (id: string) => store.files.get(id) ?? (await docs.filePath(id));
 
   const win = new BrowserWindow({
-    width: opts.width ?? 1280,
-    height: opts.height ?? 820,
+    width: Math.max(opts.width ?? 1280, WINDOW_MIN.width),
+    height: Math.max(opts.height ?? 820, WINDOW_MIN.height),
     useContentSize: true,
-    minHeight: 560,
+    minWidth: WINDOW_MIN.width,
+    minHeight: WINDOW_MIN.height,
     show: opts.show ?? true,
     title: fixture ? '소버린 AX (PoC 데모 · 가짜 홈택스 페이지)' : '소버린 AX',
     ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 15 } } : {}),

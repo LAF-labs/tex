@@ -292,7 +292,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
           'tr',
           { class: s.sel === v.id ? 'is-on' : null, 'data-bank-row': v.id, 'data-bank-status': v.status, onclick: () => select(v.id) },
           h('td', { class: 'name' }, v.cpName ?? '거래처 미상'),
-          h('td', {}, v.writtenOn),
+          h('td', { class: 'num-l' }, v.writtenOn),
           h('td', { class: 'num' }, num(v.total)),
           h('td', { class: 'num' }, num(v.received)),
           h('td', { class: 'num' }, num(v.remaining)),

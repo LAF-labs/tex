@@ -975,8 +975,12 @@ function renderHandoff() {
   chat.handoff.dataset.card = r?.id ?? '';
   if (!el) return chat.handoff.replaceChildren();
   chat.handoff.replaceChildren(
-    h('span', { class: 'sx-handoff-text' }, `지금 사람이 필요해요 · ${runTitle(r)}`),
-    h('button', { type: 'button', class: 'sx-btn sx-btn-quiet', 'data-act': 'handoff-go', onclick: () => cardOf()?.scrollIntoView({ block: 'center' }) }, '카드로 가기'),
+    h(
+      'div',
+      { class: 'sx-handoff-pill' },
+      h('span', { class: 'sx-handoff-text' }, `${runTitle(r)} · 지금 사람이 필요해요`),
+      h('button', { type: 'button', class: 'sx-btn sx-btn-quiet', 'data-act': 'handoff-go', onclick: () => cardOf()?.scrollIntoView({ block: 'center' }) }, '카드로 가기'),
+    ),
   );
   handoffSeen = new IntersectionObserver(
     (entries) => {
@@ -2691,7 +2695,7 @@ async function boot() {
   state.onb = state.boot.onboarding ?? null;
   const L = state.boot.layout;
   const root = document.documentElement.style;
-  for (const [k, v] of Object.entries({ rail: L.rail, panel: L.panel, titlebar: L.titlebar, 'chat-max': L.chatMax, gutter: L.gutter, 'composer-reserve': L.composerReserve, gap: L.gap, 'bar-h': L.barHeight })) root.setProperty(`--l-${k}`, `${v}px`);
+  for (const [k, v] of Object.entries({ rail: L.rail, panel: L.panel, titlebar: L.titlebar, 'chat-max': L.chatMax, 'chat-min': L.chatMin, gutter: L.gutter, 'composer-reserve': L.composerReserve, gap: L.gap, 'bar-h': L.barHeight })) root.setProperty(`--l-${k}`, `${v}px`);
   document.body.dataset.platform = state.boot.platform;
   document.body.dataset.sample = String(state.boot.sample !== false);
   applyLayout();

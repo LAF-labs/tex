@@ -55,7 +55,7 @@ body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var
 .is-verified .sx-tag::before { content: "✓ "; }
 .is-mismatch .sx-val { text-decoration: underline solid var(--attention); text-decoration-thickness: 2px; text-underline-offset: 4px; }
 .sx-was { font-size: 12px; line-height: 16px; color: var(--ink-3); text-decoration: line-through; }
-.is-empty .sx-val { color: var(--ink-4); }
+.is-empty .sx-val { color: var(--ink-3); }
 
 /* Amount: 크게 쓰지 않는다. 합계는 본문 크기 600, 단위·내역은 ink-2. */
 .sx-amount { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
@@ -91,8 +91,8 @@ body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var
 @media (prefers-reduced-motion: reduce) { .sx-progress > i { transition: none; } }
 /* 바뀐 앞 카드: 카드 면 없이 옅은 한 줄 */
 .sx-card.is-replaced { background: transparent; padding: 0 var(--space-4); }
-.sx-replaced-line { display: flex; gap: var(--space-2); font-size: 12px; line-height: 16px; color: var(--ink-4); }
-.sx-replaced-line > :first-child { color: var(--ink-3); }
+.sx-replaced-line { display: flex; gap: var(--space-2); font-size: 12px; line-height: 16px; color: var(--ink-3); }
+.sx-replaced-line > :first-child { color: var(--ink-2); }
 .sx-run-hd .sx-chip { flex: none; }
 .sx-run-hd .sx-btn { flex: none; height: 28px; margin: -3px -8px -3px 0; padding: 0 10px; }
 .sx-todo { display: grid; gap: 2px; min-width: 0; }

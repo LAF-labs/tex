@@ -16,6 +16,10 @@ export const SHELL = {
   chatMin: 380,
 } as const;
 
+// 창 최소 크기. 홈택스 화면 패널(browserMin)이 열려도 대화 열이 chatMin 아래로 줄지 않는 폭이다.
+// 이보다 좁으면 패널이 대화 열을 150~220px로 눌러 카드 글이 한 글자씩 꺾이고 보내기 단추가 가려졌다(PC 점검 11-20 F01).
+export const WINDOW_MIN = { width: SHELL.rail + SHELL.chatMin + SHELL.browserMin, height: 560 } as const;
+
 export function browserPanelWidth(contentWidth: number, want: number | null, big: boolean, barActive: boolean): number {
   const room = contentWidth - SHELL.rail;
   const share = Math.round(room * SHELL.browserShare);

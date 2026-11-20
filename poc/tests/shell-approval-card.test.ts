@@ -18,7 +18,7 @@ import {
   type SummaryLine,
 } from '../apps/desktop/src/approval-gate.ts';
 import { SHELL_METHODS, USER_ACTION_METHODS } from '../apps/desktop/src/ipc.ts';
-import { barBounds, browserPanelWidth, SHELL } from '../apps/desktop/src/shell-layout.ts';
+import { barBounds, browserPanelWidth, SHELL, WINDOW_MIN } from '../apps/desktop/src/shell-layout.ts';
 
 const root = path.join(import.meta.dirname, '..');
 const read = (p: string) => readFileSync(path.join(root, p), 'utf8');
@@ -145,6 +145,16 @@ describe('음성 ②: 렌더러는 승인 카드를 흉내 내거나 겹쳐 승�
     }
     assert.match(read('apps/desktop/src/shell-app.ts'), /new ApprovalBar\(win, key, \(w, h, wide, height\) => barBounds\(w, h, wide, height, panelNow\(\)\)/);
     assert.match(read('apps/desktop/src/shell-app.ts'), /browserPanelWidth\(win\.getContentSize\(\)\[0\]!, browserWant, browserShown, bar\.active\)/);
+  });
+
+  it('창 최소 폭: 홈택스 화면·상세 패널이 열려도 대화 열이 chatMin 아래로 줄지 않는다(PC 점검 11-20 F01)', () => {
+    const w = WINDOW_MIN.width;
+    for (const big of [false, true]) assert.ok(w - SHELL.rail - browserPanelWidth(w, null, big, false) >= SHELL.chatMin, `big=${big}`);
+    assert.ok(browserPanelWidth(w, null, false, false) >= SHELL.browserMin, '홈택스 화면도 browserMin 이상');
+    assert.ok(w - SHELL.rail - SHELL.panel >= SHELL.chatMin, '상세 패널');
+    const app = read('apps/desktop/src/shell-app.ts');
+    assert.match(app, /minWidth: WINDOW_MIN\.width,/);
+    assert.match(app, /width: Math\.max\(opts\.width \?\? 1280, WINDOW_MIN\.width\)/, '더 작은 크기로 열라고 해도 최소 폭으로 올려 연다');
   });
 
   it('카드는 뜰 때 메인 창 contentView의 맨 위 자식이 된 뒤에 보인다(렌더러가 그 위에 그릴 수 없다). 스크립트 없는 정적 페이지', () => {
