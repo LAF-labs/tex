@@ -108,7 +108,7 @@ export async function startDemoSeed(host: EngineHost, store: DocStore, root: str
   const cps = new Map([...DEMO_COUNTERPARTIES, ...SEED_COUNTERPARTIES].map((c) => [c.name, c]));
   const past = seedPast();
   const issued = past.filter((p) => p.kind === 'issued');
-  const invoices: Doc[] = issued.map((p) => ({ id: p.documentId!, name: `세금계산서 · ${p.who}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: p.day, expiresOn: null, source: '앱이 발급' }));
+  const invoices: Doc[] = issued.map((p) => ({ id: p.documentId!, name: `세금계산서 ${p.who}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: p.day, expiresOn: null, source: '앱이 발급' }));
   const kept = store.docs.filter((d) => d.id === 'd5' || d.id === 'd6');
   store.docs.splice(0, store.docs.length, ...invoices, ...kept);
   const dir = path.join(root, 'demo-samples');

@@ -43,7 +43,7 @@ describe('발급할 세금계산서', () => {
     const a = inv.items[0]!;
     assert.equal(a.showDue, false);
     assert.equal(a.due, '2026-12-10', '정렬은 다음 달 10일');
-    assert.equal(a.detail, '지난달 10월 28일 · 1,100,000원 · 이번 달은 아직이에요');
+    assert.equal(a.detail, '지난달 10월 28일, 1,100,000원, 이번 달은 아직이에요');
     assert.equal(invoiceSortDue('2026-12'), '2027-01-10', '정렬 키 함수는 따로(팀장 결정 (가), 법률 의견 뒤 (나)로 바꿀 자리)');
     assert.deepEqual(a.target, { to: 'compose', text: 'A상사에 지난달처럼 세금계산서 끊어 줘' });
     assert.ok(!/가산세|기한|까지/.test(a.detail), '판 문구에 기한·가산세 없음');
@@ -76,7 +76,7 @@ describe('받아야 할 증빙 · 세무사에게 줄 것', () => {
     assert.deepEqual(rc.items.map((i) => [i.label, i.due, i.showDue]), [['종이 영수증', '2026-11-05', true]]);
     const acc = b.cards.find((c) => c.kind === 'accountant')!;
     const bundle = acc.items.find((i) => i.id === 'bundle:2026-10')!;
-    assert.equal(bundle.detail, '빠진 것 2개 · 미리보고 보내기');
+    assert.equal(bundle.detail, '빠진 것 2개, 미리보고 보내기');
     assert.deepEqual(bundle.target, { to: 'view', view: 'bundle' });
     assert.equal(bundle.tone, null, '오늘이 기한이면 아직 지나지 않았다');
     const late = buildBoard(base({ today: '2026-11-09', bundle: { month: '2026-10', slots: [{ name: 'x', state: 'missing' }], sentOn: null } }));
@@ -117,7 +117,7 @@ describe('만료가 다가오는 서류', () => {
     const ex = b.cards.find((c) => c.kind === 'expiring')!;
     assert.deepEqual(ex.items.map((i) => i.id), ['doc:d4', 'doc:d1', 'doc:d5']);
     assert.deepEqual(ex.items.map((i) => i.tone), ['attention', 'attention', 'attention']);
-    assert.equal(ex.items[0]!.detail, '만료됐어요 · 다시 발급');
+    assert.equal(ex.items[0]!.detail, '만료됐어요. 다시 발급');
     assert.deepEqual(ex.items[1]!.target, { to: 'doc', id: 'd1' });
     assert.equal(b.counts.expiringSoon, 2);
     assert.equal(b.counts.attention, 1);

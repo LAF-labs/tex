@@ -420,7 +420,7 @@ async function mainPhase(): Promise<void> {
   await sleep(500);
   const docsText = await js<string>(`document.querySelector('#center')?.innerText ?? ''`);
   seen.push({ at: 'docs', text: docsText.slice(0, 1200) });
-  check('보관함에 세금계산서 줄', docsText.includes(`세금계산서 · ${CERT_CP.name}`), docsText.slice(0, 300));
+  check('보관함에 세금계산서 줄', docsText.includes(`세금계산서 ${CERT_CP.name}`), docsText.slice(0, 300));
   const docRow = await js<string | null>(`document.querySelector('[data-doc-row="d-${id1}"]') ? 'yes' : null`);
   if (docRow) {
     await tap(`[data-doc-row="d-${id1}"]`);
@@ -557,7 +557,7 @@ async function restartPhase(): Promise<void> {
   await tap('#rail [data-view=docs]');
   await sleep(500);
   const docs = await js<string>(`document.querySelector('#center')?.innerText ?? ''`);
-  repro('F-restart-docs: 재시작하면 앱이 발급한 세금계산서가 보관함에서 사라진다', !docs.includes(`세금계산서 · ${CERT_CP.name}`), docs.slice(0, 300));
+  repro('F-restart-docs: 재시작하면 앱이 발급한 세금계산서가 보관함에서 사라진다', !docs.includes(`세금계산서 ${CERT_CP.name}`), docs.slice(0, 300));
 }
 
 app.whenReady().then(async () => {

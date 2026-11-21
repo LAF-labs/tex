@@ -8,14 +8,14 @@ describe('판 카드', () => {
   it('못 받은 돈(기한 지남·가장 오래된 것·기준일) + 확인할 입금', () => {
     const c = bankBoardCards(base);
     assert.deepEqual(c.map((x) => x.kind), ['unpaid', 'deposits']);
-    assert.match(c[0]!.items[0]!.label, /기한 지난 받을 돈 2건 · 4,400,000원/);
+    assert.match(c[0]!.items[0]!.label, /기한 지난 받을 돈 2건, 4,400,000원/);
     assert.match(c[0]!.items[0]!.detail, /A상사 10월 5일\(8일 지남\).*11월 11일까지 반영/);
     assert.deepEqual(c[0]!.items[0]!.target, { to: 'view', view: 'bank' });
   });
   it('거래내역이 오래되면 금액 대신 "오래됐어요", 없으면 카드 없음', () => {
     assert.equal(bankBoardCards({ ...base, stale: true }).at(0)!.items[0]!.label, '거래내역이 오래됐어요');
     const none = bankBoardCards({ ...base, latestDay: null, stale: true }).at(0)!.items[0]!;
-    assert.equal(none.label, '받을 돈 3건 · 입금 확인 전');
+    assert.equal(none.label, '받을 돈 3건, 입금 확인 전');
     assert.equal(none.detail, '거래내역을 아직 올리지 않았어요');
     assert.doesNotMatch(none.detail + bankBoardCards({ ...base, stale: true }).at(0)!.items[0]!.detail, /\[/);
     assert.deepEqual(bankBoardCards({ ...base, unpaidCount: 0, reviewCount: 0 }), []);

@@ -126,7 +126,7 @@ export function buildBoard(input: BoardInput): Board {
   for (const x of input.issued) if (monthOf(x.date) === lastMonth && (!prev.has(x.who) || prev.get(x.who)!.date < x.date)) prev.set(x.who, x);
   for (const x of [...prev.values()].sort((a, b) => a.date.localeCompare(b.date) || a.who.localeCompare(b.who))) {
     if (thisMonth.has(x.who) || busy.has(x.who)) continue;
-    const detail = `지난달 ${Number(x.date.slice(5, 7))}월 ${Number(x.date.slice(8))}일${x.total !== null ? ` · ${won(x.total)}` : ''} · 이번 달은 아직이에요`;
+    const detail = `지난달 ${Number(x.date.slice(5, 7))}월 ${Number(x.date.slice(8))}일${x.total !== null ? `, ${won(x.total)}` : ''}, 이번 달은 아직이에요`;
     items.push({ id: `cp:${x.who}`, kind: 'invoice', label: x.who, detail, due: invoiceDue, showDue: false, tone: null, target: { to: 'compose', text: `${x.who}에 지난달처럼 세금계산서 끊어 줘` } });
   }
 
@@ -143,7 +143,7 @@ export function buildBoard(input: BoardInput): Board {
       id: `bundle:${b.month}`,
       kind: 'accountant',
       label: `${bMonth} 세무사 꾸러미`,
-      detail: missing ? `빠진 것 ${missing}개 · 미리보고 보내기` : '다 모였어요 · 미리보고 보내기',
+      detail: missing ? `빠진 것 ${missing}개, 미리보고 보내기` : '다 모였어요. 미리보고 보내기',
       due,
       showDue: true,
       tone: missing && daysBetween(input.today, due) < 0 ? 'attention' : null,
@@ -159,7 +159,7 @@ export function buildBoard(input: BoardInput): Board {
     if (!d.expiresOn) continue;
     const left = daysBetween(input.today, d.expiresOn);
     if (left > EXPIRING_WITHIN_DAYS) continue;
-    items.push({ id: `doc:${d.id}`, kind: 'expiring', label: d.name, detail: left < 0 ? '만료됐어요 · 다시 발급' : `만료 ${d.expiresOn}`, due: d.expiresOn, showDue: true, tone: d.needsUser || left <= 7 ? 'attention' : null, target: { to: 'doc', id: d.id } });
+    items.push({ id: `doc:${d.id}`, kind: 'expiring', label: d.name, detail: left < 0 ? '만료됐어요. 다시 발급' : `만료 ${d.expiresOn}`, due: d.expiresOn, showDue: true, tone: d.needsUser || left <= 7 ? 'attention' : null, target: { to: 'doc', id: d.id } });
   }
 
   const soon = (x: BoardItem) => x.kind === 'expiring' && !!x.due && daysBetween(input.today, x.due) <= 7;

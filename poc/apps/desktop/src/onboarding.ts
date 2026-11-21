@@ -43,12 +43,12 @@ export const CONSENT_NOTICES: Readonly<Record<ConsentKind, ConsentNotice>> = {
     kind: 'terms',
     key: 'consent.terms',
     version: 'terms-2026-11-30',
-    title: '이용약관·개인정보 처리방침·AI 모델 이용',
+    title: '이용약관/개인정보 처리방침/AI 모델 이용',
     lines: [
-      '앱은 내가 확인하고 승인한 세금계산서만 내 Mac에서 내 인증으로 발급해요. 세무 신고·기장·상담은 하지 않아요.',
+      '앱은 내가 확인하고 승인한 세금계산서만 내 Mac에서 내 인증으로 발급해요. 세무 신고/기장/상담은 하지 않아요.',
       '계정 하나에 사업자 프로필 1곳과 개인 프로필 1곳까지 쓸 수 있어요. 다른 사람의 사업자를 대신 맡아 쓰는 것은 허용하지 않아요.',
-      '홈택스 비밀번호·보안카드·사업자와 거래처 정보는 이 Mac에만 저장하고 서버로 보내지 않아요. 서버에는 이메일·기기·결제 정보만 있어요.',
-      '대화는 AI 모델로 해석해요. 이름·번호를 찾아 가린 문장만 아래 곳(국외)으로 보내고, 비밀번호·보안카드 번호는 보내지 않아요. 가리기는 탐지 방식이라 일부가 남을 수 있어요.',
+      '홈택스 비밀번호/보안카드/사업자와 거래처 정보는 이 Mac에만 저장하고 서버로 보내지 않아요. 서버에는 이메일/기기/결제 정보만 있어요.',
+      '대화는 AI 모델로 해석해요. 이름/번호를 찾아 가린 문장만 아래 곳(국외)으로 보내고, 비밀번호/보안카드 번호는 보내지 않아요. 가리기는 탐지 방식이라 일부가 남을 수 있어요.',
       '사용 기록은 보내지 않아요(켜려면 다음 화면에서).',
     ],
     draft: DRAFT,
@@ -62,7 +62,7 @@ export const CONSENT_NOTICES: Readonly<Record<ConsentKind, ConsentNotice>> = {
     key: 'consent.model',
     version: 'f06-pre.2',
     title: '문장 해석에 쓰는 모델(국외 이전)',
-    lines: ['입력한 문장을 해석할 때 이름·번호를 가린 문장만 모델에 보내요. 비밀번호·보안카드 번호는 보내지 않아요.', '아래 곳에서 처리하고, 보관 기간은 표에 적힌 대로예요.', '대화는 모델로 해석해요. 동의해야 앱을 쓸 수 있어요.'],
+    lines: ['입력한 문장을 해석할 때 이름/번호를 가린 문장만 모델에 보내요. 비밀번호/보안카드 번호는 보내지 않아요.', '아래 곳에서 처리하고, 보관 기간은 표에 적힌 대로예요.', '대화는 모델로 해석해요. 동의해야 앱을 쓸 수 있어요.'],
     draft: DRAFT,
   },
   telemetry: {
@@ -70,7 +70,7 @@ export const CONSENT_NOTICES: Readonly<Record<ConsentKind, ConsentNotice>> = {
     key: 'consent.telemetry',
     version: V,
     title: '사용 기록 보내기(선택)',
-    lines: ['오류 종류와 단계별 걸린 시간만 보내요. 서류·금액·거래처·사업자번호는 보내지 않아요.', '기본은 꺼져 있어요.'],
+    lines: ['오류 종류와 단계별 걸린 시간만 보내요. 서류/금액/거래처/사업자번호는 보내지 않아요.', '기본은 꺼져 있어요.'],
     draft: DRAFT,
   },
 };
@@ -89,9 +89,9 @@ export interface ConsentConfig {
 export const CONSENT_CONFIG: ConsentConfig = {
   processorsVersion: '2026-11-16',
   processors: [
-    { name: 'OpenAI', role: '요청 해석', country: '미국·EU·UAE', retention: '최대 30일(무보관 승인 전)' },
+    { name: 'OpenAI', role: '요청 해석', country: '미국/EU/UAE', retention: '최대 30일(무보관 승인 전)' },
     { name: 'OpenRouter', role: '모델 중계', country: '미국', retention: '보관하지 않음' },
-    { name: '모델 공급사(OpenRouter 연결)', role: '응답·화면 판정', country: '미국 등', retention: '공급사 정책(무보관 고정 호출은 보관 안 함)' },
+    { name: '모델 공급사(OpenRouter 연결)', role: '응답/화면 판정', country: '미국 등', retention: '공급사 정책(무보관 고정 호출은 보관 안 함)' },
   ],
 };
 
@@ -148,12 +148,12 @@ const RETIRED_STEP = 'delegation';
 const RETIRED_AUTH = 'card';
 
 export const ONB_TASKS: ReadonlyArray<{ id: string; label: string; now: boolean }> = [
-  { id: 'H-01', label: '세금계산서 발급·메일 전송', now: true },
+  { id: 'H-01', label: '세금계산서 발급/메일 전송', now: true },
   { id: 'H-03', label: certDocByCode('H-03')!.label, now: true },
   { id: 'H-04', label: certDocByCode('H-04')!.label, now: true },
-  { id: 'H-02', label: '발급한 세금계산서 조회·PDF 보관', now: false },
+  { id: 'H-02', label: '발급한 세금계산서 조회/PDF 보관', now: false },
   { id: 'H-10', label: '사실증명', now: false },
-  { id: 'G-01', label: '주민등록 등·초본(직접 발급 안내)', now: false },
+  { id: 'G-01', label: '주민등록 등/초본(직접 발급 안내)', now: false },
 ].filter((t) => !certDocByCode(t.id)?.hidden);
 const NOW_TASKS = new Set(ONB_TASKS.filter((t) => t.now).map((t) => t.id));
 
@@ -465,7 +465,7 @@ export class OnboardingFlow {
           const no = onlyDigits(clip(a.fields?.bizNo, BIZ_FIELD_MAX.bizNo));
           if (!isValidBizNo(no)) throw new Error('bad_biz_no');
           const name = clip(a.fields?.name, BIZ_FIELD_MAX.name);
-          this.say(`${name ? `${name} · ` : ''}${no.slice(0, 3)}-${no.slice(3, 5)}-${no.slice(5)}`);
+          this.say(`${name ? `${name}, ` : ''}${no.slice(0, 3)}-${no.slice(3, 5)}-${no.slice(5)}`);
           await this.setBiz({ ...EMPTY_BIZ, name, bizNo: no });
         }
         return;
@@ -542,7 +542,7 @@ export class OnboardingFlow {
           const kind = a.choice as AuthKind;
           s.auth = kind;
           this.unskip('auth');
-          this.say(kind === 'cert' ? `${AUTH_LABEL[kind]} · ${s.certs.find((x) => x.id === s.certId)?.owner ?? ''}` : AUTH_LABEL[kind]);
+          this.say(kind === 'cert' ? `${AUTH_LABEL[kind]}, ${s.certs.find((x) => x.id === s.certId)?.owner ?? ''}` : AUTH_LABEL[kind]);
           await this.afterAuth();
         }
         return;

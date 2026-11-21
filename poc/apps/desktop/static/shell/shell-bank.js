@@ -4,7 +4,7 @@ import { accountInput, amountInput, amountOf, checkFields, dateInput, field, key
 const won = (n) => `${num(n)}원`;
 const md = (iso) => (iso ? `${Number(iso.slice(5, 7))}월 ${Number(iso.slice(8, 10))}일` : '—');
 const BANKS = ['국민', '신한', '우리', '하나', '농협', '기업', '카카오뱅크', '토스뱅크', '케이뱅크', '새마을금고', '우체국', '수협', '부산', '아이엠뱅크', '경남', '광주', '전북', '제주', 'SC제일', '씨티', '신협', '기타'];
-const ROLE_LABEL = { date: '거래일(시)', time: '시간', in: '입금', out: '출금', amount: '금액(한 칸)', kind: '입출 구분', balance: '잔액', payer: '입금자·보낸분', memo: '적요', counter_account: '상대 계좌' };
+const ROLE_LABEL = { date: '거래일(시)', time: '시간', in: '입금', out: '출금', amount: '금액(한 칸)', kind: '입출 구분', balance: '잔액', payer: '입금자/보낸분', memo: '적요', counter_account: '상대 계좌' };
 const METHOD_LABEL = { account: '계좌', cash: '현금', other_account: '다른 계좌', offset: '상계', other: '기타', fee: '수수료' };
 const FIT_LABEL = { exact: '금액 같음', fee: '수수료 차감', sum: '여러 건 합', partial: '일부', over: '더 많음' };
 const ACTION_LABEL = { attach: '입금 붙임', detach: '뗌', reject: '아니라고 함', mark_received: '받았음 표시', close_fee: '차액 수수료로 닫음', promise: '기다리는 중으로', exclude: '목록에서 뺌', undo: '되돌림' };
@@ -15,7 +15,7 @@ const ERR = {
   bad_bank: '은행을 골라 주세요.',
   preview_expired: '미리보기가 끝났어요. 파일을 다시 올려 주세요.',
   no_rows: '읽은 줄이 없어요. 열을 확인해 주세요.',
-  unsupported_format: '엑셀(xlsx·xls)이나 CSV 파일을 올려 주세요.',
+  unsupported_format: '엑셀(xlsx/xls)이나 CSV 파일을 올려 주세요.',
   password_required: '암호가 걸린 파일이에요. 은행에서 암호 없이 다시 내려받아 주세요.',
   profile_not_found: '내 사업장을 먼저 등록해 주세요.',
   already_undone: '이미 되돌렸어요.',
@@ -50,7 +50,7 @@ const LOAD_FAIL = '받을 돈을 불러오지 못했어요.';
 const REFRESH_STEP = { requested: '요청함', waiting: '은행 응답 기다리는 중', running: '받는 중' };
 
 function statusText(v) {
-  if (v.status === 'received') return v.via === 'auto' ? '받음 · 자동' : v.offAccount ? `받음 · 직접(${METHOD_LABEL[v.offAccount] ?? '기타'})` : '받음 · 직접';
+  if (v.status === 'received') return v.via === 'auto' ? '받음, 자동' : v.offAccount ? `받음, 직접(${METHOD_LABEL[v.offAccount] ?? '기타'})` : '받음, 직접';
   return { unpaid: '못 받음', unknown: '확인 못 함', partial: '일부 받음', waiting: '기다리는 중', excluded: '목록에서 뺌' }[v.status];
 }
 const dueText = (v) => (v.dueIn === null ? '기한 없음' : v.dueIn < 0 ? `${-v.dueIn}일 지남` : v.dueIn === 0 ? '오늘' : `D-${v.dueIn}`);
@@ -215,7 +215,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       const r = await call('bank.commitStatement', { token: s.preview.token, accountId: s.previewAccount, columns: s.cols });
       s.preview = null;
       s.tab = r.match.review || r.match.unknown ? 'review' : 'unpaid';
-      tell('거래내역을 넣었어요.', { extra: [`새 줄 ${r.newCount}줄`, r.duplicateCount ? `이미 있던 줄 ${r.duplicateCount}줄` : null, `자동으로 붙임 ${r.match.auto}건`, `확인할 후보 ${r.match.review}건`, `누가 보낸지 모르는 입금 ${r.match.unknown}건`].filter(Boolean).join(' · ') });
+      tell('거래내역을 넣었어요.', { extra: [`새 줄 ${r.newCount}줄`, r.duplicateCount ? `이미 있던 줄 ${r.duplicateCount}줄` : null, `자동으로 붙임 ${r.match.auto}건`, `확인할 후보 ${r.match.review}건`, `누가 보낸지 모르는 입금 ${r.match.unknown}건`].filter(Boolean).join(', ') });
     } catch (e) {
       if (errText(e) === 'preview_expired') lostPreview();
       else fail(e, 'import');
@@ -229,8 +229,8 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       const r = await call('bank.pickInvoices');
       if (!r) return;
       s.invoiceResult = r;
-      if (!r.ok) tell('발급 목록 칸(작성일자·승인번호·합계금액)을 찾지 못했어요. 홈택스 [내려받기] 파일인지 확인해 주세요.', { bad: true });
-      else tell(`세금계산서 ${r.rows}건을 읽었어요.`, { extra: [`새 건 ${r.created}건`, `이미 있던 건 ${r.merged}건`, r.purchase ? `매입 ${r.purchase}건은 아직 받지 않아요` : null].filter(Boolean).join(' · ') });
+      if (!r.ok) tell('발급 목록 칸(작성일자/승인번호/합계금액)을 찾지 못했어요. 홈택스 [내려받기] 파일인지 확인해 주세요.', { bad: true });
+      else tell(`세금계산서 ${r.rows}건을 읽었어요.`, { extra: [`새 건 ${r.created}건`, `이미 있던 건 ${r.merged}건`, r.purchase ? `매입 ${r.purchase}건은 아직 받지 않아요` : null].filter(Boolean).join(', ') });
     } catch (e) {
       fail(e);
     }
@@ -241,7 +241,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
 
   function head() {
     const sum = s.data?.summary;
-    const basis = !sum ? '' : `${sum.latestDay ? `거래내역 ${md(sum.latestDay)}까지 반영` : '거래내역을 아직 올리지 않았어요'}${sum.stale && sum.latestDay ? ' · 오래됐어요' : ''}`;
+    const basis = !sum ? '' : `${sum.latestDay ? `거래내역 ${md(sum.latestDay)}까지 반영` : '거래내역을 아직 올리지 않았어요'}${sum.stale && sum.latestDay ? ', 오래됐어요' : ''}`;
     const right = !s.data ? [] : [s.data.accounts?.length ? btn('거래내역 파일 올리기', pickStatement, 'sx-btn-primary', { 'data-act': 'bank-statement' }) : null, btn('홈택스 발급목록 파일 올리기', pickInvoices, 'sx-btn-quiet', { 'data-act': 'bank-invoices' })].filter(Boolean);
     if (railHead) return railHead('받을 돈', basis, ...right);
     return h('div', { class: 'rs-head' }, h('h1', { class: 'title-screen' }, '받을 돈'), basis ? h('span', { class: 'sx-meta', 'data-bank-basis': '' }, basis) : null, h('div', { class: 'rs-right' }, ...right));
@@ -378,11 +378,11 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
         ['받은 돈', won(v.received)],
         ['남은 돈', won(v.remaining)],
         ['받기로 한 날', v.promisedOn ? `${v.promisedOn}(약속)` : (v.dueOn ?? '기한 없음')],
-        ['출처', v.sources.map((x) => (x === 'ledger' ? '앱 발급' : '홈택스 목록')).join(' · ')],
+        ['출처', v.sources.map((x) => (x === 'ledger' ? '앱 발급' : '홈택스 목록')).join(', ')],
       ]),
       h('div', { class: 'sx-panel-sec' }, '붙은 입금'),
       allocs.length
-        ? h('ul', { class: 'bank-allocs' }, ...allocs.map((a) => h('li', { 'data-bank-alloc': a.id }, a.txn ? `${md(a.txn.day)} ${won(a.amount)} · ${a.txn.payer ?? '이름 없음'} · ···${a.txn.accountLast4}` : `${METHOD_LABEL[a.method] ?? '직접'} ${won(a.amount)}${a.receivedOn ? ` · ${md(a.receivedOn)}` : ''}`, a.decidedBy === 'auto' ? h('span', { class: 'sx-tag' }, '자동') : null, btn('떼기', () => act('bank.detach', { allocId: a.id }, '뗐어요'), 'sx-btn-quiet', { 'data-act': 'bank-detach' }))))
+        ? h('ul', { class: 'bank-allocs' }, ...allocs.map((a) => h('li', { 'data-bank-alloc': a.id }, a.txn ? `${md(a.txn.day)} ${won(a.amount)}, ${a.txn.payer ?? '이름 없음'}, 끝 ${a.txn.accountLast4}` : `${METHOD_LABEL[a.method] ?? '직접'} ${won(a.amount)}${a.receivedOn ? `, ${md(a.receivedOn)}` : ''}`, a.decidedBy === 'auto' ? h('span', { class: 'sx-tag' }, '자동') : null, btn('떼기', () => act('bank.detach', { allocId: a.id }, '뗐어요'), 'sx-btn-quiet', { 'data-act': 'bank-detach' }))))
         : h('div', { class: 'sx-meta' }, '아직 붙은 입금이 없어요.'),
       open && !form
         ? h(
@@ -402,11 +402,11 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
             'div',
             {},
             h('div', { class: 'sx-panel-sec' }, '입금 붙이기'),
-            h('ul', { class: 'bank-attach' }, ...d.attachable.slice(0, 10).map((t) => h('li', { 'data-bank-attach': t.id }, `${md(t.day)} ${won(t.unallocated)} · ${t.payer ?? '이름 없음'}`, t.candidates.length ? h('span', { class: 'sx-tag' }, '후보') : null, btn('이 입금 붙이기', () => attach(t, v), 'sx-btn-quiet', { 'data-act': 'bank-attach' })))),
+            h('ul', { class: 'bank-attach' }, ...d.attachable.slice(0, 10).map((t) => h('li', { 'data-bank-attach': t.id }, `${md(t.day)} ${won(t.unallocated)}, ${t.payer ?? '이름 없음'}`, t.candidates.length ? h('span', { class: 'sx-tag' }, '후보') : null, btn('이 입금 붙이기', () => attach(t, v), 'sx-btn-quiet', { 'data-act': 'bank-attach' })))),
           )
         : null,
       h('div', { class: 'sx-panel-sec' }, '기록'),
-      h('ul', { class: 'bank-events' }, ...d.events.map((e) => h('li', {}, `${e.at.slice(5, 16).replace('T', ' ')} · ${e.actor === 'auto' ? '자동' : '사장님'} · ${ACTION_LABEL[e.action] ?? '고침'}`, e.undoOf === null && !e.undone && e.action !== 'undo' ? btn('되돌리기', () => act('bank.undo', { seq: e.seq }, '되돌렸어요'), 'sx-btn-quiet', { 'data-act': 'bank-event-undo' }) : null))),
+      h('ul', { class: 'bank-events' }, ...d.events.map((e) => h('li', {}, `${e.at.slice(5, 16).replace('T', ' ')}, ${e.actor === 'auto' ? '자동' : '사장님'}, ${ACTION_LABEL[e.action] ?? '고침'}`, e.undoOf === null && !e.undone && e.action !== 'undo' ? btn('되돌리기', () => act('bank.undo', { seq: e.seq }, '되돌렸어요'), 'sx-btn-quiet', { 'data-act': 'bank-event-undo' }) : null))),
     );
   }
 
@@ -442,7 +442,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
         return h(
           'article',
           { class: 'sx-card', 'data-bank-txn': t.id },
-          h('div', { class: 'bank-txn-hd' }, h('h2', { class: 'sx-card-title' }, `${t.payer ?? '이름 없는 입금'} · ${won(t.unallocated)}`), h('span', { class: 'sx-meta' }, `${md(t.day)} · ${t.bank} ···${t.accountLast4}${t.memo ? ` · ${t.memo}` : ''}`)),
+          h('div', { class: 'bank-txn-hd' }, h('h2', { class: 'sx-card-title' }, `${t.payer ?? '이름 없는 입금'}, ${won(t.unallocated)}`), h('span', { class: 'sx-meta' }, `${md(t.day)}, ${t.bank} 끝 ${t.accountLast4}${t.memo ? `, ${t.memo}` : ''}`)),
           t.candidates.length
             ? h(
                 'ul',
@@ -457,7 +457,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
                       'div',
                       { class: 'sx-actions' },
                       btn('맞아요', () => accept(t, c), i === 0 ? 'sx-btn-primary' : '', { 'data-act': 'bank-accept' }),
-                      c.fit === 'fee' ? btn('맞아요 · 차액은 수수료로 닫기', () => accept(t, c, true), 'sx-btn-quiet', { 'data-act': 'bank-accept-fee' }) : null,
+                      c.fit === 'fee' ? btn('맞아요. 차액은 수수료로 닫기', () => accept(t, c, true), 'sx-btn-quiet', { 'data-act': 'bank-accept-fee' }) : null,
                       c.receivableIds.length === 1 ? btn('아니에요', () => act('bank.reject', { txnId: t.id, receivableId: c.receivableIds[0] }, '이 건이 아니라고 했어요'), 'sx-btn-quiet', { 'data-act': 'bank-reject' }) : null,
                     ),
                   ),
@@ -547,7 +547,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       const r = await act('bank.addAccount', { bank: a.bank, number: a.number, alias: a.alias || undefined }, undefined, 'account');
       if (r) {
         s.adding = null;
-        tell(r.bank ? `${r.bank} ···${r.last4} 계좌를 등록했어요.` : '계좌를 등록했어요.', { ic: 'check', extra: '이제 [거래내역 파일 올리기]로 은행 거래내역을 넣을 수 있어요.' });
+        tell(r.bank ? `${r.bank} 끝 ${r.last4} 계좌를 등록했어요.` : '계좌를 등록했어요.', { ic: 'check', extra: '이제 [거래내역 파일 올리기]로 은행 거래내역을 넣을 수 있어요.' });
       }
       rerender();
     };
@@ -589,7 +589,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       const yes = async () => {
         s.confirmDel = null;
         if (await act('bank.deleteAccount', { id: x.id })) {
-          tell(`${x.bank} ···${x.last4} 계좌와 그 거래내역을 지웠어요.`, { ic: 'check' });
+          tell(`${x.bank} 끝 ${x.last4} 계좌와 그 거래내역을 지웠어요.`, { ic: 'check' });
           rerender();
         }
       };
@@ -599,7 +599,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
         h(
           'td',
           { colspan: 6 },
-          h('div', { class: 'sx-actions' }, h('span', {}, `${x.bank} ···${x.last4} 계좌와 그 거래내역·맞춤을 지울까요?`), btn('지우기', yes, 'sx-btn-primary', { 'data-act': 'bank-account-delete-yes' }), btn('그만두기', no, 'sx-btn-quiet', { 'data-act': 'bank-account-delete-no' })),
+          h('div', { class: 'sx-actions' }, h('span', {}, `${x.bank} 끝 ${x.last4} 계좌와 그 거래내역/맞춤을 지울까요?`), btn('지우기', yes, 'sx-btn-primary', { 'data-act': 'bank-account-delete-yes' }), btn('그만두기', no, 'sx-btn-quiet', { 'data-act': 'bank-account-delete-no' })),
           h('div', { class: 'sx-meta' }, '그 입금으로 받음이 된 건은 못 받음으로 돌아가요.'),
         ),
       );
@@ -611,9 +611,9 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
             'tr',
             { 'data-bank-account': x.id },
             h('td', {}, x.bank),
-            h('td', { class: 'sx-id', 'data-bank-number': x.id }, `···${x.last4}`),
+            h('td', { class: 'sx-id', 'data-bank-number': x.id }, `끝 ${x.last4}`),
             h('td', {}, x.alias ?? '—'),
-            h('td', {}, x.lastDay ? `${x.txnCount}줄 · ${md(x.lastDay)}까지` : '아직 없음'),
+            h('td', {}, x.lastDay ? `${x.txnCount}줄, ${md(x.lastDay)}까지` : '아직 없음'),
             linkCell(x),
             h(
               'td',
@@ -626,7 +626,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
                   const r = await call('bank.revealAccount', { id: x.id }).catch(() => null);
                   if (!r?.number) return;
                   cell.textContent = r.number;
-                  setTimeout(() => (cell.textContent = `···${x.last4}`), 3000);
+                  setTimeout(() => (cell.textContent = `끝 ${x.last4}`), 3000);
                 }, 'sx-btn-quiet'),
                 btn('지우기', () => {
                   s.confirmDel = x.id;
@@ -641,7 +641,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       { class: 'bank-tab' },
       list.length ? table([['은행'], ['계좌'], ['이름'], ['거래내역'], ['연결'], ['']], list.map(row)) : a ? null : h('div', { class: 'empty' }, h('div', {}, '등록한 계좌가 없어요. 계좌를 추가하면 거래내역 파일을 올릴 수 있어요.'), h('div', {}, addBtn('sx-btn-primary'))),
       form ?? (list.length ? h('div', { class: 'sx-actions' }, addBtn('')) : null),
-      h('p', { class: 'sx-meta rs-foot' }, list.some((x) => x.linkState !== 'file_only') ? '자동 연결된 계좌는 [최신화]로 새 거래를 받아요. 다른 계좌는 은행에서 거래내역을 엑셀이나 CSV로 내려받아 올려 주세요. 계좌번호는 끝 4자리만 보여요.' : '은행 인터넷뱅킹·앱에서 거래내역을 엑셀이나 CSV로 내려받아 올려 주세요. 파일을 넣을 때 앱은 은행에 접속하지 않아요. 계좌번호는 끝 4자리만 보여요.'),
+      h('p', { class: 'sx-meta rs-foot' }, list.some((x) => x.linkState !== 'file_only') ? '자동 연결된 계좌는 [최신화]로 새 거래를 받아요. 다른 계좌는 은행에서 거래내역을 엑셀이나 CSV로 내려받아 올려 주세요. 계좌번호는 끝 4자리만 보여요.' : '은행 인터넷뱅킹/앱에서 거래내역을 엑셀이나 CSV로 내려받아 올려 주세요. 파일을 넣을 때 앱은 은행에 접속하지 않아요. 계좌번호는 끝 4자리만 보여요.'),
     );
   }
 
@@ -677,10 +677,10 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
     return h(
       'article',
       { class: 'sx-card', 'data-bank-preview': '', onkeydown: keys(null, cancel) },
-      h('h2', { class: 'board-card-title' }, p.ok ? `${p.bankHint ?? ''} 거래내역 · ${p.period.from ? `${md(p.period.from)}~${md(p.period.to)}` : ''} · 입금 ${p.totals.inCount}줄 · 출금 ${p.totals.outCount}줄` : '열을 알아보지 못했어요. 각 열이 무엇인지 골라 주세요.'),
-      p.skipped ? h('p', { class: 'sx-meta' }, `날짜·금액을 읽지 못해 뺀 줄 ${p.skipped}줄`) : null,
-      field({ label: '어느 계좌의 거래내역인가요?', input: selectInput(accounts.map((a) => [a.id, `${a.bank} ···${a.last4}${a.alias ? ` ${a.alias}` : ''}`]), { value: s.previewAccount, compact: true, 'data-field': 'account', onchange: (e) => (s.previewAccount = e.target.value) }) }),
-      p.accountLast4 && !accounts.some((a) => a.last4 === p.accountLast4) ? note(`파일의 계좌 끝자리(···${p.accountLast4})와 같은 등록 계좌가 없어요. 맞는 계좌인지 확인해 주세요.`, true) : null,
+      h('h2', { class: 'board-card-title' }, p.ok ? `${p.bankHint ?? ''} 거래내역, ${p.period.from ? `${md(p.period.from)}~${md(p.period.to)}` : ''}, 입금 ${p.totals.inCount}줄, 출금 ${p.totals.outCount}줄` : '열을 알아보지 못했어요. 각 열이 무엇인지 골라 주세요.'),
+      p.skipped ? h('p', { class: 'sx-meta' }, `날짜/금액을 읽지 못해 뺀 줄 ${p.skipped}줄`) : null,
+      field({ label: '어느 계좌의 거래내역인가요?', input: selectInput(accounts.map((a) => [a.id, `${a.bank} 끝 ${a.last4}${a.alias ? ` ${a.alias}` : ''}`]), { value: s.previewAccount, compact: true, 'data-field': 'account', onchange: (e) => (s.previewAccount = e.target.value) }) }),
+      p.accountLast4 && !accounts.some((a) => a.last4 === p.accountLast4) ? note(`파일의 계좌 끝자리(끝 ${p.accountLast4})와 같은 등록 계좌가 없어요. 맞는 계좌인지 확인해 주세요.`, true) : null,
       h(
         'div',
         { class: 'list-box' },
@@ -722,7 +722,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
           ? emptyState(s.notice.text.replace(/\.$/, ''), s.notice.text === LOAD_FAIL ? '이 PC의 앱 엔진이 잠시 답하지 않았어요. 넣어 둔 거래내역과 맞춘 기록은 그대로예요.' : null, btn('다시 시도', () => ((s.notice = null), rerender(), void refresh()), 'sx-btn-primary', { 'data-act': 'bank-retry' }), { role: 'alert', 'data-bank-load': 'error' })
           : emptyState('불러오는 중이에요', null, null, { 'aria-busy': 'true', 'data-bank-load': 'loading' })
         : null,
-      d && s.tab === 'unpaid' ? [sum.overdueCount ? h('p', { class: 'sx-body-sm', 'data-bank-overdue': '' }, `기한 지난 받을 돈 ${sum.overdueCount}건 · ${won(sum.overdueTotal)}`) : null, recvList(unpaid, '못 받은 돈이 없어요.'), detailCard()] : null,
+      d && s.tab === 'unpaid' ? [sum.overdueCount ? h('p', { class: 'sx-body-sm', 'data-bank-overdue': '' }, `기한 지난 받을 돈 ${sum.overdueCount}건, ${won(sum.overdueTotal)}`) : null, recvList(unpaid, '못 받은 돈이 없어요.'), detailCard()] : null,
       d && s.tab === 'received' ? [recvList(d.received, '아직 받은 돈이 없어요.'), detailCard()] : null,
       d && s.tab === 'review' ? reviewList() : null,
       d && s.tab === 'accounts' ? accountsTab() : null,
@@ -733,7 +733,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
 
   const cpCache = new Map();
   function cpSection(c) {
-    const box = h('div', { class: 'bank-cp', 'data-bank-cp': c.id }, h('div', { class: 'sx-panel-sec' }, '계좌 · 입금자 이름'));
+    const box = h('div', { class: 'bank-cp', 'data-bank-cp': c.id }, h('div', { class: 'sx-panel-sec' }, '계좌, 입금자 이름'));
     let adding = null;
     let vals = {};
     let formErr = null;
@@ -809,13 +809,13 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       }
       const open = (k) => () => ((adding = k), (formErr = null), (vals = {}), draw(cpCache.get(c.id)));
       box.replaceChildren(
-        h('div', { class: 'sx-panel-sec' }, '계좌 · 입금자 이름'),
+        h('div', { class: 'sx-panel-sec' }, '계좌, 입금자 이름'),
         ...(accounts.length || aliases.length
           ? [
               h(
                 'div',
                 { class: 'cp-list' },
-                accounts.map((a) => h('div', { class: 'cp-row', 'data-bank-cp-account': a.id }, h('span', { class: 'cp-row-main' }, `${a.bank ?? ''} ···${a.last4}`), h('span', { class: 'cp-row-meta' }, a.holder ? `예금주 ${a.holder}` : ''), btn('지우기', async () => (await call('bank.deleteCpAccount', { id: a.id }).catch(say), reload()), 'sx-btn-quiet'))),
+                accounts.map((a) => h('div', { class: 'cp-row', 'data-bank-cp-account': a.id }, h('span', { class: 'cp-row-main' }, `${a.bank ?? ''} 끝 ${a.last4}`), h('span', { class: 'cp-row-meta' }, a.holder ? `예금주 ${a.holder}` : ''), btn('지우기', async () => (await call('bank.deleteCpAccount', { id: a.id }).catch(say), reload()), 'sx-btn-quiet'))),
                 aliases.map((a) => h('div', { class: 'cp-row', 'data-bank-alias': a.id }, h('span', { class: 'cp-row-main' }, a.nameRaw), h('span', { class: 'cp-row-meta' }, a.source === 'manual' ? '직접 입력' : a.source === 'learned' ? '확인에서 배움' : '계좌 예금주'), btn('지우기', async () => (await call('bank.deleteAlias', { id: a.id }).catch(say), reload()), 'sx-btn-quiet'))),
               ),
             ]

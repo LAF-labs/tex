@@ -248,7 +248,7 @@ export class ApprovalBar extends EventEmitter {
     const action = bad ? ACTION_TEXT : actionText(req);
     const many = !cert && !!batch && batch.count > 1 && batch.lines.length === batch.count - 1 && action === ACTION_TEXT && !!f;
     this.batchShown = many ? batch.count : 0;
-    if (many) this.lines.push(...batch.lines.map((l, i) => ({ label: `${i + 2}번째`, pieces: [{ text: l.name, shrink: true }, { text: ` · ${Number(l.total).toLocaleString('en-US')}원` }] })));
+    if (many) this.lines.push(...batch.lines.map((l, i) => ({ label: `${i + 2}번째`, pieces: [{ text: l.name, shrink: true }, { text: `, ${Number(l.total).toLocaleString('en-US')}원` }] })));
     this.text = cert ? certGateText(certName ?? '증명서', action) : gateText(many ? batchActionText(batch.count) : action, many ? `${f.get('counterpartName') ?? ''} 외 ${batch.count - 1}건` : f?.get('counterpartName'), !!f?.get('counterpartEmail'), auth);
     this.height = cardHeight(cert ? CARD_ROWS.cert : CARD_ROWS['H-01'] + (many ? batch.count - 1 : 0));
     this.baseRefusal = bad ? (bad === 'duplicate' ? REFUSAL_TEXT.duplicate() : REFUSAL_TEXT.hash()) : Array.isArray(summary) ? null : refusalText(summary!);

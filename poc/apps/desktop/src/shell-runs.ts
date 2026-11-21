@@ -16,7 +16,7 @@ export const REPLACING_NOTE = '앞 준비를 멈추고 이 값으로 준비해�
 export const REPLACED_NOTE = '고친 값으로 바꿔서 멈췄어요. 보낸 것은 없어요.';
 export const QUEUED_NOTE = '앞 건이 끝나면 이어서 준비해요';
 
-const VERIFY_NOW = '발급 목록 확인 중 · 1~2분 걸려요';
+const VERIFY_NOW = '발급 목록 확인 중, 1~2분 걸려요';
 export const verifyNow = (attempt?: number) => (attempt && attempt > 1 ? `발급 목록 다시 확인 중(${attempt}번째)` : VERIFY_NOW);
 
 const PHASES = ['login', 'form', 'input', 'readback', 'gate', 'sign', 'verify', 'mail'] as const;
@@ -54,7 +54,7 @@ const signFor = (auth: string | undefined) => (auth && Object.hasOwn(SIGN_BY_AUT
 const HANDOFF_BY_CODE: Record<string, { text: string; note: string }> = {
   'portal.captcha': { text: '홈택스 창에서 자동입력방지 문자를 넣고 로그인해 주세요', note: '마치면 [이어서]를 눌러 주세요. 30분 안에 마치지 않으면 멈춰요.' },
   'cert.pick_needed': { text: '홈택스 창의 인증서 목록에서 쓸 인증서를 한 번 눌러 주세요', note: '고른 뒤 [이어서]를 눌러 주세요. 비밀번호는 앱이 넣어요. 다음부터는 이 인증서를 자동으로 골라요.' },
-  'login.simple_auth': { text: '공동인증서로 로그인하지 못했어요. 아래 홈택스 화면에서 간편인증으로 로그인해 주세요', note: '이름·휴대폰 번호를 넣고 휴대폰에서 인증을 승인한 뒤 [이어서]를 눌러 주세요. 30분 안에 마치지 않으면 멈춰요.' },
+  'login.simple_auth': { text: '공동인증서로 로그인하지 못했어요. 아래 홈택스 화면에서 간편인증으로 로그인해 주세요', note: '이름/휴대폰 번호를 넣고 휴대폰에서 인증을 승인한 뒤 [이어서]를 눌러 주세요. 30분 안에 마치지 않으면 멈춰요.' },
   'portal.mfa_pending': { text: '홈택스 창에서 추가 인증을 마치고 로그인해 주세요', note: '마치면 [이어서]를 눌러 주세요. 30분 안에 마치지 않으면 멈춰요.' },
   'portal.unexpected_page': { text: '홈택스 창의 화면을 확인해 주세요', note: '앱이 이 화면을 알아보지 못했어요. 홈택스 창에서 이 단계를 마친 뒤 [다 했어요], 직접 발급하셨다면 [직접 발급함]을 눌러 주세요.' },
   'step.assert_failed': { text: '홈택스 창의 화면을 확인해 주세요', note: '앱이 이 화면을 알아보지 못했어요. 홈택스 창에서 이 단계를 마친 뒤 [다 했어요], 직접 발급하셨다면 [직접 발급함]을 눌러 주세요.' },
@@ -115,7 +115,7 @@ export const NOTE: Record<string, string> = {
   'portal.unobservable': '홈택스 화면을 확인하지 못해 승인을 열지 않았어요. 아무것도 발급하지 않았어요.',
   'portal.personal_login_required': '이 서류는 개인사업자 로그인으로는 뗄 수 없어요. 홈택스에서 로그아웃하고 대표자 개인 인증서로 다시 로그인해 주세요. 아무것도 발급하지 않았어요.',
   'assert.total_mismatch': '홈택스 화면의 공급가액과 세액을 더한 값이 합계와 달라 승인을 열지 않았어요. 아무것도 발급하지 않았어요.',
-  'assert.input_mismatch': '홈택스 화면 값이 준비한 거래처 사업자번호·공급가액·세액·이메일과 달라 승인을 열지 않았어요. 아무것도 발급하지 않았어요.',
+  'assert.input_mismatch': '홈택스 화면 값이 준비한 거래처 사업자번호/공급가액/세액/이메일과 달라 승인을 열지 않았어요. 아무것도 발급하지 않았어요.',
   'counterpart.bizno_rejected': '홈택스가 이 거래처 사업자번호를 정상으로 확인해 주지 않았어요. 아래 홈택스 안내를 확인해 주세요. 아무것도 발급하지 않았어요.',
   'assert.issue_date_mismatch': '홈택스 작성일자가 오늘(한국 시간)과 달라 멈췄어요. 아무것도 발급하지 않았어요.',
   'vault.leak_suspected': '보안 점검에서 이상이 보여 멈췄어요. 아무것도 발급하지 않았어요. 앱을 다시 시작해 주세요.',
@@ -126,7 +126,7 @@ export const NOTE: Record<string, string> = {
   'issue.lock_lost': '다른 PC와 겹치는지 다시 확인하지 못해 발급 버튼을 누르지 않았어요. 아무것도 발급하지 않았어요.',
   'commit.precheck_failed': '다른 PC와 겹치는지 다시 확인하지 못해 발급 버튼을 누르지 않았어요. 아무것도 발급하지 않았어요.',
   'verify.not_committed': "직전 시도는 '발급 안 됨'으로 판정되었어요. 홈택스 발급목록을 직접 확인한 뒤 다시 준비해 주세요.",
-  'verify.not_committed_repeat': '두 번 눌러도 홈택스에서 발급·신청이 되지 않아 더 반복하지 않고 멈췄어요. 홈택스 목록에 새 건이 없는지 확인한 뒤 다시 준비해 주세요.',
+  'verify.not_committed_repeat': '두 번 눌러도 홈택스에서 발급/신청이 되지 않아 더 반복하지 않고 멈췄어요. 홈택스 목록에 새 건이 없는지 확인한 뒤 다시 준비해 주세요.',
   'verify.unknown': '발급 요청은 보냈지만 발급목록에서 확인하지 못했어요. 홈택스 발급목록을 직접 확인해 주세요. 다시 실행하면 중복 발급될 수 있어요.',
   in_doubt: '발급 단계에서 멈춰 발급됐는지 확인하지 못했어요. 홈택스 발급목록을 직접 확인해 주세요. 다시 실행하면 중복 발급될 수 있어요.',
   'rehearsal.gate_reached': '예행을 마쳤어요. 승인 직전까지 갔고 발급하지 않았어요.',
@@ -138,11 +138,11 @@ export const NOTE: Record<string, string> = {
   'post_commit.error': '발급은 확정됐지만 그 뒤 단계에서 오류가 났어요. 다시 실행하지 말고 홈택스 발급목록에서 확인해 주세요.',
   'engine.exit_before_approval': '엔진이 멈춰 승인 전에 끝났어요. 홈택스에는 아무것도 발급되지 않았어요. 앱을 다시 시작해 주세요.',
   'engine.exit': '엔진이 발급 도중에 멈춰 발급됐는지 모릅니다. 홈택스 발급목록을 직접 확인해 주세요. 다시 실행하면 중복 발급될 수 있어요.',
-  'portal.blocked': '홈택스에서 차단·경고 신호(안내 화면, 요청 거부 응답)가 보여 바로 멈췄어요. 그 뒤로 앱은 홈택스에서 아무 동작도 하지 않았고 아무것도 발급하지 않았어요. 홈택스에 직접 접속해 상태를 확인해 주세요.',
-  'portal.blocked_in_doubt': '발급 확인 중에 홈택스에서 차단·경고 신호가 보여 멈췄어요. 발급됐는지 확인하지 못했어요. 홈택스 발급목록을 직접 확인해 주세요. 다시 실행하면 중복 발급될 수 있어요.',
-  'save_pdf.failed': '발급은 완료되었어요. 발급한 세금계산서 PDF는 받지 못했어요. 홈택스 발급목록에서 확인·인쇄할 수 있어요. 다시 발급하지 마세요.',
-  'portal.blocked_after_commit': '발급은 확정됐지만 그 뒤 홈택스에서 차단·경고 신호가 보여 멈췄어요. 다음 발급을 이어가기 전에 홈택스에 직접 접속해 상태를 확인해 주세요.',
-  'policy.cooldown': '홈택스 차단·경고 신호가 보여 24시간 동안 홈택스 실행을 쉬어요. 아무것도 발급하지 않았어요.',
+  'portal.blocked': '홈택스에서 차단/경고 신호(안내 화면, 요청 거부 응답)가 보여 바로 멈췄어요. 그 뒤로 앱은 홈택스에서 아무 동작도 하지 않았고 아무것도 발급하지 않았어요. 홈택스에 직접 접속해 상태를 확인해 주세요.',
+  'portal.blocked_in_doubt': '발급 확인 중에 홈택스에서 차단/경고 신호가 보여 멈췄어요. 발급됐는지 확인하지 못했어요. 홈택스 발급목록을 직접 확인해 주세요. 다시 실행하면 중복 발급될 수 있어요.',
+  'save_pdf.failed': '발급은 완료되었어요. 발급한 세금계산서 PDF는 받지 못했어요. 홈택스 발급목록에서 확인/인쇄할 수 있어요. 다시 발급하지 마세요.',
+  'portal.blocked_after_commit': '발급은 확정됐지만 그 뒤 홈택스에서 차단/경고 신호가 보여 멈췄어요. 다음 발급을 이어가기 전에 홈택스에 직접 접속해 상태를 확인해 주세요.',
+  'policy.cooldown': '홈택스 차단/경고 신호가 보여 24시간 동안 홈택스 실행을 쉬어요. 아무것도 발급하지 않았어요.',
   'portal.mfa_pending': '홈택스가 추가 인증을 요구해 멈췄어요. 아무것도 발급하지 않았어요. 홈택스에서 직접 인증한 뒤 다시 준비해 주세요.',
   'portal.extra_auth_repeat': '홈택스 추가 인증이 반복돼 앱이 스스로 멈췄어요(차단 신호는 아니에요). 홈택스에서 직접 인증을 마친 뒤 다시 준비해 주세요. 아무것도 발급하지 않았어요.',
   'portal.maintenance': '홈택스가 점검 중이에요. 점검이 끝나면 [다시 시작]을 눌러 주세요. 아무것도 발급하지 않았어요.',
@@ -160,7 +160,7 @@ export const NOTE: Record<string, string> = {
   bad_issue_date: '작성일자를 확인하지 못해 시작하지 않았어요. 카드에서 작성일자를 오늘이나 지난 날로 고친 뒤 다시 준비해 주세요. 아무것도 발급하지 않았어요.',
   item_missing: '품목이 비어 있어 시작하지 않았어요. 아무것도 발급하지 않았어요. 거래처 화면에서 [저장 품목]을 넣거나, 대화에서 같은 요청을 다시 하면 품목을 물어볼게요.',
   'input.missing': '발급에 필요한 값이 비어 있어 시작하지 않았어요. 아무것도 발급하지 않았어요.',
-  'cert.input_invalid': '증명서 신청 값(용도·제출처)이 홈택스 작업 정보의 선택지와 맞지 않아 시작하지 않았어요. 앱을 업데이트한 뒤 다시 해 주세요. 아무것도 발급하지 않았어요.',
+  'cert.input_invalid': '증명서 신청 값(용도/제출처)이 홈택스 작업 정보의 선택지와 맞지 않아 시작하지 않았어요. 앱을 업데이트한 뒤 다시 해 주세요. 아무것도 발급하지 않았어요.',
   'cert.input_unknown': '홈택스 작업 정보가 받지 않는 신청 값이 있어 시작하지 않았어요. 앱을 업데이트한 뒤 다시 해 주세요. 아무것도 발급하지 않았어요.',
   'cert.unknown_doc': '이 증명서를 떼는 홈택스 작업 정보가 없어 시작하지 않았어요. 아무것도 발급하지 않았어요.',
   busy: '다른 작업이 진행 중이라 시작하지 않았어요. 그 작업이 끝난 뒤 다시 준비해 주세요.',
@@ -208,7 +208,7 @@ const DUP_NOTE = {
   committed: '이 거래와 같은 건이 이미 발급돼 있어요(승인번호 있음). 한 번 더 발급하면 같은 계산서가 2건이 돼요.',
   unknown: '같은 건이 발급됐는지 아직 확인하지 못했어요. 홈택스 발급목록을 먼저 확인해 주세요.',
   notCommitted: '이전 시도는 발급되지 않았어요. 다시 발급하기 전에 홈택스 발급목록을 한 번 확인해 주세요.',
-  other: '같은 거래처·금액·날짜·품목의 기록이 있어요. 같은 건을 두 번 발급하는 것이 아닌지 확인해 주세요.',
+  other: '같은 거래처/금액/날짜/품목의 기록이 있어요. 같은 건을 두 번 발급하는 것이 아닌지 확인해 주세요.',
 } as const;
 
 function dupWarnings(req: GateRequest, text: Record<keyof typeof DUP_NOTE, string> = DUP_NOTE): string[] {
@@ -317,7 +317,7 @@ const kstHm = (at: number) => new Date(at + KST_MS).toISOString().slice(11, 16);
 
 const issuedDoc = (r: RunView): Doc => r.cert
   ? { id: `d-${r.id}`, name: r.cert.name, kind: '증명서', docName: r.cert.name, profile: 'business', issuedOn: dayOffset(0), expiresOn: null, source: '앱이 발급', noFile: true, purpose: r.cert.inputs.purpose }
-  : { id: `d-${r.id}`, name: `세금계산서 · ${r.counterparty.name}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(0), expiresOn: null, source: '앱이 발급', noFile: true };
+  : { id: `d-${r.id}`, name: `세금계산서 ${r.counterparty.name}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(0), expiresOn: null, source: '앱이 발급', noFile: true };
 
 const BATCH_APPROVAL_MAX_MS = 30 * 60_000;
 const RUN_HALT = /^(portal\.blocked|portal\.maintenance|policy\.|vault\.|engine\.|package\.|ir\.|ledger\.|token\.invalid|verify\.unknown|in_doubt|profile_missing|busy$)/;
@@ -326,7 +326,7 @@ const BATCH_BUSY_RETRY_MS = 15_000;
 const BATCH_BUSY_TRIES = 8;
 const BATCH_SKIPPED_NOTE = '이 건은 시작하지 못해 건너뛰었어요. 값을 고친 뒤 [홈택스에서 준비]를 누르면 승인 카드를 다시 띄워요. 아무것도 발급하지 않았어요.';
 export const BATCH_AUTO_NOTE = '묶음 승인으로 이어서 발급해요. 2초 안에 [중지]하면 발급하지 않아요';
-const BATCH_REASK_NOTE = '이 건은 승인 카드에서 따로 승인해 주세요(홈택스 값이 처음 승인 때와 다르거나 처음 거래·처음 보내는 주소예요)';
+const BATCH_REASK_NOTE = '이 건은 승인 카드에서 따로 승인해 주세요(홈택스 값이 처음 승인 때와 다르거나 처음 거래/처음 보내는 주소예요)';
 export const BATCH_CHANGED_NOTE = '승인 카드를 띄운 뒤 묶음 값이 바뀌어 묶음 승인으로 받지 않았어요. 남은 건은 하나씩 승인해 주세요.';
 interface BatchOffer {
   batchId: string;

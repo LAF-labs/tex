@@ -174,9 +174,9 @@ describe('정적·구성 경계', () => {
     assert.deepEqual(lines.map((l) => l.label), ['합계', '공급받는자', '품목', '작성일자', '받는 이메일'], '금액 먼저, 되읽은 값 전체(결정 7)');
     assert.equal(lines.filter((l) => !l.amount).length, CARD_ROWS['H-01'], '값 줄 수는 서류 종류별 표 그대로');
     assert.equal(lines[1]!.flag, '처음 거래');
-    assert.deepEqual([lines[0]!.amount, ...lines[0]!.pieces.map((p) => p.text)], [true, '3,630,000원', '공급가액 3,300,000원 · 세액 330,000원']);
+    assert.deepEqual([lines[0]!.amount, ...lines[0]!.pieces.map((p) => p.text)], [true, '3,630,000원', '공급가액 3,300,000원, 세액 330,000원']);
     assert.equal(lines[2]!.pieces.map((p) => p.text).join(''), '경영 컨설팅');
-    assert.equal((summarize(base({ itemCount: '3' }), '2026-11-03') as SummaryLine[])[2]!.pieces.map((p) => p.text).join(''), '경영 컨설팅 · 3개 품목');
+    assert.equal((summarize(base({ itemCount: '3' }), '2026-11-03') as SummaryLine[])[2]!.pieces.map((p) => p.text).join(''), '경영 컨설팅, 3개 품목');
     assert.deepEqual([lines[3]!.pieces[0]!.text, lines[3]!.flag], ['2026-11-03', undefined]);
     assert.equal((summarize(base(), '2026-11-04') as SummaryLine[])[3]!.flag, '오늘 아님', '작성일자가 KST 오늘과 다르면 표시');
     assert.equal(lines[4]!.pieces[1]!.text, '@xn--bcher-kva.example', '국제화 도메인은 punycode');
@@ -188,7 +188,7 @@ describe('정적·구성 경계', () => {
     assert.deepEqual(summarize(base({ supplyAmount: '03300000' })), { reason: 'unsafe', label: '합계' });
     assert.deepEqual(summarize(base({ itemCount: '0' })), { reason: 'unsafe', label: '품목' });
     for (const [k, label] of [['supplyAmount', '합계'], ['itemName', '품목'], ['issueDate', '작성일자']] as const) assert.deepEqual(summarize(base({ [k]: '' })), { reason: 'missing', label }, `${k} 없이는 무장하지 않는다(값 전체)`);
-    assert.equal((summarize(base({ counterpartEmail: '' })) as SummaryLine[])[4]!.pieces.map((p) => p.text).join(''), '없음 · 메일을 보내지 않아요', '받는 이메일이 없으면 메일을 보내지 않는다고 보인다');
+    assert.equal((summarize(base({ counterpartEmail: '' })) as SummaryLine[])[4]!.pieces.map((p) => p.text).join(''), '없음, 메일을 보내지 않아요', '받는 이메일이 없으면 메일을 보내지 않는다고 보인다');
     assert.deepEqual(summarize(base({ counterpartEmail: 'a‮@x.example' })), { reason: 'unsafe', label: '받는 이메일' });
     assert.deepEqual(summarize(base({}, [{ fieldKey: 'counterpartName', value: 'B상사' }])), { reason: 'duplicate' });
     assert.equal(overflowLine(lines, 600), null);
@@ -203,8 +203,8 @@ describe('정적·구성 경계', () => {
     assert.ok(html.includes('&lt;script&gt;'));
     assert.match(html, /default-src 'none'; style-src 'self'/);
     assert.ok(!/<button|<a |<input|<form|onclick|style=|tabindex|autofocus/i.test(html), '정적 그림뿐: 실제 버튼·링크·입력·인라인 스타일·포커스 속성이 없다');
-    assert.match(html, /<div class="hd"><span class="tt">세금계산서 · &lt;script&gt;alert\(1\)&lt;\/script&gt;<\/span><span class="cp">승인 대기<\/span><\/div>/, '머리 줄: 서류 종류 · 상호(이스케이프) + 상태 칩');
-    assert.ok(html.includes('<div class="am"><span class="tot">3,630,000원</span></div><div class="sub">공급가액 3,300,000원 · 세액 330,000원</div>'), '금액 칸: 합계 + 공급가액·세액');
+    assert.match(html, /<div class="hd"><span class="tt">세금계산서 &lt;script&gt;alert\(1\)&lt;\/script&gt;<\/span><span class="cp">승인 대기<\/span><\/div>/, '머리 줄: 서류 종류, 상호(이스케이프) + 상태 칩');
+    assert.ok(html.includes('<div class="am"><span class="tot">3,630,000원</span></div><div class="sub">공급가액 3,300,000원, 세액 330,000원</div>'), '금액 칸: 합계 + 공급가액/세액');
     assert.ok(buildCardHtml(summarize(base({ '$dup.businessKey': 'committed' })) as SummaryLine[], 'armed').includes('<span class="tot">3,630,000원</span><span class="fl">이미 발급됨(승인번호 있음)</span>'), '중복 경고는 합계 끝에 하나');
     assert.ok(html.includes(`<div class="irr">${IRREVERSIBLE_TEXT}</div>`), '비가역 한 줄(앱 고정 문구)');
     assert.equal(IRREVERSIBLE_TEXT, '승인하면 바로 발급되고 메일로 가요. 되돌릴 수 없어요.');

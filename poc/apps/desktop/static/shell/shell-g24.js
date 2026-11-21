@@ -23,7 +23,7 @@ export function g24Card(g, act) {
     stopped: [p('그만뒀어요. 문서함에는 아무것도 넣지 않았어요.', true)],
   }[g.stage];
   const st = { guide: 'turn', pick: 'turn', saved: 'done', stopped: 'stopped' }[g.stage];
-  card.append(h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `${g.doc} · 정부24`), chip(st)), ...body);
+  card.append(h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `${g.doc}, 정부24`), chip(st)), ...body);
   return card;
 }
 
@@ -31,7 +31,7 @@ export function g24Panel(g, act) {
   const head = h(
     'div',
     { class: 'sx-card-hd' },
-    h('div', { class: 'sx-card-title' }, `${g.doc} · 정부24`),
+    h('div', { class: 'sx-card-title' }, `${g.doc}, 정부24`),
     chip(g.stage === 'saved' ? 'done' : g.stage === 'stopped' ? 'stopped' : 'turn'),
     h('button', { type: 'button', class: 'panel-x', 'aria-label': '패널 닫기', onclick: act.closePanel }, icon('close')),
   );
@@ -41,7 +41,7 @@ export function g24Panel(g, act) {
       'guide',
       p(LINE),
       sample() ? kv([['주소', SAMPLE_ADDRESS, { copy: () => act.copy(SAMPLE_ADDRESS) }]], true) : null,
-      row(btn('출력·저장했어요', () => act.g24Saved(g.id), 'sx-btn-primary', { 'data-act': 'g24-saved' })),
+      row(btn('출력/저장했어요', () => act.g24Saved(g.id), 'sx-btn-primary', { 'data-act': 'g24-saved' })),
     );
   if (g.stage === 'pick') {
     if (!g.candidates.length) return panel('pick', p(LINE), row(btn('PDF 가져오기', () => importPdf(act, g.id), 'sx-btn-primary', { 'data-act': 'g24-import' })));
@@ -50,7 +50,7 @@ export function g24Panel(g, act) {
         'button',
         { type: 'button', class: `sx-opt${g.picked === c.id ? ' is-on' : ''}`, 'data-candidate': c.id, 'aria-pressed': String(g.picked === c.id), onclick: () => act.g24Pick(g.id, c.id) },
         h('span', { class: 'sx-radio' }),
-        h('span', { class: 'opt-main' }, h('span', {}, c.name), h('span', { class: 'sx-meta' }, `${c.size} · ${c.at} 생성`)),
+        h('span', { class: 'opt-main' }, h('span', {}, c.name), h('span', { class: 'sx-meta' }, `${c.size}, ${c.at} 생성`)),
       ),
     );
     return panel(

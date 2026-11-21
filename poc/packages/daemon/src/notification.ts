@@ -74,12 +74,12 @@ export function notificationText(n: DaemonNotification): { title: string; body: 
     case 'doc.expiring': {
       const p = n.payload;
       const when = p.daysLeft === 0 ? '오늘 만료돼요' : `${p.daysLeft}일 뒤 만료돼요`;
-      return { title: '서류 만료가 다가와요', body: `${label(p.docType)} · ${when}${p.estimated ? ' (추정)' : ''}` };
+      return { title: '서류 만료가 다가와요', body: `${label(p.docType)}, ${when}${p.estimated ? ' (추정)' : ''}` };
     }
     case 'bundle.ready': {
       const p = n.payload;
       const what = p.halfYear ? `${monthLabel(p.month)}까지 반기` : monthLabel(p.month);
-      return { title: '세무사 꾸러미 준비됨', body: p.missingCount ? `${what} 꾸러미 · 빠진 것 ${p.missingCount}개` : `${what} 꾸러미 · 다 모였어요` };
+      return { title: '세무사 꾸러미 준비됨', body: p.missingCount ? `${what} 꾸러미, 빠진 것 ${p.missingCount}개` : `${what} 꾸러미, 다 모였어요` };
     }
     case 'payroll.unconfirmed': {
       const p = n.payload;
@@ -88,7 +88,7 @@ export function notificationText(n: DaemonNotification): { title: string; body: 
     }
     case 'card.stale': {
       const p = n.payload;
-      return { title: '사업용 카드 내역', body: p.daysSinceFetch === null ? '아직 가져온 적 없어요 · [최신화]를 눌러 주세요' : `${p.daysSinceFetch}일 전 최신화 · [최신화]를 눌러 주세요` };
+      return { title: '사업용 카드 내역', body: p.daysSinceFetch === null ? '아직 가져온 적 없어요. [최신화]를 눌러 주세요' : `${p.daysSinceFetch}일 전 최신화, [최신화]를 눌러 주세요` };
     }
   }
 }

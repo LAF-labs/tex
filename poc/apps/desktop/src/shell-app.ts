@@ -293,7 +293,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const b = ps.find((p) => p.kind === 'business');
     business = b ? profileView(b) : null;
     businessId = b?.id ?? null;
-    const lastDoc = (name: string) => store.docs.filter((d) => d.kind === '세금계산서' && d.name === `세금계산서 · ${name}`).reduce<string | null>((m, d) => (d.issuedOn && (!m || d.issuedOn > m) ? d.issuedOn : m), null);
+    const lastDoc = (name: string) => store.docs.filter((d) => d.kind === '세금계산서' && d.name === `세금계산서 ${name}`).reduce<string | null>((m, d) => (d.issuedOn && (!m || d.issuedOn > m) ? d.issuedOn : m), null);
     const rows = (await host.rpc('db.query.counterparties.list')) as DbCounterparty[];
     const firsts = await Promise.all(rows.map((c) => host.rpc('counterparty.getItems', { id: c.id }).then((r) => (Array.isArray(r) ? (r[0] as { name?: string } | undefined)?.name : undefined), () => undefined)));
     cps = rows.map((c, i) => counterpartyView(c, fixture?.itemHints ?? {}, firsts[i])).map((c) => ({ ...c, lastIssuedOn: c.lastIssuedOn ?? lastDoc(c.name) }));
@@ -305,7 +305,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     pick: (kind) =>
       opts.bankPick
         ? opts.bankPick(kind)
-        : pickFileBytes([{ name: kind === 'statement' ? '은행 거래내역(엑셀·CSV)' : '홈택스 발급 목록(엑셀)', extensions: ['xlsx', 'xls', 'csv', 'htm', 'html'] }], win),
+        : pickFileBytes([{ name: kind === 'statement' ? '은행 거래내역(엑셀/CSV)' : '홈택스 발급 목록(엑셀)', extensions: ['xlsx', 'xls', 'csv', 'htm', 'html'] }], win),
     readSheet: async (bytes) => {
       const r = await readSheetInSandbox(bytes);
       return { format: r.format, encoding: r.encoding, sheets: r.sheets, flags: r.flags };
@@ -353,7 +353,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     minWidth: WINDOW_MIN.width,
     minHeight: WINDOW_MIN.height,
     show: opts.show ?? true,
-    title: fixture ? '소버린 AX (PoC 데모 · 가짜 홈택스 페이지)' : '소버린 AX',
+    title: fixture ? '소버린 AX (PoC 데모, 가짜 홈택스 페이지)' : '소버린 AX',
     ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 15 } } : {}),
     webPreferences: {
       sandbox: true,
@@ -437,7 +437,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   });
   const issuedInvoices = (): IssuedInvoice[] => {
     const total = new Map((seed?.past ?? []).flatMap((p) => (p.documentId ? [[p.documentId, p.total]] : [])));
-    return store.docs.filter((d) => d.kind === '세금계산서' && d.issuedOn).map((d) => ({ who: d.name.replace(/^세금계산서 · /, ''), date: d.issuedOn!, total: total.get(d.id) ?? null }));
+    return store.docs.filter((d) => d.kind === '세금계산서' && d.issuedOn).map((d) => ({ who: d.name.replace(/^세금계산서 /, ''), date: d.issuedOn!, total: total.get(d.id) ?? null }));
   };
   let boardDay = '';
   const boardNow = async (): Promise<Board> => {
@@ -737,7 +737,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       .catch((e: Error) => log.event('main.phone_gate_offer_failed', { error: e.message.slice(0, 80) }));
     const offer = runs.batchOffer(runId);
     const manyShown = !!offer && actionText(req) === ACTION_TEXT;
-    if (gr) runNotify('gate', runId, '승인이 필요해요', manyShown ? `세금계산서 ${offer.count}건 · ${gr.counterparty.name} 외 ${offer.count - 1}건` : `세금계산서 · ${gr.counterparty.name} ${wonText(gr.total)}`);
+    if (gr) runNotify('gate', runId, '승인이 필요해요', manyShown ? `세금계산서 ${offer.count}건, ${gr.counterparty.name} 외 ${offer.count - 1}건` : `세금계산서 ${gr.counterparty.name} ${wonText(gr.total)}`);
     void bar.open(req, gr?.auth, offer, runs.get(runId)?.cert?.name).then(async (o) => {
       if (o.decision === 'approve') {
         if (!verifyLocalApproval(key, o.approval)) return runs.abortGate(runId, 'answer.rejected');
@@ -855,18 +855,18 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const prev = runLast.get(r.id);
     runLast.set(r.id, r.status);
     if (prev === r.status || r.discarded) return;
-    const what = `세금계산서 · ${r.counterparty.name} ${wonText(r.total)}`;
+    const what = `세금계산서 ${r.counterparty.name} ${wonText(r.total)}`;
     if (r.status === 'turn') return runNotify('turn', r.id, '홈택스에서 할 일이 있어요', r.turn?.text ?? what);
     if (!['done', 'attention', 'stopped'].includes(r.status) || !prev || prev === 'draft') return;
     if (r.batch) {
       const all = runs.batchRuns(r.batch.id);
       if (runs.batchOpen(r.batch.id)) return;
       const done = all.filter((x) => x.status === 'done').length;
-      return runNotify('end', all[0]!.id, done === all.length ? `${all.length}건 모두 발급했어요` : `${all.length}건 중 ${done}건 발급했어요`, all.map((x) => `${x.counterparty.name} ${x.status === 'done' ? '발급' : x.status === 'draft' ? '남음' : '멈춤'}`).join(' · '));
+      return runNotify('end', all[0]!.id, done === all.length ? `${all.length}건 모두 발급했어요` : `${all.length}건 중 ${done}건 발급했어요`, all.map((x) => `${x.counterparty.name} ${x.status === 'done' ? '발급' : x.status === 'draft' ? '남음' : '멈춤'}`).join(', '));
     }
     if (r.rehearsal) return runNotify('end', r.id, '예행을 마쳤어요', '승인 직전까지 갔고 발급하지 않았어요');
-    if (r.status === 'done') return runNotify('end', r.id, '발급했어요', `${what}${r.result?.approvalNo ? ` · 승인번호 ${r.result.approvalNo}` : ''}`);
-    runNotify('end', r.id, r.status === 'attention' ? '확인이 필요해요' : '멈췄어요', `${what} · ${r.stoppedNote ?? ''}`);
+    if (r.status === 'done') return runNotify('end', r.id, '발급했어요', `${what}${r.result?.approvalNo ? `, 승인번호 ${r.result.approvalNo}` : ''}`);
+    runNotify('end', r.id, r.status === 'attention' ? '확인이 필요해요' : '멈췄어요', `${what}, ${r.stoppedNote ?? ''}`);
   });
   let updater: UpdateHost | null = null;
   const REGISTRY_EVERY_MS = 15 * 60_000;
@@ -913,7 +913,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const onbStore = new EngineOnboardingStore((m, p) => host.rpc(m, p));
   const legacyOnbFile = path.join(appPaths(root ?? defaultAppRoot()).userData, 'onboarding-state.json');
   const bizCertPorts: BizCertReadPorts = {
-    pick: () => pickFileBytes([{ name: '사업자등록증(PDF·사진)', extensions: ['pdf', 'png', 'jpg', 'jpeg'] }], win),
+    pick: () => pickFileBytes([{ name: '사업자등록증(PDF/사진)', extensions: ['pdf', 'png', 'jpg', 'jpeg'] }], win),
     pdfText: async (b, o) => (await parsePdfInSandbox(b, { ocrPages: 1, forceOcr: o.forceOcr })).text,
     imageText: async (b) => (await ocrImageInSandbox(b, { mode: 'document' })).text,
     parse: (text) => host.rpc('bizcert.parse', { text }),

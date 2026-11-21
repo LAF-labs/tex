@@ -17,7 +17,7 @@ import { PLATFORM_KO, summaryOf } from './settlement.ts';
 configure({ useWebWorkers: false });
 
 /** 받는 쪽(세무사) 안내: 첨부 ZIP을 여는 방법 */
-export const ZIP_OPEN_GUIDE = 'ZIP은 반디집·7-Zip 등으로 열어 주세요(Windows 탐색기·macOS 기본 압축 해제는 AES ZIP을 못 엽니다)';
+export const ZIP_OPEN_GUIDE = 'ZIP은 반디집/7-Zip 등으로 열어 주세요(Windows 탐색기/macOS 기본 압축 해제는 AES ZIP을 못 엽니다)';
 /** 주민번호를 가렸을 때 급여 시트 끝과 안내에 쓰는 문구 */
 export const RRN_HIDDEN_NOTE = '주민번호는 설정에서 켜면 포함됩니다';
 
@@ -202,7 +202,7 @@ export async function exportBundle(input: BundleExportInput): Promise<BundleExpo
 
   const tier2 = status.filter((s) => s.item.tier === 2);
   if (tier2.length) {
-    const rows: Row[] = [header(['구분', '일자·기간', '금액', '상태', '파일', '수수료', '입금액', '비고'])];
+    const rows: Row[] = [header(['구분', '일자/기간', '금액', '상태', '파일', '수수료', '입금액', '비고'])];
     const docs = new DocumentRepo(db);
     for (const s of tier2) {
       if (s.item.kind === 'cash_sales') for (const c of new CashSalesRepo(db).range(profileId, from, to)) rows.push(['현금매출', c.day, num(c.amount), c.source === 'phone' ? '폰 입력' : 'PC 입력', '']);
@@ -218,8 +218,8 @@ export async function exportBundle(input: BundleExportInput): Promise<BundleExpo
         }
       }
     }
-    sheets.push({ sheet: '정산·현금매출', data: rows });
-    tally.push({ sheet: '정산·현금매출', rows: rows.length - 1 });
+    sheets.push({ sheet: '정산 현금매출', data: rows });
+    tally.push({ sheet: '정산 현금매출', rows: rows.length - 1 });
   }
 
   const rrnIncluded = input.includeRrn ?? new BundleRepo(db).includeRrn(profileId);

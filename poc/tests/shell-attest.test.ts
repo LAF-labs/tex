@@ -80,7 +80,7 @@ describe('증언 바 내용(approval-gate, ADR-021 결정 5)', () => {
       lines.map((l) => [l.label, l.pieces.map((p) => p.text).join(''), l.note === true, l.amount === true]),
       [
         ['합계', '440,000원', false, true],
-        ['공급받는자', 'C테크 · 418-25-77343', false, false],
+        ['공급받는자', 'C테크, 418-25-77343', false, false],
         ['', ATTEST_FIXED, true, false],
       ],
     );
@@ -105,7 +105,7 @@ describe('증언 바 내용(approval-gate, ADR-021 결정 5)', () => {
     assert.equal((summarizeAttest(attestFor('r')) as SummaryLine[]).filter((l) => !l.amount).length, attestRows(false));
     const html = buildCardHtml(lines, 'armed', undefined, attestText('C테크'));
     assert.ok(html.includes('class="armed attn"'), '주의 색');
-    assert.ok(html.includes('<span class="tt">세금계산서 · C테크</span><span class="cp">확인 필요</span>'));
+    assert.ok(html.includes('<span class="tt">세금계산서 C테크</span><span class="cp">확인 필요</span>'));
     assert.ok(html.includes(`<div class="btn st" role="button">${ATTEST_STOP_TEXT}</div><div class="btn ap" role="button"><span>${ATTEST_ACTION_TEXT}</span></div>`), '[닫기]·[홈택스 발급목록에 없음을 확인했어요]');
     assert.ok(html.includes(`<div class="irr">${ATTEST_TEXT.irreversible}</div>`) && ATTEST_TEXT.irreversible.includes('되돌릴 수 없어요'));
     assert.ok(html.includes(ATTEST_ACTION_TEXT) && html.includes(ATTEST_FIXED) && html.includes('직접 확인한 뒤 답해 주세요'));

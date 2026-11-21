@@ -158,7 +158,7 @@ describe('세무사 꾸러미: 종이 세금계산서', () => {
       assert.ok(csv.includes('매출 합계,,,,,,,300000,30000,330000'));
       assert.ok(csv.includes('매입 합계,,,,,,,300001,30000,330001') || csv.includes('매입 합계'), '합계 줄');
       assert.ok(s.gaps.some((g) => g.kind === 'paper_check' && g.day === '2026-10-30'));
-      assert.ok(fs.readFileSync(path.join(dir, '2026-10', '요약.txt'), 'utf8').includes('종이 세금계산서 3건(매출 1 · 매입 2)'));
+      assert.ok(fs.readFileSync(path.join(dir, '2026-10', '요약.txt'), 'utf8').includes('종이 세금계산서 3건(매출 1, 매입 2)'));
       assert.ok(fs.existsSync(path.join(dir, s.zipName)));
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

@@ -71,7 +71,7 @@ async function flow() {
   await setValue('[data-bank-account-form] [data-field="number"]', '999-88-7776665');
   await setValue('[data-bank-account-form] [data-field="alias"]', '주거래');
   await click('[data-act="bank-account-save"]');
-  check('계좌 목록에 끝 4자리만', await until('account row', async () => (await text('[data-bank-account]')).includes('···6665') && !(await text('[data-bank-account]')).includes('7776665')));
+  check('계좌 목록에 끝 4자리만', await until('account row', async () => (await text('[data-bank-account]')).includes('끝 6665') && !(await text('[data-bank-account]')).includes('7776665')));
   check('연결 칸: 파일만, 자동 연결 전엔 [최신화] 없음', (await count('[data-bank-account] [data-bank-link="file_only"]')) === 1 && (await count('[data-act="bank-refresh"]')) === 0);
 
   const ap = (i: number) => `20261005-41000000-${String(10000000 + i)}`;

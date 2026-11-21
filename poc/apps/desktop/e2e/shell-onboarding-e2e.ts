@@ -101,7 +101,7 @@ async function main() {
 
   check('[나중에] → O-06 요약: 등록 내용 + 하는 일·하지 않는 일(F-06 자리표시) + 건너뛴 항목 안내', (await reply('[data-onb=later]', 'summary')) && (await js<boolean>(`(() => { const t = document.querySelector('[data-onb-step=summary]').textContent; return t.includes('사업자 간편인증') && !t.includes('금고에 등록함') && !!document.querySelector('[data-onb-scope] .onb-draft') && t.includes('이번 달 할 일에'); })()`)));
   const scope = await js<string[]>(`[...document.querySelectorAll('[data-onb-scope] li')].map((l) => l.textContent)`);
-  check('요약 "지금 되는 일"은 세금계산서와 민원증명 1종(O-04 표 그대로)', scope[0] === '지금 되는 일: 세금계산서 발급·메일 전송, 사업자등록증명', scope);
+  check('요약 "지금 되는 일"은 세금계산서와 민원증명 1종(O-04 표 그대로)', scope[0] === '지금 되는 일: 세금계산서 발급/메일 전송, 사업자등록증명', scope);
   check('O-06 요약에 갈 곳 없는 [보관 위치 바꾸기]가 없다', !(await js<boolean>(`!!document.querySelector('[data-onb=storage]')`)));
   check('[확인했어요] → 프로필 저장(엔진 profile.upsert, 고친 이메일·간편인증)', (await reply('[data-onb=ok]', 'first')) && (await S.host.rpc('db.query.profiles.list').then((ps) => (ps as DbProfile[]).some((p) => p.kind === 'business' && p.email === 'billing@ganada.example' && p.signMethod === 'simple_auth'))));
   {

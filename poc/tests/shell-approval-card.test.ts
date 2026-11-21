@@ -172,7 +172,7 @@ describe('음성 ②: 렌더러는 승인 카드를 흉내 내거나 겹쳐 승�
   it('렌더러의 대화 카드는 승인 대기 중 "작성 완료" 한 줄(서류·거래처·합계): 되읽은 값 전체·승인 버튼을 그리지 않는다', () => {
     const views = read('apps/desktop/static/shell/shell-views.js');
     const waiting = between(views, "} else if (st === 'waiting') {", "} else if (st === 'done') {").replace(/^\s*\/\/.*$/gm, '');
-    assert.ok(waiting.includes('card.replaceChildren()') && waiting.includes('작성 완료') && waiting.includes('`세금계산서 · ${run.counterparty.name} · ${won(run.total)}`'));
+    assert.ok(waiting.includes('card.replaceChildren()') && waiting.includes('작성 완료') && waiting.includes('`세금계산서 ${run.counterparty.name}, ${won(run.total)}`'));
     for (const bad of ['run.supply', 'run.tax', 'run.counterparty.bizNo', 'run.email', 'run.item', 'run.writeDate', 'run.warnings', 'amount(', 'kv(', '승인하고 발급', '승인 카드', '승인 바', 'act.approve']) assert.ok(!waiting.includes(bad), bad);
     const js = read('apps/desktop/static/shell/shell.js');
     const set = between(js, 'function setBarHeight(px) {', '\n}');

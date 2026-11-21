@@ -75,7 +75,7 @@ export function createPackScreen({ call, toast, rerender, errText, today, railHe
       ['세액', won(d.totals.tax)],
       ['합계', won(d.totals.total), { total: true }],
       ['증명서', `${d.certs.length}건`],
-      ['받을 돈', d.receivables ? `${d.receivables.count}건 · ${won(d.receivables.total)}` : '계좌 연결 전'],
+      ['받을 돈', d.receivables ? `${d.receivables.count}건, ${won(d.receivables.total)}` : '계좌 연결 전'],
     ]);
 
   function gapsBox(d) {
@@ -85,7 +85,7 @@ export function createPackScreen({ call, toast, rerender, errText, today, railHe
     return h(
       'div',
       { class: 'pack-gaps', 'data-pack-gaps': String(d.gaps.length) },
-      noteGroup(lines.map((g) => [[g.text, g.who ? h('span', { class: 'sx-meta' }, ` · ${g.who}`) : null], { 'data-gap': g.kind }]), bad),
+      noteGroup(lines.map((g) => [[g.text, g.who ? h('span', { class: 'sx-meta' }, `, ${g.who}`) : null], { 'data-gap': g.kind }]), bad),
     );
   }
 
@@ -95,7 +95,7 @@ export function createPackScreen({ call, toast, rerender, errText, today, railHe
     const d = s.data?.month === s.month ? s.data : null;
     const tab = ([key, month, label]) =>
       h('button', { type: 'button', class: s.month === month ? 'is-on' : null, 'aria-pressed': String(s.month === month), 'data-pack-month': key, onclick: () => s.month !== month && make(month) }, label);
-    const meta = d ? `${d.label} · 세금계산서 ${d.totals.count}건` : s.busy ? '만드는 중…' : null;
+    const meta = d ? `${d.label}, 세금계산서 ${d.totals.count}건` : s.busy ? '만드는 중…' : null;
     return h(
       'section',
       { class: 'rail-screen', 'data-view': 'bundle', 'data-screen': 'D-05', 'data-pack': d ? d.month : '' },
@@ -120,7 +120,7 @@ export function createPackScreen({ call, toast, rerender, errText, today, railHe
         h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `${d.label} 꾸러미`), h('span', { class: 'sx-meta' }, d.zipName)),
         summaryKv(d),
         actions(d),
-        h('p', { class: 'sx-meta' }, '[보내기]를 누르면 메일·메시지로 보낼 수 있어요. 파일은 이 PC에만 있어요.'),
+        h('p', { class: 'sx-meta' }, '[보내기]를 누르면 메일/메시지로 보낼 수 있어요. 파일은 이 PC에만 있어요.'),
       ),
       h('div', { class: 'rs-sec' }, h('h2', { class: 'sx-card-title' }, '빠진 것'), gapsBox(d)),
       h(
@@ -151,7 +151,7 @@ export function createPackScreen({ call, toast, rerender, errText, today, railHe
         { class: 'rs-sec', 'data-pack-certs': String(d.certs.length) },
         h('h2', { class: 'sx-card-title' }, '증명서'),
         d.certs.length
-          ? h('ul', { class: 'pack-files' }, ...d.certs.map((c) => h('li', {}, `${c.name} · ${md(c.issuedOn)}`, c.file ? null : h('span', { class: 'sx-meta' }, ' (PDF 없음)'))))
+          ? h('ul', { class: 'pack-files' }, ...d.certs.map((c) => h('li', {}, `${c.name}, ${md(c.issuedOn)}`, c.file ? null : h('span', { class: 'sx-meta' }, ' (PDF 없음)'))))
           : h('p', { class: 'sx-meta' }, `${d.label}에 뗀 증명서가 없어요.`),
       ),
       d.receivables
@@ -160,7 +160,7 @@ export function createPackScreen({ call, toast, rerender, errText, today, railHe
             { class: 'rs-sec', 'data-pack-recv': String(d.receivables.count) },
             h('h2', { class: 'sx-card-title' }, '받을 돈 (만든 날 기준)'),
             d.receivables.count
-              ? h('ul', { class: 'pack-files' }, ...d.receivables.rows.slice(0, 10).map((r) => h('li', {}, `${r.who} · ${md(r.writtenOn)} · ${r.remaining == null ? '금액 모름' : won(r.remaining)}`)))
+              ? h('ul', { class: 'pack-files' }, ...d.receivables.rows.slice(0, 10).map((r) => h('li', {}, `${r.who}, ${md(r.writtenOn)}, ${r.remaining == null ? '금액 모름' : won(r.remaining)}`)))
               : h('p', { class: 'sx-meta' }, '못 받은 돈이 없어요.'),
           )
         : null,

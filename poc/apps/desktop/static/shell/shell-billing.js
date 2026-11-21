@@ -52,11 +52,11 @@ export function createBilling(ctx) {
     const sub = v.subscription;
     const rows = [];
     const live = sub && (sub.status === 'active' || sub.status === 'past_due');
-    if (live && e.state === 'trial') rows.push(['상태', '무료 체험 중 · 카드 등록됨'], ['첫 결제', `${sub.renewAt ? day(sub.renewAt) : '체험이 끝나는 날'} · ${won(sub.amountKrw)}`]);
+    if (live && e.state === 'trial') rows.push(['상태', '무료 체험 중, 카드 등록됨'], ['첫 결제', `${sub.renewAt ? day(sub.renewAt) : '체험이 끝나는 날'}, ${won(sub.amountKrw)}`]);
     else if (e.state === 'trial') rows.push(['상태', '무료 체험 중'], ['체험 끝', e.until ? `${day(e.until)} (이후 AI 기능은 구독해야 써요)` : '-']);
     else if (sub?.status === 'past_due') rows.push(['상태', '결제 실패'], ['안내', '카드 결제가 안 됐어요. 다시 시도하고, 계속 안 되면 다른 카드로 다시 등록해 주세요.']);
-    else if (sub?.status === 'active') rows.push(['상태', '구독 중'], ['다음 결제', `${sub.renewAt ? day(sub.renewAt) : '-'} · ${won(sub.amountKrw)}`]);
-    else if (sub?.status === 'canceled' && e.state === 'paid') rows.push(['상태', '해지함'], ['쓸 수 있는 날', `${e.until ? day(e.until) : '-'}까지 · 더 결제되지 않아요`]);
+    else if (sub?.status === 'active') rows.push(['상태', '구독 중'], ['다음 결제', `${sub.renewAt ? day(sub.renewAt) : '-'}, ${won(sub.amountKrw)}`]);
+    else if (sub?.status === 'canceled' && e.state === 'paid') rows.push(['상태', '해지함'], ['쓸 수 있는 날', `${e.until ? day(e.until) : '-'}까지, 더 결제되지 않아요`]);
     else rows.push(['상태', '구독 안 함'], ['안내', '무료 체험이 끝났어요. 구독하면 AI 기능을 다시 써요.']);
     return h('div', { 'data-billing-status': sub?.status ?? e.state }, kv(rows));
   }

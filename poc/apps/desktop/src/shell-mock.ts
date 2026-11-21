@@ -15,8 +15,8 @@ export class MockStore implements DocStore {
   readonly docs: Doc[] = [
     { id: 'd1', name: '납세증명서(국세)', kind: '증명서', docName: '납세증명서', profile: 'business', issuedOn: dayOffset(-25), expiresOn: dayOffset(5), source: '앱이 발급', purpose: '입찰 제출' },
     { id: 'd2', name: '사업자등록증명', kind: '증명서', docName: '사업자등록증명', profile: 'business', issuedOn: dayOffset(-12), expiresOn: null, source: '앱이 발급', purpose: '거래처 등록' },
-    { id: 'd3', name: '세금계산서 · B상사', kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(-1), expiresOn: null, source: '앱이 발급' },
-    { id: 'd4', name: '세금계산서 · A상사', kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(-32), expiresOn: null, source: '앱이 발급' },
+    { id: 'd3', name: '세금계산서 B상사', kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(-1), expiresOn: null, source: '앱이 발급' },
+    { id: 'd4', name: '세금계산서 A상사', kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(-32), expiresOn: null, source: '앱이 발급' },
     { id: 'd5', name: '중소기업확인서', kind: '직접 추가', docName: '중소기업확인서', profile: 'business', issuedOn: dayOffset(-210), expiresOn: dayOffset(150), source: '직접 추가' },
     { id: 'd6', name: '주민등록표 등본', kind: '증명서', docName: '주민등록표 등본', profile: 'personal', issuedOn: dayOffset(-47), expiresOn: null, source: '직접 발급', purpose: '은행 제출' },
   ];
@@ -51,7 +51,7 @@ export function seedTimeline(): unknown[] {
   return [
     { type: 'day', date: dayOffset(-4) },
     { type: 'app', text: '등록을 마쳤어요. 맡기신 일은 입력창 위 빠른 실행에 넣어 두었어요.' },
-    { type: 'summary', rows: [['사업자', '가나다컴퍼니 · 123-45-67891'], ['발급 인증', '사업자 간편인증(카카오뱅크)'], ['거래처', '3곳'], ['맡긴 업무', '세금계산서 발급, 사업자등록증명, 납세증명서']] },
+    { type: 'summary', rows: [['사업자', '가나다컴퍼니, 123-45-67891'], ['발급 인증', '사업자 간편인증(카카오뱅크)'], ['거래처', '3곳'], ['맡긴 업무', '세금계산서 발급, 사업자등록증명, 납세증명서']] },
     { type: 'day', date: dayOffset(-1) },
     { type: 'me', text: 'B상사에 55만원 세금계산서 끊어 줘', time: '16:20' },
     { type: 'past', title: '세금계산서', who: 'B상사', total: 605000, supply: 550000, tax: 55000, approvalNo: `${dayOffset(-1).replaceAll('-', '')}-41000012-00000123`, mail: 'account@bsangsa.example' },

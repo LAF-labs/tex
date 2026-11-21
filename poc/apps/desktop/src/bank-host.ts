@@ -268,11 +268,11 @@ export function bankBoardCards(s: BankSummaryLike): BoardCard[] {
   if (s.unpaidCount > 0) {
     const basis = s.latestDay ? `거래내역 ${md(s.latestDay)}까지 반영` : '거래내역을 아직 올리지 않았어요';
     const item = !s.latestDay
-      ? { id: 'bank-stale', label: `받을 돈 ${s.unpaidCount}건 · 입금 확인 전`, detail: basis, tone: null }
+      ? { id: 'bank-stale', label: `받을 돈 ${s.unpaidCount}건, 입금 확인 전`, detail: basis, tone: null }
       : s.stale
       ? { id: 'bank-stale', label: '거래내역이 오래됐어요', detail: basis, tone: 'attention' as const }
       : s.overdueCount > 0
-        ? { id: 'bank-overdue', label: `기한 지난 받을 돈 ${s.overdueCount}건 · ${won(s.overdueTotal)}`, detail: `${s.oldestOverdue ? `가장 오래된 것: ${s.oldestOverdue.cpName ?? '거래처'} ${md(s.oldestOverdue.writtenOn)}(${s.oldestOverdue.daysOver}일 지남) · ` : ''}${basis}`, tone: 'attention' as const }
+        ? { id: 'bank-overdue', label: `기한 지난 받을 돈 ${s.overdueCount}건, ${won(s.overdueTotal)}`, detail: `${s.oldestOverdue ? `가장 오래된 것: ${s.oldestOverdue.cpName ?? '거래처'} ${md(s.oldestOverdue.writtenOn)}(${s.oldestOverdue.daysOver}일 지남), ` : ''}${basis}`, tone: 'attention' as const }
         : { id: 'bank-unpaid', label: `기다리는 받을 돈 ${s.unpaidCount}건`, detail: basis, tone: null };
     out.push({ kind: 'unpaid', title: '못 받은 돈', due: null, items: [{ ...item, kind: 'unpaid', due: null, showDue: false, target }] });
   }

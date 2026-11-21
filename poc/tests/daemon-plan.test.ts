@@ -61,7 +61,7 @@ describe('서류 만료 알림', () => {
       payload: { docType: 'national_tax_cert', daysLeft: 7, stage: 7, estimated: false },
       target: { to: 'doc', id: 'd1' },
     });
-    assert.deepEqual(notificationText(p!.notification), { title: '서류 만료가 다가와요', body: '납세증명서(국세) · 7일 뒤 만료돼요' });
+    assert.deepEqual(notificationText(p!.notification), { title: '서류 만료가 다가와요', body: '납세증명서(국세), 7일 뒤 만료돼요' });
   });
   it('사용자가 끈 일정(enabled=0)의 종류는 알리지 않는다', () => {
     assert.deepEqual(docIds(snap({ documents: [taxDoc], schedules: [sched({ enabled: false })] }), '2026-11-23'), []);
@@ -99,7 +99,7 @@ describe('월초 세무사 꾸러미 준비됨(bundle.reminderDay)', () => {
     assert.deepEqual(bundlePeriod('2027-07-05', 5, true)?.period, '2027-06');
     const n = planNotifications(snap({ settings: { reminderDay: 5, halfYearWithholding: true }, cardFetchedOn: '2027-01-02' }), '2027-01-05').notifications[0]!.notification;
     assert.equal(n.kind, 'bundle.ready');
-    assert.deepEqual(notificationText(n).body, '12월까지 반기 꾸러미 · 다 모였어요');
+    assert.deepEqual(notificationText(n).body, '12월까지 반기 꾸러미, 다 모였어요');
   });
   it('reminderDay가 그 달 날 수를 넘으면 말일', () => {
     assert.deepEqual(bundlePeriod('2027-02-28', 31, false)?.remindOn, '2027-02-28');
@@ -108,7 +108,7 @@ describe('월초 세무사 꾸러미 준비됨(bundle.reminderDay)', () => {
     const m = missing({ emptyItems: [{ itemId: 'i1', name: '급여대장', tier: 1, period: '2026-10', status: 'missing' }, { itemId: 'i2', name: '종이 증빙', tier: 1, period: '2026-10', status: 'partial' }] });
     const n = planNotifications(snap({ missing: m }), '2026-11-05').notifications.find((x) => x.notification.kind === 'bundle.ready')!.notification;
     assert.deepEqual(n.payload, { month: '2026-10', halfYear: false, missingCount: 2 });
-    assert.equal(notificationText(n).body, '10월 꾸러미 · 빠진 것 2개');
+    assert.equal(notificationText(n).body, '10월 꾸러미, 빠진 것 2개');
     assert.deepEqual(ids(snap({ missing: m, bundleSentPeriods: ['2026-10'] }), '2026-11-05'), []);
   });
   it('다른 달의 missingReport는 쓰지 않는다(빠진 것 0으로)', () => {
@@ -132,7 +132,7 @@ describe('확인 안 한 급여·카드 최신화', () => {
     assert.ok(!ids(snap({ cardFetchedOn: '2026-11-01' }), '2026-11-05').some((i) => i.startsWith('card.')));
     const n = planNotifications(snap({ cardFetchedOn: '2026-10-20' }), '2026-11-05').notifications.find((x) => x.notification.kind === 'card.stale')!.notification;
     assert.deepEqual(n.payload, { daysSinceFetch: 16 });
-    assert.equal(notificationText(n).body, '16일 전 최신화 · [최신화]를 눌러 주세요');
+    assert.equal(notificationText(n).body, '16일 전 최신화, [최신화]를 눌러 주세요');
     assert.deepEqual(n.target, { to: 'view', view: 'card' });
     const never = planNotifications(snap({ cardFetchedOn: null }), '2026-11-05').notifications.find((x) => x.notification.kind === 'card.stale')!.notification;
     assert.deepEqual(never.payload, { daysSinceFetch: null });

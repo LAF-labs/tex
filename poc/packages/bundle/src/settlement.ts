@@ -14,7 +14,7 @@ const fail = (code: string): never => {
 export const SETTLEMENT_PLATFORMS = ['baemin', 'coupang_eats', 'yogiyo', 'ddangyo', 'smartstore', 'coupang', '11st', 'esm', 'other'] as const;
 export type SettlementPlatformId = (typeof SETTLEMENT_PLATFORMS)[number];
 export const PLATFORM_KO: Record<SettlementPlatformId, string> = {
-  baemin: '배달의민족', coupang_eats: '쿠팡이츠', yogiyo: '요기요', ddangyo: '땡겨요', smartstore: '스마트스토어', coupang: '쿠팡', '11st': '11번가', esm: 'G마켓·옥션', other: '기타',
+  baemin: '배달의민족', coupang_eats: '쿠팡이츠', yogiyo: '요기요', ddangyo: '땡겨요', smartstore: '스마트스토어', coupang: '쿠팡', '11st': '11번가', esm: 'G마켓/옥션', other: '기타',
 };
 
 /** documents.meta.settlement에 두는 요약 */

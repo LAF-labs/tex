@@ -140,13 +140,13 @@ ${trial ? `<p>지금은 무료 체험 중이라 <strong>오늘은 결제되지 �
 <dt>결제 금액</dt><dd>매월 ${won} (부가세 포함)</dd>
 <dt>결제일</dt><dd>${trial ? `${trial}(체험이 끝나는 날)` : '오늘'}, 그다음부터 매월 같은 날 자동 갱신(그달에 같은 날이 없으면 말일)${trial ? '. 첫 결제 7일 전에 메일로 다시 알려드려요' : ''}</dd>
 <dt>해지</dt><dd>앱의 구독 화면에서 언제든 바로 해지할 수 있어요. 해지하면 다음 결제가 없고, 이미 낸 기간이 끝날 때까지 쓸 수 있어요.</dd>
-<dt>청약철회·환불</dt><dd>${trial ? '체험 중 해지하면 결제가 없어요. ' : ''}결제 후 7일 안에 철회할 수 있어요. 쓰지 않았으면 전액, 썼으면 쓴 날만큼 빼고 돌려드려요.</dd>
+<dt>청약철회/환불</dt><dd>${trial ? '체험 중 해지하면 결제가 없어요. ' : ''}결제 후 7일 안에 철회할 수 있어요. 쓰지 않았으면 전액, 썼으면 쓴 날만큼 빼고 돌려드려요.</dd>
 <dt>결제 실패</dt><dd>다음 날 다시 결제를 시도하고, 세 번 실패하면 구독이 끝나 유료 기능이 멈춰요.</dd>
 </dl>
 <label class="agree"><input id="agree" type="checkbox"> 위 내용과 <a href="${TERMS_URL}" target="_blank" rel="noopener">이용약관</a>, <a href="${PRIVACY_URL}" target="_blank" rel="noopener">개인정보처리방침</a>을 확인했고 매월 자동 결제에 동의해요</label>
 <button id="go" type="button" disabled>${trial ? `카드 등록하기(오늘 결제 없음)` : `${won} 결제하고 구독 시작`}</button>
 <p class="muted" id="msg"></p>
-<footer>${SELLER_INFO} · 결제 대행: 토스페이먼츠</footer></main>
+<footer>${SELLER_INFO}, 결제 대행: 토스페이먼츠</footer></main>
 <script src="${TOSS_SDK}"></script>
 <script nonce="${esc(o.nonce)}">
 const d = ${data};
@@ -173,7 +173,7 @@ export const TERMS_URL = 'https://tax.laf-co.com/terms';
 export const PRIVACY_URL = 'https://tax.laf-co.com/privacy';
 export const TERMS_VERSION = 'terms-2026-11-30';
 /** 판매자 표시(전자상거래법 §10). TODO(사용자): 대표자·사업자등록번호·통신판매업 신고번호·주소·전화번호를 받아 채운다 */
-export const SELLER_INFO = 'LAF · contact@laf-co.com';
+export const SELLER_INFO = 'LAF, contact@laf-co.com';
 
 export const PAGE_CSS =
   'body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard",sans-serif;background:#f7f7f8;color:#191f28}' +

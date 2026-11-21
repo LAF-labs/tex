@@ -291,7 +291,7 @@ const act = {
   },
   reissue: (doc) => {
     go('chat');
-    fillComposer(doc.kind === '세금계산서' ? `${doc.name.split(' · ')[1] || ''}에 세금계산서 ` : `${doc.docName} 떼 줘`);
+    fillComposer(doc.kind === '세금계산서' ? `${doc.name.replace(/^세금계산서 /, '')}에 세금계산서 ` : `${doc.docName} 떼 줘`);
   },
   go: (v) => go(v),
   g24Saved: async (id) => {
@@ -361,10 +361,10 @@ function renderTitlebar() {
       'div',
       { class: 'tb-profile' },
       h('button', { type: 'button', class: 'tb-co', 'aria-haspopup': 'menu', 'aria-expanded': String(state.menu), onclick: () => toggleMenu() }, cur.name, icon('chevron')),
-      state.menu ? h('div', { class: 'menu', role: 'menu', 'aria-label': '프로필' }, h('div', { class: 'menu-label' }, '새 요청에 쓸 프로필'), item('business', `사업자 · ${p.business.name}`), p.personal && !p.personal.placeholder ? item('personal', `개인 · ${p.personal.name}`) : null) : null,
+      state.menu ? h('div', { class: 'menu', role: 'menu', 'aria-label': '프로필' }, h('div', { class: 'menu-label' }, '새 요청에 쓸 프로필'), item('business', `사업자 ${p.business.name}`), p.personal && !p.personal.placeholder ? item('personal', `개인 ${p.personal.name}`) : null) : null,
     ),
     state.browser.available ? h('button', { type: 'button', class: 'tb-browser', 'data-act': 'browser-toggle', 'aria-pressed': String(state.browser.shown), title: state.browser.shown ? '브라우저 패널 작게' : '브라우저 패널 크게', onclick: () => void call('browser.toggle', { show: !state.browser.shown }).catch(() => {}) }, '홈택스 화면') : null,
-    ...(state.boot?.sample === false ? [] : [h('span', { class: 'mock-badge' }, '견본 데이터 · PoC 데모')]),
+    ...(state.boot?.sample === false ? [] : [h('span', { class: 'mock-badge' }, '견본 데이터, PoC 데모')]),
     ...(state.boot?.build ?? []).map((t) => h('span', { class: 'mock-badge', 'data-build-badge': '' }, t)),
     ].filter(Boolean),
   );
@@ -978,7 +978,7 @@ function renderHandoff() {
     h(
       'div',
       { class: 'sx-handoff-pill' },
-      h('span', { class: 'sx-handoff-text' }, `${runTitle(r)} · 지금 사람이 필요해요`),
+      h('span', { class: 'sx-handoff-text' }, `${runTitle(r)}, 지금 사람이 필요해요`),
       h('button', { type: 'button', class: 'sx-btn sx-btn-quiet', 'data-act': 'handoff-go', onclick: () => cardOf()?.scrollIntoView({ block: 'center' }) }, '카드로 가기'),
     ),
   );
@@ -1257,12 +1257,12 @@ function paintScreen() {
   else if (s.frame || (state.browser.embedded && s.url)) mark('live', '직접 조작');
   if (state.browser.embedded) {
     box.dataset.state = s.gone ? 'gone' : s.paused ? 'paused' : 'live';
-    if (s.gone) box.replaceChildren(h('p', { class: 'sx-meta' }, '연결 끊김 · 브라우저가 닫혔어요'));
+    if (s.gone) box.replaceChildren(h('p', { class: 'sx-meta' }, '연결 끊김, 브라우저가 닫혔어요'));
     return;
   }
   if (s.gone) {
     box.dataset.state = 'gone';
-    box.replaceChildren(h('p', { class: 'sx-meta' }, '연결 끊김 · 브라우저가 닫혔어요'));
+    box.replaceChildren(h('p', { class: 'sx-meta' }, '연결 끊김, 브라우저가 닫혔어요'));
     return;
   }
   if (s.paused) {
@@ -1313,7 +1313,7 @@ function renderPanel() {
 
 const waitingChip = () => {
   const r = [...state.runs.values()].find((x) => x.status === 'waiting');
-  return h('button', { type: 'button', class: 'sx-btn sx-btn-quiet rs-waiting', onclick: () => go('chat') }, r ? `${runTitle(r)} 승인 대기 · 대화로 가기` : '승인 대기 · 대화로 가기');
+  return h('button', { type: 'button', class: 'sx-btn sx-btn-quiet rs-waiting', onclick: () => go('chat') }, r ? `${runTitle(r)} 승인 대기, 대화로 가기` : '승인 대기, 대화로 가기');
 };
 
 const panelHead = (title, ...extra) => h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, title), ...extra, h('button', { type: 'button', class: 'panel-x', 'aria-label': '패널 닫기', onclick: act.closePanel }, icon('close')));
@@ -1345,7 +1345,7 @@ const ISSUED_STATE = { issued: ['발급됨', ''], unsure: ['확인 필요', 'is-
 function issuedSection() {
   const all = (state.issued ?? []).filter((x) => x.kind === 'issued' || x.kind === 'unsure');
   const tried = (state.issued?.length ?? 0) - all.length;
-  const triedLine = tried ? h('div', { class: 'issued-tried', 'data-issued-tried': String(tried) }, btn(`발급 안 된 시도 ${tried}건 · 활동 기록에서 보기`, () => go('activity'), 'sx-btn-quiet', { 'data-act': 'issued-tried' })) : null;
+  const triedLine = tried ? h('div', { class: 'issued-tried', 'data-issued-tried': String(tried) }, btn(`발급 안 된 시도 ${tried}건, 활동 기록에서 보기`, () => go('activity'), 'sx-btn-quiet', { 'data-act': 'issued-tried' })) : null;
   if (!all.length) return triedLine;
   const rows = state.issuedAll ? all : all.slice(0, ISSUED_SHOWN);
   const done = all.filter((x) => x.kind === 'issued').length;
@@ -1353,7 +1353,7 @@ function issuedSection() {
   return h(
     'div',
     { class: 'issued-sec', 'data-issued': '' },
-    h('div', { class: 'issued-hd' }, h('h2', { class: 'issued-title' }, '발급한 세금계산서'), h('span', { class: 'sx-meta' }, [`발급 ${done}건`, unsure ? `확인 필요 ${unsure}건` : null].filter(Boolean).join(' · '))),
+    h('div', { class: 'issued-hd' }, h('h2', { class: 'issued-title' }, '발급한 세금계산서'), h('span', { class: 'sx-meta' }, [`발급 ${done}건`, unsure ? `확인 필요 ${unsure}건` : null].filter(Boolean).join(', '))),
     listTable(
       [['날짜'], ['거래처'], ['금액', 'num'], ['승인번호'], ['메일'], ['']],
       rows.map((x) => {
@@ -1391,7 +1391,7 @@ function docsView() {
     .sort((a, b) => Number(!!b.d.vault?.needsUser) - Number(!!a.d.vault?.needsUser) || Number(b.n !== null && b.n <= 7) - Number(a.n !== null && a.n <= 7) || (b.d.issuedOn ?? '').localeCompare(a.d.issuedOn ?? ''));
   const check = state.docs.filter((d) => d.vault?.needsUser).length;
   const soon = state.docs.filter(n7).length;
-  const meta = [`${state.docs.length}개`, check ? `확인 필요 ${check}개` : null, soon ? `만료 임박 ${soon}개` : null].filter(Boolean).join(' · ');
+  const meta = [`${state.docs.length}개`, check ? `확인 필요 ${check}개` : null, soon ? `만료 임박 ${soon}개` : null].filter(Boolean).join(', ');
   const fb = ([key, label]) => h('button', { type: 'button', class: f === key ? 'is-on' : null, 'aria-pressed': String(f === key), onclick: () => ((state.docFilter = key), render()) }, label);
   return h(
     'section',
@@ -1429,7 +1429,7 @@ function cpsView() {
   return h(
     'section',
     { class: 'rail-screen', 'data-view': 'cps' },
-    state.cps.length ? railHead('거래처', `${state.cps.length}곳${issued ? ` · 이번 달 발급 ${issued}곳` : ''}`, btn('거래처 추가', () => openPanel({ kind: 'cp-edit', id: null }), '', { 'data-act': 'cp-add' })) : railHead('거래처', ''),
+    state.cps.length ? railHead('거래처', `${state.cps.length}곳${issued ? `, 이번 달 발급 ${issued}곳` : ''}`, btn('거래처 추가', () => openPanel({ kind: 'cp-edit', id: null }), '', { 'data-act': 'cp-add' })) : railHead('거래처', ''),
     state.onb?.step === 'counterparties'
       ? h('div', { class: 'sx-note', 'data-onb-band': 'cps' }, h('div', {}, '거래처를 다 넣으면 대화로 돌아가 [다 했어요]를 눌러 주세요.'), btn('대화로 돌아가기', () => go('chat'), 'sx-btn-primary', { 'data-act': 'onb-back' }))
       : null,
@@ -1446,13 +1446,13 @@ function cpsView() {
           h('td', { class: c.lastIssuedOn?.startsWith(month) ? null : 'is-none' }, c.lastIssuedOn?.startsWith(month) ? '발급함' : '—'),
         ),
       ),
-    ) : loadState('cps', '거래처 목록', () => void loadCps()) ?? emptyState('아직 거래처가 없어요.', '세금계산서를 보낼 곳의 사업자번호만 있으면 상호·대표자는 홈택스에서 채워요.', btn('거래처 추가', () => openPanel({ kind: 'cp-edit', id: null }), 'sx-btn-primary', { 'data-act': 'cp-add' })),
+    ) : loadState('cps', '거래처 목록', () => void loadCps()) ?? emptyState('아직 거래처가 없어요.', '세금계산서를 보낼 곳의 사업자번호만 있으면 상호/대표자는 홈택스에서 채워요.', btn('거래처 추가', () => openPanel({ kind: 'cp-edit', id: null }), 'sx-btn-primary', { 'data-act': 'cp-add' })),
     state.cps.length ? h('p', { class: 'sx-meta rs-foot' }, '사업자번호는 발급할 때마다 홈택스에서 다시 확인해요.') : null,
   );
 }
 
 function cpPanel(c) {
-  const history = state.docs.filter((d) => d.kind === '세금계산서' && d.name === `세금계산서 · ${c.name}`).sort((a, b) => (b.issuedOn ?? '').localeCompare(a.issuedOn ?? ''));
+  const history = state.docs.filter((d) => d.kind === '세금계산서' && d.name === `세금계산서 ${c.name}`).sort((a, b) => (b.issuedOn ?? '').localeCompare(a.issuedOn ?? ''));
   return h(
     'div',
     { class: 'panel-in', 'data-panel-cp': c.id },
@@ -1475,7 +1475,7 @@ function cpPanel(c) {
       btn('수정', () => openPanel({ kind: 'cp-edit', id: c.id }), '', { 'data-act': 'cp-edit' }),
     ),
     state.profile === 'business' ? bankUi.cpSection(c) : null,
-    h('div', { class: 'sx-source' }, '거래처 장부 · 이 PC에만 있어요'),
+    h('div', { class: 'sx-source' }, '거래처 장부, 이 PC에만 있어요'),
   );
 }
 
@@ -1625,7 +1625,7 @@ function bizView() {
         ? h(
             'article',
             { class: 'sx-card', 'data-personal-card': '' },
-            h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `개인 · ${personal.name}`)),
+            h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `개인 ${personal.name}`)),
             kv(
               [
                 ['이름', personal.name],
@@ -1649,7 +1649,7 @@ function bizView() {
 }
 
 const PAST = {
-  issued: { status: 'done', result: '완료', hometax: '전자세금계산서 1건 발급 · 발급목록에서 확인' },
+  issued: { status: 'done', result: '완료', hometax: '전자세금계산서 1건 발급, 발급목록에서 확인' },
   unsure: { status: 'attention', result: '확인 필요', hometax: '발급됐는지 확인하지 못함' },
   not_issued: { status: 'stopped', result: '발급 안 함', hometax: '발급하지 않음' },
   stopped_before_gate: { status: 'stopped', result: '승인 전에 멈춤', hometax: '발급하지 않음(승인 전에 앱이 꺼짐)' },
@@ -1664,17 +1664,17 @@ function activityRows() {
   }
   for (const g of [...state.g24.values()].reverse()) {
     const result = { guide: '내 차례', pick: '내 차례', saved: '문서함에 넣음', stopped: '그만둠' }[g.stage];
-    rows.push({ id: g.id, g24: g, at: `${today} ${g.startedAt}`, what: `${g.doc} · 정부24`, profile: '개인', portal: '정부24 · 직접', status: { guide: 'turn', pick: 'turn', saved: 'done', stopped: 'stopped' }[g.stage], result });
+    rows.push({ id: g.id, g24: g, at: `${today} ${g.startedAt}`, what: `${g.doc}, 정부24`, profile: '개인', portal: '정부24, 직접', status: { guide: 'turn', pick: 'turn', saved: 'done', stopped: 'stopped' }[g.stage], result });
   }
   const LABEL = { name: '상호', bizNo: '사업자번호', rep: '대표자', bizType: '업태', bizItem: '종목', address: '주소', email: '이메일' };
   for (const [i, e] of [...(state.boot.profileEdits ?? []).entries()].reverse()) {
     const d = new Date(e.at);
     const at = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    rows.push({ id: `edit-${i}`, edit: e, at, what: `내 사업장 수정 · ${e.fields.map((f) => LABEL[f] ?? f).join('·')}`, profile: '사업자', portal: '이 PC', status: 'done', result: '저장함' });
+    rows.push({ id: `edit-${i}`, edit: e, at, what: `내 사업장 수정(${e.fields.map((f) => LABEL[f] ?? f).join(', ')})`, profile: '사업자', portal: '이 PC', status: 'done', result: '저장함' });
   }
   for (const p of state.boot.past ?? []) {
     if (state.runs.has(p.runId)) continue;
-    rows.push({ id: `past-${p.runId}`, past: p, at: p.day ? `${shortDate(p.day)} ${p.time}` : '시각 모름', what: `세금계산서 · ${p.who ?? '거래처 정보 없음'}`, profile: '사업자', portal: '홈택스', status: PAST[p.kind].status, result: PAST[p.kind].result });
+    rows.push({ id: `past-${p.runId}`, past: p, at: p.day ? `${shortDate(p.day)} ${p.time}` : '시각 모름', what: `세금계산서 ${p.who ?? '거래처 정보 없음'}`, profile: '사업자', portal: '홈택스', status: PAST[p.kind].status, result: PAST[p.kind].result });
   }
   return rows;
 }
@@ -1684,7 +1684,7 @@ function activityView() {
   return h(
     'section',
     { class: 'rail-screen', 'data-view': 'activity' },
-    railHead('활동 기록', '이 PC에만 남아요 · 비밀값은 남기지 않아요'),
+    railHead('활동 기록', '이 PC에만 남아요. 비밀값은 남기지 않아요'),
     rows.length
       ? listTable(
           [['시각'], ['작업'], ['프로필'], ['포털'], ['결과'], ['AI']],
@@ -1701,7 +1701,7 @@ function activityView() {
             ),
           ),
         )
-      : emptyState('아직 기록이 없어요.', '홈택스·정부24에서 한 일이 시각·결과와 함께 여기에 남아요.'),
+      : emptyState('아직 기록이 없어요.', '홈택스/정부24에서 한 일이 시각/결과와 함께 여기에 남아요.'),
   );
 }
 
@@ -1711,14 +1711,14 @@ function activityPanel(row) {
     ? whereRows(r)
     : row.g24
       ? [
-          ['정부24', '앱은 요청을 보내지 않았어요 · 직접 발급'],
+          ['정부24', '앱은 요청을 보내지 않았어요. 직접 발급'],
           ['보관', row.g24.stage === 'saved' ? '이 PC 문서함' : '넣지 않음'],
           modelRow(row.g24.sent),
           serverRow(row.g24.sent),
         ]
       : row.edit
         ? [
-            ['저장', `이 PC 내 사업장 정보 · 고친 칸 ${row.edit.fields.length}개(값은 기록하지 않아요)`],
+            ['저장', `이 PC 내 사업장 정보, 고친 칸 ${row.edit.fields.length}개(값은 기록하지 않아요)`],
             ['AI', '쓰지 않음'],
             serverRow([]),
           ]
@@ -1728,7 +1728,7 @@ function activityPanel(row) {
             row.past.documentId ? ['보관', '이 PC 문서함'] : null,
           ]
         : [
-            ['홈택스', r.status === 'stopped' ? '발급하지 않음' : r.status === 'attention' ? '확인 필요 · 위 안내를 봐 주세요' : '진행 중'],
+            ['홈택스', r.status === 'stopped' ? '발급하지 않음' : r.status === 'attention' ? '확인 필요. 위 안내를 봐 주세요' : '진행 중'],
             modelRow(r.sent),
             serverRow(r.sent),
           ];
@@ -1738,7 +1738,7 @@ function activityPanel(row) {
     panelHead(row.what, chip(row.status, row.past ? row.result : undefined)),
     kv([
       ['시각', row.at],
-      ['프로필', row.profile === '사업자' ? `사업자 · ${state.boot.profiles.business.name}` : `개인 · ${state.boot.profiles.personal.name}`],
+      ['프로필', row.profile === '사업자' ? `사업자 ${state.boot.profiles.business.name}` : `개인 ${state.boot.profiles.personal.name}`],
       ['포털', row.portal],
       r?.result ? ['승인번호', r.result.approvalNo, { mono: true }] : row.past?.approvalNo ? ['승인번호', row.past.approvalNo, { mono: true, copy: () => act.copy(row.past.approvalNo) }] : null,
       row.past?.total != null ? ['합계', `${num(row.past.total)}원 (공급가액 ${num(row.past.supply)} + 세액 ${num(row.past.tax)})`] : null,
@@ -1904,8 +1904,8 @@ function deletionRow() {
       'div',
       { class: 'sx-card', 'data-account-delete': 'confirm' },
       h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '정말 탈퇴할까요?')),
-      meta('구독이 바로 해지되고, 7일 뒤 서버의 계정 정보(이메일·기기·결제 참조)가 지워져요. 7일 안에는 취소할 수 있어요.'),
-      meta('이 Mac에 있는 사업장·거래처·발급 기록은 앱을 지우기 전까지 그대로 남아요.'),
+      meta('구독이 바로 해지되고, 7일 뒤 서버의 계정 정보(이메일/기기/결제 참조)가 지워져요. 7일 안에는 취소할 수 있어요.'),
+      meta('이 Mac에 있는 사업장/거래처/발급 기록은 앱을 지우기 전까지 그대로 남아요.'),
       h('div', { class: 'sx-actions' }, btn('탈퇴하기', () => deletionAct('account.delete'), 'sx-btn-primary', { 'data-act': 'account-delete' }), btn('그만두기', () => ((state.deletion = { ...d, confirm: false }), render()), 'sx-btn-quiet', { 'data-act': 'account-delete-back' })),
     );
   return h('p', { class: 'onb-links', 'data-account-delete': 'none' }, btn('탈퇴', () => ((state.deletion = { ...d, confirm: true }), render()), 'sx-btn-quiet', { 'data-act': 'account-delete-open' }));
@@ -2086,7 +2086,7 @@ setInterval(() => {
 }, 1000);
 const AUTH_DESC = {
   '사업자 간편인증': '발급할 때마다 휴대폰에서 승인해요',
-  '공동·금융인증서': '홈택스 로그인에 쓰는 그 인증서예요. 첫 발급 때 비밀번호를 한 번 넣으면 다음부터는 앱이 넣어요',
+  '공동/금융인증서': '홈택스 로그인에 쓰는 그 인증서예요. 첫 발급 때 비밀번호를 한 번 넣으면 다음부터는 앱이 넣어요',
 };
 
 function authCard() {
@@ -2104,7 +2104,7 @@ function authCard() {
       ? h(
           'div',
           { class: 'sx-card auth-row', 'data-cert-name': '' },
-          h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, `홈택스 인증서 · ${state.certName.owner}`), h('span', { class: 'sx-meta' }, '홈택스 인증서 창에서 이 인증서를 자동으로 골라요.')),
+          h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, `홈택스 인증서 ${state.certName.owner}`), h('span', { class: 'sx-meta' }, '홈택스 인증서 창에서 이 인증서를 자동으로 골라요.')),
           btn('지우기', clearCertName, '', { 'data-act': 'cert-name-clear' }),
         )
       : null,
@@ -2347,7 +2347,7 @@ async function importDoc(input) {
     if (state.view === 'docs') {
       toast(msg);
       openPanel({ kind: 'doc', id: d.id });
-    } else toast(`${msg} · 문서함에서 볼 수 있어요`);
+    } else toast(`${msg}, 문서함에서 볼 수 있어요`);
   } catch (e) {
     state.docImport = null;
     toast(docErr(e));
@@ -2463,7 +2463,7 @@ function docReview(doc) {
       ['발급번호', v.docNo, { mono: true }],
       ['읽은 곳', src],
     ]),
-    v.needsUser ? note(v.reasons.map((r) => DOC_REASON[r]).filter(Boolean).join(' · ') || '값을 확인해 주세요', true, 'PDF를 열어 값을 맞춰 보고 확인을 눌러 주세요.') : null,
+    v.needsUser ? note(v.reasons.map((r) => DOC_REASON[r]).filter(Boolean).join(', ') || '값을 확인해 주세요', true, 'PDF를 열어 값을 맞춰 보고 확인을 눌러 주세요.') : null,
     !v.needsUser && v.subjectMismatch ? note('내 사업장과 사업자번호가 다른 서류예요(확인함).') : null,
     h(
       'div',
@@ -2477,7 +2477,7 @@ function docReview(doc) {
       ? h(
           'div',
           { class: 'sx-meta doc-hint', 'data-doc-hint': '' },
-          `${hints.join(' · ')} (PDF에서 확인하세요) `,
+          `${hints.join(', ')} (PDF에서 확인하세요) `,
           btn(
             '후보 넣기',
             () => {

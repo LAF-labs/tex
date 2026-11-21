@@ -12,7 +12,7 @@ describe('계좌 자동조회 main', () => {
   });
 
   it('창 페이지는 결속값만 싣고 글자는 이스케이프한다', () => {
-    const html = codefPageHtml({ mode: 'codef', reqId: REQ, scope: 'business' }, { profileName: '<가나>상사', certLabel: '홍길동 · yessign' });
+    const html = codefPageHtml({ mode: 'codef', reqId: REQ, scope: 'business' }, { profileName: '<가나>상사', certLabel: '홍길동, yessign' });
     assert.ok(html.includes(`data-req="${REQ}"`) && html.includes('data-scope="business"'));
     assert.ok(html.includes('&lt;가나&gt;상사') && !html.includes('<가나>'));
     assert.ok(html.includes('codef-secret.js') && html.includes('id="remember"'));
@@ -37,7 +37,7 @@ describe('계좌 자동조회 main', () => {
     assert.deepEqual(await b.handlers['bankAuto.connect']({ certId: 'fedcba9876543210' }), { ok: false, code: 'cert_missing' });
     await b.handlers['bankAuto.connect']({ certId: '0123456789abcdef', bank: '0020' });
     assert.deepEqual(calls, [['codef.connect', { certId: '0123456789abcdef', bank: '0020' }]], '계좌 종류를 고르지 않으면 엔진이 기업·개인을 차례로 해 본다');
-    assert.equal(b.chosenLabel(), '홍길동 · yessign');
+    assert.equal(b.chosenLabel(), '홍길동, yessign');
   });
 
   it('홈택스 발급 인증서가 맨 앞(표시), 동의는 PC DB에 위탁 동의로 남고, 고르기는 엔진에 그대로(연결 상태는 엔진이 정한다)', async () => {
