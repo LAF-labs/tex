@@ -111,10 +111,10 @@ describe('settlement.store', () => {
   });
 });
 
-describe('꾸러미 내보내기: 정산·현금매출 시트', () => {
+describe('꾸러미 내보내기: 정산 현금매출 시트', () => {
   it('정산 파일마다 플랫폼·기간·금액·수수료·입금액을 "파일에서 읽은 값"으로 적는다(형식 추정 표시), 요약 없는 파일은 예전처럼 한 줄', async () => {
     const r = (await svc.handle('bundle.export', { profileId, month: '2026-10' })) as { file: string; password: string; sheets: string[] };
-    assert.ok(r.sheets.includes('정산·현금매출'));
+    assert.ok(r.sheets.includes('정산 현금매출'));
     const parts = await new ZipReader(new Uint8ArrayReader(new Uint8Array(await officeCrypto.decrypt(fs.readFileSync(r.file), { password: r.password })))).getEntries();
     const all = (await Promise.all(parts.filter((p) => p.filename.endsWith('.xml')).map((p) => p.getData!(new TextWriter())))).join('\n');
     for (const s of ['배달앱 월별 정산내역(배달의민족)', '2026-10-01~2026-10-31', '파일에서 읽은 값, 형식 추정', '오픈마켓 월별 정산내역(스마트스토어)', '수수료', '입금액']) assert.ok(all.includes(s), s);

@@ -6,7 +6,7 @@ export const BIZ_EDIT_ERR = {
   name_required: '상호를 입력해 주세요.',
   bad_biz_no: '사업자번호가 맞지 않아요. 10자리를 다시 확인해 주세요.',
   bad_email: '이메일 주소 모양이 맞지 않아요. 다시 확인해 주세요.',
-  biz_inactive: '국세청 조회에서 휴업·폐업으로 나와요. 이 번호로는 저장할 수 없어요.',
+  biz_inactive: '국세청 조회에서 휴업/폐업으로 나와요. 이 번호로는 저장할 수 없어요.',
   onboarding_open: '시작 설정을 먼저 마쳐 주세요.',
   gesture_required: '[저장]을 직접 눌러 주세요.',
   account_required: '먼저 로그인해 주세요.',
@@ -49,7 +49,7 @@ function viewCard(ctx) {
   return h(
     'article',
     { class: 'sx-card', 'data-biz-card': 'view' },
-    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `사업자 · ${b.name}`), btn(has ? '수정' : '등록', ctx.onEdit, 'sx-btn-quiet', { 'data-act': 'biz-edit' })),
+    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `사업자 ${b.name}`), btn(has ? '수정' : '등록', ctx.onEdit, 'sx-btn-quiet', { 'data-act': 'biz-edit' })),
     kv(
       [
         ['상호', has && !b.nameMissing ? b.name : null, ht('name')],

@@ -52,7 +52,7 @@ describe('붙여넣기 → 후보(규칙 사전)', () => {
       cs.map((c) => [c.name, c.existing]),
       [
         ['사업용 신용카드 사용내역', { kind: 'card', itemId: id('card') }],
-        ['매출·매입 세금계산서', { kind: 'tax_invoice', itemId: id('tax_invoice') }],
+        ['매출/매입 세금계산서', { kind: 'tax_invoice', itemId: id('tax_invoice') }],
         ['배달앱 월별 정산내역', { kind: 'settlement_delivery', itemId: id('settlement_delivery') }],
         ['오픈마켓 월별 정산내역', { kind: 'settlement_market', itemId: null, industry: 'online_seller' }],
       ],

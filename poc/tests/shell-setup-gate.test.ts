@@ -29,14 +29,14 @@ describe('카드 전 검사: 무엇이 빠졌는지', () => {
   it('사업자번호·발급 인증', () => {
     assert.deepEqual(setupMissing({ kind: 'business', name: '내 사업장', email: '', auth: '' }), ['biz', 'auth']);
     assert.deepEqual(setupMissing({ kind: 'business', name: 'A', bizNo: '1234567891', email: '', auth: '발급 인증 미설정' }), ['auth']);
-    assert.deepEqual(setupMissing({ kind: 'business', name: 'A', email: '', auth: '공동·금융인증서' }), ['biz']);
+    assert.deepEqual(setupMissing({ kind: 'business', name: 'A', email: '', auth: '공동/금융인증서' }), ['biz']);
     assert.deepEqual(setupMissing({ kind: 'business', name: 'A', bizNo: '1234567891', email: '', auth: '사업자 간편인증(카카오뱅크)' }), []);
   });
   it('발급 인증이 비어 있는 프로필(되돌린 보안카드 포함)은 "고르지 않음"으로 보이고 다시 고르게 한다(대표 결정 2026-11-19)', () => {
     const app = fs.readFileSync(new URL('../apps/desktop/src/shell-app.ts', import.meta.url), 'utf8');
     assert.match(app, /auth: p\.signMethod \? SIGN_LABEL\[p\.signMethod\] : NO_AUTH \}/);
     assert.deepEqual(setupMissing({ kind: 'business', name: 'A', bizNo: '1234567891', email: '', auth: '발급 인증 미설정' }), ['auth']);
-    assert.match(setupText('invoice', ['auth']), /공동인증서·간편인증/);
+    assert.match(setupText('invoice', ['auth']), /공동인증서\/간편인증/);
     assert.doesNotMatch(setupText('invoice', ['auth']), /보안카드/);
     const ui = fs.readFileSync(new URL('../apps/desktop/static/shell/shell.js', import.meta.url), 'utf8');
     const desc = ui.slice(ui.indexOf('const AUTH_DESC = {'), ui.indexOf('};', ui.indexOf('const AUTH_DESC = {')));

@@ -18,7 +18,7 @@ const Q = {
 const AUTH = [
   ['cert', '공동인증서', '홈택스 로그인에 쓰는 그 인증서예요. 비밀번호를 처음 한 번 넣으면 다음부터는 앱이 넣어요.'],
   ['fincert', '금융인증서', '발급할 때마다 6자리 인증서 비밀번호를 직접 넣어요.'],
-  ['simple', '사업자 간편인증', '발급할 때마다 휴대폰(카카오뱅크·IBK·KB 앱)에서 승인해요.'],
+  ['simple', '사업자 간편인증', '발급할 때마다 휴대폰(카카오뱅크/IBK/KB 앱)에서 승인해요.'],
 ];
 const AUTH_LABEL = Object.fromEntries(AUTH.map(([k, l]) => [k, l]));
 
@@ -107,7 +107,7 @@ function stepBody(o, act) {
         field({ label: '사업자번호(10자리)', input, error: errFor(u, 'bizNo') }),
         row(h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-onb': 'submit' }, '확인'), btn('뒤로', () => reply('back'), 'sx-btn-quiet', { 'data-onb': 'back' })),
       );
-      return card('사업자번호로 등록', notice, p('대표자·주소 등은 나중에 내 사업장에서 채워도 돼요.', true), form);
+      return card('사업자번호로 등록', notice, p('대표자/주소 등은 나중에 내 사업장에서 채워도 돼요.', true), form);
     }
     case 'biz-confirm':
       return bizCard(o, u, reply, answer, act);
@@ -164,7 +164,7 @@ function bizCard(o, u, reply, answer, act) {
     ['상호', b.name || '—'],
     ['사업자번호', fmtBiz(b.bizNo), { mono: true }],
     ['대표자', b.rep || '—'],
-    ['업태·종목', [b.bizType, b.bizItem].filter(Boolean).join(' · ') || '—'],
+    ['업태/종목', [b.bizType, b.bizItem].filter(Boolean).join(', ') || '—'],
     ['사업장 주소', b.address || '—'],
     ['사업자 이메일', b.email || '—'],
     ['상태', o.check?.label ?? '—', { tag: o.check?.source, state: active ? null : 'attention' }],
@@ -238,7 +238,7 @@ function authCard(o, u, reply, answer, act) {
   const certs = [...o.certs]
     .sort((a, b) => usable(b) - usable(a))
     .map((c) => ({
-      label: twoLines(`${c.owner} · ${c.usage}`, usable(c) ? `만료 ${c.expiresOn}${soon(c) ? ' · 30일 안에 만료돼요' : ''}` : `만료 ${c.expiresOn} · ${WHY[c.why] ?? '쓸 수 없어요'}`, !usable(c) || soon(c)),
+      label: twoLines(`${c.owner}, ${c.usage}`, usable(c) ? `만료 ${c.expiresOn}${soon(c) ? ', 30일 안에 만료돼요' : ''}` : `만료 ${c.expiresOn}, ${WHY[c.why] ?? '쓸 수 없어요'}`, !usable(c) || soon(c)),
       onPick: () => reply('cert', { certId: c.id }),
       attrs: { 'data-cert': c.id, disabled: !usable(c) },
     }));
@@ -304,7 +304,7 @@ function summaryCard(o, answer) {
   const skipped = new Set(o.skipped);
   const tasks = o.tasksCatalog.filter((t) => o.tasks.includes(t.id)).map((t) => t.label);
   const rows = [
-    ['사업자', b && !skipped.has('biz') ? `${b.name || '이름 미입력'} · ${fmtBiz(b.bizNo)}` : '나중에 등록'],
+    ['사업자', b && !skipped.has('biz') ? `${b.name || '이름 미입력'}, ${fmtBiz(b.bizNo)}` : '나중에 등록'],
     ['발급 인증', o.auth ? AUTH_LABEL[o.auth] : '나중에 고르기'],
     ['맡긴 업무', tasks.length ? tasks.join(', ') : '나중에 고르기'],
     ['서류 보관', '이 PC 앱 폴더 안 보관함(기본)'],

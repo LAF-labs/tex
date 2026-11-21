@@ -73,7 +73,7 @@ const DISPLAY: Record<StoredDocType, string> = {
 };
 /** 실행 산출물로 보관할 수 있는 종류(save_pdf docType): H-01 세금계산서와 민원증명 4종(H-04·H-03·H-08·H-09). */
 export const RUN_ARTIFACT_DOC_TYPES: ReadonlySet<string> = new Set(['tax_invoice', 'national_tax_cert', 'biz_registration_cert', 'vat_tax_base_cert', 'financial_statements_cert']);
-const KIND_DISPLAY: Partial<Record<DetectedKind, string>> = { localtax_cert: '지방세 납세증명서', biz_registration: '사업자등록증', closure_cert: '휴업·폐업 사실증명', english_cert: '영문 증명' };
+const KIND_DISPLAY: Partial<Record<DetectedKind, string>> = { localtax_cert: '지방세 납세증명서', biz_registration: '사업자등록증', closure_cert: '휴업/폐업 사실증명', english_cert: '영문 증명' };
 const MAX_PDF = 15 * 1024 * 1024;
 const MAX_TEXT = 1024 * 1024;
 const ISO = /^\d{4}-\d{2}-\d{2}$/;

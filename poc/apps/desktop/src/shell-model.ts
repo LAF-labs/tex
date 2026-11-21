@@ -26,7 +26,7 @@ export interface Profile {
   placeholder?: boolean;
 }
 
-export const SIGN_LABEL: Readonly<Record<'cert' | 'simple_auth', string>> = { simple_auth: '사업자 간편인증', cert: '공동·금융인증서' };
+export const SIGN_LABEL: Readonly<Record<'cert' | 'simple_auth', string>> = { simple_auth: '사업자 간편인증', cert: '공동/금융인증서' };
 
 export const NO_AUTH = '발급 인증 미설정';
 
@@ -44,7 +44,7 @@ export function setupText(work: 'invoice' | 'cert', missing: ReadonlyArray<Setup
       : missing.includes('biz')
         ? `${what} 먼저 사업자 정보(사업자번호)를 등록해 주세요.`
         : missing.includes('auth')
-          ? `${what} 먼저 발급할 때 쓸 인증(공동인증서·간편인증)을 골라 주세요.`
+          ? `${what} 먼저 발급할 때 쓸 인증(공동인증서/간편인증)을 골라 주세요.`
           : null;
   const sec = missing.includes('security') ? '홈택스 공동인증서 프로그램(MagicLine4NX)도 켜 주세요.' : '';
   if (!chrome) return head ? `${head}${sec ? ` ${sec}` : ''}` : `${what} 먼저 홈택스 공동인증서 프로그램(MagicLine4NX)을 설치하거나 켜 주세요.`;
@@ -226,7 +226,7 @@ export function answersPending(parsed: Parsed, runs: Drafts, text?: string): boo
 }
 
 export const EMPTY_REQUEST_TEXT = '세금계산서 발급이나 지난 발급, 매출을 말해 주세요.';
-export const CERT_OTHER_TEXT = `그 증명서는 이 앱에서 떼지 못해요. ${CERT_DOCS_SHOWN.map((d) => d.name).join('·')}은 바로 뗄 수 있어요.`;
+export const CERT_OTHER_TEXT = `그 증명서는 이 앱에서 떼지 못해요. ${CERT_DOCS_SHOWN.map((d) => d.name).join(', ')}은 바로 뗄 수 있어요.`;
 const objectJosa = (w: string) => ((w.charCodeAt(w.length - 1) - 0xac00) % 28 > 0 ? '을' : '를');
 
 export function interpret(text: string, vat: Vat | null, profile: Profile['kind'], runs: Drafts, parsed: Parsed = parseRegex(text, runs.counterparties)): Reply {
@@ -274,7 +274,7 @@ export function interpret(text: string, vat: Vat | null, profile: Profile['kind'
     if (!doc || doc.hidden) return { kind: 'say', text: CERT_OTHER_TEXT };
     if (profile !== 'business') return { kind: 'say', text: '증명서는 사업자 프로필로 떼요. 위에서 사업자로 바꿔 주세요.' };
     const inputs = certInputsFor(doc, text, kstToday(Date.now()));
-    return { kind: 'draft', run: runs.createCertDraft(doc.code, inputs), text: `${doc.name}${objectJosa(doc.name)} 홈택스에서 떼요. 사용 용도 ${inputs.purpose} · 제출처 ${inputs.submitTo}.` };
+    return { kind: 'draft', run: runs.createCertDraft(doc.code, inputs), text: `${doc.name}${objectJosa(doc.name)} 홈택스에서 떼요. 사용 용도 ${inputs.purpose}, 제출처 ${inputs.submitTo}.` };
   }
   return { kind: 'say', text: EMPTY_REQUEST_TEXT, chips: QUICK.filter((q) => !q.soon) };
 }

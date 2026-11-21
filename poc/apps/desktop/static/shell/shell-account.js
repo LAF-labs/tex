@@ -56,7 +56,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const back = (label, onClick) => h('button', { type: 'button', class: 'acct-back', 'data-act': 'account-back', onclick: onClick }, icon('chevronLeft'), label);
 const mark = () => h('span', { class: 'acct-mark', 'aria-hidden': 'true' }, 'ax');
 const head = (title, sub, subAttrs) => h('div', { class: 'acct-head' }, h('h1', { class: 'title-screen', id: 'acct-title' }, title), sub ? h('p', { class: 'sx-body-sm', ...(subAttrs ?? {}) }, sub) : null);
-const links = (...bs) => h('div', { class: 'acct-links' }, ...bs.flatMap((b, i) => (i ? [h('span', { class: 'acct-dot', 'aria-hidden': 'true' }, '·'), b] : [b])));
+const links = (...bs) => h('div', { class: 'acct-links' }, ...bs.flatMap((b, i) => (i ? [h('span', { class: 'acct-dot', 'aria-hidden': 'true' }, '/'), b] : [b])));
 const quiet = (label, onClick, act) => btn(label, onClick, 'sx-btn-quiet', { 'data-act': act });
 const primary = (label, onClick, act, busy) => btn(label, onClick, 'sx-btn-primary sx-btn-lg', { 'data-act': act, disabled: busy });
 
@@ -66,7 +66,7 @@ const eye = (draft, ctx) =>
 const RULES = [
   ['len', '10자 이상'],
   ['common', '흔하거나 알려진 비밀번호가 아님'],
-  ['identity', '이메일·서비스 이름이 들어가지 않음'],
+  ['identity', '이메일/서비스 이름이 들어가지 않음'],
 ];
 
 function newPasswordField(ctx, { email, serverErr, onEnter, submitBtn }) {

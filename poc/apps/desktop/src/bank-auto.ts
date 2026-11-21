@@ -15,7 +15,7 @@ export function parseCodefNeeded(d: unknown): CodefNeeded | null {
   return { mode: 'codef', reqId: o.reqId, scope: o.scope, ...(o.field === 'account' ? { field: 'account' as const } : {}) };
 }
 
-export const CODEF_WINDOW_TITLE = '금고 · 공동인증서 비밀번호(계좌 자동조회)';
+export const CODEF_WINDOW_TITLE = '금고 공동인증서 비밀번호(계좌 자동조회)';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
@@ -24,7 +24,7 @@ export function codefPageHtml(req: CodefNeeded, ctx: { profileName: string; cert
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
 <link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="bundle.css"><link rel="stylesheet" href="secret.css"><title>${esc(CODEF_WINDOW_TITLE)}</title></head>
 <body data-req="${req.reqId}" data-scope="${req.scope}">
-<p class="ctx">${esc(`계좌 자동조회 · ${ctx.profileName}${ctx.certLabel ? ` · ${ctx.certLabel}` : ''}`)}</p>
+<p class="ctx">${esc(`계좌 자동조회 ${ctx.profileName}${ctx.certLabel ? `, ${ctx.certLabel}` : ''}`)}</p>
 ${
     req.field === 'account'
       ? `<form id="f"><label for="v">${esc(ctx.bankName ?? '은행')} 출금계좌 비밀번호 4자리</label><input id="v" type="password" inputmode="numeric" maxlength="4" autocomplete="off" spellcheck="false" autofocus>
@@ -77,7 +77,7 @@ export function bankAutoHandlers(d: BankAutoDeps) {
     return [...list.filter((c) => c.issuance), ...list.filter((c) => !c.issuance)];
   };
   return {
-    chosenLabel: (): string | null => (chosen ? `${chosen.owner} · ${chosen.usage}` : null),
+    chosenLabel: (): string | null => (chosen ? `${chosen.owner}, ${chosen.usage}` : null),
     chosenBank: (): string | null => BANK_NAMES[chosenBankCode] ?? null,
     handlers: {
       'bankAuto.status': () => eng('codef.status'),

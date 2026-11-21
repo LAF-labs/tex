@@ -39,7 +39,7 @@ describe('온보딩: 한 번에 하나씩', () => {
     const s = flow.state;
     assert.equal(s.step, 'biz-confirm');
     assert.equal(s.biz?.name, '가나다컴퍼니');
-    assert.deepEqual(s.check, { status: 'active', label: '계속사업자 · 일반과세자', taxType: '일반과세자', source: '국세청 조회' });
+    assert.deepEqual(s.check, { status: 'active', label: '계속사업자, 일반과세자', taxType: '일반과세자', source: '국세청 조회' });
     await flow.answer({ step: 'biz-confirm', choice: 'edit', fields: { email: 'new@ganada.example' } });
     assert.equal(flow.state.biz?.email, 'new@ganada.example');
     await flow.answer({ step: 'biz-confirm', choice: 'confirm' });
@@ -170,7 +170,7 @@ describe('온보딩: 한 번에 하나씩', () => {
     await flow.answer({ step: 'auth', choice: 'cert', certId: 'npki-1' });
     assert.equal(flow.state.step, 'first', '모델 동의는 약관 화면에서 받았으니 바로 첫 작업 제안(B4)');
     assert.equal(flow.state.certId, 'npki-1');
-    assert.equal(flow.state.log.at(-1)?.text, '공동인증서 · 가나다컴퍼니');
+    assert.equal(flow.state.log.at(-1)?.text, '공동인증서, 가나다컴퍼니');
   });
 });
 

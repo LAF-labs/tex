@@ -25,13 +25,13 @@ export class MockOnboardingPorts implements OnboardingPorts {
   }
   async checkBizNo(_bizNo: string) {
     const st = this.o.bizStatus ?? 'active';
-    const label = { active: '계속사업자 · 일반과세자', suspended: '휴업자', closed: '폐업자' }[st];
+    const label = { active: '계속사업자, 일반과세자', suspended: '휴업자', closed: '폐업자' }[st];
     return { status: st, label, taxType: st === 'active' ? '일반과세자' : null, source: '국세청 조회' as const };
   }
   async findCerts() {
     return [
       { id: 'npki-1', owner: '가나다컴퍼니', usage: '사업자 범용', expiresOn: dayOffset(240), usable: true },
-      { id: 'npki-2', owner: '김가나', usage: '개인 은행·보험용', expiresOn: dayOffset(12), usable: true },
+      { id: 'npki-2', owner: '김가나', usage: '개인 은행/보험용', expiresOn: dayOffset(12), usable: true },
     ];
   }
   async certName(certId: string) {

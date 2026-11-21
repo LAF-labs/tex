@@ -181,12 +181,12 @@ export function candidatesFor(txn: MatchTxn, receivables: MatchReceivable[], cps
     if (exact.length || st < 2) continue;
     for (const r of list) {
       const gap = r.remaining - amt;
-      if (gap > 0 && gap <= tol) out.push({ receivableIds: [r.id], cpKey: key, fit: 'fee', signal: s, strength: st, amounts: [amt], feeGap: gap, reason: `수수료 ${won(gap)}을 빼고 받은 것 같아요 · ${why}` });
-      else if (gap > tol) out.push({ receivableIds: [r.id], cpKey: key, fit: 'partial', signal: s, strength: st, amounts: [amt], feeGap: 0, reason: `일부 ${isOut ? '냄' : '받음'} ${won(amt)} · 남은 ${won(gap)} · ${why}` });
-      else if (gap < 0) out.push({ receivableIds: [r.id], cpKey: key, fit: 'over', signal: s, strength: st, amounts: [r.remaining], feeGap: 0, reason: `남은 돈보다 ${won(-gap)} 많아요(${isOut ? '여러 건을 한 번에 냈거나 미리 낸 돈일 수 있어요' : '여러 건을 한 번에 보냈거나 먼저 보낸 돈일 수 있어요'}) · ${why}` });
+      if (gap > 0 && gap <= tol) out.push({ receivableIds: [r.id], cpKey: key, fit: 'fee', signal: s, strength: st, amounts: [amt], feeGap: gap, reason: `수수료 ${won(gap)}을 빼고 받은 것 같아요. ${why}` });
+      else if (gap > tol) out.push({ receivableIds: [r.id], cpKey: key, fit: 'partial', signal: s, strength: st, amounts: [amt], feeGap: 0, reason: `일부 ${isOut ? '냄' : '받음'} ${won(amt)}, 남은 ${won(gap)}, ${why}` });
+      else if (gap < 0) out.push({ receivableIds: [r.id], cpKey: key, fit: 'over', signal: s, strength: st, amounts: [r.remaining], feeGap: 0, reason: `남은 돈보다 ${won(-gap)} 많아요(${isOut ? '여러 건을 한 번에 냈거나 미리 낸 돈일 수 있어요' : '여러 건을 한 번에 보냈거나 먼저 보낸 돈일 수 있어요'}), ${why}` });
     }
     for (const run of sumRuns([...list].sort((a, b) => (a.writtenOn < b.writtenOn ? -1 : a.writtenOn > b.writtenOn ? 1 : 0)), amt))
-      out.push({ receivableIds: run.map((r) => r.id), cpKey: key, fit: 'sum', signal: s, strength: st, amounts: run.map((r) => r.remaining), feeGap: 0, reason: `${run.length}건을 한 번에 ${isOut ? '낸' : '보낸'} 것 같아요 · ${why}` });
+      out.push({ receivableIds: run.map((r) => r.id), cpKey: key, fit: 'sum', signal: s, strength: st, amounts: run.map((r) => r.remaining), feeGap: 0, reason: `${run.length}건을 한 번에 ${isOut ? '낸' : '보낸'} 것 같아요. ${why}` });
   }
   const first = (c: Candidate) => open.find((r) => r.id === c.receivableIds[0])!.writtenOn;
   out.sort((a, b) => b.strength - a.strength || FIT_RANK[b.fit] - FIT_RANK[a.fit] || (first(a) < first(b) ? -1 : first(a) > first(b) ? 1 : 0) || (a.receivableIds[0]! < b.receivableIds[0]! ? -1 : 1));

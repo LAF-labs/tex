@@ -5,8 +5,8 @@ import type { Branch, RouteId, RouteSpec } from './types.ts';
 export const ROUTES: readonly RouteSpec[] = [
   {
     id: 'hometax.auto', kind: 'portal', costKrw: 0, costBasis: '홈택스 무료',
-    speed: '3~6분(추정: 로그인 사람 차례 1~2분 + 입력 1분 + verify 하한 60초·조회 2번)',
-    ownerDoes: '로그인·서명 차례, 승인 카드', needs: ['chrome', 'hometax.package'],
+    speed: '3~6분(추정: 로그인 사람 차례 1~2분 + 입력 1분 + verify 하한 60초/조회 2번)',
+    ownerDoes: '로그인/서명 차례, 승인 카드', needs: ['chrome', 'hometax.package'],
   },
   {
     id: 'hometax.manual', kind: 'human', costKrw: 0, costBasis: '홈택스 무료',

@@ -123,7 +123,7 @@ export function amount(total, supply, tax, note, split = true) {
     'div',
     { class: 'sx-amount' },
     h('div', { class: 'sx-amount-total' }, num(total), h('span', { class: 'sx-unit' }, '원')),
-    split ? h('div', { class: 'sx-amount-split' }, `공급가 ${num(supply)} + 세액 ${num(tax)}${note ? ` · ${note}` : ''}`) : null,
+    split ? h('div', { class: 'sx-amount-split' }, `공급가 ${num(supply)} + 세액 ${num(tax)}${note ? `, ${note}` : ''}`) : null,
   );
 }
 
@@ -232,7 +232,7 @@ export const writeDateText = (d) => {
   const md = `${Number(String(d).slice(5, 7))}월 ${Number(String(d).slice(8, 10))}일`;
   return y === Number(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul', year: 'numeric' }).format(new Date())) ? md : `${y}년 ${md}`;
 };
-export const DUP_TODAY_TEXT = '이미 오늘 같은 거래처·같은 금액으로 발급했어요. 한 번 더 발급하려는 게 맞는지 확인해 주세요.';
+export const DUP_TODAY_TEXT = '이미 오늘 같은 거래처/같은 금액으로 발급했어요. 한 번 더 발급하려는 게 맞는지 확인해 주세요.';
 
 export function emptyState(title, sub, action = null, attrs = {}) {
   return h('div', { class: 'empty', ...attrs }, h('p', { class: 'empty-title' }, title), sub ? h('p', { class: 'empty-sub' }, sub) : null, action ? h('div', { class: 'empty-act' }, action) : null);
@@ -270,13 +270,13 @@ export function replyOptions(opts, attrs = {}) {
 export const NO_FILE_TEXT = '세금계산서 PDF는 홈택스 발급목록에서 확인할 수 있어요.';
 const CERT_NO_FILE_TEXT = '증명서 PDF는 홈택스 민원증명 발급 내역에서 다시 출력할 수 있어요.';
 
-export const runTitle = (run) => (run.cert ? run.cert.name : `세금계산서 · ${run.counterparty.name}`);
-const certLine = (run) => h('div', { class: 'sx-meta', 'data-cert-inputs': '' }, `사용 용도 ${run.cert.inputs.purpose ?? ''} · 제출처 ${run.cert.inputs.submitTo ?? ''}`);
+export const runTitle = (run) => (run.cert ? run.cert.name : `세금계산서 ${run.counterparty.name}`);
+const certLine = (run) => h('div', { class: 'sx-meta', 'data-cert-inputs': '' }, `사용 용도 ${run.cert.inputs.purpose ?? ''}, 제출처 ${run.cert.inputs.submitTo ?? ''}`);
 
 const showBrowserBtn = (run, act, primary = false) => btn('홈택스 창 보기', () => act.showBrowser(run.id), primary ? 'sx-btn-primary' : '', { 'data-act': 'show-browser' });
 
 const INFO_NOTICE = /이 값으로 준비해요|이어서 준비해요|한 번 더 로그인해 볼게요/;
-const verifyLine = (n) => (n && n > 1 ? `발급 목록 다시 확인 중(${n}번째)` : '발급 목록 확인 중 · 1~2분 걸려요');
+const verifyLine = (n) => (n && n > 1 ? `발급 목록 다시 확인 중(${n}번째)` : '발급 목록 확인 중, 1~2분 걸려요');
 const stepLine = (now, withNote = true) => (now ? (withNote && now.note ? now.note : now.label) : '');
 function progressBar(run) {
   const gs = runSteps(run);
@@ -328,7 +328,7 @@ function stepsToggle(run, act) {
 
 function runSummary(run) {
   if (run.cert) return certLine(run);
-  return h('p', { class: 'sx-run-sum', 'data-run-facts': '' }, h('b', {}, won(run.total)), ` · 부가세 ${run.vat === 'separate' ? '별도' : '포함'}${run.item ? ` · ${run.item}` : ''}`);
+  return h('p', { class: 'sx-run-sum', 'data-run-facts': '' }, h('b', {}, won(run.total)), `, 부가세 ${run.vat === 'separate' ? '별도' : '포함'}${run.item ? `, ${run.item}` : ''}`);
 }
 function progressCount(run) {
   if (run.status === 'attention' || run.status === 'stopped') return null;
@@ -423,7 +423,7 @@ export function taskCard(run, act) {
           h('dd', {}, valBtn('거래처', run.counterparty.name, () => act.editCp(run.id), { act: 'draft-cp' })),
           ...(run.writeDateSet ? [] : [h('dt', {}, '작성일자'), h('dd', { 'data-draft-date': run.writeDate ?? '' }, writeDateText(run.writeDate))]),
           h('dt', {}, '받는 이메일'),
-          h('dd', { 'data-draft-email': run.email.value ?? '' }, valBtn('받는 이메일', run.email.value || '없음 · 메일은 보내지 않아요', () => act.editFields(run.id, 'email'), { act: 'email-edit', cls: run.email.value ? '' : 'is-none' })),
+          h('dd', { 'data-draft-email': run.email.value ?? '' }, valBtn('받는 이메일', run.email.value || '없음, 메일은 보내지 않아요', () => act.editFields(run.id, 'email'), { act: 'email-edit', cls: run.email.value ? '' : 'is-none' })),
         ),
       ];
     }
@@ -462,7 +462,7 @@ export function taskCard(run, act) {
                   act.toggleDraftMore?.(run.id, !box.hidden);
                 } }, act.draftMore?.has?.(run.id) ? '접기' : '자세히'),
           ),
-      editing ? null : h('div', { class: 'sx-meta' }, noAmount ? '합계가 0원이에요. 금액을 눌러 고치면 준비할 수 있어요.' : noItem ? '품목을 넣으면 준비할 수 있어요.' : '값을 누르면 고쳐요 · 아직 보낸 것은 없어요'),
+      editing ? null : h('div', { class: 'sx-meta' }, noAmount ? '합계가 0원이에요. 금액을 눌러 고치면 준비할 수 있어요.' : noItem ? '품목을 넣으면 준비할 수 있어요.' : '값을 누르면 고쳐요. 아직 보낸 것은 없어요'),
     );
   } else if (st === 'preparing') {
     fold(card, run, act, stepLine(now, run.steps[0].state !== 'now'), stopBtn(run, act));
@@ -500,7 +500,7 @@ export function taskCard(run, act) {
     card.classList.add('is-folded');
     card.append(
       ...[
-        h('div', { class: 'sx-card-hd', 'data-folded': '' }, h('div', { class: 'sx-card-title sx-folded' }, icon('check'), '작성 완료'), h('span', { class: 'sx-meta sx-folded-line' }, run.cert ? `${run.cert.name} · ${run.cert.inputs.purpose ?? ''}` : `세금계산서 · ${run.counterparty.name} · ${won(run.total)}`), chip(shownStatus(run))),
+        h('div', { class: 'sx-card-hd', 'data-folded': '' }, h('div', { class: 'sx-card-title sx-folded' }, icon('check'), '작성 완료'), h('span', { class: 'sx-meta sx-folded-line' }, run.cert ? `${run.cert.name}, ${run.cert.inputs.purpose ?? ''}` : `세금계산서 ${run.counterparty.name}, ${won(run.total)}`), chip(shownStatus(run))),
         run.regate ? tagged(note(run.regate.note, true), 'regate', run.regate.reason) : null,
         run.approvedPending ? h('div', { class: 'sx-actions' }, note('승인했어요. 2초 안에 [중지]하면 발급하지 않아요'), btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' })) : null,
       ].filter(Boolean),
@@ -526,7 +526,7 @@ export function taskCard(run, act) {
       where,
     );
   } else if (st === 'stopped' && run.replaced) {
-    card.replaceChildren(h('div', { class: 'sx-replaced-line', 'data-replaced': '' }, h('span', {}, runTitle(run)), h('span', {}, `${won(run.total)} · 고친 값으로 바꿨어요`)));
+    card.replaceChildren(h('div', { class: 'sx-replaced-line', 'data-replaced': '' }, h('span', {}, runTitle(run)), h('span', {}, `${won(run.total)}, 고친 값으로 바꿨어요`)));
     card.classList.add('is-folded', 'is-replaced');
     return card;
   } else if (st === 'stopped') {
@@ -574,13 +574,13 @@ export function taskCard(run, act) {
 const sentSet = (sent) => new Set(Array.isArray(sent) ? sent.filter((x) => typeof x === 'string') : []);
 export const modelRow = (sent) => {
   const s = sentSet(sent);
-  if (s.has('openrouter_demo')) return ['AI', '시연용 외부 AI · 채팅 문장과 가상 거래처 이름만 보냄'];
-  if (s.has('gateway.decide')) return ['AI', '요청 이해에 씀 · 이름·번호를 가린 요청 문장만 보냄'];
+  if (s.has('openrouter_demo')) return ['AI', '시연용 외부 AI, 채팅 문장과 가상 거래처 이름만 보냄'];
+  if (s.has('gateway.decide')) return ['AI', '요청 이해에 씀, 이름/번호를 가린 요청 문장만 보냄'];
   return ['AI', '쓰지 않음(요청은 이 PC 안에서 이해함)'];
 };
 export const serverRow = (sent) => {
   const s = sentSet(sent);
-  const parts = [s.has('gateway.run_tokens') ? '실행 허가 받기(문장 없음)' : null, s.has('gateway.decide') ? '이름·번호를 가린 요청 문장' : null, s.has('gateway.respond') ? '이름·번호를 가린 대화 문장(짧은 답)' : null].filter(Boolean);
+  const parts = [s.has('gateway.run_tokens') ? '실행 허가 받기(문장 없음)' : null, s.has('gateway.decide') ? '이름/번호를 가린 요청 문장' : null, s.has('gateway.respond') ? '이름/번호를 가린 대화 문장(짧은 답)' : null].filter(Boolean);
   return ['우리 서버', parts.length ? parts.join(', ') : '보낸 것 없음'];
 };
 export const modelCell = (sent) => {
@@ -620,7 +620,7 @@ export function batchCard(runs, act) {
   return h(
     'article',
     { class: 'sx-card sx-batch', 'data-batch': runs[0].batch.id, 'data-done': done },
-    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `세금계산서 ${runs.length}건 · 차례로 발급`), h('span', { class: `sx-chip${ended ? ' is-done' : ''}` }, `${done}/${runs.length} 발급`)),
+    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `세금계산서 ${runs.length}건, 차례로 발급`), h('span', { class: `sx-chip${ended ? ' is-done' : ''}` }, `${done}/${runs.length} 발급`)),
     h('p', { class: 'sx-meta' }, lead),
     h('ol', { class: 'sx-batch-list' }, rows),
     focus && !inRow.has(focus) ? taskCard(focus, act) : null,
@@ -628,11 +628,11 @@ export function batchCard(runs, act) {
 }
 
 export function whereRows(run) {
-  if (run.cert) return [['홈택스', `${run.cert.name} 1건 발급`], ['보관', '이 PC 문서함 · 증명서'], modelRow(run.sent), serverRow(run.sent)];
+  if (run.cert) return [['홈택스', `${run.cert.name} 1건 발급`], ['보관', '이 PC 문서함, 증명서'], modelRow(run.sent), serverRow(run.sent)];
   return [
-    ['홈택스', '전자세금계산서 1건 발급 · 발급목록에서 확인'],
-    ['메일', run.result.mailTo ? `${run.result.mailTo} · 홈택스가 보냄, ${run.result.mailConfirmed ? '메일발송목록에서 확인' : '메일발송목록에서 확인하지 못함'}` : '보내지 않음'],
-    ['보관', '이 PC 문서함 · 파일명에는 거래처·승인번호를 넣지 않아요'],
+    ['홈택스', '전자세금계산서 1건 발급, 발급목록에서 확인'],
+    ['메일', run.result.mailTo ? `${run.result.mailTo}, 홈택스가 보냄, ${run.result.mailConfirmed ? '메일발송목록에서 확인' : '메일발송목록에서 확인하지 못함'}` : '보내지 않음'],
+    ['보관', '이 PC 문서함, 파일명에는 거래처/승인번호를 넣지 않아요'],
     modelRow(run.sent),
     serverRow(run.sent),
   ];
@@ -673,14 +673,14 @@ export function runPanel(run, act) {
       ];
   const source =
     st === 'done' && r
-      ? `홈택스 발급목록에서 확인 · ${r.doneAt}`
+      ? `홈택스 발급목록에서 확인, ${r.doneAt}`
       : confirmed
-        ? `홈택스에서 다시 읽음 · ${run.createdAt} 요청`
+        ? `홈택스에서 다시 읽음, ${run.createdAt} 요청`
         : st === 'draft'
-          ? `초안 · ${guessed.length ? `추정 값 ${guessed.length}개 · ` : ''}아직 아무것도 보내지 않았어요`
+          ? `초안, ${guessed.length ? `추정 값 ${guessed.length}개, ` : ''}아직 아무것도 보내지 않았어요`
           : run.cert
-            ? `요청 문장과 기본 용도·제출처로 채움 · ${run.createdAt}`
-            : `요청 문장과 거래처 장부에서 채움 · ${run.createdAt}`;
+            ? `요청 문장과 기본 용도/제출처로 채움, ${run.createdAt}`
+            : `요청 문장과 거래처 장부에서 채움, ${run.createdAt}`;
   const canStop = st === 'preparing' || st === 'waiting' || (st === 'turn' && (!!run.handoff || run.steps[4].state !== 'done'));
   const promise = st === 'preparing' ? '승인하기 전에는 아무것도 발급하지 않아요.' : st === 'issuing' ? '홈택스 발급목록에서 확인할 때까지 다시 발급하지 않아요.' : null;
   return h(
@@ -784,7 +784,7 @@ export function pastCard(p, act) {
   return h(
     'section',
     { class: 'sx-card' },
-    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `${p.title} · ${p.who}`), chip('done')),
+    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `${p.title}, ${p.who}`), chip('done')),
     h('p', { class: 'sx-run-sum' }, h('b', {}, won(p.total))),
     h('div', { class: 'sx-run-foot' }, h('p', { class: 'sx-card-now' }, h('span', { class: 'sx-id' }, p.approvalNo), h('button', { type: 'button', class: 'sx-copy', onclick: () => act.copy(p.approvalNo) }, '복사')), h('p', { class: 'sx-run-info' }, `${p.mail}로 보낸 것도 확인했어요`)),
   );
@@ -797,7 +797,7 @@ export function summaryCard(s) {
 const EXPIRY_TAG = { document: '문서', rule: '추정', user: '확인함' };
 export const expiryTag = (doc) => (doc.vault.needsUser ? '추정' : (EXPIRY_TAG[doc.vault.expirySource] ?? ''));
 
-const docKind = (doc) => (doc.kind === doc.source ? doc.kind : `${doc.kind} · ${doc.source}`);
+const docKind = (doc) => (doc.kind === doc.source ? doc.kind : `${doc.kind}, ${doc.source}`);
 
 function docCells(doc, today) {
   const d = dday(doc.expiresOn, today);
@@ -813,7 +813,7 @@ function docCells(doc, today) {
       { class: inferred ? 'is-inferred' : v?.expirySource === 'user' ? 'is-verified' : null },
       h('span', { class: 'label sx-meta' }, '유효'),
       h('span', { class: `value sx-val${d !== null && d <= 7 ? ' is-attention' : ''}${d === null ? ' is-none' : ''}` }, ddayText(d)),
-      doc.expiresOn ? h('span', { class: 'sx-tag' }, h('span', { class: 'doc-date' }, doc.expiresOn), v ? ` · ${expiryTag(doc)}` : '') : null,
+      doc.expiresOn ? h('span', { class: 'sx-tag' }, h('span', { class: 'doc-date' }, doc.expiresOn), v ? `, ${expiryTag(doc)}` : '') : null,
     ),
   );
 }
@@ -843,7 +843,7 @@ export function docPanel(doc, today, act, review) {
       ]),
       doc.noFile ? h('p', { class: 'sx-body-sm is-muted', 'data-doc-nofile': '' }, NO_FILE_TEXT) : null,
       h('div', { class: 'sx-actions' }, doc.noFile ? null : btn('열기', () => act.openDoc(doc.id), 'sx-btn-primary', { 'data-act': 'doc-open' }), doc.source === '앱이 발급' && !doc.noFile ? btn('다시 발급', () => act.reissue(doc)) : null),
-      h('div', { class: 'sx-source' }, `${doc.source}${doc.issuedOn ? ` · ${doc.issuedOn}` : ''} · 파일명에는 거래처·승인번호를 넣지 않아요`),
+      h('div', { class: 'sx-source' }, `${doc.source}${doc.issuedOn ? `, ${doc.issuedOn}` : ''}, 파일명에는 거래처/승인번호를 넣지 않아요`),
     ],
   );
 }
@@ -874,7 +874,7 @@ export function securityBox(st, ops, onOk) {
         'div',
         { class: 'sx-note-body' },
         h('b', { class: 'sx-note-title' }, missing ? `홈택스 인증서 프로그램(${s.name})이 없어요` : `홈택스 인증서 프로그램(${s.name})이 꺼져 있어요`),
-        h('p', {}, missing ? '홈택스 로그인·서명에 필요해요. 홈택스 공식 설치 파일을 받아 설치한 뒤 [다시 확인]을 눌러 주세요.' : '이 프로그램을 켜야 홈택스가 이 PC의 인증서를 읽어요.'),
+        h('p', {}, missing ? '홈택스 로그인/서명에 필요해요. 홈택스 공식 설치 파일을 받아 설치한 뒤 [다시 확인]을 눌러 주세요.' : '이 프로그램을 켜야 홈택스가 이 PC의 인증서를 읽어요.'),
         h('div', { class: 'sx-actions' }, main, btn('다시 확인', run(ops.check), main ? 'sx-btn-quiet' : 'sx-btn-primary', { 'data-act': 'security-check' })),
       ),
     );

@@ -23,15 +23,15 @@ describe('활동 기록 줄 = 실제 송신', () => {
   });
 
   it('게이트웨이 판정을 보냈으면 "게이트웨이(마스킹한 문장)", 실행 토큰만이면 문장 없음이라고 적는다', () => {
-    assert.deepEqual(views.modelRow(['gateway.run_tokens', 'gateway.decide']), ['AI', '요청 이해에 씀 · 이름·번호를 가린 요청 문장만 보냄']);
-    assert.deepEqual(views.serverRow(['gateway.run_tokens', 'gateway.decide']), ['우리 서버', '실행 허가 받기(문장 없음), 이름·번호를 가린 요청 문장']);
+    assert.deepEqual(views.modelRow(['gateway.run_tokens', 'gateway.decide']), ['AI', '요청 이해에 씀, 이름/번호를 가린 요청 문장만 보냄']);
+    assert.deepEqual(views.serverRow(['gateway.run_tokens', 'gateway.decide']), ['우리 서버', '실행 허가 받기(문장 없음), 이름/번호를 가린 요청 문장']);
     assert.equal(views.modelCell(['gateway.decide']), '우리 서버');
     assert.deepEqual(views.serverRow(['gateway.run_tokens']), ['우리 서버', '실행 허가 받기(문장 없음)']);
     assert.deepEqual(views.modelRow(['gateway.run_tokens']), ['AI', '쓰지 않음(요청은 이 PC 안에서 이해함)']);
   });
 
   it('시연 모델(OpenRouter)은 모델 줄에만, 우리 서버로는 보내지 않았다', () => {
-    assert.deepEqual(views.modelRow(['openrouter_demo']), ['AI', '시연용 외부 AI · 채팅 문장과 가상 거래처 이름만 보냄']);
+    assert.deepEqual(views.modelRow(['openrouter_demo']), ['AI', '시연용 외부 AI, 채팅 문장과 가상 거래처 이름만 보냄']);
     assert.deepEqual(views.serverRow(['openrouter_demo']), ['우리 서버', '보낸 것 없음']);
     assert.equal(views.modelCell(['openrouter_demo']), '시연용 AI');
   });
@@ -39,7 +39,7 @@ describe('활동 기록 줄 = 실제 송신', () => {
   it('결과 카드의 "어디로 무엇이 갔나요"도 같은 줄을 쓴다', () => {
     const run = { result: { mailTo: '', mailConfirmed: false }, sent: ['gateway.decide'] };
     const rows = views.whereRows(run);
-    assert.deepEqual(rows.find((r) => r[0] === '우리 서버'), ['우리 서버', '이름·번호를 가린 요청 문장']);
+    assert.deepEqual(rows.find((r) => r[0] === '우리 서버'), ['우리 서버', '이름/번호를 가린 요청 문장']);
     assert.deepEqual(views.whereRows({ ...run, sent: [] }).find((r) => r[0] === '우리 서버'), ['우리 서버', '보낸 것 없음']);
   });
 

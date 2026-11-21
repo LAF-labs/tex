@@ -136,7 +136,7 @@ describe('이번 달 상태와 빠진 것', () => {
   it('빠진 것: 비어 있는 항목, 확인 안 한 급여(초안·줄 없는 재직자), 대조 없는 카드(취소 쌍·영수증 대조 제외)', () => {
     const m = missingReport(ctx());
     assert.ok(m.emptyItems.some((e) => e.name === '사업용 신용카드 사용내역' && e.status === 'partial'));
-    assert.ok(!m.emptyItems.some((e) => e.name === '매출·매입 세금계산서'), '해당 없음은 빠진 것이 아니다');
+    assert.ok(!m.emptyItems.some((e) => e.name === '매출/매입 세금계산서'), '해당 없음은 빠진 것이 아니다');
     assert.deepEqual(m.payroll, { state: 'draft', revision: 1, employeesWithoutLine: [{ id: m.payroll!.employeesWithoutLine[0]!.id, name: '이직원' }] });
     assert.deepEqual(m.cardWithoutEvidence.map((c) => c.amount), [15_000]);
     assert.equal(missingReport(ctx({ payrollEnabled: false })).payroll, null);
@@ -148,7 +148,7 @@ describe('이번 달 상태와 빠진 것', () => {
     assert.match(pw, /^[A-HJ-NP-Za-km-z2-9]+$/);
     const outDir = path.join(dir, 'exports');
     const r = await exportBundle({ ...ctx(), outDir, password: pw, now: () => new Date('2026-11-05T01:00:00Z') });
-    assert.deepEqual(r.sheets, ['표지', '매출', '매입', '사업용 카드', '종이 증빙', '정산·현금매출', '급여대장', '원천세 요약', '추가 항목', '빠진 것']);
+    assert.deepEqual(r.sheets, ['표지', '매출', '매입', '사업용 카드', '종이 증빙', '정산 현금매출', '급여대장', '원천세 요약', '추가 항목', '빠진 것']);
     assert.equal(r.attachments, 1);
     assert.equal(path.basename(r.file), '세무사꾸러미_2026-10.xlsx');
     assert.equal(path.basename(r.zipFile!), '세무사꾸러미_2026-10_첨부.zip');

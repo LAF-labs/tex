@@ -11,7 +11,7 @@ describe('내 사업장: 저장된 개인 프로필이 없으면 카드를 그�
     assert.match(read('apps/desktop/src/shell-app.ts'), /const NO_PERSONAL: Profile = \{ kind: 'personal', name: '개인', email: '', auth: '', placeholder: true \};/);
     const shell = read('apps/desktop/static/shell/shell.js');
     assert.match(shell, /const personal = p\.personal && !p\.personal\.placeholder \? p\.personal : null;/);
-    assert.match(shell, /p\.personal && !p\.personal\.placeholder \? item\('personal', `개인 · \$\{p\.personal\.name\}`\) : null/);
+    assert.match(shell, /p\.personal && !p\.personal\.placeholder \? item\('personal', `개인 \$\{p\.personal\.name\}`\) : null/);
   });
 });
 

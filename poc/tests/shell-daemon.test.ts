@@ -63,7 +63,7 @@ describe('서류 데몬 배선', () => {
     const t = await r.host.tick();
     assert.equal(t.status, 'ok');
     assert.deepEqual(r.calls.filter((m) => m !== 'daemon.snapshot'), [], '엔진에는 읽기 전용 질의 하나만');
-    assert.deepEqual(r.shown.map((s) => [s.title, s.body]), [['서류 만료가 다가와요', '납세증명서(국세) · 7일 뒤 만료돼요']]);
+    assert.deepEqual(r.shown.map((s) => [s.title, s.body]), [['서류 만료가 다가와요', '납세증명서(국세), 7일 뒤 만료돼요']]);
     assert.ok(!JSON.stringify(r.shown).includes('가나다컴퍼니'), '문서 표시 이름(상호 등)은 알림에 넣지 않는다');
     assert.deepEqual(r.delivered, ['doc.expiring']);
     r.shown[0]!.click();

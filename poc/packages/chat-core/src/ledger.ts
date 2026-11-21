@@ -11,7 +11,7 @@ export function sumOf(rows: ReadonlyArray<Totaled>, field: 'supply' | 'total'): 
 export function tally(rows: ReadonlyArray<Totaled>): string {
   const known = rows.filter((x) => x.total !== null);
   const gap = rows.length - known.length;
-  return `${rows.length}건 · 공급가 ${won(sumOf(known, 'supply')!)} · 합계 ${won(sumOf(known, 'total')!)}${gap ? `(금액 모르는 ${gap}건 빼고)` : ''}`;
+  return `${rows.length}건, 공급가 ${won(sumOf(known, 'supply')!)}, 합계 ${won(sumOf(known, 'total')!)}${gap ? `(금액 모르는 ${gap}건 빼고)` : ''}`;
 }
 
 export const newestFirst = <T extends { date: string }>(rows: readonly T[]): T[] => [...rows].sort((a, b) => b.date.localeCompare(a.date));

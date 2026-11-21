@@ -176,7 +176,7 @@ describe('AgentChat 11턴', () => {
       {
         type: 'table',
         table: 'sales',
-        title: '10월 발급 2건 · 공급가 1,500,000원 · 합계 1,650,000원',
+        title: '10월 발급 2건, 공급가 1,500,000원, 합계 1,650,000원',
         rows: [
           { date: '2026-10-20', counterparty: 'B상사', total: 550_000, approvalNo: null, documentId: null, mail: null },
           { date: '2026-10-15', counterparty: 'A상사', total: 1_100_000, approvalNo: '20261015-41000012-00000001', documentId: null, mail: null },
@@ -266,7 +266,7 @@ describe('AgentChat 11턴', () => {
       {
         type: 'table',
         table: 'history',
-        title: 'A상사 발급 기록 2건 · 공급가 3,000,000원 · 합계 3,300,000원',
+        title: 'A상사 발급 기록 2건, 공급가 3,000,000원, 합계 3,300,000원',
         rows: [
           { date: '2026-10-15', counterparty: 'A상사', total: 1_100_000, approvalNo: '20261015-41000012-00000001', documentId: null, mail: null },
           { date: '2026-09-03', counterparty: 'A상사', total: 2_200_000, approvalNo: null, documentId: null, mail: null },
@@ -276,7 +276,7 @@ describe('AgentChat 11턴', () => {
 
     const t10 = agent(await say(a, '그때 얼마였어?', () => reply({ text: `그때는 공급가 {${hist}.first.supply}, 합계 {${hist}.first.total}이었어요.` })));
     assert.equal(t10.text, '그때는 공급가 1,000,000원, 합계 1,100,000원이었어요.');
-    assert.deepEqual(t10.show.map((x) => x.type === 'table' && x.title), ['A상사 발급 기록 2건 · 공급가 3,000,000원 · 합계 3,300,000원'], '슬롯이 가리키는 표는 모델이 show에 넣지 않아도 보인다');
+    assert.deepEqual(t10.show.map((x) => x.type === 'table' && x.title), ['A상사 발급 기록 2건, 공급가 3,000,000원, 합계 3,300,000원'], '슬롯이 가리키는 표는 모델이 show에 넣지 않아도 보인다');
 
     const t10a = agent(await say(a, '승인번호 알려줘', () => reply({ text: `가장 최근 건 승인번호는 {${hist}.first.approvalNo}예요.` })));
     assert.equal(t10a.text, '가장 최근 건 승인번호는 20261015-41000012-00000001이에요.', '조사도 받침에 맞춘다');
@@ -384,7 +384,7 @@ describe('AgentChat 받을 돈·기록 표 제목', () => {
       ),
     );
     assert.equal(t.text, '2건, 합계 1,650,000원이 아직 입금 확인 전이에요.');
-    assert.deepEqual(t.show.map((x) => x.type === 'table' && x.title), ['입금 확인 전 2건 · 공급가 1,500,000원 · 합계 1,650,000원']);
+    assert.deepEqual(t.show.map((x) => x.type === 'table' && x.title), ['입금 확인 전 2건, 공급가 1,500,000원, 합계 1,650,000원']);
 
     receivable = [...receivable, { counterpartyId: null, counterparty: 'C테크', date: '2026-11-02', total: null }];
     const u = agent(
@@ -399,7 +399,7 @@ describe('AgentChat 받을 돈·기록 표 제목', () => {
       ),
     );
     assert.equal(u.text, AGENT_SLOT_MISSING_TEXT, '금액 모르는 행이 있으면 합계 슬롯은 채우지 않는다');
-    assert.deepEqual(u.show.map((x) => x.type === 'table' && x.title), ['입금 확인 전 3건 · 공급가 1,500,000원 · 합계 1,650,000원(금액 모르는 1건 빼고)']);
+    assert.deepEqual(u.show.map((x) => x.type === 'table' && x.title), ['입금 확인 전 3건, 공급가 1,500,000원, 합계 1,650,000원(금액 모르는 1건 빼고)']);
   });
 });
 

@@ -207,7 +207,7 @@ async function flow(): Promise<void> {
   check('승인 카드 줄 = 합계(공급가액·세액)·공급받는자·품목·작성일자·받는 이메일, 값은 게이트 요청 fields 그대로', firstRows.map((l) => l.label).join() === '합계,공급받는자,품목,작성일자,받는 이메일' && firstRows[0]!.pieces.map((x) => x.text).join(' / ') === '3,630,000원 / 공급가액 3,300,000원 · 세액 330,000원' && firstRows[2]!.pieces[0]!.text === f.get('itemName'), firstRows);
   check('작성일자 = KST 오늘이면 "오늘 아님" 표시가 없다(가짜 H-01도 KST)', f.get('issueDate') === kstToday(Date.now()) && dateRow?.pieces[0]?.text === f.get('issueDate') && !dateRow?.flag, { issueDate: f.get('issueDate'), dateRow });
   const folded = await js<string>(`document.querySelector('[data-run="${id}"]').textContent`);
-  check('대화의 작성 카드는 "작성 완료" 한 줄(서류·거래처·합계)로 접히고 되읽은 값 전체·승인·[중지] 버튼을 그리지 않는다(결정 7)', S.runs.get(id)!.confirmed && S.runs.get(id)!.counterparty.first && folded.includes('작성 완료') && folded.includes('세금계산서 · A상사 · 3,630,000원') && !/tax@asangsa|214-86-51233|경영 컨설팅|공급가액|승인하고 발급|승인 카드|승인 바/.test(folded) && (await js<number>(`document.querySelectorAll('[data-run="${id}"] button').length`)) === 0, folded);
+  check('대화의 작성 카드는 "작성 완료" 한 줄(서류·거래처·합계)로 접히고 되읽은 값 전체·승인·[중지] 버튼을 그리지 않는다(결정 7)', S.runs.get(id)!.confirmed && S.runs.get(id)!.counterparty.first && folded.includes('작성 완료') && folded.includes('세금계산서 A상사, 3,630,000원') && !/tax@asangsa|214-86-51233|경영 컨설팅|공급가액|승인하고 발급|승인 카드|승인 바/.test(folded) && (await js<number>(`document.querySelectorAll('[data-run="${id}"] button').length`)) === 0, folded);
   const snap = S.bar.snapshot();
   const [cw, ch] = S.win.getContentSize() as [number, number];
   const exp = barBounds(cw, ch);
@@ -371,7 +371,7 @@ async function flow(): Promise<void> {
   await shot('14-result');
   await click('[data-view=docs]');
   await sleep(100);
-  check('문서함에 발급 결과가 들어온다', (await js<string>(`document.querySelector('[data-view=docs] tbody').textContent`)).includes('세금계산서 · A상사'));
+  check('문서함에 발급 결과가 들어온다', (await js<string>(`document.querySelector('[data-view=docs] tbody').textContent`)).includes('세금계산서 A상사'));
   await click(`[data-doc-row="d-${id}"]`);
   await shot('15-docs');
   await click('[data-view=cps]');

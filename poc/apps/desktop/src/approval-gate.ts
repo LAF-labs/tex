@@ -28,8 +28,8 @@ type ArmRefusal = { reason: 'missing' | 'unsafe' | 'overflow'; label: string } |
 export const REFUSAL_TEXT = {
   missing: (l: string) => `${l} 값이 없어 승인할 수 없어요`,
   unsafe: (l: string) => `${l} 칸에 쓸 수 없는 문자가 있어요. 그 칸을 고쳐 주세요`,
-  overflow: (l: string) => `창을 넓혀 주세요 · ${l}`,
-  tall: () => '창을 높여 주세요 · 승인 카드가 다 보이지 않아요',
+  overflow: (l: string) => `창을 넓혀 주세요. ${l}`,
+  tall: () => '창을 높여 주세요. 승인 카드가 다 보이지 않아요',
   hash: () => '값 대조가 맞지 않아 승인할 수 없어요',
   duplicate: () => '같은 항목이 두 번 들어 있어 승인할 수 없어요',
 };
@@ -94,13 +94,13 @@ export function summarize(req: Pick<GateRequest, 'fields'>, todayKst: string = k
   if (count !== undefined && !/^[1-9]\d{0,3}$/.test(count)) return { reason: 'unsafe', label: '품목' };
   const dup = dupState(f);
   const rows: SummaryLine[] = [
-    { label: '합계', amount: true, pieces: [{ text: won(f.get('totalAmount')!) }, { text: `공급가액 ${won(f.get('supplyAmount')!)} · 세액 ${won(f.get('taxAmount')!)}` }], flag: dup?.flag, tone: dup?.tone },
-    { label: '공급받는자', pieces: [{ text: f.get('counterpartName')!, shrink: true }, { text: ` · ${bizNo(f.get('counterpartBizNo')!)}` }], flag: f.get('$first.bizNo') === 'true' ? '처음 거래' : undefined },
-    { label: '품목', pieces: [{ text: f.get('itemName')!, shrink: true }, ...(count && count !== '1' ? [{ text: ` · ${count}개 품목` }] : [])] },
+    { label: '합계', amount: true, pieces: [{ text: won(f.get('totalAmount')!) }, { text: `공급가액 ${won(f.get('supplyAmount')!)}, 세액 ${won(f.get('taxAmount')!)}` }], flag: dup?.flag, tone: dup?.tone },
+    { label: '공급받는자', pieces: [{ text: f.get('counterpartName')!, shrink: true }, { text: `, ${bizNo(f.get('counterpartBizNo')!)}` }], flag: f.get('$first.bizNo') === 'true' ? '처음 거래' : undefined },
+    { label: '품목', pieces: [{ text: f.get('itemName')!, shrink: true }, ...(count && count !== '1' ? [{ text: `, ${count}개 품목` }] : [])] },
     { label: '작성일자', pieces: [{ text: issueDate }], flag: issueDate !== todayKst ? '오늘 아님' : undefined },
   ];
   const email = f.get('counterpartEmail') ?? '';
-  if (!email) return [...rows, { label: '받는 이메일', pieces: [{ text: '없음 · 메일을 보내지 않아요' }] }];
+  if (!email) return [...rows, { label: '받는 이메일', pieces: [{ text: '없음, 메일을 보내지 않아요' }] }];
   if (UNSAFE_CHARS.test(email)) return { reason: 'unsafe', label: '받는 이메일' };
   const at = email.lastIndexOf('@');
   if (at <= 0) return { reason: 'unsafe', label: '받는 이메일' };
@@ -150,7 +150,7 @@ export function summarizeAttest(req: Pick<AttestRequest, 'fields' | 'manualCheck
   if (!AMOUNT.test(f.get('totalAmount')!)) return { reason: 'unsafe', label: '합계' };
   const lines: SummaryLine[] = [
     { label: '합계', amount: true, pieces: [{ text: won(f.get('totalAmount')!) }], tone: 'attention' },
-    { label: '공급받는자', pieces: [{ text: f.get('counterpartName')!, shrink: true }, { text: ` · ${bizNo(f.get('counterpartBizNo')!)}` }], tone: 'attention' },
+    { label: '공급받는자', pieces: [{ text: f.get('counterpartName')!, shrink: true }, { text: `, ${bizNo(f.get('counterpartBizNo')!)}` }], tone: 'attention' },
     { label: '', pieces: [{ text: ATTEST_FIXED }], tone: 'attention', note: true },
   ];
   if (req.manualCheck === true) lines.push({ label: '', pieces: [{ text: attestManualText(req.portal) }], tone: 'attention', note: true });
@@ -255,16 +255,16 @@ export interface CardText {
   irreversible: string;
   stop: string;
 }
-const title = (name?: string) => (name ? `${DOC_TITLE} · ${name}` : DOC_TITLE);
+const title = (name?: string) => (name ? `${DOC_TITLE} ${name}` : DOC_TITLE);
 export const GATE_TEXT: CardText = { title: DOC_TITLE, chip: '승인 대기', action: ACTION_TEXT, irreversible: IRREVERSIBLE_TEXT, stop: STOP_TEXT };
 export const ATTEST_TEXT: CardText = { title: DOC_TITLE, chip: '확인 필요', action: ATTEST_ACTION_TEXT, irreversible: ATTEST_IRREVERSIBLE_TEXT, stop: ATTEST_STOP_TEXT };
 export const SIGN_AFTER: Readonly<Record<string, string>> = {
-  '공동·금융인증서': '승인 뒤 인증서 비밀번호를 넣으면',
+  '공동/금융인증서': '승인 뒤 인증서 비밀번호를 넣으면',
   '사업자 간편인증': '승인 뒤 휴대폰 간편인증을 마치면',
 };
 const SIGN_AFTER_DEFAULT = '승인 뒤 홈택스 인증을 마치면';
 export const irreversibleText = (auth: string | undefined, mail: boolean): string =>
-  `${(auth && Object.hasOwn(SIGN_AFTER, auth) ? SIGN_AFTER[auth] : null) ?? SIGN_AFTER_DEFAULT} 발급${mail ? '·메일 전송' : ''}돼요. 되돌릴 수 없어요.`;
+  `${(auth && Object.hasOwn(SIGN_AFTER, auth) ? SIGN_AFTER[auth] : null) ?? SIGN_AFTER_DEFAULT} ${mail ? '발급/메일 전송' : '발급'}돼요. 되돌릴 수 없어요.`;
 export const gateText = (action: string, name?: string, mail = true, auth?: string): CardText => ({ ...GATE_TEXT, title: title(name), action, irreversible: auth === undefined ? (mail ? IRREVERSIBLE_TEXT : IRREVERSIBLE_TEXT_NO_MAIL) : irreversibleText(auth, mail) });
 export const attestText = (name?: string): CardText => ({ ...ATTEST_TEXT, title: title(name) });
 export const certGateText = (docName: string, action: string): CardText => ({ title: docName, chip: '승인 대기', action, irreversible: CERT_IRREVERSIBLE_TEXT, stop: STOP_TEXT });

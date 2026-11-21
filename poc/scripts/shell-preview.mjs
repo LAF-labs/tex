@@ -57,7 +57,7 @@ const boardNow = () =>
     today: dayOffset(0),
     reminderDay: MOCK_SETTINGS.reminderDay,
     issued: [
-      ...store.docs.filter((d) => d.kind === '세금계산서').map((d) => ({ who: d.name.replace(/^세금계산서 · /, ''), date: d.issuedOn, total: d.name.endsWith('A상사') ? 3630000 : 605000 })),
+      ...store.docs.filter((d) => d.kind === '세금계산서').map((d) => ({ who: d.name.replace(/^세금계산서 /, ''), date: d.issuedOn, total: d.name.endsWith('A상사') ? 3630000 : 605000 })),
       { who: 'C테크', date: dayOffset(-27), total: 1650000 },
     ],
     runs: [],

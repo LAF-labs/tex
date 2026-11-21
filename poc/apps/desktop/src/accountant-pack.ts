@@ -290,15 +290,15 @@ export class AccountantPack {
     const label = `${Number(month.slice(5))}월`;
     const won = (n: number) => `${n.toLocaleString('ko-KR')}원`;
     const readme = [
-      `세무사 꾸러미 ${month}${this.ports.businessName() ? ` · ${this.ports.businessName()}` : ''}`,
+      `세무사 꾸러미 ${month}${this.ports.businessName() ? `, ${this.ports.businessName()}` : ''}`,
       '',
-      `발급한 세금계산서 ${totals.count}건 · 공급가액 ${won(totals.supply)} · 세액 ${won(totals.tax)} · 합계 ${won(totals.total)}`,
+      `발급한 세금계산서 ${totals.count}건, 공급가액 ${won(totals.supply)}, 세액 ${won(totals.tax)}, 합계 ${won(totals.total)}`,
       `증명서 ${certs.length}건`,
-      ...(paper.length ? [`종이 세금계산서 ${paper.length}건(매출 ${paper.filter((r) => r.direction === 'sales').length} · 매입 ${paper.filter((r) => r.direction === 'purchase').length}) · 원본 사진은 '종이 세금계산서' 폴더`] : []),
-      receivables ? `받을 돈 ${receivables.count}건 · ${won(receivables.total)} (만든 날 기준)` : '받을 돈: 계좌 연결 전이라 넣지 않았어요',
+      ...(paper.length ? [`종이 세금계산서 ${paper.length}건(매출 ${paper.filter((r) => r.direction === 'sales').length}, 매입 ${paper.filter((r) => r.direction === 'purchase').length}), 원본 사진은 '종이 세금계산서' 폴더`] : []),
+      receivables ? `받을 돈 ${receivables.count}건, ${won(receivables.total)} (만든 날 기준)` : '받을 돈: 계좌 연결 전이라 넣지 않았어요',
       '',
       gaps.length ? '빠진 것' : '빠진 것 없음',
-      ...gaps.map((g) => `- ${GAP_LABEL[g.kind]}${g.who ? ` · ${g.who}` : ''}${g.day ? ` · ${g.day}` : ''}${g.total !== null ? ` · ${won(g.total)}` : ''}`),
+      ...gaps.map((g) => `- ${GAP_LABEL[g.kind]}${g.who ? `, ${g.who}` : ''}${g.day ? `, ${g.day}` : ''}${g.total !== null ? `, ${won(g.total)}` : ''}`),
     ].join('\r\n');
     await put('요약.txt', Buffer.from('﻿' + readme + '\r\n'));
 

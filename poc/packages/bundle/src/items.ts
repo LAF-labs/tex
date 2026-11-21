@@ -6,10 +6,10 @@ export type IndustryKind = 'settlement_delivery' | 'settlement_market' | 'cash_s
 export type Industry = 'restaurant' | 'online_seller' | 'cash_business';
 
 export const TIER1: ReadonlyArray<{ kind: BuiltinKind; name: string }> = [
-  { kind: 'tax_invoice', name: '매출·매입 세금계산서' },
+  { kind: 'tax_invoice', name: '매출/매입 세금계산서' },
   { kind: 'payroll', name: '급여대장' },
   { kind: 'card', name: '사업용 신용카드 사용내역' },
-  { kind: 'paper_receipt', name: '종이 세무자료(종이 세금계산서·계산서·간이영수증)' },
+  { kind: 'paper_receipt', name: '종이 세무자료(종이 세금계산서/계산서/간이영수증)' },
 ];
 
 export const TIER2: Readonly<Record<Industry, { kind: IndustryKind; name: string }>> = {

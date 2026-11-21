@@ -369,7 +369,7 @@ describe('audit-d: D13 셸 문구·이벤트 연결', () => {
     for (const c of ['portal.unexpected_page', 'portal.extra_auth_repeat', 'portal.unobservable', 'vault.leak_suspected', 'assert.issue_date_mismatch', 'step.target_not_found', 'checkpoint.expect_failed', 'policy.irreversible_per_day']) {
       assert.ok(NOTE[c] && /[요다]\.?$/.test(NOTE[c]!), c);
     }
-    assert.equal(NOTE['policy.cooldown'], '홈택스 차단·경고 신호가 보여 24시간 동안 홈택스 실행을 쉬어요. 아무것도 발급하지 않았어요.');
+    assert.equal(NOTE['policy.cooldown'], '홈택스 차단/경고 신호가 보여 24시간 동안 홈택스 실행을 쉬어요. 아무것도 발급하지 않았어요.');
     assert.equal(NOTE['policy.irreversible_per_day'], '오늘 홈택스 발급 건수 상한에 닿아 멈췄어요. 아무것도 발급하지 않았어요. 내일 다시 할 수 있어요.');
     assert.equal(NOTE['step.target_not_found'], '예상한 홈택스 화면이 아니에요. 전용 Chrome 창에 뜬 안내를 확인해 주세요. 아무것도 발급하지 않았어요.');
   });

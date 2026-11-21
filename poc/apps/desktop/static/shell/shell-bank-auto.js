@@ -15,12 +15,12 @@ export const CONSENT_VERSION = 'codef-bank-auto-2026-11-12';
 export const CONSENT_LINES = [
   '자동 연결은 은행 조회 대행 회사 (주)헥토데이터(CODEF)를 통해 거래내역을 가져와요. 그래서 다른 기능과 달리 PC 밖으로 나가는 정보가 있어요.',
   '나가는 것: 고른 공동인증서 파일과 인증서 비밀번호, 계좌번호. 이 PC에서 CODEF로 바로 가요(비밀번호는 금고가 CODEF 공개키로 감싸요). 우리 서버는 거치지 않아요.',
-  '가져오는 것: 이 계좌의 보유계좌 목록과 입출금 거래내역(날짜·금액·잔액·적요). 앱은 조회만 하고, 돈을 보내거나 이체하지 않아요.',
+  '가져오는 것: 이 계좌의 보유계좌 목록과 입출금 거래내역(날짜/금액/잔액/적요). 앱은 조회만 하고, 돈을 보내거나 이체하지 않아요.',
   '가져온 거래내역은 이 PC에만 암호화해 저장해요. AI 모델로는 아무것도 보내지 않아요.',
   '언제든 [연결 해제]로 그만둘 수 있고, 그러면 파일 올리기로 계속 쓸 수 있어요.',
 ];
 export const CONSENT_CHECKS = [
-  ['use', '(필수) 은행 자동 연결을 위한 개인정보 수집·이용 동의 — 우리 회사가 계좌번호·공동인증서·인증서 비밀번호·거래내역을 자동 조회와 받을 돈 맞추기에만 써요. 연결을 끊으면 지워요.'],
+  ['use', '(필수) 은행 자동 연결을 위한 개인정보 수집/이용 동의 — 우리 회사가 계좌번호/공동인증서/인증서 비밀번호/거래내역을 자동 조회와 받을 돈 맞추기에만 써요. 연결을 끊으면 지워요.'],
   ['entrust', '(필수) 개인정보 처리 위탁 안내 — 계좌 거래내역 조회를 (주)헥토데이터(CODEF)에 맡겨요. CODEF는 받은 정보를 암호화해 처리해요.'],
   ['keep', '(읽음) 인증서 보관 고지 — 공동인증서는 은행에서 조회 밖의 일도 할 수 있는 접근매체예요. CODEF에는 조회하는 동안만 등록하고 조회가 끝나면 바로 지워요. [이 PC에 기억]을 고르면 인증서 비밀번호가 이 PC 키체인에 남아요.'],
 ];
@@ -261,7 +261,7 @@ export function createBankAuto(ctx) {
                         !c.usable,
                         () => go({ certId: c.id }),
                         h('span', { class: 'auth-name' }, c.owner, c.issuance ? [' ', h('span', { class: 'sx-chip' }, '홈택스 발급에 쓰는 인증서')] : null),
-                        `${c.usage} · ${c.expiresOn}까지${c.usable ? '' : c.why === 'expired' ? ' · 만료' : ' · 쓸 수 없음'}`,
+                        `${c.usage}, ${c.expiresOn}까지${c.usable ? '' : c.why === 'expired' ? ', 만료' : ', 쓸 수 없음'}`,
                       ),
                     ),
                   )
@@ -347,7 +347,7 @@ export function createBankAuto(ctx) {
               ? h(
                   'div',
                   { class: 'opt-list', role: 'group', 'aria-label': '보유계좌' },
-                  s.accounts.map((a) => choice(s.pick === a.key, !a.usable, () => go({ pick: a.key }), h('span', { class: 'auth-name' }, `${a.name || '계좌'} ···${a.last4}`), a.usable ? won(a.balance) : '입출금 계좌가 아니라 거래내역을 가져올 수 없어요')),
+                  s.accounts.map((a) => choice(s.pick === a.key, !a.usable, () => go({ pick: a.key }), h('span', { class: 'auth-name' }, `${a.name || '계좌'} 끝 ${a.last4}`), a.usable ? won(a.balance) : '입출금 계좌가 아니라 거래내역을 가져올 수 없어요')),
                 )
               : h('div', { class: 'empty' }, '이 인증서로 조회되는 입출금 계좌가 없어요.'),
             h('div', { class: 'sx-actions' }, btn('이 계좌 연결', choose, 'sx-btn-primary', { disabled: !s.pick, 'data-bank-choose': '' }), btn('그만두기', cancel, 'sx-btn-quiet')),
@@ -357,8 +357,8 @@ export function createBankAuto(ctx) {
           return h(
             'div',
             { class: 'sx-card', 'data-bank-auto': 'connected' },
-            h('p', { class: 'sx-body-sm' }, h('span', { class: 'sx-chip is-done' }, '연결됨'), ` ${st.bankName || ''} ···${st.last4 || ''}${st.accountName ? ` · ${st.accountName}` : ''}`),
-            h('p', { class: 'sx-meta' }, `마지막 조회: ${when(st.lastSyncAt)}${typeof st.callsLeft === 'number' ? ` · 오늘 남은 조회 ${st.callsLeft}회` : ''}`),
+            h('p', { class: 'sx-body-sm' }, h('span', { class: 'sx-chip is-done' }, '연결됨'), ` ${st.bankName || ''} 끝 ${st.last4 || ''}${st.accountName ? `, ${st.accountName}` : ''}`),
+            h('p', { class: 'sx-meta' }, `마지막 조회: ${when(st.lastSyncAt)}${typeof st.callsLeft === 'number' ? `, 오늘 남은 조회 ${st.callsLeft}회` : ''}`),
             msgLine(),
             h('div', { class: 'sx-actions' }, btn('최신화', refresh, 'sx-btn-primary', { 'data-bank-refresh': '' }), bankLink(), btn('연결 해제', disconnect, 'sx-btn-quiet', { 'data-bank-disconnect': '' }), fileLink()),
             h('p', { class: 'sx-meta' }, '[최신화]마다 금고 창에서 비밀번호를 물어요. 창에서 [이 PC에 기억]을 고르면 다음부터 묻지 않아요.'),

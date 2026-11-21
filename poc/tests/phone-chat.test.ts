@@ -132,7 +132,7 @@ describe('폰 대화: 컨텍스트와 가림', () => {
     const a = reply(await t.chat.send('한빛전자 발급 기록 보여줘'));
     assert.equal(a.text, '최근 발급은 11월 3일, 합계 1,100,000원이에요.');
     assert.equal(a.show.length, 1);
-    assert.deepEqual(a.show[0]!.type === 'table' && [a.show[0]!.table, a.show[0]!.rows.length, a.show[0]!.copy, a.show[0]!.title], ['history', 2, 'fresh', '한빛전자 발급 기록 2건 · 공급가 1,550,000원 · 합계 1,705,000원']);
+    assert.deepEqual(a.show[0]!.type === 'table' && [a.show[0]!.table, a.show[0]!.rows.length, a.show[0]!.copy, a.show[0]!.title], ['history', 2, 'fresh', '한빛전자 발급 기록 2건, 공급가 1,550,000원, 합계 1,705,000원']);
     const b = reply(await t.chat.send('그때 공급가 얼마였어?'));
     assert.equal(b.text, '그때 공급가는 1,000,000원이었어요.');
     const text = t.reqs[1]!.text;

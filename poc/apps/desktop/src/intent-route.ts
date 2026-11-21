@@ -35,7 +35,7 @@ export function parseRoute(v: unknown): IntentRoute | null {
 const SOON: Partial<Record<IntentPlaybook, string>> = {
   'hometax.invoice.list': '세금계산서 조회',
   'hometax.invoice.amend': '수정세금계산서 발급',
-  'hometax.summary.view': '매출·매입 합계 조회',
+  'hometax.summary.view': '매출/매입 합계 조회',
   'counterparty.bizstatus.check': '거래처 상태 확인',
   'query.documents': '보관함 조회',
   'hometax.card.refresh': '사업용 카드 내역',
@@ -56,7 +56,7 @@ export function routed(r: IntentRoute, local: Parsed): Routed {
   if (p === 'gov24.resident.copy') return { parsed: { ...local, intent: local.intent === 'resident_abstract' ? 'resident_abstract' : 'resident_copy' }, note };
   if (CERT.includes(p)) return { parsed: { ...local, intent: 'cert', cert: local.cert ?? CERT_CODE[p] ?? null }, note };
   const soon = SOON[p];
-  return soon ? { say: `${soon}은(는) 곧 이 대화에서 열 수 있어요. 지금은 세금계산서 발급, 홈택스 증명서(사업자등록증명·납세증명서 등) 발급, 정부24 직접 발급 안내를 할 수 있어요.`, note: null } : { parsed: { ...local, intent: 'other' }, note };
+  return soon ? { say: `${soon}은(는) 곧 이 대화에서 열 수 있어요. 지금은 세금계산서 발급, 홈택스 증명서(사업자등록증명/납세증명서 등) 발급, 정부24 직접 발급 안내를 할 수 있어요.`, note: null } : { parsed: { ...local, intent: 'other' }, note };
 }
 
 export interface IntentResolver {

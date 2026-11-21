@@ -114,6 +114,7 @@ export function checkAgentReply<K extends string, A extends string>(out: unknown
   if (k === 'tax_advice') return { kind: k, text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice' };
   const text = braceTokens(o.text)
     .replace(REF_NOTE, '')
+    .replace(/\s*[·ㆍ]\s*/g, ', ')
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/\{([^{}]*)\}/g, (_m, x: string) => `{${x.replace(/\s+/g, '')}}`);
